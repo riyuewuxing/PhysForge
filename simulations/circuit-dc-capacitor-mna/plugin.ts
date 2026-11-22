@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
   checkInvariants,
   computeObservables,
@@ -17,7 +17,8 @@ const paramSchema: readonly ParamFieldSpec<CircuitParams>[] = [
       { label: '闭合电路欧姆定律与输出功率 P-R', value: 'closed-power' },
       { label: '混联滑变动态分析（串反并同）', value: 'series-parallel-dynamic' },
       { label: 'RC 含容电路充放电瞬态', value: 'rc-transient' },
-      { label: '电桥含容支路稳态电荷求解', value: 'rc-bridge-charge' }
+      { label: '电桥含容支路稳态电荷求解', value: 'rc-bridge-charge' },
+      { label: '非线性小灯泡 / 二极管伏安特性 (MNA-NR)', value: 'nonlinear-lamp-diode' }
     ],
     defaultValue: 'rc-transient'
   },
@@ -91,12 +92,55 @@ const paramSchema: readonly ParamFieldSpec<CircuitParams>[] = [
 
 export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams, CircuitState>({
   meta: {
-    id: 'circuit-dc-capacitor-mna',
-    title: '高中直流与含容电路动态分析（纯 TS MNA 求解器）',
+    id: 'builder-circuit-mna',
+    title: '自由拓扑线性与非线性电路建模器 (B2)',
     textbookRef: '人教版 必修第三册 第十二章 第1–3节',
     curriculumTags: ['物理观念', '科学思维', '科学探究'],
     difficulty: '高三一轮',
-    version: '1.0.0'
+    version: '2.0.0'
+  },
+  getControlHandles: (_state, params) => [
+    {
+      id: 'slider-resistor',
+      label: `Rp=${params.sliderR.toFixed(1)}Ω`,
+      position: { x: -1.5 + (params.sliderR / 20) * 3.0, y: -1.2 },
+      handleKind: 'point',
+      color: '#f472b6',
+      onDrag: (worldPos) => {
+        const nextR = Math.max(0.5, Math.min(20, ((worldPos.x + 1.5) / 3.0) * 20));
+        return { sliderR: Math.round(nextR * 2) / 2 };
+      }
+    }
+  ],
+  sceneSerializer: {
+    exportScene: (_state, params) => ({
+      schemaVersion: '2.0',
+      modelId: 'builder-circuit-mna',
+      title: '自由拓扑电路仿真',
+      params
+    }),
+    importScene: (dsl) => dsl.params as Partial<CircuitParams>
+  },
+  exportDiagramIR: (_state, params) => {
+    const primitives: DiagramPrimitive[] = [
+      { kind: 'circuitElement', element: 'battery', x1: -2.2, y1: -1.4, x2: -2.2, y2: 1.4, label: `E=${params.emf}V, r=${params.internalR}\\Omega` },
+      { kind: 'line', x1: -2.2, y1: 1.4, x2: -0.6, y2: 1.4 },
+      { kind: 'circuitElement', element: 'resistor', x1: -0.6, y1: 1.4, x2: 1.6, y2: 1.4, label: `R_1=${params.r1}\\Omega` },
+      { kind: 'line', x1: 1.6, y1: 1.4, x2: 2.2, y2: 1.4 },
+      params.topology === 'rc-transient'
+        ? { kind: 'circuitElement', element: 'capacitor', x1: 2.2, y1: 1.4, x2: 2.2, y2: -1.4, label: `C=${params.capacitance}F` }
+        : params.topology === 'nonlinear-lamp-diode'
+          ? { kind: 'circuitElement', element: 'lamp', x1: 2.2, y1: 1.4, x2: 2.2, y2: -1.4, label: params.switchClosed ? 'D' : 'L' }
+          : { kind: 'circuitElement', element: 'resistor', x1: 2.2, y1: 1.4, x2: 2.2, y2: -1.4, label: `R_p=${params.sliderR}\\Omega` },
+      { kind: 'circuitElement', element: 'ammeter', x1: 2.2, y1: -1.4, x2: -2.2, y2: -1.4, label: 'A' }
+    ];
+    return {
+      width: 720,
+      height: 440,
+      viewBox: { minX: -3.2, minY: -2.2, maxX: 3.2, maxY: 2.2 },
+      title: '直流/含容/非线性电路原理图',
+      primitives
+    };
   },
   paramSchema,
   presets: [
@@ -149,6 +193,18 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
         r2: 6,
         sliderR: 2,
         capacitance: 0.1
+      }
+    },
+    {
+      id: 'nonlinear-diode-iv',
+      name: '5. 非线性肖克利二极管 / 小灯泡导通特性',
+      description: '采用 Newton-Raphson 非线性 MNA 求解二极管正向导通压降（开关闭合=二极管，断开=幂律小灯泡）。',
+      params: {
+        topology: 'nonlinear-lamp-diode',
+        emf: 5,
+        internalR: 0.5,
+        sliderR: 10,
+        switchClosed: true
       }
     }
   ],

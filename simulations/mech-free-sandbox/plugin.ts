@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { ensureRapierLoaded } from './rapierLoader.js';
 import {
   checkInvariants,
@@ -18,7 +18,8 @@ const paramSchema: readonly ParamFieldSpec<SandboxParams>[] = [
       { label: '一维刚体弹性/非弹性碰撞', value: 'elastic-collision' },
       { label: '斜面滑块下滑碰撞', value: 'incline-slide' },
       { label: '气垫导轨轻弹簧振子', value: 'spring-oscillator' },
-      { label: '牛顿摆多球动量传递', value: 'newtons-cradle' }
+      { label: '牛顿摆多球动量传递', value: 'newtons-cradle' },
+      { label: '阿特伍德机解析约束 (Udwadia-Kalaba)', value: 'atwood-constrained' }
     ],
     defaultValue: 'elastic-collision'
   },
@@ -86,12 +87,135 @@ const paramSchema: readonly ParamFieldSpec<SandboxParams>[] = [
 
 export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, SandboxState>({
   meta: {
-    id: 'mech-free-sandbox',
-    title: '自由力学刚体与碰撞探究沙箱（Rapier2D）',
+    id: 'builder-mechanics-lab',
+    title: '自由力学约束与多刚体建模器 (B4)',
     textbookRef: '人教版 必修第二册 & 选择性必修一 第一章',
     curriculumTags: ['物理观念', '科学思维', '科学探究'],
     difficulty: '基础新授',
-    version: '1.0.0'
+    version: '2.0.0'
+  },
+  getControlHandles: (state, params) => {
+    const dyn = state.bodies.find((b) => b.dynamic);
+    if (!dyn) return [];
+    return [
+      {
+        id: 'mass-ratio',
+        label: `m₂=${params.massRatio.toFixed(1)}kg`,
+        position: { x: dyn.x, y: dyn.y + dyn.halfH + 0.5 },
+        handleKind: 'point',
+        color: '#f472b6',
+        onDrag: (wp) => ({
+          massRatio: Number(Math.max(0.5, Math.min(5, Math.round((wp.y + 1.5) * 2) / 2)).toFixed(1))
+        })
+      }
+    ];
+  },
+  getForceVectors: (state, params) => {
+    const vectors = [];
+    for (const b of state.bodies) {
+      if (!b.dynamic) continue;
+      vectors.push({
+        id: `weight-${b.id}`,
+        label: `${b.label}g`,
+        origin: { x: b.x, y: b.y },
+        force: { x: 0, y: -b.mass * params.gravity },
+        color: '#fbbf24',
+        category: 'gravity' as const,
+        unit: 'N'
+      });
+      if (params.scenario === 'atwood-constrained' && state.constraintTensionN !== undefined) {
+        vectors.push({
+          id: `tension-${b.id}`,
+          label: 'T',
+          origin: { x: b.x, y: b.y },
+          force: { x: 0, y: state.constraintTensionN },
+          color: '#38bdf8',
+          category: 'tension' as const,
+          unit: 'N'
+        });
+      }
+      if (params.scenario === 'spring-oscillator' && b.id === 'mass-block') {
+        vectors.push({
+          id: 'spring-force',
+          label: 'F_k',
+          origin: { x: b.x, y: b.y },
+          force: { x: -params.springK * (b.x + 0.45), y: 0 },
+          color: '#4ade80',
+          category: 'tension' as const,
+          unit: 'N'
+        });
+      }
+    }
+    return vectors;
+  },
+  referenceFrames: [
+    {
+      id: 'center-of-mass',
+      label: '系统质心参考系',
+      getOrigin: (state) => {
+        let totalM = 0;
+        let mx = 0;
+        let my = 0;
+        for (const b of state.bodies) {
+          if (!b.dynamic) continue;
+          totalM += b.mass;
+          mx += b.mass * b.x;
+          my += b.mass * b.y;
+        }
+        return totalM > 0 ? { x: mx / totalM, y: my / totalM } : { x: 0, y: 0 };
+      }
+    }
+  ],
+  sceneSerializer: {
+    exportScene: (_state, params) => ({
+      schemaVersion: '2.0',
+      modelId: 'builder-mechanics-lab',
+      title: '自由力学约束实验场景',
+      params
+    }),
+    importScene: (dsl) => dsl.params as Partial<SandboxParams>
+  },
+  exportDiagramIR: (state, params) => {
+    const primitives: DiagramPrimitive[] = [
+      { kind: 'hatchedGround', x1: -3.5, y1: -1.2, x2: 3.5, y2: -1.2 }
+    ];
+    for (const b of state.bodies) {
+      if (!b.dynamic) continue;
+      if (b.shape === 'ball') {
+        primitives.push({ kind: 'circle', cx: b.x, cy: b.y, r: b.halfW });
+      } else {
+        primitives.push({
+          kind: 'block',
+          cx: b.x,
+          cy: b.y,
+          width: b.halfW * 2,
+          height: b.halfH * 2,
+          label: b.label
+        });
+      }
+    }
+    if (params.scenario === 'spring-oscillator') {
+      const anchor = state.bodies.find((b) => b.id === 'anchor');
+      const block = state.bodies.find((b) => b.id === 'mass-block');
+      if (anchor && block) {
+        primitives.push({ kind: 'spring', x1: anchor.x + anchor.halfW, y1: anchor.y, x2: block.x - block.halfW, y2: block.y, coils: 8 });
+      }
+    } else if (params.scenario === 'atwood-constrained') {
+      const left = state.bodies.find((b) => b.id === 'atwood-left');
+      const right = state.bodies.find((b) => b.id === 'atwood-right');
+      primitives.push({ kind: 'circle', cx: 0, cy: 1.4, r: 0.28 });
+      if (left && right) {
+        primitives.push({ kind: 'line', x1: -0.28, y1: 1.4, x2: left.x, y2: left.y + left.halfH });
+        primitives.push({ kind: 'line', x1: 0.28, y1: 1.4, x2: right.x, y2: right.y + right.halfH });
+      }
+    }
+    return {
+      width: 720,
+      height: 440,
+      viewBox: { minX: -3.8, minY: -1.8, maxX: 3.8, maxY: 2.2 },
+      title: '自由力学刚体与解析约束试卷配图',
+      primitives
+    };
   },
   paramSchema,
   presets: [
@@ -138,6 +262,16 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
         restitution: 1.0,
         friction: 0
       }
+    },
+    {
+      id: 'atwood-udwadia-analytical',
+      name: '5. 阿特伍德机精确约束与张力求解 (Udwadia-Kalaba)',
+      description: '采用 Gauss 最小拘束原理直接输出精确轻绳张力 T = 2m₁m₂g/(m₁+m₂) 与对称辛步进轨迹。',
+      params: {
+        scenario: 'atwood-constrained',
+        massRatio: 2.0,
+        gravity: 9.8
+      }
     }
   ],
   engine: {
@@ -180,6 +314,28 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     });
 
     if (activeLayers.has('bodies')) {
+      if (params.scenario === 'atwood-constrained') {
+        const pulley = state.bodies.find((b) => b.id === 'pulley');
+        const left = state.bodies.find((b) => b.id === 'atwood-left');
+        const right = state.bodies.find((b) => b.id === 'atwood-right');
+        if (pulley && left && right) {
+          const pP = toScreen(pulley.x, pulley.y);
+          const pL = toScreen(left.x, left.y + left.halfH);
+          const pR = toScreen(right.x, right.y + right.halfH);
+          const rPx = pulley.halfW * pxPerM;
+          ctx.save();
+          ctx.strokeStyle = '#cbd5e1';
+          ctx.lineWidth = 2.2;
+          ctx.beginPath();
+          ctx.moveTo(pL.sx, pL.sy);
+          ctx.lineTo(pP.sx - rPx, pP.sy);
+          ctx.moveTo(pR.sx, pR.sy);
+          ctx.lineTo(pP.sx + rPx, pP.sy);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
       // 若为弹簧振子先绘制弹簧锯齿线
       if (params.scenario === 'spring-oscillator') {
         const anchor = state.bodies.find((b) => b.id === 'anchor');

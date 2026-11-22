@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 
 function parseCliArgs(argv) {
-  const args = { model: 'em-bounded-magnetic-field', preset: null, out: null };
+  const args = { model: 'em-bounded-magnetic-field', preset: null, presetFile: null, out: null };
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
     if (token === '--') continue;
@@ -18,30 +18,88 @@ function parseCliArgs(argv) {
     else if (token === '--model' && argv[i + 1]) args.model = argv[++i];
     else if (token.startsWith('--preset=')) args.preset = token.slice('--preset='.length);
     else if (token === '--preset' && argv[i + 1]) args.preset = argv[++i];
+    else if (token.startsWith('--preset-file='))
+      args.presetFile = token.slice('--preset-file='.length);
+    else if (token === '--preset-file' && argv[i + 1]) args.presetFile = argv[++i];
     else if (token.startsWith('--out=')) args.out = token.slice('--out='.length);
     else if (token === '--out' && argv[i + 1]) args.out = argv[++i];
   }
   return args;
 }
 
+const MODEL_ALIAS_TO_DIR = {
+  'builder-composite-em-field': 'em-bounded-magnetic-field',
+  'builder-circuit-mna': 'circuit-dc-capacitor-mna',
+  'builder-optics-ray': 'optics-ray-studio',
+  'builder-mechanics-lab': 'mech-free-sandbox'
+};
+
 const KNOWN_MODELS = [
   'em-bounded-magnetic-field',
+  'builder-composite-em-field',
   'wave-vibration-coupling',
   'em-induction-double-rod',
   'mech-block-conveyor',
   'optics-ray-studio',
+  'builder-optics-ray',
   'mech-free-sandbox',
-  'circuit-dc-capacitor-mna'
+  'builder-mechanics-lab',
+  'circuit-dc-capacitor-mna',
+  'builder-circuit-mna',
+  'builder-custom-ode-lab'
 ];
 
+function isSameModelGroup(a, b) {
+  if (a === b) return true;
+  const da = MODEL_ALIAS_TO_DIR[a] ?? a;
+  const db = MODEL_ALIAS_TO_DIR[b] ?? b;
+  return da === db;
+}
+
 async function main() {
-  const { model, preset, out } = parseCliArgs(process.argv.slice(2));
-  const pluginEntry = path.resolve(repoRoot, 'simulations', model, 'plugin.ts');
+  const parsedArgs = parseCliArgs(process.argv.slice(2));
+  let model = parsedArgs.model;
+  const preset = parsedArgs.preset;
+  const out = parsedArgs.out;
+
+  let presetData = null;
+  if (parsedArgs.presetFile) {
+    const candCwd = path.resolve(process.cwd(), parsedArgs.presetFile);
+    const candRoot = path.resolve(repoRoot, parsedArgs.presetFile);
+    const absPresetPath = fs.existsSync(candCwd) ? candCwd : candRoot;
+    if (!fs.existsSync(absPresetPath)) {
+      throw new Error(`Preset JSON file not found: ${candCwd} (also checked ${candRoot})`);
+    }
+    const rawJson = JSON.parse(fs.readFileSync(absPresetPath, 'utf8'));
+    if (typeof rawJson.modelId === 'string' && rawJson.modelId.trim()) {
+      model = rawJson.modelId;
+    }
+    if (rawJson.preset && typeof rawJson.preset === 'object') {
+      presetData = {
+        presetId: rawJson.preset.id,
+        name: rawJson.preset.name,
+        params: rawJson.preset.params,
+        visibleLayers: rawJson.preset.visibleLayers
+      };
+    } else if (rawJson.params && typeof rawJson.params === 'object') {
+      presetData = {
+        presetId: rawJson.presetId,
+        name: rawJson.title,
+        params: rawJson.params,
+        visibleLayers: rawJson.visibleLayers
+      };
+    } else {
+      throw new Error(`Invalid preset file format in ${absPresetPath}`);
+    }
+  }
+
+  const pluginDirName = MODEL_ALIAS_TO_DIR[model] ?? model;
+  const pluginEntry = path.resolve(repoRoot, 'simulations', pluginDirName, 'plugin.ts');
   if (!fs.existsSync(pluginEntry)) {
     throw new Error(`Target simulation plugin not found: ${pluginEntry}`);
   }
 
-  const tempOutDir = path.resolve(__dirname, '.tmp-build', model);
+  const tempOutDir = path.resolve(__dirname, '.tmp-build', pluginDirName);
   fs.rmSync(tempOutDir, { recursive: true, force: true });
 
   await build({
@@ -59,7 +117,8 @@ async function main() {
       }
     },
     define: {
-      __INITIAL_PRESET_ID__: JSON.stringify(preset)
+      __INITIAL_PRESET_ID__: JSON.stringify(preset),
+      __INITIAL_PRESET_DATA__: JSON.stringify(presetData)
     },
     build: {
       outDir: tempOutDir,
@@ -78,7 +137,11 @@ async function main() {
   const distDir = path.resolve(__dirname, 'dist');
   fs.mkdirSync(distDir, { recursive: true });
   const finalOutPath = out
-    ? path.resolve(process.cwd(), out)
+    ? path.isAbsolute(out)
+      ? out
+      : out.replace(/\\/g, '/').startsWith('apps/singlefile-exporter/')
+        ? path.resolve(repoRoot, out)
+        : path.resolve(process.cwd(), out)
     : path.join(distDir, `${model}.html`);
   fs.mkdirSync(path.dirname(finalOutPath), { recursive: true });
   fs.writeFileSync(finalOutPath, html, 'utf8');
@@ -89,7 +152,7 @@ async function main() {
   if (leakedExternalCdn) {
     throw new Error(`Singlefile bundle ${finalOutPath} contains disallowed external CDN references!`);
   }
-  const otherModels = KNOWN_MODELS.filter((m) => m !== model && html.includes(m));
+  const otherModels = KNOWN_MODELS.filter((m) => !isSameModelGroup(m, model) && html.includes(m));
   if (otherModels.length > 0) {
     throw new Error(
       `Singlefile bundle ${finalOutPath} leaked unrelated simulation models: ${otherModels.join(', ')}`
@@ -98,7 +161,7 @@ async function main() {
   if (html.includes('EXCALIDRAW_ASSET_PATH') || html.includes('@excalidraw/excalidraw')) {
     throw new Error(`Singlefile bundle ${finalOutPath} must not include Excalidraw!`);
   }
-  if (model !== 'mech-free-sandbox' && html.includes('rapier_wasm2d')) {
+  if (!isSameModelGroup(model, 'mech-free-sandbox') && html.includes('rapier_wasm2d')) {
     throw new Error(`Singlefile bundle ${finalOutPath} must not include Rapier2D WASM!`);
   }
   if (html.includes('papaparse') || html.includes('PapaParse')) {
@@ -110,7 +173,7 @@ async function main() {
   if (html.includes('OrbitControls') || html.includes('THREE.WebGLRenderer')) {
     throw new Error(`Singlefile bundle ${finalOutPath} must not include Three.js!`);
   }
-  if (html.includes('mathjs')) {
+  if (model !== 'builder-custom-ode-lab' && html.includes('mathjs')) {
     throw new Error(`Singlefile bundle ${finalOutPath} must not include mathjs!`);
   }
 

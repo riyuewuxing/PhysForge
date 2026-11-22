@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
   checkInvariants,
   computeLarmorCircleForTrack,
@@ -112,7 +112,7 @@ const paramSchema: readonly ParamFieldSpec<BoundedMagneticParams>[] = [
     label: '粒子束数量',
     unit: '束',
     min: 1,
-    max: 7,
+    max: 9,
     step: 1,
     defaultValue: 5
   }
@@ -162,12 +162,171 @@ export const emBoundedMagneticFieldPlugin = defineSimulationPlugin<
   BoundedMagneticState
 >({
   meta: {
-    id: 'em-bounded-magnetic-field',
-    title: '有界磁场与动态圆 · 复合场配速法',
+    id: 'builder-composite-em-field',
+    title: '自由复合场与动态圆建模器 (B1)',
     textbookRef: '人教版 选择性必修二 第一章 第2–3节',
     curriculumTags: ['物理观念', '科学思维', '科学探究'],
     difficulty: '压轴专题',
-    version: '1.0.0'
+    version: '2.0.0'
+  },
+  getControlHandles: (state, params) => {
+    const primary = state.particles[0];
+    if (!primary) return [];
+    const pos = primary.state.position;
+    const vel = primary.state.velocity;
+    const handles = [
+      {
+        id: 'launch-velocity',
+        label: `v₀=${params.initialSpeed.toFixed(1)}m/s`,
+        position: { x: pos.x + vel.x * 0.35, y: pos.y + vel.y * 0.35 },
+        origin: { x: pos.x, y: pos.y },
+        handleKind: 'vector' as const,
+        color: '#4ade80',
+        onDrag: (worldPos: { x: number; y: number }) => {
+          const dx = (worldPos.x - pos.x) / 0.35;
+          const dy = (worldPos.y - pos.y) / 0.35;
+          const speed = Math.max(0, Math.min(6, Math.hypot(dx, dy)));
+          const deg = Math.max(-60, Math.min(60, (Math.atan2(dy, dx) * 180) / Math.PI));
+          return {
+            initialSpeed: Number(speed.toFixed(2)),
+            launchAngleDeg: Math.round(deg / 5) * 5
+          };
+        }
+      },
+      {
+        id: 'field-scale',
+        label: `R=${params.fieldScale.toFixed(1)}m`,
+        position: { x: params.fieldScale, y: 0 },
+        handleKind: 'radius' as const,
+        color: '#38bdf8',
+        onDrag: (worldPos: { x: number; y: number }) => ({
+          fieldScale: Number(Math.max(0.5, Math.min(2.5, Math.hypot(worldPos.x, worldPos.y))).toFixed(1))
+        })
+      }
+    ];
+    return handles;
+  },
+  getForceVectors: (state, params) => {
+    const primary = state.particles[0];
+    if (!primary) return [];
+    const pos = primary.state.position;
+    const vel = primary.state.velocity;
+    const activeB = params.mode === 'crossed-eb' || primary.inField ? params.magneticFieldZ : 0;
+    const activeE = params.mode === 'crossed-eb' ? params.electricFieldY : 0;
+    const fLorX = params.charge * vel.y * activeB;
+    const fLorY = -params.charge * vel.x * activeB;
+    const items = [
+      {
+        id: 'lorentz',
+        label: 'F_B',
+        origin: { x: pos.x, y: pos.y },
+        force: { x: fLorX, y: fLorY },
+        color: '#38bdf8',
+        category: 'magnetic' as const,
+        unit: 'N'
+      }
+    ];
+    if (Math.abs(activeE) > 1e-6) {
+      items.push({
+        id: 'electric',
+        label: 'F_E',
+        origin: { x: pos.x, y: pos.y },
+        force: { x: 0, y: params.charge * activeE },
+        color: '#fbbf24',
+        category: 'magnetic' as const,
+        unit: 'N'
+      });
+    }
+    return items;
+  },
+  referenceFrames: [
+    {
+      id: 'primary-particle',
+      label: '主粒子随动参考系',
+      getOrigin: (state) => {
+        const p = state.particles[0]?.state.position;
+        return p ? { x: p.x, y: p.y } : { x: 0, y: 0 };
+      }
+    }
+  ],
+  sceneSerializer: {
+    exportScene: (_state, params) => ({
+      schemaVersion: '2.0',
+      modelId: 'builder-composite-em-field',
+      title: '有界磁场与复合场动态圆',
+      params
+    }),
+    importScene: (dsl) => dsl.params as Partial<BoundedMagneticParams>
+  },
+  exportDiagramIR: (state, params) => {
+    const R = Math.max(0.5, params.fieldScale);
+    const primitives: DiagramPrimitive[] = [];
+    const sym: 'cross' | 'dot' = params.magneticFieldZ >= 0 ? 'cross' : 'dot';
+
+    if (params.mode === 'circular') {
+      primitives.push({ kind: 'circle', cx: 0, cy: 0, r: R, dashed: true });
+      for (const [fx, fy] of [
+        [0, 0],
+        [-0.45 * R, 0.35 * R],
+        [0.45 * R, 0.35 * R],
+        [-0.45 * R, -0.35 * R],
+        [0.45 * R, -0.35 * R]
+      ]) {
+        primitives.push({ kind: 'fieldMarker', x: fx!, y: fy!, symbol: sym });
+      }
+    } else if (params.mode === 'half-space') {
+      primitives.push({ kind: 'line', x1: 0, y1: -2.2, x2: 0, y2: 2.2, dashed: true });
+      for (const [fx, fy] of [
+        [0.8, 1.0],
+        [1.8, 1.0],
+        [0.8, -1.0],
+        [1.8, -1.0]
+      ]) {
+        primitives.push({ kind: 'fieldMarker', x: fx!, y: fy!, symbol: sym });
+      }
+    } else if (params.mode === 'rectangular') {
+      primitives.push({ kind: 'rect', x: 0, y: -0.8 * R, width: R, height: 1.6 * R, dashed: true });
+      primitives.push({ kind: 'fieldMarker', x: 0.5 * R, y: 0.4 * R, symbol: sym });
+      primitives.push({ kind: 'fieldMarker', x: 0.5 * R, y: -0.4 * R, symbol: sym });
+    } else {
+      primitives.push({ kind: 'rect', x: -2.5, y: -1.8, width: 5, height: 3.6, dashed: true });
+      primitives.push({ kind: 'fieldMarker', x: 1.5, y: 1.1, symbol: sym });
+      primitives.push({ kind: 'arrow', x1: -2.1, y1: -1.0, x2: -2.1, y2: 0.6, label: 'E' });
+    }
+
+    for (const track of state.particles.slice(0, 5)) {
+      if (track.trail.length >= 2) {
+        primitives.push({ kind: 'trajectory', points: track.trail });
+      }
+      const p = track.state.position;
+      primitives.push({ kind: 'circle', cx: p.x, cy: p.y, r: 0.08, fill: true });
+    }
+    const p0 = state.particles[0];
+    if (p0) {
+      primitives.push({
+        kind: 'arrow',
+        x1: p0.state.position.x,
+        y1: p0.state.position.y,
+        x2: p0.state.position.x + p0.state.velocity.x * 0.35,
+        y2: p0.state.position.y + p0.state.velocity.y * 0.35,
+        label: 'v_0'
+      });
+    }
+    primitives.push({
+      kind: 'mathLabel',
+      x: 2.3,
+      y: 2.1,
+      text: `B = ${params.magneticFieldZ.toFixed(1)} T`,
+      align: 'end'
+    });
+
+    return {
+      width: 720,
+      height: 460,
+      viewBox: { minX: -2.8, minY: -2.4, maxX: 2.8, maxY: 2.4 },
+      title: '有界磁场与复合场动态圆试卷配图',
+      primitives
+    };
   },
   paramSchema,
   presets: [

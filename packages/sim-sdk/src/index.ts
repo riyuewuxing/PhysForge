@@ -78,12 +78,12 @@ export type AnyParamFieldSpec =
 export type ParamFieldSpec<TParams extends ParamRecord> = {
   [K in keyof TParams & string]: string extends K
     ? never
-    : TParams[K] extends number
+    : Exclude<TParams[K], undefined> extends number
       ? NumberParamSpec<K>
-      : TParams[K] extends boolean
+      : Exclude<TParams[K], undefined> extends boolean
         ? BooleanParamSpec<K>
-        : TParams[K] extends string
-          ? SelectParamSpec<K, TParams[K]>
+        : Exclude<TParams[K], undefined> extends string
+          ? SelectParamSpec<K, Exclude<TParams[K], undefined>>
           : never;
 }[keyof TParams & string];
 
@@ -251,10 +251,26 @@ export type DiagramPrimitive =
   | { kind: 'arrow'; x1: number; y1: number; x2: number; y2: number; label?: string; dashed?: boolean }
   | { kind: 'circle'; cx: number; cy: number; r: number; fill?: boolean; dashed?: boolean }
   | { kind: 'arc'; cx: number; cy: number; r: number; startAngle: number; endAngle: number; dashed?: boolean }
+  | { kind: 'arcAngle'; cx: number; cy: number; r: number; startAngle: number; endAngle: number; label?: string; dashed?: boolean }
   | { kind: 'rect'; x: number; y: number; width: number; height: number; hatch?: boolean; dashed?: boolean }
+  | { kind: 'hatchedGround'; x1: number; y1: number; x2: number; y2: number; depth?: number }
+  | { kind: 'spring'; x1: number; y1: number; x2: number; y2: number; coils?: number; amplitude?: number }
+  | { kind: 'block'; cx: number; cy: number; width: number; height: number; angleDeg?: number; label?: string }
   | { kind: 'polyline'; points: readonly { x: number; y: number }[]; dashed?: boolean; closed?: boolean }
+  | { kind: 'trajectory'; points: readonly { x: number; y: number }[]; dashed?: boolean; strokeWidth?: number }
   | { kind: 'text'; x: number; y: number; text: string; align?: 'start' | 'middle' | 'end' }
-  | { kind: 'fieldSymbol'; x: number; y: number; symbol: 'cross' | 'dot' };
+  | { kind: 'mathLabel'; x: number; y: number; text: string; align?: 'start' | 'middle' | 'end'; fontSize?: number }
+  | { kind: 'fieldSymbol'; x: number; y: number; symbol: 'cross' | 'dot' }
+  | { kind: 'fieldMarker'; x: number; y: number; symbol: 'cross' | 'dot' | 'plus' | 'minus'; radius?: number }
+  | {
+      kind: 'circuitElement';
+      element: 'resistor' | 'capacitor' | 'battery' | 'ammeter' | 'voltmeter' | 'lamp' | 'diode' | 'switch';
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      label?: string;
+    };
 
 export interface DiagramExportOptions {
   showVelocityVectors?: boolean;

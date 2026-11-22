@@ -13,6 +13,7 @@
     "@dimforge/rapier2d-compat": "^0.21.0",
     "@excalidraw/excalidraw": "^0.18.1",
     "@physforge/analysis-lab": "workspace:*",
+    "@physforge/export-studio": "workspace:*",
     "@physforge/pedagogy-schema": "workspace:*",
     "@physforge/physics-core": "workspace:*",
     "@physforge/sim-sdk": "workspace:*",

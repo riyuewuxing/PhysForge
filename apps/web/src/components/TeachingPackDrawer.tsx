@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { BookOpen, CheckCircle2, Download, FileText, Printer, X } from 'lucide-react';
 import { parseTeachingPack, type TeachingPack } from '@physforge/pedagogy-schema';
+import { resolveCanonicalModelId } from '@physforge/simulations/registry';
 
 interface TeachingPackDrawerProps {
   modelId: string;
@@ -76,15 +77,16 @@ export const TeachingPackDrawer: React.FC<TeachingPackDrawerProps> = ({
   onClose
 }) => {
   const allPacks = useMemo(() => loadAllPacks(), []);
-  const activePack = useMemo(
-    () =>
+  const activePack = useMemo(() => {
+    const canonical = resolveCanonicalModelId(modelId);
+    return (
       allPacks.find(
         (pack) =>
-          pack.poeWorksheets.some((p) => p.modelId === modelId) ||
-          pack.variantQuestions.some((q) => q.modelId === modelId)
-      ) ?? null,
-    [allPacks, modelId]
-  );
+          pack.poeWorksheets.some((p) => resolveCanonicalModelId(p.modelId) === canonical) ||
+          pack.variantQuestions.some((q) => resolveCanonicalModelId(q.modelId) === canonical)
+      ) ?? null
+    );
+  }, [allPacks, modelId]);
 
   const [revealedAnswers, setRevealedAnswers] = useState<Record<string, boolean>>({});
   const [exportMsg, setExportMsg] = useState('');

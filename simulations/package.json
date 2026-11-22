@@ -12,6 +12,10 @@
       "types": "./em-bounded-magnetic-field/plugin.ts",
       "default": "./em-bounded-magnetic-field/plugin.ts"
     },
+    "./builder-composite-em-field": {
+      "types": "./em-bounded-magnetic-field/plugin.ts",
+      "default": "./em-bounded-magnetic-field/plugin.ts"
+    },
     "./wave-vibration-coupling": {
       "types": "./wave-vibration-coupling/plugin.ts",
       "default": "./wave-vibration-coupling/plugin.ts"
@@ -28,19 +32,39 @@
       "types": "./optics-ray-studio/plugin.ts",
       "default": "./optics-ray-studio/plugin.ts"
     },
+    "./builder-optics-ray": {
+      "types": "./optics-ray-studio/plugin.ts",
+      "default": "./optics-ray-studio/plugin.ts"
+    },
     "./mech-free-sandbox": {
+      "types": "./mech-free-sandbox/plugin.ts",
+      "default": "./mech-free-sandbox/plugin.ts"
+    },
+    "./builder-mechanics-lab": {
       "types": "./mech-free-sandbox/plugin.ts",
       "default": "./mech-free-sandbox/plugin.ts"
     },
     "./circuit-dc-capacitor-mna": {
       "types": "./circuit-dc-capacitor-mna/plugin.ts",
       "default": "./circuit-dc-capacitor-mna/plugin.ts"
+    },
+    "./builder-circuit-mna": {
+      "types": "./circuit-dc-capacitor-mna/plugin.ts",
+      "default": "./circuit-dc-capacitor-mna/plugin.ts"
+    },
+    "./builder-custom-ode-lab": {
+      "types": "./builder-custom-ode-lab/plugin.ts",
+      "default": "./builder-custom-ode-lab/plugin.ts"
     }
   },
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.21.0",
     "@physforge/physics-core": "workspace:*",
-    "@physforge/sim-sdk": "workspace:*"
+    "@physforge/sim-sdk": "workspace:*",
+    "mathjs": "^15.2.0"
+  },
+  "devDependencies": {
+    "@physforge/analysis-lab": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

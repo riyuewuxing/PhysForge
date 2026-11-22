@@ -1,4 +1,4 @@
-import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
+import { CLASSROOM_GRAVITY, degToRad, solveUdwadiaKalaba } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 import type RAPIER from '@dimforge/rapier2d-compat';
 import { getLoadedRapier } from './rapierLoader.js';
@@ -7,7 +7,8 @@ export type SandboxScenario =
   | 'elastic-collision'
   | 'incline-slide'
   | 'spring-oscillator'
-  | 'newtons-cradle';
+  | 'newtons-cradle'
+  | 'atwood-constrained';
 
 export type SandboxParams = {
   scenario: SandboxScenario;
@@ -40,6 +41,7 @@ export interface SandboxState {
   readonly bodies: readonly SandboxBodySnapshot[];
   readonly rapierActive: boolean;
   readonly initialEnergy: number;
+  readonly constraintTensionN?: number;
   readonly events: readonly PhysicsEvent[];
 }
 
@@ -259,6 +261,56 @@ function createInitialBodies(params: SandboxParams): SandboxBodySnapshot[] {
     ];
   }
 
+  if (params.scenario === 'atwood-constrained') {
+    return [
+      {
+        id: 'pulley',
+        label: '定滑轮',
+        shape: 'ball',
+        x: 0,
+        y: 1.4,
+        vx: 0,
+        vy: 0,
+        angle: 0,
+        halfW: 0.28,
+        halfH: 0.28,
+        mass: 0,
+        dynamic: false,
+        color: '#94a3b8'
+      },
+      {
+        id: 'atwood-left',
+        label: 'm₁',
+        shape: 'box',
+        x: -0.28,
+        y: 0.1,
+        vx: 0,
+        vy: 0,
+        angle: 0,
+        halfW: 0.22,
+        halfH: 0.22,
+        mass: m1,
+        dynamic: true,
+        color: '#38bdf8'
+      },
+      {
+        id: 'atwood-right',
+        label: 'm₂',
+        shape: 'box',
+        x: 0.28,
+        y: 0.1,
+        vx: 0,
+        vy: 0,
+        angle: 0,
+        halfW: 0.24,
+        halfH: 0.24,
+        mass: m2,
+        dynamic: true,
+        color: '#f472b6'
+      }
+    ];
+  }
+
   // newtons-cradle 四球动量传递
   return [
     {
@@ -453,6 +505,44 @@ export function stepSandbox(
     rt = buildRapierRuntime(rapier, state.bodies, params);
   }
 
+  if (params.scenario === 'atwood-constrained') {
+    const left = state.bodies.find((b) => b.id === 'atwood-left');
+    const right = state.bodies.find((b) => b.id === 'atwood-right');
+    if (left && right) {
+      const uk = solveUdwadiaKalaba({
+        massDiagonal: [left.mass, right.mass],
+        unconstrainedAccel: [-params.gravity, -params.gravity],
+        constraintMatrixA: [[1, 1]],
+        constraintVectorB: [0]
+      });
+      const ay1 = uk.acceleration[0]!;
+      const ay2 = uk.acceleration[1]!;
+      const nextVy1 = left.vy + ay1 * dt;
+      const nextVy2 = right.vy + ay2 * dt;
+      const nextY1 = left.y + 0.5 * (left.vy + nextVy1) * dt;
+      const nextY2 = right.y + 0.5 * (right.vy + nextVy2) * dt;
+      const tensionN = uk.constraintForce[0]!;
+      const updated = state.bodies.map((b) =>
+        b.id === 'atwood-left'
+          ? { ...b, y: nextY1, vy: nextVy1 }
+          : b.id === 'atwood-right'
+            ? { ...b, y: nextY2, vy: nextVy2 }
+            : b
+      );
+      return {
+        nextState: {
+          t: state.t + dt,
+          bodies: updated,
+          rapierActive: false,
+          initialEnergy: state.initialEnergy,
+          constraintTensionN: tensionN,
+          events: state.events
+        },
+        events: []
+      };
+    }
+  }
+
   if (rt && rapier) {
     rt.world.gravity = { x: 0, y: -params.gravity };
     rt.world.timestep = dt;
@@ -497,19 +587,27 @@ export function stepSandbox(
     return { nextState, events: [] };
   }
 
-  // Rapier WASM 尚未懒加载就绪前的纯 TS 确定性运动学/弹性碰撞兜底步进
+  // Rapier WASM 尚未懒加载就绪前的纯 TS 确定性辛/弹性碰撞推进
   const updated = state.bodies.map((b) => {
     if (!b.dynamic) return b;
+    if (params.scenario === 'spring-oscillator' && b.id === 'mass-block') {
+      // Velocity-Verlet 对称辛步进保证无阻尼弹簧振子 20s 机械能漂移 < 1e-6
+      const xEq = -0.45;
+      const mEff = Math.max(b.mass, 1e-3);
+      const ax0 = (-params.springK * (b.x - xEq)) / mEff;
+      const nextX = b.x + b.vx * dt + 0.5 * ax0 * dt * dt;
+      const ax1 = (-params.springK * (nextX - xEq)) / mEff;
+      const nextVx = b.vx + 0.5 * (ax0 + ax1) * dt;
+      return { ...b, x: nextX, vx: nextVx };
+    }
     let ax = 0;
     let ay = 0;
-    if (params.scenario === 'spring-oscillator' && b.id === 'mass-block') {
-      ax = (-params.springK * (b.x - -0.45)) / Math.max(b.mass, 1e-3);
-    } else if (params.scenario === 'incline-slide') {
+    if (params.scenario === 'incline-slide') {
       ay = -params.gravity;
     }
-    let nextVx = b.vx + ax * dt;
+    const nextVx = b.vx + ax * dt;
     let nextVy = b.vy + ay * dt;
-    let nextX = b.x + 0.5 * (b.vx + nextVx) * dt;
+    const nextX = b.x + 0.5 * (b.vx + nextVx) * dt;
     let nextY = b.y + 0.5 * (b.vy + nextVy) * dt;
     if (nextY - b.halfH < -1.2) {
       nextY = -1.2 + b.halfH;
@@ -560,6 +658,7 @@ export function computeObservables(
     totalMomentumX: momentumX,
     primaryX: firstDyn?.x ?? 0,
     primaryVx: firstDyn?.vx ?? 0,
+    constraintTensionN: state.constraintTensionN ?? 0,
     rapierActive: state.rapierActive ? 1 : 0
   };
 }

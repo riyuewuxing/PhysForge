@@ -1,11 +1,13 @@
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
+import { solveNonlinearMna, type NonlinearCircuitElement } from '@physforge/physics-core';
 import { solveMnaNetwork, type MnaElement } from './mnaSolver.js';
 
 export type CircuitTopology =
   | 'closed-power'
   | 'series-parallel-dynamic'
   | 'rc-transient'
-  | 'rc-bridge-charge';
+  | 'rc-bridge-charge'
+  | 'nonlinear-lamp-diode';
 
 export type CircuitParams = {
   topology: CircuitTopology;
@@ -156,6 +158,43 @@ function solveTopology(
     };
   }
 
+  if (params.topology === 'nonlinear-lamp-diode') {
+    // Node 0=GND, 1=E+, 2=经 internalR + r1 后的非线性节点 (串联小灯泡与二极管，按 switchClosed 切换灯泡/肖克利二极管)
+    const seriesR = Math.max(1e-4, r + params.sliderR);
+    const elements: NonlinearCircuitElement[] = [
+      { kind: 'voltageSource', id: 'V_main', pos: 1, neg: 0, voltage: E },
+      { kind: 'resistor', id: 'R_series', a: 1, b: 2, resistance: seriesR },
+      params.switchClosed
+        ? {
+            kind: 'diode',
+            id: 'NL_load',
+            anode: 2,
+            cathode: 0,
+            saturationCurrent: 1e-12,
+            thermalVoltage: 0.026
+          }
+        : { kind: 'lamp', id: 'NL_load', a: 2, b: 0, k: 0.25, alpha: 0.65 }
+    ];
+    const sol = solveNonlinearMna(2, elements);
+    const uLoad = sol.nodeVoltages[2]!;
+    const iMain = sol.elementCurrents['R_series']!;
+    const pOut = uLoad * iMain;
+    const pTotal = E * iMain;
+    return {
+      nodeVoltages: sol.nodeVoltages,
+      totalCurrent: iMain,
+      branchCurrent1: sol.elementCurrents['NL_load']!,
+      branchCurrent2: 0,
+      terminalVoltage: uLoad,
+      outputPower: pOut,
+      efficiency: pTotal > 1e-9 ? pOut / pTotal : 0,
+      capVoltage: uLoad,
+      capCurrent: 0,
+      capCharge: 0,
+      capEnergy: 0
+    };
+  }
+
   // rc-bridge-charge：电桥含容支路
   // 0=GND, 1=E+, 2=路端+, 3=左分压点 (2-R1-3-R2-0), 4=右分压点 (2-Rp-4-R_fixed-0)
   // 电容 C 跨接在节点 3 (+) 与 节点 4 (-) 之间！
@@ -221,10 +260,18 @@ function solveTopology(
 export function createInitialState(params: CircuitParams): CircuitState {
   const initCapV = params.topology === 'rc-transient' && !params.switchClosed ? params.emf : 0;
   const first = solveTopology(params, initCapV, 0, 0);
+  const events: PhysicsEvent[] = [];
+  if (params.internalR <= 1e-6 && params.sliderR <= 1e-6 && params.emf > 0) {
+    events.push({
+      id: 'SHORT_CIRCUIT',
+      time: 0,
+      label: 'SHORT_CIRCUIT 电源极限短路告警'
+    });
+  }
   return {
     t: 0,
     ...first,
-    events: []
+    events
   };
 }
 

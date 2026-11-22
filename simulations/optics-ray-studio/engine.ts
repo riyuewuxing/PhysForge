@@ -6,7 +6,8 @@ export type OpticsSceneMode =
   | 'parallel-slab'
   | 'prism-dispersion'
   | 'optical-fiber'
-  | 'double-slit';
+  | 'double-slit'
+  | 'thin-lens-imaging';
 
 export type OpticsParams = {
   sceneMode: OpticsSceneMode;
@@ -20,6 +21,8 @@ export type OpticsParams = {
   slitSeparationMm: number;
   screenDistanceM: number;
   animateSweep: boolean;
+  focalLengthM?: number;
+  objectDistanceM?: number;
 };
 
 export interface RaySegment {
@@ -27,6 +30,7 @@ export interface RaySegment {
   readonly to: Vec2;
   readonly color: string;
   readonly intensity: number;
+  readonly dashed?: boolean;
   readonly label?: string;
 }
 
@@ -40,6 +44,8 @@ export interface OpticsState {
   readonly lateralShift: number;
   readonly prismDeviationDeg: number;
   readonly fringeSpacingMm: number;
+  readonly imageDistanceM?: number;
+  readonly magnification?: number;
   readonly events: readonly PhysicsEvent[];
 }
 
@@ -342,6 +348,51 @@ function solveRayTrace(
     };
   }
 
+  if (params.sceneMode === 'thin-lens-imaging') {
+    const f = Math.max(0.25, params.focalLengthM ?? 0.65);
+    const u = Math.max(0.15, params.objectDistanceM ?? Math.max(0.25, params.slabThickness));
+    const hObj = 0.55;
+    const objTop = vec2(-u, hObj);
+    const denom = u - f;
+    const v = Math.abs(denom) > 1e-4 ? (u * f) / denom : 50;
+    const magnification = -v / u;
+    const hImg = hObj * magnification;
+    const imgTop = vec2(v, hImg);
+
+    // 三条特殊光线：1) 平行主光轴 -> 过右焦点；2) 过光心直线传播
+    const hitParallel = vec2(0, hObj);
+    rays.push({ from: objTop, to: hitParallel, color: '#fbbf24', intensity: 1, label: '平行光线' });
+    if (v > 0) {
+      rays.push({ from: hitParallel, to: imgTop, color: '#38bdf8', intensity: 0.95 });
+      rays.push({ from: objTop, to: imgTop, color: '#4ade80', intensity: 0.95, label: '过光心光线' });
+    } else {
+      // 虚像延长虚线（u < f）
+      const slopeF = -hObj / f;
+      rays.push({
+        from: hitParallel,
+        to: vec2(2.2, hObj + slopeF * 2.2),
+        color: '#38bdf8',
+        intensity: 0.9
+      });
+      rays.push({ from: hitParallel, to: imgTop, color: '#38bdf8', intensity: 0.55, dashed: true, label: '虚像反向延长线' });
+      rays.push({ from: objTop, to: vec2(2.2, (hObj / -u) * 2.2), color: '#4ade80', intensity: 0.9 });
+      rays.push({ from: objTop, to: imgTop, color: '#4ade80', intensity: 0.55, dashed: true });
+    }
+
+    return {
+      activeAngleDeg,
+      rays,
+      criticalAngleDeg: null,
+      isTotalInternalReflection: false,
+      refractedAngleDeg: null,
+      lateralShift: 0,
+      prismDeviationDeg: 0,
+      fringeSpacingMm: 0,
+      imageDistanceM: v,
+      magnification
+    };
+  }
+
   // double-slit 双缝干涉解析：Delta x = (L * lambda) / d
   const lambdaM = Math.max(380, params.wavelengthNm) * 1e-9;
   const dM = Math.max(0.05, params.slitSeparationMm) * 1e-3;
@@ -420,7 +471,9 @@ export function computeObservables(state: OpticsState): Record<string, number> {
     criticalAngleDeg: state.criticalAngleDeg ?? 0,
     lateralShift: state.lateralShift,
     prismDeviationDeg: state.prismDeviationDeg,
-    fringeSpacingMm: state.fringeSpacingMm
+    fringeSpacingMm: state.fringeSpacingMm,
+    imageDistanceM: state.imageDistanceM ?? 0,
+    magnification: state.magnification ?? 0
   };
 }
 

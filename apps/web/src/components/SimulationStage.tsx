@@ -34,6 +34,7 @@ interface SnapshotFrame {
 
 export interface RecordedTelemetryFrame {
   t: number;
+  state?: unknown;
   observables: Record<string, number>;
 }
 
@@ -207,7 +208,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
   useEffect(() => {
     onRegisterSnapshotsGetter?.(() =>
-      snapshotsRef.current.map((s) => ({ t: s.t, observables: s.observables }))
+      snapshotsRef.current.map((s) => ({ t: s.t, state: s.state, observables: s.observables }))
     );
   }, [onRegisterSnapshotsGetter]);
 

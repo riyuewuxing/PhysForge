@@ -5,6 +5,7 @@ import {
   Compass,
   Eye,
   EyeOff,
+  Image as ImageIcon,
   Maximize2,
   Minimize2,
   MoveDiagonal2,
@@ -41,6 +42,10 @@ const LazyCommandPalette = React.lazy(() =>
   import('./components/CommandPalette.js').then((m) => ({ default: m.CommandPalette }))
 );
 
+const LazyExportStudioDrawer = React.lazy(() =>
+  import('./components/ExportStudioDrawer.js').then((m) => ({ default: m.ExportStudioDrawer }))
+);
+
 const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
 
 export const App: React.FC = () => {
@@ -49,6 +54,7 @@ export const App: React.FC = () => {
   const snapshotsGetterRef = useRef<() => readonly RecordedTelemetryFrame[]>(() => []);
   const [teachingPackOpen, setTeachingPackOpen] = useState(false);
   const [analysisLabOpen, setAnalysisLabOpen] = useState(false);
+  const [exportStudioOpen, setExportStudioOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [labFrames, setLabFrames] = useState<readonly RecordedTelemetryFrame[]>([]);
 
@@ -429,6 +435,20 @@ export const App: React.FC = () => {
 
           <button
             type="button"
+            data-testid="btn-export-studio"
+            onClick={() => setExportStudioOpen(true)}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{
+              borderColor: exportStudioOpen ? '#fbbf24' : 'var(--pf-border)',
+              backgroundColor: exportStudioOpen ? 'rgba(251, 191, 36, 0.16)' : 'transparent'
+            }}
+          >
+            <ImageIcon className="w-4 h-4" />
+            <span>导出配图</span>
+          </button>
+
+          <button
+            type="button"
             data-testid="btn-teaching-pack"
             onClick={() => setTeachingPackOpen((v) => !v)}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
@@ -575,6 +595,27 @@ export const App: React.FC = () => {
               store.applyExternalState(modelId, presetId, overrideParams)
             }
             onClose={() => setCommandPaletteOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      {exportStudioOpen && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/70 text-amber-300 font-semibold">
+              正在按需加载试卷矢量配图与媒体导出工坊...
+            </div>
+          }
+        >
+          <LazyExportStudioDrawer
+            plugin={plugin}
+            params={store.params}
+            activeLayers={store.activeLayers}
+            simCanvasRef={simCanvasRef}
+            getSnapshotStates={() =>
+              snapshotsGetterRef.current().map((s) => ({ t: s.t, state: s.state ?? null }))
+            }
+            onClose={() => setExportStudioOpen(false)}
           />
         </Suspense>
       )}

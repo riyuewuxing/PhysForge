@@ -5,50 +5,48 @@
 
 ---
 
-## 当前权威状态快照（2026-11-22 19:53）
+## 当前权威状态快照（2026-11-22 20:31）
 
 * **Git 分支与基线**：
-  * 本地仓库位于 `main` 分支（`HEAD = 62f9383` 为 V1.0 + V2.0 规格/总控方案基线）；当前 `V2-W1` 全部新增与修改文件处于本地工作区未提交状态，未执行 `git commit` / `git push`，等待总控验收。
+  * 本地仓库位于 `main` 分支（`HEAD = 61cad64` 为已验收的 V2-W1 基线）；当前 `V2-W2` 全部新增与修改文件处于本地工作区未提交状态，未执行 `git commit` / `git push`，等待总控验收。
   * 远端：`origin = https://github.com/riyuewuxing/PhysForge.git`。
 * **权威参考文档**：
-  * 仓库宪法：[AGENTS.md](file:///d:/project%20code/44-PhysForge/AGENTS.md) ｜ V2 权威施工方案：[docs/V2_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V2_WRITER_CONSTRUCTION_PLAN.md) ｜ 第1卷架构规格：[docs/v2-specs/01_ARCHITECTURE_AND_CORE_PLATFORM.md](file:///d:/project%20code/44-PhysForge/docs/v2-specs/01_ARCHITECTURE_AND_CORE_PLATFORM.md)
-* **已新增 / 核实技术栈与版本**：
-  * V1 基线：`Node v24.18.0`、`pnpm 11.24.0`、`typescript@7.0.2`、`vitest@5.1.1`、`zod@4.6.7`、`vite@6.4.6`、`react@19.3.1`、`zustand@5.1.0`、`uplot@1.6.32`、`katex@0.19.1`、`@excalidraw/excalidraw@0.18.1`、`@dimforge/rapier2d-compat@0.21.0`、`vite-plugin-pwa@2.0.0`、`vite-plugin-singlefile@2.3.4`、`playwright@1.65.1`。
-  * V2-W1 新增（均为 MIT，未引入 R3F 或 `mathjs`）：`papaparse@5.7.1`、`@types/papaparse@5.5.2`、`fflate@0.8.3`、`three@0.187.0`、`@types/three@0.187.0`。
-* **当前施工状态**：**V2-W1（底座升维）已全量竣工并完成双路径构建及 Playwright 端到端自检，等待总控验收**。
+  * 仓库宪法：[AGENTS.md](file:///d:/project%20code/44-PhysForge/AGENTS.md) ｜ V2 权威施工方案：[docs/V2_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V2_WRITER_CONSTRUCTION_PLAN.md) ｜ 第2卷模型规格：[docs/v2-specs/02_MODELS_BUILDERS_AND_MECHANICS_EM.md](file:///d:/project%20code/44-PhysForge/docs/v2-specs/02_MODELS_BUILDERS_AND_MECHANICS_EM.md)
+* **V2-W2 新增技术栈**：
+  * `mathjs@15.2.0`（`Apache-2.0`，仅安装于 `@physforge/simulations`，严格在 `B5` 内通过 `preloadMathjsCompiler()` 动态 `import('mathjs')` 懒加载）。
+* **当前施工状态**：**V2-W2（`export-studio` + `--preset-file` 单文件增强 + `B1–B5` 五大自由建模器）已全量竣工并跑通最后一次编辑后的全部门禁与 Playwright 实测，等待总控验收**。
 * **最后一次代码编辑后的实测门禁结果**：
-  * **静态合规扫描**（`packages/`、`apps/`、`simulations/` 非构建源码）：零 `@ts-ignore`、零 `@ts-expect-error`、零 `as any`、零 `eslint-disable`、零 `.skip(`/`.only(`、零 `Math.random(`、零 `eval(`/ `new Function(`。
-  * `pnpm typecheck`：退出码 `0`（9/9 工作区全部子包 + `scripts/tsconfig.json` 通过）。
-  * `pnpm test`：退出码 `0`（14 个测试文件、59/59 条用例全绿，耗时 `673ms`；涵盖原有 V1 46 题基线与新增 13 条 V2 测试）。
-  * `pnpm verify:packs`：退出码 `0`（6/6 教研包、20/20 道物理题全数通过）。
-  * `pnpm build`（`/` 与 `VITE_BASE_PATH=/PhysForge/` 双路径）：均退出码 `0`；主入口 `index-*.js` 压缩后 `258.05–258.06 KB` gzip（远低于 `350 KB` 红线），确认未提前打入 `OrbitControls`、`papaparse`、`rapier_wasm2d`、`@excalidraw/excalidraw`、`physforge-workspace-vault`、`mathjs`；单文件 `em-bounded-magnetic-field.html` 产物 `2008.5 KB`（零依赖泄漏）。
-  * **Playwright 无头实机验收（`/` 与 `/PhysForge/` 双路径）**：`consoleErrors: []`、`pageErrors: []`、`externalRequests: []`、`failed404: []`；实测缩放 `100% → 112% → 居中复位 100%`、虚拟直尺/0.1°量角器、Phyphox 分号欧式小数 CSV 阻尼谐振拟合、`Ctrl+K` IndexedDB Vault 保存、Excalidraw 离线批注切换均正常。
-* **下一优先级动作**：请总控对 `V2-W1` 进行零信任验收；验收通过后进入 `V2-W2`（`packages/export-studio` + `apps/singlefile-exporter --preset-file` + `B1–B5` 自由建模器，`B5` 按需异步引入 `mathjs >= 15.2.0`）。
+  * **静态合规扫描**：全仓（`packages/`、`apps/`、`simulations/` 非构建源码）零 `@ts-ignore`、零 `@ts-expect-error`、零 `as any`、零 `eslint-disable`、零 `.skip(`/`.only(`、零 `Math.random(`（仅 `B5` 恶意用例测试字面量包含拒绝测试串 `'eval("1+1")'`）。
+  * `pnpm typecheck`：退出码 `0`（9/9 有该脚本工作区子包 + `scripts/tsconfig.json` 通过）。
+  * `pnpm test`：退出码 `0`（**20 个测试文件、71/71 条用例全绿**，耗时 `2.09s`）。
+  * `pnpm verify:packs`：退出码 `0`（6/6 教研包、20/20 道物理验算题全通过，兼容 `LEGACY_MODEL_ALIASES`）。
+  * `pnpm build` & 体积隔离：主入口 `index-BOEjHW8I.js` 压缩后 `270.69 KB` gzip（`< 350 KB`），确认未提前打入 `OrbitControls`、`papaparse`、`rapier_wasm2d`、`@excalidraw/excalidraw`、`physforge-workspace-vault`、`mathjs`；`mathjs` 拆入异步分包 `esm-*.js`（`209.30 KB` gzip）。
+  * `pnpm export:singlefile` 实测：`--preset-file=content/presets/em-bounded-magnetic-field.focusing.json`（`2012.0 KB`）、`--model=builder-custom-ode-lab`（`2740.0 KB`），均通过依赖防泄漏检查。
+  * **Playwright 无头实机验收**：主站与单文件 `file://` 均 `consoleErrors: []`、`pageErrors: []`、`externalRequests: []`、`failed404: []`；实测 `ExportStudioDrawer` 黑白矢量 SVG、TikZ 代码、12 帧频闪合成长图 PNG 下载、60fps WebM 录屏下载、`TeachingPackDrawer` 别名兼容匹配 `B1`，以及切换 `B5` 后才按需加载 `mathjs` chunk。
+* **下一优先级动作**：请总控对 `V2-W2` 进行零信任验收；验收通过后按规划推进 `V2-W3`（力学与天体全矩阵 `M01–M11`，11 单元）。
 
 ---
 
 ## 会话增量记录
 
-### [2026-11-22 19:53 +08:00] 完成 V2-W1（底座升维）全量交付
+### [2026-11-22 20:31 +08:00] 完成 V2-W2（`export-studio` + 五大自由建模器 `B1–B5`）全量交付
 
-#### 1. `packages/physics-core` 7 大 V2 算法内核（零 DOM/React，零 `Math.random()`）
-* 新增 [scaleContext.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/units/scaleContext.ts)、[hybridAutomaton.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/hybrid/hybridAutomaton.ts)（含零速静摩擦滞回与 `DEFAULT_MAX_TRANSITIONS_PER_STEP = 8` Zeno 防护）、[udwadiaKalaba.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/constraints/udwadiaKalaba.ts)（Jacobi 对称特征 SVD 伪逆）、[rootFinder.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/inverse/rootFinder.ts)（Brent 边界打靶多解求根）、[waveFDTD2D.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/fields/waveFDTD2D.ts) + [marchingSquares.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/fields/marchingSquares.ts)、[spatialHash2D.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/particles/spatialHash2D.ts)、[wavelengthToRgb.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/optics/wavelengthToRgb.ts)、[seededPrng.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/random/seededPrng.ts)、[nonlinearMna.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/circuits/nonlinearMna.ts)（修正二极管/小灯泡牛顿迭代等效电流源符号并补足梯形 LC 20 周期检验）与 [auditor.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/verification/auditor.ts)。
-* 单测 [v2-modules.test.ts](file:///d:/project%20code/44-PhysForge/packages/physics-core/src/v2-modules.test.ts)（7 组综合检验）全通过。
+#### 1. `@physforge/export-studio` 试卷矢量与媒体导出工坊 + 单文件升级
+* 扩充 [packages/sim-sdk/src/index.ts](file:///d:/project%20code/44-PhysForge/packages/sim-sdk/src/index.ts) 的 `DiagramPrimitive`（支持 `arcAngle`, `hatchedGround`, `spring`, `block`, `fieldMarker`, `trajectory`, `circuitElement`, `mathLabel`）。
+* 新建 `@physforge/export-studio`：[svgRenderer.ts](file:///d:/project%20code/44-PhysForge/packages/export-studio/src/svgRenderer.ts)（黑白打印 SVG）、[tikzRenderer.ts](file:///d:/project%20code/44-PhysForge/packages/export-studio/src/tikzRenderer.ts)（LaTeX TikZ 代码）、[pngRenderer.ts](file:///d:/project%20code/44-PhysForge/packages/export-studio/src/pngRenderer.ts)（2x/4x/600 DPI PNG 与剪贴板）、[mediaRecorder.ts](file:///d:/project%20code/44-PhysForge/packages/export-studio/src/mediaRecorder.ts)（60fps WebM 录屏与多帧频闪合成长图）、[export.test.ts](file:///d:/project%20code/44-PhysForge/packages/export-studio/src/export.test.ts)（2 单测）。
+* 在 `apps/web` 按需懒加载接入 [ExportStudioDrawer.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/ExportStudioDrawer.tsx)，同步更新 [SimulationStage.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/SimulationStage.tsx)、[App.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/App.tsx) 与 [TeachingPackDrawer.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/TeachingPackDrawer.tsx)（调用 `resolveCanonicalModelId` 兼容旧包 ID）。
+* 升级 [apps/singlefile-exporter/export.mjs](file:///d:/project%20code/44-PhysForge/apps/singlefile-exporter/export.mjs) 与 [SingleFileApp.tsx](file:///d:/project%20code/44-PhysForge/apps/singlefile-exporter/src/SingleFileApp.tsx) 支持 `--preset-file=<path>`、跨模型别名映射与 `mathjs`/`three`/`papaparse`/`fflate` 防泄漏红线。
 
-#### 2. `packages/sim-sdk` V2 向后兼容契约
-* 扩充 [index.ts](file:///d:/project%20code/44-PhysForge/packages/sim-sdk/src/index.ts)：新增 `SimulationPluginV2`、`ControlHandle`、`ForceVectorItem`、`ReferenceFrameSpec`、`DiagramIR`、`DiagramExportOptions`、`SceneDSL`、`ThreeSceneBridge` 与 `isSimulationPluginV2`，并通过 [index.test.ts](file:///d:/project%20code/44-PhysForge/packages/sim-sdk/src/index.test.ts) 验证与全部 7 个 V1.0 模型无缝兼容。
-
-#### 3. `@physforge/analysis-lab` 与 `@physforge/workspace-vault`
-* 新建 `@physforge/analysis-lab`：[fftAnalyzer.ts](file:///d:/project%20code/44-PhysForge/packages/analysis-lab/src/fftAnalyzer.ts)（Radix-2 FFT + Hann 窗 + 亚 bin Top-3 峰值）、[csvFitting.ts](file:///d:/project%20code/44-PhysForge/packages/analysis-lab/src/csvFitting.ts)（Phyphox `;`/`\t`/欧式逗号小数、Tracker 多行表头、线性/多项式/指数/LM 阻尼谐振子拟合、Green 定理环路面积）、[sweepRunner.ts](file:///d:/project%20code/44-PhysForge/packages/analysis-lab/src/sweepRunner.ts)、[PhaseXYPlotter.tsx](file:///d:/project%20code/44-PhysForge/packages/analysis-lab/src/components/PhaseXYPlotter.tsx) 及 4 组单测。
-* 新建 `@physforge/workspace-vault`：[vaultStore.ts](file:///d:/project%20code/44-PhysForge/packages/workspace-vault/src/vaultStore.ts)（IndexedDB + FileSystemAccess 目录同步 + `fflate` ZIP 打包恢复 + 合入 `content/presets/*.json`）、[globalSearch.ts](file:///d:/project%20code/44-PhysForge/packages/workspace-vault/src/globalSearch.ts) 及 2 组单测。
-
-#### 4. `apps/web` 交互工作台、懒加载 3D、子路径适配与 CI/Pages
-* 新增 [ViewportController.ts](file:///d:/project%20code/44-PhysForge/apps/web/src/stage/ViewportController.ts)（`0.1x–20x` 光标锚点缩放/拖拽平移/复位）、[CommandStack.ts](file:///d:/project%20code/44-PhysForge/apps/web/src/stage/CommandStack.ts)（50 步 `Ctrl+Z`/`Ctrl+Shift+Z` 撤销重做）、[RulerToolboxOverlay.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/stage/RulerToolboxOverlay.tsx)（虚拟直尺、`0.1°` 量角器、三点定圆圆规）、[AutoFbdOverlay.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/stage/AutoFbdOverlay.tsx)、纯 Vanilla Three.js [ThreeStage.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/stage/ThreeStage.tsx)（严格 `dispose()`）与 [stage.test.ts](file:///d:/project%20code/44-PhysForge/apps/web/src/stage/stage.test.ts)。
-* 懒加载接入 [AnalysisLabDrawer.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/AnalysisLabDrawer.tsx)、[sweep.worker.ts](file:///d:/project%20code/44-PhysForge/apps/web/src/workers/sweep.worker.ts)（`vite.config.ts` 设 `worker.format = 'es'`）与 [CommandPalette.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/CommandPalette.tsx)（`Ctrl+K`）；同步升级 [useClassroomStore.ts](file:///d:/project%20code/44-PhysForge/apps/web/src/store/useClassroomStore.ts)、[SimulationStage.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/SimulationStage.tsx)、[App.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/App.tsx) 及 [export.mjs](file:///d:/project%20code/44-PhysForge/apps/singlefile-exporter/export.mjs) 防泄漏红线校验。
-* 修复 [vite.config.ts](file:///d:/project%20code/44-PhysForge/apps/web/vite.config.ts)、[index.html](file:///d:/project%20code/44-PhysForge/apps/web/index.html) 与 [main.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/main.tsx) 的 `VITE_BASE_PATH` / `/PhysForge/` 子路径映射，新增 [.github/workflows/ci.yml](file:///d:/project%20code/44-PhysForge/.github/workflows/ci.yml) 与 [.github/workflows/deploy-pages.yml](file:///d:/project%20code/44-PhysForge/.github/workflows/deploy-pages.yml)。
+#### 2. 五大自由建模器（`B1–B5`）与 `LEGACY_MODEL_ALIASES`
+* **注册表与兼容层**（[simulations/registry.ts](file:///d:/project%20code/44-PhysForge/simulations/registry.ts) & [simulations/package.json](file:///d:/project%20code/44-PhysForge/simulations/package.json)）：建立 `LEGACY_MODEL_ALIASES` 映射旧 ID 至 `builder-*` 规范 ID。
+* **`B1` `builder-composite-em-field`**（升级 [em-bounded-magnetic-field](file:///d:/project%20code/44-PhysForge/simulations/em-bounded-magnetic-field/plugin.ts)）：扩展至 9 粒子磁聚焦、`solveCriticalSpeedForRadius` Brent 反解、`ControlHandle`、`Auto-FBD` 洛伦兹力与电场力、随动参考系及 `DiagramIR`，补齐 [v2-builder.test.ts](file:///d:/project%20code/44-PhysForge/simulations/em-bounded-magnetic-field/v2-builder.test.ts)（3 测）。
+* **`B2` `builder-circuit-mna`**（升级 [circuit-dc-capacitor-mna](file:///d:/project%20code/44-PhysForge/simulations/circuit-dc-capacitor-mna/plugin.ts)）：接入 `solveNonlinearMna` 肖克利二极管/小灯泡牛顿迭代与 `SHORT_CIRCUIT` 告警、`ControlHandle`、`DiagramIR` 及 [v2-builder.test.ts](file:///d:/project%20code/44-PhysForge/simulations/circuit-dc-capacitor-mna/v2-builder.test.ts)（2 测）。
+* **`B3` `builder-optics-ray`**（升级 [optics-ray-studio](file:///d:/project%20code/44-PhysForge/simulations/optics-ray-studio/plugin.ts)）：新增理想薄透镜高斯成像模式（$1/u+1/v=1/f$ 与虚像延长线）、角度/物距 `ControlHandle`、`DiagramIR` 及 [v2-builder.test.ts](file:///d:/project%20code/44-PhysForge/simulations/optics-ray-studio/v2-builder.test.ts)（1 测）。
+* **`B4` `builder-mechanics-lab`**（升级 [mech-free-sandbox](file:///d:/project%20code/44-PhysForge/simulations/mech-free-sandbox/plugin.ts)）：新增 `Udwadia-Kalaba` 阿特伍德机解析约束、Velocity-Verlet 弹簧振子、`Auto-FBD`、质心参考系、`DiagramIR` 及 [v2-builder.test.ts](file:///d:/project%20code/44-PhysForge/simulations/mech-free-sandbox/v2-builder.test.ts)（2 测）。
+* **`B5` `builder-custom-ode-lab`**（新建 [simulations/builder-custom-ode-lab/](file:///d:/project%20code/44-PhysForge/simulations/builder-custom-ode-lab/plugin.ts)）：动态懒加载 `mathjs@15.2.0` + 严格白名单 AST 沙箱 [safeAstCompiler.ts](file:///d:/project%20code/44-PhysForge/simulations/builder-custom-ode-lab/safeAstCompiler.ts)（零 `eval` / `new Function`）、RK4 + Velocity-Verlet 开普勒/单摆/Duffing 模板，[engine.test.ts](file:///d:/project%20code/44-PhysForge/simulations/builder-custom-ode-lab/engine.test.ts) 验证全部恶意表达式拦截、开普勒守恒及 50 步无头扫参通过。
 
 ---
 
-### [2026-11-22 15:55–17:28 +08:00] 历史归档摘要（V1.0 基线 `62f9383`）
+### [2026-11-22 15:55–19:53 +08:00] 历史归档摘要（V1.0 `62f9383` & V2-W1 `61cad64`）
 
-* Phase 0 & Wave 1 + Wave 2 已完成 Monorepo、`physics-core` V1、7 大物理模型（4 旗舰 + 光学追迹 + Rapier2D 沙箱 + MNA 电路）、`uPlot` 双向回放、POE 遮罩、本地 `Excalidraw`、按模型裁剪单文件导出、6 份防幻觉 `teaching-packs`（20 题）及开源门面文档，46 条 V1 单测全部传承通过。
+* V1.0 完成 Monorepo、7 大模型、离线 Excalidraw、单文件导出与 6 套防幻觉教研包（46 测 20 题）；V2-W1 完成 `physics-core` 7 大 V2 内核、`SimulationPluginV2`、`analysis-lab`（相图/CSV/FFT/Worker 扫参）、`workspace-vault`（ZIP/IndexedDB/`Ctrl+K`）、画布缩放/尺规/Auto-FBD/3D、`VITE_BASE_PATH` 双路径修复及 CI/Pages 流水线（合入 `61cad64`）。

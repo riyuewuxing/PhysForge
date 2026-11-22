@@ -1,5 +1,5 @@
 import { degToRad, radToDeg } from '@physforge/physics-core';
-import { defineSimulationPlugin, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
   checkInvariants,
   computeObservables,
@@ -19,7 +19,8 @@ const paramSchema: readonly ParamFieldSpec<OpticsParams>[] = [
       { label: '平行玻璃砖侧移测折射率', value: 'parallel-slab' },
       { label: '三棱镜折射与色散光谱', value: 'prism-dispersion' },
       { label: '光导纤维全反射导光', value: 'optical-fiber' },
-      { label: '双缝干涉条纹测定', value: 'double-slit' }
+      { label: '双缝干涉条纹测定', value: 'double-slit' },
+      { label: '理想薄凸透镜成像规律 (1/u+1/v=1/f)', value: 'thin-lens-imaging' }
     ],
     defaultValue: 'tir-interface'
   },
@@ -118,17 +119,109 @@ const paramSchema: readonly ParamFieldSpec<OpticsParams>[] = [
     kind: 'boolean',
     label: '连续扫描入射角（运行模式）',
     defaultValue: true
+  },
+  {
+    key: 'focalLengthM',
+    kind: 'number',
+    label: '薄透镜焦距 f',
+    unit: 'm',
+    min: 0.3,
+    max: 1.5,
+    step: 0.05,
+    defaultValue: 0.65
+  },
+  {
+    key: 'objectDistanceM',
+    kind: 'number',
+    label: '物距 u（薄透镜）',
+    unit: 'm',
+    min: 0.25,
+    max: 2.5,
+    step: 0.05,
+    defaultValue: 1.2
   }
 ];
 
 export const opticsRayStudioPlugin = defineSimulationPlugin<OpticsParams, OpticsState>({
   meta: {
-    id: 'optics-ray-studio',
-    title: '几何光学与双缝干涉实验室',
+    id: 'builder-optics-ray',
+    title: '自由几何光学与波动光学建模器 (B3)',
     textbookRef: '人教版 选择性必修一 第四章 第1–4节',
     curriculumTags: ['物理观念', '科学思维', '科学探究'],
     difficulty: '高三一轮',
-    version: '1.0.0'
+    version: '2.0.0'
+  },
+  getControlHandles: (state, params) => {
+    if (params.sceneMode === 'thin-lens-imaging') {
+      const u = params.objectDistanceM ?? 1.2;
+      return [
+        {
+          id: 'object-distance',
+          label: `物距 u=${u.toFixed(2)}m`,
+          position: { x: -u, y: 0.55 },
+          handleKind: 'point',
+          color: '#fbbf24',
+          onDrag: (wp) => ({
+            objectDistanceM: Number(Math.max(0.25, Math.min(2.5, -wp.x)).toFixed(2))
+          })
+        }
+      ];
+    }
+    const rad = degToRad(state.activeAngleDeg);
+    return [
+      {
+        id: 'incident-angle',
+        label: `θ₁=${state.activeAngleDeg.toFixed(0)}°`,
+        position: { x: -1.4 * Math.sin(rad), y: 1.4 * Math.cos(rad) },
+        origin: { x: 0, y: 0 },
+        handleKind: 'angle',
+        color: '#fbbf24',
+        onDrag: (wp) => {
+          const ang = Math.max(0, Math.min(85, Math.round((Math.atan2(-wp.x, Math.max(0.05, wp.y)) * 180) / Math.PI)));
+          return { incidentAngleDeg: ang, animateSweep: false };
+        }
+      }
+    ];
+  },
+  sceneSerializer: {
+    exportScene: (_state, params) => ({
+      schemaVersion: '2.0',
+      modelId: 'builder-optics-ray',
+      title: '几何光学画板场景',
+      params
+    }),
+    importScene: (dsl) => dsl.params as Partial<OpticsParams>
+  },
+  exportDiagramIR: (state, params) => {
+    const primitives: DiagramPrimitive[] = [
+      { kind: 'line', x1: -2.6, y1: 0, x2: 2.6, y2: 0, dashed: params.sceneMode === 'thin-lens-imaging' }
+    ];
+    if (params.sceneMode === 'tir-interface') {
+      primitives.push({ kind: 'line', x1: 0, y1: -1.8, x2: 0, y2: 1.8, dashed: true });
+      primitives.push({
+        kind: 'arcAngle',
+        cx: 0,
+        cy: 0,
+        r: 0.55,
+        startAngle: Math.PI / 2,
+        endAngle: Math.PI / 2 + degToRad(state.activeAngleDeg),
+        label: `θ_1=${state.activeAngleDeg.toFixed(0)}°`
+      });
+    } else if (params.sceneMode === 'thin-lens-imaging') {
+      primitives.push({ kind: 'line', x1: 0, y1: -1.2, x2: 0, y2: 1.2, strokeWidth: 2 });
+      const u = params.objectDistanceM ?? 1.2;
+      primitives.push({ kind: 'arrow', x1: -u, y1: 0, x2: -u, y2: 0.55, label: '物' });
+    }
+    for (const r of state.rays) {
+      primitives.push({ kind: 'arrow', x1: r.from.x, y1: r.from.y, x2: r.to.x, y2: r.to.y, dashed: r.dashed, label: r.label });
+    }
+    return {
+      width: 720,
+      height: 440,
+      viewBox: { minX: -2.8, minY: -1.9, maxX: 2.8, maxY: 1.9 },
+      title: '几何光学与折射全反射光路图',
+      primitives
+    };
   },
   paramSchema,
   presets: [
@@ -190,6 +283,17 @@ export const opticsRayStudioPlugin = defineSimulationPlugin<OpticsParams, Optics
         wavelengthNm: 600,
         slitSeparationMm: 0.5,
         screenDistanceM: 1.5,
+        animateSweep: false
+      }
+    },
+    {
+      id: 'thin-lens-real-image',
+      name: '6. 薄凸透镜成倒立实像 (u > 2f)',
+      description: '验证高斯成像公式 1/u + 1/v = 1/f，拖动左侧物矢即可连续观察实像/虚像转换。',
+      params: {
+        sceneMode: 'thin-lens-imaging',
+        focalLengthM: 0.65,
+        objectDistanceM: 1.5,
         animateSweep: false
       }
     }
@@ -386,6 +490,53 @@ export const opticsRayStudioPlugin = defineSimulationPlugin<OpticsParams, Optics
         ctx.lineWidth = 2;
         ctx.fillRect(tl.sx, tl.sy, br.sx - tl.sx, br.sy - tl.sy);
         ctx.strokeRect(tl.sx, tl.sy, br.sx - tl.sx, br.sy - tl.sy);
+      } else if (params.sceneMode === 'thin-lens-imaging') {
+        const axisL = toScreen(-2.8, 0);
+        const axisR = toScreen(2.8, 0);
+        const lensTop = toScreen(0, 1.3);
+        const lensBot = toScreen(0, -1.3);
+        ctx.strokeStyle = '#94a3b8';
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(axisL.sx, axisL.sy);
+        ctx.lineTo(axisR.sx, axisR.sy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(lensTop.sx, lensTop.sy);
+        ctx.lineTo(lensBot.sx, lensBot.sy);
+        ctx.stroke();
+        const f = params.focalLengthM ?? 0.65;
+        const u = params.objectDistanceM ?? 1.2;
+        const fL = toScreen(-f, 0);
+        const fR = toScreen(f, 0);
+        ctx.fillStyle = '#38bdf8';
+        for (const fp of [fL, fR]) {
+          ctx.beginPath();
+          ctx.arc(fp.sx, fp.sy, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        const oB = toScreen(-u, 0);
+        const oT = toScreen(-u, 0.55);
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(oB.sx, oB.sy);
+        ctx.lineTo(oT.sx, oT.sy);
+        ctx.stroke();
+        if (state.imageDistanceM !== undefined && state.magnification !== undefined) {
+          const iB = toScreen(state.imageDistanceM, 0);
+          const iT = toScreen(state.imageDistanceM, 0.55 * state.magnification);
+          ctx.strokeStyle = state.imageDistanceM > 0 ? '#4ade80' : '#f472b6';
+          ctx.setLineDash(state.imageDistanceM > 0 ? [] : [5, 4]);
+          ctx.beginPath();
+          ctx.moveTo(iB.sx, iB.sy);
+          ctx.lineTo(iT.sx, iT.sy);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
       }
       ctx.restore();
     }

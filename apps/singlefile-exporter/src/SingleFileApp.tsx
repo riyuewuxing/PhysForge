@@ -45,17 +45,28 @@ export const SingleFileApp: React.FC = () => {
       const found = targetPlugin.presets.find((p) => p.id === __INITIAL_PRESET_ID__);
       if (found) return found;
     }
+    if (__INITIAL_PRESET_DATA__?.presetId) {
+      const found = targetPlugin.presets.find((p) => p.id === __INITIAL_PRESET_DATA__?.presetId);
+      if (found) return found;
+    }
     return targetPlugin.presets[0] ?? null;
   }, []);
 
-  const [activePresetId, setActivePresetId] = useState<string | null>(initialPreset?.id ?? null);
+  const [activePresetId, setActivePresetId] = useState<string | null>(
+    __INITIAL_PRESET_DATA__?.presetId ?? initialPreset?.id ?? null
+  );
   const [params, setParams] = useState<ParamRecord>(() =>
-    resolvePluginParams(targetPlugin.paramSchema, initialPreset?.params)
+    resolvePluginParams(
+      targetPlugin.paramSchema,
+      __INITIAL_PRESET_DATA__?.params ?? initialPreset?.params
+    )
   );
   const [activeLayers, setActiveLayers] = useState<string[]>(() =>
-    initialPreset?.visibleLayers?.length
-      ? [...initialPreset.visibleLayers]
-      : targetPlugin.layers.filter((l) => l.defaultVisible).map((l) => l.id)
+    __INITIAL_PRESET_DATA__?.visibleLayers?.length
+      ? [...__INITIAL_PRESET_DATA__.visibleLayers]
+      : initialPreset?.visibleLayers?.length
+        ? [...initialPreset.visibleLayers]
+        : targetPlugin.layers.filter((l) => l.defaultVisible).map((l) => l.id)
   );
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);

@@ -7,6 +7,7 @@ import {
   signedDistanceCircle2D,
   signedDistanceHalfSpace2D,
   signedDistanceRect2D,
+  solveBoundaryParameter,
   stepBorisPusher,
   vec2,
   vec3,
@@ -110,7 +111,7 @@ export function createFieldEvaluator(params: BoundedMagneticParams): EmFieldEval
  * 根据教学模式生成主粒子与动态圆簇初始状态
  */
 export function createInitialState(params: BoundedMagneticParams): BoundedMagneticState {
-  const count = params.family === 'single' ? 1 : Math.max(1, Math.min(7, Math.round(params.beamCount)));
+  const count = params.family === 'single' ? 1 : Math.max(1, Math.min(9, Math.round(params.beamCount)));
   const R = Math.max(params.fieldScale, 0.1);
   const baseAngleRad = degToRad(params.launchAngleDeg);
   const particles: ParticleTrack[] = [];
@@ -432,4 +433,23 @@ export function checkInvariants(
   }
 
   return [];
+}
+
+/**
+ * 逆问题求解器（基于 Brent 求根）：计算垂直射入半空间/圆形磁场达到指定临界回旋半径所需的初速率
+ */
+export function solveCriticalSpeedForRadius(
+  params: BoundedMagneticParams,
+  targetRadius: number,
+  speedBounds: readonly [number, number] = [0.05, 20]
+): number | null {
+  const qB = Math.abs(params.charge * params.magneticFieldZ);
+  if (qB < 1e-12) return null;
+  const mass = Math.max(params.mass, 1e-12);
+  const roots = solveBoundaryParameter(
+    (v) => (mass * v) / qB - targetRadius,
+    speedBounds,
+    { tolerance: 1e-10, gridSamples: 24 }
+  );
+  return roots[0]?.root ?? null;
 }
