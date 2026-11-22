@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest';
+import {
+  auditSceneHeadless,
+  normalizeToSceneDsl,
+  routePhysicsProblemPrompt,
+  runGenerateThenRefine,
+  synthesizeSceneFromPrompt
+} from './index.js';
+
+describe('@physforge/ai-copilot 3-tier routing, Zod SceneDSL & 3-round refine', () => {
+  it('routes physics word problems across specialized, builder B1-B4, and B5 custom-ODE tiers', () => {
+    const rSpec = routePhysicsProblemPrompt('一束光子照射钠阴极光电管发生光电效应求遏止电压');
+    expect(rSpec.tier).toBe('specialized');
+    expect(rSpec.modelId).toBe('modern-photoelectric-compton');
+
+    const rQuant = routePhysicsProblemPrompt('512格一维高斯波包量子隧穿矩形势垒');
+    expect(rQuant.tier).toBe('specialized');
+    expect(rQuant.modelId).toBe('comp-relativity-quantum-tunneling');
+
+    const rBuilder = routePhysicsProblemPrompt('带电粒子进入多个区域复合场磁聚焦');
+    expect(rBuilder.tier).toBe('builder');
+    expect(rBuilder.modelId).toBe('builder-composite-em-field');
+
+    const rOde = routePhysicsProblemPrompt('求解自定义微分方程 d^2x/dt^2 = -x - 0.1*x^3 相轨迹');
+    expect(rOde.tier).toBe('custom-ode-fallback');
+    expect(rOde.modelId).toBe('builder-custom-ode-lab');
+  });
+
+  it('rejects malformed SceneDSL payloads cleanly via Zod and accepts legacy preset wrapper', () => {
+    expect(() => normalizeToSceneDsl({ schemaVersion: '1.0', modelId: '', params: {} })).toThrow();
+
+    const norm = normalizeToSceneDsl({
+      modelId: 'em-bounded-magnetic-field',
+      preset: { id: 'p1', name: 'Test', params: { magneticFieldZ: 2.0 } }
+    });
+    expect(norm.schemaVersion).toBe('2.0');
+    expect(norm.modelId).toBe('builder-composite-em-field');
+  });
+
+  it('runs Generate-then-Refine headless self-correction loop (max 3 rounds) and succeeds after fixing bad params', async () => {
+    const out = await runGenerateThenRefine(
+      async (round) => {
+        if (round === 1) {
+          return {
+            schemaVersion: '2.0',
+            modelId: 'modern-photoelectric-compton',
+            params: { wavelengthNm: 999999 } // violates paramSchema max bound (750)
+          };
+        }
+        return {
+          schemaVersion: '2.0',
+          modelId: 'modern-photoelectric-compton',
+          params: { mode: 'photoelectric', cathodeMetal: 'Na', wavelengthNm: 405, intensityRel: 1.4 }
+        };
+      },
+      { maxRounds: 3, steps: 20, dt: 0.02 }
+    );
+
+    expect(out.accepted).toBe(true);
+    expect(out.attempts).toBe(2);
+    expect(out.history[0]!.errors.length).toBeGreaterThan(0);
+    expect(out.lastAudit.passed).toBe(true);
+  });
+
+  it('synthesizes valid runnable SceneDSL offline from prompt and passes headless audit', async () => {
+    const synth = await synthesizeSceneFromPrompt('水平实心球滑滚转换与保龄球回滚');
+    expect(synth.route.modelId).toBe('comp-rigid-rolling-slip');
+    const audit = await auditSceneHeadless(synth.scene, { steps: 30, dt: 0.02 });
+    expect(audit.passed).toBe(true);
+  });
+});

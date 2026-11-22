@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "2.0",
+  "modelId": "comp-relativity-quantum-tunneling",
+  "presetId": "tdse-sub-barrier-tunneling",
+  "title": "一维量子波包势垒隧穿教学场景",
+  "params": {
+    "mode": "tdse-tunneling",
+    "potentialShape": "single-barrier",
+    "barrierHeightV0": 2.45,
+    "barrierWidth": 1.4,
+    "waveMomentumK0": 2.0,
+    "packetSigma": 3.2
+  },
+  "notes": "V2-W6 SceneDSL 场景资产：校验 512 格 Crank-Nicolson TDSE 总概率幺正守恒"
+}

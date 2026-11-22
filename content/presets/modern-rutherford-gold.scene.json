@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "2.0",
+  "modelId": "modern-rutherford-bohr",
+  "presetId": "rutherford-gold-foil-scatter",
+  "title": "卢瑟福 α 粒子金箔散射场景",
+  "params": {
+    "mode": "rutherford",
+    "alphaEnergyMev": 5.0,
+    "targetZ": 79,
+    "impactParamFm": 25
+  },
+  "notes": "V2-W6 SceneDSL 场景资产：核物理 ScaleContext 下 RK45 散射角与能量守恒审计"
+}

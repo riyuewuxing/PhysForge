@@ -12,6 +12,7 @@
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.21.0",
     "@excalidraw/excalidraw": "^0.18.1",
+    "@physforge/ai-copilot": "workspace:*",
     "@physforge/analysis-lab": "workspace:*",
     "@physforge/export-studio": "workspace:*",
     "@physforge/pedagogy-schema": "workspace:*",

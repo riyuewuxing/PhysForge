@@ -366,6 +366,96 @@ export const simulationCatalog: readonly SimulationCatalogEntry[] = [
       difficulty: '高三一轮',
       version: '2.0.0'
     }
+  },
+  {
+    meta: {
+      id: 'stse-tokamak-magnetic-mirror',
+      title: '托卡马克环形磁场与磁镜/磁瓶 (S01)',
+      textbookRef: '人教版 选择性必修二 第一章 · 现代核聚变磁约束 STSE',
+      curriculumTags: ['物理观念', '科学思维', '科学态度与责任'],
+      difficulty: '压轴专题',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'stse-em-devices-suite',
+      title: '现代电磁科技器件集成台 (S02)',
+      textbookRef: '人教版 选择性必修二 第一章 · 电磁六大科技器件集成',
+      curriculumTags: ['物理观念', '科学思维', '科学探究'],
+      difficulty: '高三一轮',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'stse-em-launch-regen-brake',
+      title: '电磁弹射与新能源再生制动 (S03)',
+      textbookRef: '人教版 选择性必修二 第二章 & 必修二 · 电磁能流 STSE',
+      curriculumTags: ['物理观念', '科学思维', '科学态度与责任'],
+      difficulty: '高三一轮',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'stse-gravity-assist-rendezvous',
+      title: '深空引力弹弓与空间站交会对接 (S04)',
+      textbookRef: '人教版 必修第二册 第七章 · 天体变轨与深空探测 STSE',
+      curriculumTags: ['物理观念', '科学思维', '科学态度与责任'],
+      difficulty: '压轴专题',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'exp-mechanics-error-lab',
+      title: '力学实验真误差与纸带逐差仿真台 (X01)',
+      textbookRef: '人教版 必修第一册 第四章 · 探究 a-F 异常图线溯源',
+      curriculumTags: ['科学探究', '科学思维', '物理观念'],
+      difficulty: '高三一轮',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'exp-electrical-error-lab',
+      title: '电学核心实验真误差与精密读数台 (X02)',
+      textbookRef: '人教版 必修第三册 第十一、十二章 · 非理想电表误差与读数',
+      curriculumTags: ['科学探究', '科学思维', '物理观念'],
+      difficulty: '高三一轮',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'comp-rigid-rolling-slip',
+      title: '刚体定轴转动与滑滚转换 (C01)',
+      textbookRef: '人教版 选择性必修一 & 强基竞赛 · 刚体转动与滑滚',
+      curriculumTags: ['物理观念', '科学思维'],
+      difficulty: '压轴专题',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'comp-chaos-normal-coriolis',
+      title: '混沌双摆、简正模与科里奥利力 (C02)',
+      textbookRef: '人教版 选择性必修一 & 强基竞赛 · 分析力学与非惯性系',
+      curriculumTags: ['物理观念', '科学思维'],
+      difficulty: '压轴专题',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'comp-relativity-quantum-tunneling',
+      title: '狭义相对论时空图与一维量子隧穿 (C03)',
+      textbookRef: '人教版 选择性必修三 & 强基竞赛 · 相对论几何与 TDSE 隧穿',
+      curriculumTags: ['物理观念', '科学思维'],
+      difficulty: '压轴专题',
+      version: '2.0.0'
+    }
   }
 ];
 
@@ -437,7 +527,25 @@ const MODEL_LOADERS: Readonly<Record<string, () => Promise<AnySimulationPlugin>>
   'modern-rutherford-bohr': async () =>
     erasePluginType((await import('./modern-rutherford-bohr/plugin.js')).modernRutherfordBohrPlugin),
   'modern-nuclear-recoil-decay': async () =>
-    erasePluginType((await import('./modern-nuclear-recoil-decay/plugin.js')).modernNuclearRecoilDecayPlugin)
+    erasePluginType((await import('./modern-nuclear-recoil-decay/plugin.js')).modernNuclearRecoilDecayPlugin),
+  'stse-tokamak-magnetic-mirror': async () =>
+    erasePluginType((await import('./stse-tokamak-magnetic-mirror/plugin.js')).stseTokamakMagneticMirrorPlugin),
+  'stse-em-devices-suite': async () =>
+    erasePluginType((await import('./stse-em-devices-suite/plugin.js')).stseEmDevicesSuitePlugin),
+  'stse-em-launch-regen-brake': async () =>
+    erasePluginType((await import('./stse-em-launch-regen-brake/plugin.js')).stseEmLaunchRegenBrakePlugin),
+  'stse-gravity-assist-rendezvous': async () =>
+    erasePluginType((await import('./stse-gravity-assist-rendezvous/plugin.js')).stseGravityAssistRendezvousPlugin),
+  'exp-mechanics-error-lab': async () =>
+    erasePluginType((await import('./exp-mechanics-error-lab/plugin.js')).expMechanicsErrorLabPlugin),
+  'exp-electrical-error-lab': async () =>
+    erasePluginType((await import('./exp-electrical-error-lab/plugin.js')).expElectricalErrorLabPlugin),
+  'comp-rigid-rolling-slip': async () =>
+    erasePluginType((await import('./comp-rigid-rolling-slip/plugin.js')).compRigidRollingSlipPlugin),
+  'comp-chaos-normal-coriolis': async () =>
+    erasePluginType((await import('./comp-chaos-normal-coriolis/plugin.js')).compChaosNormalCoriolisPlugin),
+  'comp-relativity-quantum-tunneling': async () =>
+    erasePluginType((await import('./comp-relativity-quantum-tunneling/plugin.js')).compRelativityQuantumTunnelingPlugin)
 };
 
 export async function loadSimulationById(id: string): Promise<AnySimulationPlugin | undefined> {

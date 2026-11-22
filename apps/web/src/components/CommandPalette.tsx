@@ -12,8 +12,13 @@ import {
 } from '@physforge/workspace-vault';
 
 interface RawContentPresetJson {
-  modelId: string;
-  preset: {
+  readonly schemaVersion?: '2.0';
+  readonly modelId: string;
+  readonly presetId?: string;
+  readonly title?: string;
+  readonly notes?: string;
+  readonly params?: ParamRecord;
+  readonly preset?: {
     id: string;
     name: string;
     description?: string;
@@ -26,14 +31,27 @@ const rawBuiltinModules = import.meta.glob<RawContentPresetJson>(
   { eager: true, import: 'default' }
 );
 
-const builtinVaultAssets: BuiltinPresetAsset[] = Object.values(rawBuiltinModules).map((entry) => ({
-  id: entry.preset.id,
-  modelId: entry.modelId,
-  title: entry.preset.name,
-  tags: [entry.modelId],
-  params: entry.preset.params,
-  notes: entry.preset.description
-}));
+const builtinVaultAssets: BuiltinPresetAsset[] = Object.entries(rawBuiltinModules).map(([filePath, entry]) => {
+  if (entry.preset) {
+    return {
+      id: entry.preset.id,
+      modelId: entry.modelId,
+      title: entry.preset.name,
+      tags: [entry.modelId],
+      params: entry.preset.params,
+      notes: entry.preset.description
+    };
+  }
+  const fallbackId = filePath.split('/').pop()?.replace(/\.json$/, '') ?? entry.modelId;
+  return {
+    id: entry.presetId ?? fallbackId,
+    modelId: entry.modelId,
+    title: entry.title ?? entry.modelId,
+    tags: [entry.modelId, 'V2-SceneDSL'],
+    params: entry.params ?? {},
+    notes: entry.notes
+  };
+});
 
 interface CommandPaletteProps {
   readonly currentModelId: string;

@@ -22,6 +22,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm verify:packs
+      - run: pnpm verify:scenes
+      - run: pnpm verify:vault
       - run: pnpm build
       - name: Check first-screen JS gzip budget (< 350 KB)
         run: |

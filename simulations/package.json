@@ -167,6 +167,46 @@
     "./modern-nuclear-recoil-decay": {
       "types": "./modern-nuclear-recoil-decay/plugin.ts",
       "default": "./modern-nuclear-recoil-decay/plugin.ts"
+    },
+    "./stse-tokamak-magnetic-mirror": {
+      "types": "./stse-tokamak-magnetic-mirror/plugin.ts",
+      "default": "./stse-tokamak-magnetic-mirror/plugin.ts"
+    },
+    "./stse-tokamak-magnetic-mirror/engine": {
+      "types": "./stse-tokamak-magnetic-mirror/engine.ts",
+      "default": "./stse-tokamak-magnetic-mirror/engine.ts"
+    },
+    "./stse-em-devices-suite": {
+      "types": "./stse-em-devices-suite/plugin.ts",
+      "default": "./stse-em-devices-suite/plugin.ts"
+    },
+    "./stse-em-launch-regen-brake": {
+      "types": "./stse-em-launch-regen-brake/plugin.ts",
+      "default": "./stse-em-launch-regen-brake/plugin.ts"
+    },
+    "./stse-gravity-assist-rendezvous": {
+      "types": "./stse-gravity-assist-rendezvous/plugin.ts",
+      "default": "./stse-gravity-assist-rendezvous/plugin.ts"
+    },
+    "./exp-mechanics-error-lab": {
+      "types": "./exp-mechanics-error-lab/plugin.ts",
+      "default": "./exp-mechanics-error-lab/plugin.ts"
+    },
+    "./exp-electrical-error-lab": {
+      "types": "./exp-electrical-error-lab/plugin.ts",
+      "default": "./exp-electrical-error-lab/plugin.ts"
+    },
+    "./comp-rigid-rolling-slip": {
+      "types": "./comp-rigid-rolling-slip/plugin.ts",
+      "default": "./comp-rigid-rolling-slip/plugin.ts"
+    },
+    "./comp-chaos-normal-coriolis": {
+      "types": "./comp-chaos-normal-coriolis/plugin.ts",
+      "default": "./comp-chaos-normal-coriolis/plugin.ts"
+    },
+    "./comp-relativity-quantum-tunneling": {
+      "types": "./comp-relativity-quantum-tunneling/plugin.ts",
+      "default": "./comp-relativity-quantum-tunneling/plugin.ts"
     }
   },
   "dependencies": {

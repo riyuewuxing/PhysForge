@@ -72,7 +72,16 @@ const KNOWN_MODELS = [
   'thermo-cycles-kinetic-md',
   'modern-photoelectric-compton',
   'modern-rutherford-bohr',
-  'modern-nuclear-recoil-decay'
+  'modern-nuclear-recoil-decay',
+  'stse-tokamak-magnetic-mirror',
+  'stse-em-devices-suite',
+  'stse-em-launch-regen-brake',
+  'stse-gravity-assist-rendezvous',
+  'exp-mechanics-error-lab',
+  'exp-electrical-error-lab',
+  'comp-rigid-rolling-slip',
+  'comp-chaos-normal-coriolis',
+  'comp-relativity-quantum-tunneling'
 ];
 
 function isSameModelGroup(a, b) {

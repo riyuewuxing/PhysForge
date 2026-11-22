@@ -15,7 +15,10 @@
     "build": "pnpm -r --if-present build",
     "dev:web": "pnpm --filter @physforge/web dev",
     "export:singlefile": "pnpm --filter @physforge/singlefile-exporter run export",
-    "verify:packs": "node ./scripts/run-verify-packs.mjs"
+    "export:release": "node ./scripts/export-release-bundle.mjs",
+    "verify:packs": "node ./scripts/run-verify-packs.mjs",
+    "verify:scenes": "node ./scripts/run-verify-scenes.mjs",
+    "verify:vault": "node ./scripts/run-verify-vault.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

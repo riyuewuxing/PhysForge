@@ -37,6 +37,15 @@ import { thermoCyclesKineticMdPlugin } from './thermo-cycles-kinetic-md/plugin.j
 import { modernPhotoelectricComptonPlugin } from './modern-photoelectric-compton/plugin.js';
 import { modernRutherfordBohrPlugin } from './modern-rutherford-bohr/plugin.js';
 import { modernNuclearRecoilDecayPlugin } from './modern-nuclear-recoil-decay/plugin.js';
+import { stseTokamakMagneticMirrorPlugin } from './stse-tokamak-magnetic-mirror/plugin.js';
+import { stseEmDevicesSuitePlugin } from './stse-em-devices-suite/plugin.js';
+import { stseEmLaunchRegenBrakePlugin } from './stse-em-launch-regen-brake/plugin.js';
+import { stseGravityAssistRendezvousPlugin } from './stse-gravity-assist-rendezvous/plugin.js';
+import { expMechanicsErrorLabPlugin } from './exp-mechanics-error-lab/plugin.js';
+import { expElectricalErrorLabPlugin } from './exp-electrical-error-lab/plugin.js';
+import { compRigidRollingSlipPlugin } from './comp-rigid-rolling-slip/plugin.js';
+import { compChaosNormalCoriolisPlugin } from './comp-chaos-normal-coriolis/plugin.js';
+import { compRelativityQuantumTunnelingPlugin } from './comp-relativity-quantum-tunneling/plugin.js';
 
 import type { ParamRecord, SimulationPlugin } from '@physforge/sim-sdk';
 
@@ -86,7 +95,16 @@ export const simulationPlugins: readonly AnySimulationPlugin[] = [
   erasePluginType(thermoCyclesKineticMdPlugin),
   erasePluginType(modernPhotoelectricComptonPlugin),
   erasePluginType(modernRutherfordBohrPlugin),
-  erasePluginType(modernNuclearRecoilDecayPlugin)
+  erasePluginType(modernNuclearRecoilDecayPlugin),
+  erasePluginType(stseTokamakMagneticMirrorPlugin),
+  erasePluginType(stseEmDevicesSuitePlugin),
+  erasePluginType(stseEmLaunchRegenBrakePlugin),
+  erasePluginType(stseGravityAssistRendezvousPlugin),
+  erasePluginType(expMechanicsErrorLabPlugin),
+  erasePluginType(expElectricalErrorLabPlugin),
+  erasePluginType(compRigidRollingSlipPlugin),
+  erasePluginType(compChaosNormalCoriolisPlugin),
+  erasePluginType(compRelativityQuantumTunnelingPlugin)
 ];
 
 export function getSimulationById(id: string): AnySimulationPlugin | undefined {

@@ -8,6 +8,12 @@ import {
   type Magnetic3dParams,
   type Magnetic3dState
 } from '@physforge/simulations/em-3d-magnetic-fields/engine';
+import {
+  buildTokamakMirrorSegments,
+  traceTokamakMirrorLines,
+  type TokamakMirrorParams,
+  type TokamakMirrorState
+} from '@physforge/simulations/stse-tokamak-magnetic-mirror/engine';
 
 interface ThreeStageProps {
   readonly plugin: SimulationPluginV2<ParamRecord, unknown>;
@@ -118,22 +124,26 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     ro.observe(container);
 
     const isMag3d = plugin.meta.id === 'em-3d-magnetic-fields';
+    const isTokamak3d = plugin.meta.id === 'stse-tokamak-magnetic-mirror';
 
     bridgeRef.current = {
       sync: (state, curParams, layers) => {
         if (!state) return;
-        if (isMag3d) {
-          const magState = state as Magnetic3dState;
-          const magParams = curParams as Magnetic3dParams;
+        if (isMag3d || isTokamak3d) {
+          const magState = state as Magnetic3dState | TokamakMirrorState;
           marker.position.set(magState.position.x, magState.position.z, magState.position.y);
 
-          const sig = `${magParams.geometryType}:${magParams.radiusR}:${magParams.solenoidTurns}:${magParams.currentI}:${layers.has('conductors')}:${layers.has('fieldLines3d')}:${magState.trail.length}`;
+          const sig = isMag3d
+            ? `${(curParams as Magnetic3dParams).geometryType}:${(curParams as Magnetic3dParams).radiusR}:${(curParams as Magnetic3dParams).solenoidTurns}:${(curParams as Magnetic3dParams).currentI}:${layers.has('conductors')}:${layers.has('fieldLines3d')}:${magState.trail.length}`
+            : `tok:${(curParams as TokamakMirrorParams).mode}:${(curParams as TokamakMirrorParams).b0Tesla}:${(curParams as TokamakMirrorParams).coilHalfSpanM}:${(curParams as TokamakMirrorParams).majorRadiusM}:${layers.has('conductors')}:${layers.has('fieldLines3d')}:${magState.trail.length}`;
           if (sig !== lastConfigSig) {
             lastConfigSig = sig;
             disposeGroupChildren(dynamicGroup);
 
             if (layers.has('conductors')) {
-              const segs = buildConductorSegments(magParams);
+              const segs = isMag3d
+                ? buildConductorSegments(curParams as Magnetic3dParams)
+                : buildTokamakMirrorSegments(curParams as TokamakMirrorParams);
               if (segs.length > 0) {
                 const posArr = new Float32Array(segs.length * 6);
                 segs.forEach((s, idx) => {
@@ -152,7 +162,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             }
 
             if (layers.has('fieldLines3d')) {
-              const lines = trace3dFieldLines(magParams);
+              const lines = isMag3d
+                ? trace3dFieldLines(curParams as Magnetic3dParams)
+                : traceTokamakMirrorLines(curParams as TokamakMirrorParams);
               for (const line of lines) {
                 if (line.length < 2) continue;
                 const pts = line.map((p) => new THREE.Vector3(p.x, p.z, p.y));

@@ -2,6 +2,7 @@ import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   Activity,
   BookOpen,
+  Bot,
   Compass,
   Eye,
   EyeOff,
@@ -45,6 +46,10 @@ const LazyExportStudioDrawer = React.lazy(() =>
   import('./components/ExportStudioDrawer.js').then((m) => ({ default: m.ExportStudioDrawer }))
 );
 
+const LazyAiCopilotDrawer = React.lazy(() =>
+  import('./components/AiCopilotDrawer.js').then((m) => ({ default: m.AiCopilotDrawer }))
+);
+
 const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
 
 export const App: React.FC = () => {
@@ -55,6 +60,7 @@ export const App: React.FC = () => {
   const [analysisLabOpen, setAnalysisLabOpen] = useState(false);
   const [exportStudioOpen, setExportStudioOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [labFrames, setLabFrames] = useState<readonly RecordedTelemetryFrame[]>([]);
 
   const handleRegisterSnapshotsGetter = useCallback(
@@ -445,6 +451,20 @@ export const App: React.FC = () => {
 
           <button
             type="button"
+            data-testid="btn-ai-copilot"
+            onClick={() => setAiCopilotOpen(true)}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{
+              borderColor: aiCopilotOpen ? '#38bdf8' : 'var(--pf-border)',
+              backgroundColor: aiCopilotOpen ? 'rgba(56, 189, 248, 0.16)' : 'transparent'
+            }}
+          >
+            <Bot className="w-4 h-4" />
+            <span>AI 建模</span>
+          </button>
+
+          <button
+            type="button"
             data-testid="btn-teaching-pack"
             onClick={() => setTeachingPackOpen((v) => !v)}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
@@ -612,6 +632,23 @@ export const App: React.FC = () => {
               snapshotsGetterRef.current().map((s) => ({ t: s.t, state: s.state ?? null }))
             }
             onClose={() => setExportStudioOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      {aiCopilotOpen && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 text-sky-300 font-semibold">
+              正在加载 AI 逆向建模与物理防幻觉审计台...
+            </div>
+          }
+        >
+          <LazyAiCopilotDrawer
+            onApplyScene={(modelId, presetId, params) =>
+              store.applyExternalState(modelId, presetId, params)
+            }
+            onClose={() => setAiCopilotOpen(false)}
           />
         </Suspense>
       )}
