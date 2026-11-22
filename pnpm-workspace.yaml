@@ -1,0 +1,7 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "simulations"
+
+allowBuilds:
+  esbuild: true

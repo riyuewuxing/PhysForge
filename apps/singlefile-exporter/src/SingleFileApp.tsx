@@ -1,0 +1,672 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import katex from 'katex';
+import uPlot from 'uplot';
+import { Play, Pause, RotateCcw, StepForward, Eye, EyeOff, SunMoon, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
+import targetPlugin from '@physforge/target-plugin';
+import {
+  resolvePluginParams,
+  type FormulaDisplayItem,
+  type InvariantReport,
+  type ParamRecord,
+  type PhysicsEvent,
+  type Viewport
+} from '@physforge/sim-sdk';
+
+interface SnapshotFrame {
+  t: number;
+  state: unknown;
+  observables: Record<string, number>;
+}
+
+const FIXED_DT = 1 / 240;
+const SNAPSHOT_INTERVAL = 1 / 60;
+const MAX_SNAPSHOTS = 2400;
+
+function findClosestSnapshot(snapshots: readonly SnapshotFrame[], targetT: number): SnapshotFrame | null {
+  if (snapshots.length === 0) return null;
+  let lo = 0;
+  let hi = snapshots.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (snapshots[mid]!.t < targetT) lo = mid + 1;
+    else hi = mid;
+  }
+  const cand = snapshots[lo]!;
+  if (lo > 0) {
+    const prev = snapshots[lo - 1]!;
+    if (Math.abs(prev.t - targetT) < Math.abs(cand.t - targetT)) return prev;
+  }
+  return cand;
+}
+
+export const SingleFileApp: React.FC = () => {
+  const initialPreset = useMemo(() => {
+    if (__INITIAL_PRESET_ID__) {
+      const found = targetPlugin.presets.find((p) => p.id === __INITIAL_PRESET_ID__);
+      if (found) return found;
+    }
+    return targetPlugin.presets[0] ?? null;
+  }, []);
+
+  const [activePresetId, setActivePresetId] = useState<string | null>(initialPreset?.id ?? null);
+  const [params, setParams] = useState<ParamRecord>(() =>
+    resolvePluginParams(targetPlugin.paramSchema, initialPreset?.params)
+  );
+  const [activeLayers, setActiveLayers] = useState<string[]>(() =>
+    initialPreset?.visibleLayers?.length
+      ? [...initialPreset.visibleLayers]
+      : targetPlugin.layers.filter((l) => l.defaultVisible).map((l) => l.id)
+  );
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [strobeEnabled, setStrobeEnabled] = useState(false);
+  const [poeMasked, setPoeMasked] = useState(false);
+  const [theme, setTheme] = useState<'chalkboard' | 'projector'>('chalkboard');
+  const [bigScreen, setBigScreen] = useState(false);
+  const [resetNonce, setResetNonce] = useState(0);
+  const [stepOnceNonce, setStepOnceNonce] = useState(0);
+  const [scrubTime, setScrubTime] = useState<number | null>(null);
+  const [summary, setSummary] = useState<{
+    t: number;
+    observables: Record<string, number>;
+    events: PhysicsEvent[];
+    invariants: InvariantReport[];
+    formulas: FormulaDisplayItem[];
+  }>({ t: 0, observables: {}, events: [], invariants: [], formulas: [] });
+
+  const channels = targetPlugin.telemetryChannels;
+  const [channelA, setChannelA] = useState(channels[0]?.key ?? '');
+  const [channelB, setChannelB] = useState(channels[1]?.key ?? channels[0]?.key ?? '');
+
+  const stageBoxRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const uplotWrapRef = useRef<HTMLDivElement | null>(null);
+  const uplotRef = useRef<uPlot | null>(null);
+
+  const simStateRef = useRef<unknown>(null);
+  const initialStateRef = useRef<unknown>(null);
+  const eventsRef = useRef<PhysicsEvent[]>([]);
+  const snapshotsRef = useRef<SnapshotFrame[]>([]);
+  const lastSnapTRef = useRef(0);
+  const accRef = useRef(0);
+  const lastFrameMsRef = useRef<number | null>(null);
+  const lastUiMsRef = useRef(0);
+  const viewportRef = useRef<Viewport>({
+    width: 800,
+    height: 460,
+    dpr: 1,
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0
+  });
+
+  const latestRef = useRef({
+    params,
+    activeLayers,
+    isPlaying,
+    playbackSpeed,
+    strobeEnabled,
+    poeMasked,
+    theme,
+    scrubTime,
+    channelA,
+    channelB
+  });
+  latestRef.current = {
+    params,
+    activeLayers,
+    isPlaying,
+    playbackSpeed,
+    strobeEnabled,
+    poeMasked,
+    theme,
+    scrubTime,
+    channelA,
+    channelB
+  };
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  const drawCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const { params: pm, activeLayers: layers, strobeEnabled: strobe, poeMasked: masked, theme: th, scrubTime: scrub } =
+      latestRef.current;
+    const vp = viewportRef.current;
+    ctx.save();
+    ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
+    ctx.fillStyle = th === 'projector' ? '#ffffff' : '#091220';
+    ctx.fillRect(0, 0, vp.width, vp.height);
+
+    const frame =
+      scrub !== null
+        ? findClosestSnapshot(snapshotsRef.current, scrub)
+        : snapshotsRef.current[snapshotsRef.current.length - 1] ?? null;
+    const drawState = frame ? frame.state : simStateRef.current;
+    if (drawState !== null) {
+      const layerSet = new Set(layers);
+      if (masked) {
+        layerSet.delete('trajectory');
+        layerSet.delete('larmorCircle');
+        layerSet.delete('slopeGhost');
+        layerSet.delete('vibrationGraph');
+        layerSet.delete('eventPins');
+      }
+      targetPlugin.renderCanvas(ctx, drawState, pm, vp, layerSet);
+
+      if (strobe && !masked && snapshotsRef.current.length > 2) {
+        const curT = frame ? frame.t : 0;
+        const pxPerM = Math.min(vp.width, vp.height) * 0.24 * vp.scale;
+        const ox = vp.width * 0.45;
+        const oy = vp.height * 0.5;
+        let lastT = -1;
+        for (const s of snapshotsRef.current) {
+          if (s.t > curT) break;
+          if (s.t - lastT < 0.08) continue;
+          lastT = s.t;
+          if (typeof s.observables.x === 'number' && typeof s.observables.y === 'number') {
+            ctx.fillStyle = 'rgba(251, 191, 36, 0.72)';
+            ctx.beginPath();
+            ctx.arc(ox + s.observables.x * pxPerM, oy - s.observables.y * pxPerM, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+    ctx.restore();
+  };
+
+  const syncPlot = () => {
+    const plot = uplotRef.current;
+    if (!plot) return;
+    const snaps = snapshotsRef.current;
+    const { channelA: chA, channelB: chB } = latestRef.current;
+    plot.setData([
+      snaps.map((s) => s.t),
+      snaps.map((s) => (chA ? s.observables[chA] ?? 0 : 0)),
+      snaps.map((s) => (chB ? s.observables[chB] ?? 0 : 0))
+    ]);
+  };
+
+  const emitSummary = (force = false) => {
+    const now = performance.now();
+    if (!force && now - lastUiMsRef.current < 90) return;
+    lastUiMsRef.current = now;
+    const snaps = snapshotsRef.current;
+    const snap =
+      latestRef.current.scrubTime !== null
+        ? findClosestSnapshot(snaps, latestRef.current.scrubTime)
+        : snaps[snaps.length - 1] ?? null;
+    if (!snap || initialStateRef.current === null) return;
+    setSummary({
+      t: snap.t,
+      observables: snap.observables,
+      events: eventsRef.current,
+      invariants: targetPlugin.engine.checkInvariants
+        ? targetPlugin.engine.checkInvariants(snap.state, initialStateRef.current, latestRef.current.params)
+        : [],
+      formulas: targetPlugin.formatFormulas
+        ? targetPlugin.formatFormulas(snap.state, latestRef.current.params)
+        : []
+    });
+  };
+
+  useEffect(() => {
+    const init = targetPlugin.engine.createInitialState(params);
+    const obs0 = targetPlugin.engine.computeObservables(init, params);
+    simStateRef.current = init;
+    initialStateRef.current = init;
+    eventsRef.current = [];
+    snapshotsRef.current = [{ t: 0, state: init, observables: obs0 }];
+    lastSnapTRef.current = 0;
+    accRef.current = 0;
+    lastFrameMsRef.current = null;
+    drawCanvas();
+    syncPlot();
+    emitSummary(true);
+  }, [resetNonce]);
+
+  useEffect(() => {
+    if (stepOnceNonce === 0) return;
+    let cur = simStateRef.current;
+    if (cur === null) return;
+    let simT = snapshotsRef.current[snapshotsRef.current.length - 1]?.t ?? 0;
+    for (let i = 0; i < 4; i++) {
+      const res = targetPlugin.engine.step(cur, params, FIXED_DT);
+      cur = res.nextState;
+      simT += FIXED_DT;
+      if (res.events.length > 0) eventsRef.current = [...eventsRef.current, ...res.events];
+    }
+    simStateRef.current = cur;
+    snapshotsRef.current.push({
+      t: simT,
+      state: cur,
+      observables: targetPlugin.engine.computeObservables(cur, params)
+    });
+    if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
+    lastSnapTRef.current = simT;
+    drawCanvas();
+    syncPlot();
+    emitSummary(true);
+  }, [stepOnceNonce]);
+
+  useEffect(() => {
+    drawCanvas();
+    emitSummary(true);
+  }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime]);
+
+  useEffect(() => {
+    syncPlot();
+  }, [channelA, channelB]);
+
+  useEffect(() => {
+    const box = stageBoxRef.current;
+    const canvas = canvasRef.current;
+    if (!box || !canvas) return;
+    const updateSize = () => {
+      const rect = box.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(300, Math.floor(rect.width));
+      const height = Math.max(220, Math.floor(rect.height));
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      viewportRef.current = { ...viewportRef.current, width, height, dpr };
+      drawCanvas();
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    let rafId = 0;
+    const tick = (nowMs: number) => {
+      rafId = requestAnimationFrame(tick);
+      if (!latestRef.current.isPlaying) {
+        lastFrameMsRef.current = null;
+        return;
+      }
+      if (lastFrameMsRef.current === null) {
+        lastFrameMsRef.current = nowMs;
+        return;
+      }
+      const rawDt = Math.min((nowMs - lastFrameMsRef.current) / 1000, 0.05);
+      lastFrameMsRef.current = nowMs;
+      accRef.current += rawDt * latestRef.current.playbackSpeed;
+
+      let stepped = false;
+      let cur = simStateRef.current;
+      let simT = snapshotsRef.current[snapshotsRef.current.length - 1]?.t ?? 0;
+
+      while (accRef.current >= FIXED_DT && cur !== null) {
+        const res = targetPlugin.engine.step(cur, latestRef.current.params, FIXED_DT);
+        cur = res.nextState;
+        simT += FIXED_DT;
+        accRef.current -= FIXED_DT;
+        stepped = true;
+        if (res.events.length > 0) eventsRef.current = [...eventsRef.current, ...res.events];
+        if (simT - lastSnapTRef.current >= SNAPSHOT_INTERVAL) {
+          snapshotsRef.current.push({
+            t: simT,
+            state: cur,
+            observables: targetPlugin.engine.computeObservables(cur, latestRef.current.params)
+          });
+          if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
+          lastSnapTRef.current = simT;
+        }
+      }
+
+      if (stepped && cur !== null) {
+        simStateRef.current = cur;
+        drawCanvas();
+        syncPlot();
+        emitSummary(false);
+      }
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
+
+  useEffect(() => {
+    const wrap = uplotWrapRef.current;
+    if (!wrap) return;
+    const specA = channels.find((c) => c.key === channelA) ?? channels[0];
+    const specB = channels.find((c) => c.key === channelB) ?? channels[1] ?? channels[0];
+    const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
+    const gridColor = theme === 'projector' ? 'rgba(15,23,42,0.12)' : 'rgba(148,163,184,0.16)';
+
+    const plot = new uPlot(
+      {
+        width: Math.max(280, wrap.clientWidth),
+        height: 150,
+        axes: [
+          { stroke: textColor, grid: { stroke: gridColor } },
+          { stroke: textColor, grid: { stroke: gridColor } }
+        ],
+        series: [
+          { label: 't (s)' },
+          { label: specA?.label ?? 'A', stroke: specA?.color ?? '#38bdf8', width: 2 },
+          { label: specB?.label ?? 'B', stroke: specB?.color ?? '#f472b6', width: 2 }
+        ],
+        hooks: {
+          setCursor: [
+            (u) => {
+              const idx = u.cursor.idx;
+              if (idx == null || latestRef.current.isPlaying) return;
+              const tv = u.data[0]?.[idx];
+              if (typeof tv === 'number' && Number.isFinite(tv)) setScrubTime(tv);
+            }
+          ]
+        }
+      },
+      [[0], [0], [0]],
+      wrap
+    );
+    uplotRef.current = plot;
+    syncPlot();
+    const ro = new ResizeObserver(() => {
+      if (uplotWrapRef.current) plot.setSize({ width: Math.max(280, uplotWrapRef.current.clientWidth), height: 150 });
+    });
+    ro.observe(wrap);
+    return () => {
+      ro.disconnect();
+      plot.destroy();
+      uplotRef.current = null;
+    };
+  }, [channelA, channelB, theme]);
+
+  return (
+    <div
+      data-testid="singlefile-shell"
+      data-model-id={targetPlugin.meta.id}
+      className={`h-screen w-screen flex flex-col overflow-hidden ${bigScreen ? 'big-screen-mode' : ''}`}
+      style={{ backgroundColor: 'var(--pf-bg)', color: 'var(--pf-text)' }}
+    >
+      <header
+        className="shrink-0 border-b px-3 py-2 flex flex-wrap items-center justify-between gap-2"
+        style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
+      >
+        <div>
+          <div className="font-bold text-base">{targetPlugin.meta.title}</div>
+          <div className="text-xs" style={{ color: 'var(--pf-text-muted)' }}>
+            离线课堂单文件切片 · {targetPlugin.meta.textbookRef} · t = {summary.t.toFixed(3)} s
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            data-testid="sf-play-pause"
+            onClick={() => {
+              setIsPlaying((p) => !p);
+              setScrubTime(null);
+            }}
+            className="pf-touch-target inline-flex items-center gap-1 px-3.5 py-1.5 rounded-xl bg-sky-500 text-slate-950 font-bold cursor-pointer"
+          >
+            {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            <span>{isPlaying ? '暂停' : '运行'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsPlaying(false);
+              setStepOnceNonce((n) => n + 1);
+            }}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{ borderColor: 'var(--pf-border)' }}
+          >
+            <StepForward className="w-4 h-4" />
+            <span>单步</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsPlaying(false);
+              setScrubTime(null);
+              setResetNonce((n) => n + 1);
+            }}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{ borderColor: 'var(--pf-border)' }}
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>复位</span>
+          </button>
+          <select
+            aria-label="播放倍速"
+            value={playbackSpeed}
+            onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
+            className="pf-touch-target rounded-xl border px-2 py-1 text-sm"
+            style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
+          >
+            {[0.1, 0.25, 0.5, 1, 2].map((sp) => (
+              <option key={sp} value={sp}>
+                {sp}x
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => setStrobeEnabled((v) => !v)}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{ borderColor: strobeEnabled ? 'var(--pf-accent)' : 'var(--pf-border)' }}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>频闪</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPoeMasked((v) => !v)}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{ borderColor: poeMasked ? '#fbbf24' : 'var(--pf-border)' }}
+          >
+            {poeMasked ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            <span>POE 遮罩</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTheme((t) => (t === 'chalkboard' ? 'projector' : 'chalkboard'))}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{ borderColor: 'var(--pf-border)' }}
+          >
+            <SunMoon className="w-4 h-4" />
+            <span>{theme === 'chalkboard' ? '黑板深蓝' : '投影白底'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setBigScreen((b) => !b)}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{ borderColor: bigScreen ? 'var(--pf-accent)' : 'var(--pf-border)' }}
+          >
+            {bigScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            <span>大屏模式</span>
+          </button>
+        </div>
+      </header>
+
+      <main className="flex-1 flex min-h-0 overflow-hidden">
+        <section className="flex-1 flex flex-col min-w-0 p-2.5 gap-2">
+          <div
+            ref={stageBoxRef}
+            className="relative flex-1 min-h-[220px] rounded-xl overflow-hidden border"
+            style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-canvas-bg)' }}
+          >
+            <canvas ref={canvasRef} data-testid="sf-canvas" className="block w-full h-full" />
+            {poeMasked && (
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 p-6 text-center">
+                <button
+                  type="button"
+                  onClick={() => setPoeMasked(false)}
+                  className="pf-touch-target px-5 py-2.5 rounded-xl bg-amber-400 text-slate-950 font-bold cursor-pointer"
+                >
+                  POE 预测阶段 · 点击揭晓观察
+                </button>
+              </div>
+            )}
+          </div>
+          <div
+            className="rounded-xl border p-2 shrink-0"
+            style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
+          >
+            <div className="flex items-center gap-2 text-xs mb-1">
+              <select
+                value={channelA}
+                onChange={(e) => setChannelA(e.target.value)}
+                className="rounded border px-2 py-1"
+                style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
+              >
+                {channels.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={channelB}
+                onChange={(e) => setChannelB(e.target.value)}
+                className="rounded border px-2 py-1"
+                style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
+              >
+                {channels.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div ref={uplotWrapRef} data-testid="sf-uplot" />
+          </div>
+        </section>
+
+        <aside
+          className="w-80 shrink-0 border-l p-3 overflow-y-auto space-y-3"
+          style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
+        >
+          <div className="text-xs font-bold text-sky-400">课堂预设速切</div>
+          <div className="space-y-1.5">
+            {targetPlugin.presets.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => {
+                  setActivePresetId(preset.id);
+                  setParams(resolvePluginParams(targetPlugin.paramSchema, preset.params));
+                  if (preset.visibleLayers?.length) setActiveLayers([...preset.visibleLayers]);
+                  setIsPlaying(false);
+                  setResetNonce((n) => n + 1);
+                }}
+                className="pf-touch-target w-full text-left rounded-xl border p-2 text-xs cursor-pointer"
+                style={{
+                  borderColor: preset.id === activePresetId ? 'var(--pf-accent)' : 'var(--pf-border)',
+                  backgroundColor: 'var(--pf-surface-elevated)'
+                }}
+              >
+                <div className="font-semibold">{preset.name}</div>
+              </button>
+            ))}
+          </div>
+
+          {summary.formulas.map((f) => (
+            <div
+              key={f.id}
+              className="rounded-xl border p-2.5 text-xs space-y-1"
+              style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
+            >
+              <div style={{ color: 'var(--pf-text-muted)' }}>{f.label}</div>
+              <div
+                dangerouslySetInnerHTML={{
+                  __html: katex.renderToString(f.substitutedLatex ?? f.latex, { throwOnError: false })
+                }}
+              />
+            </div>
+          ))}
+
+          <div className="text-xs font-bold text-sky-400">参数调节</div>
+          {targetPlugin.paramSchema.map((field) => {
+            const val = params[field.key] ?? field.defaultValue;
+            if (field.kind === 'number') {
+              return (
+                <div key={field.key} className="text-xs space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>{field.label}</span>
+                    <span className="font-mono">
+                      {val} {field.unit ?? ''}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    value={typeof val === 'number' ? val : field.defaultValue}
+                    onChange={(e) => {
+                      const next = resolvePluginParams(targetPlugin.paramSchema, {
+                        ...params,
+                        [field.key]: Number(e.target.value)
+                      });
+                      setActivePresetId(null);
+                      setParams(next);
+                      setResetNonce((n) => n + 1);
+                    }}
+                    className="w-full h-9"
+                  />
+                </div>
+              );
+            }
+            if (field.kind === 'boolean') {
+              return (
+                <label key={field.key} className="flex items-center justify-between text-xs py-1">
+                  <span>{field.label}</span>
+                  <input
+                    type="checkbox"
+                    checked={typeof val === 'boolean' ? val : field.defaultValue}
+                    onChange={(e) => {
+                      setParams(
+                        resolvePluginParams(targetPlugin.paramSchema, {
+                          ...params,
+                          [field.key]: e.target.checked
+                        })
+                      );
+                      setResetNonce((n) => n + 1);
+                    }}
+                  />
+                </label>
+              );
+            }
+            return (
+              <div key={field.key} className="text-xs space-y-1">
+                <span>{field.label}</span>
+                <select
+                  value={typeof val === 'string' ? val : field.defaultValue}
+                  onChange={(e) => {
+                    setParams(
+                      resolvePluginParams(targetPlugin.paramSchema, {
+                        ...params,
+                        [field.key]: e.target.value
+                      })
+                    );
+                    setResetNonce((n) => n + 1);
+                  }}
+                  className="w-full rounded border px-2 py-1.5"
+                  style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
+                >
+                  {field.options.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
+        </aside>
+      </main>
+    </div>
+  );
+};

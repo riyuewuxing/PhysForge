@@ -1,0 +1,35 @@
+{
+  "name": "@physforge/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
+    "@physforge/pedagogy-schema": "workspace:*",
+    "@physforge/physics-core": "workspace:*",
+    "@physforge/sim-sdk": "workspace:*",
+    "@physforge/simulations": "workspace:*",
+    "katex": "^0.19.1",
+    "lucide-react": "^1.77.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "uplot": "^1.6.32",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/katex": "^0.16.8",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "tailwindcss": "^4.3.5",
+    "vite": "^6.4.6",
+    "vite-plugin-pwa": "^2.0.0"
+  }
+}

@@ -1,0 +1,13 @@
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    include: [
+      'packages/*/src/**/*.test.ts',
+      'simulations/**/*.test.ts',
+      'apps/*/src/**/*.test.ts'
+    ],
+    environment: 'node',
+    globals: false
+  }
+});

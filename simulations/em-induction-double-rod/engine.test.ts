@@ -1,0 +1,134 @@
+import { describe, expect, it } from 'vitest';
+import {
+  checkInvariants,
+  computeObservables,
+  createInitialState,
+  stepInduction,
+  type InductionParams
+} from './engine.js';
+
+const baseParams: InductionParams = {
+  rodMode: 'double',
+  circuitLoad: 'resistor',
+  magneticB: 1.5,
+  railWidth: 1.0,
+  mass1: 2.0,
+  mass2: 1.0,
+  resistorR: 1.5,
+  rodResistance1: 0.5,
+  rodResistance2: 0.5,
+  capacitance: 0.5,
+  batteryEmf: 6.0,
+  externalForce: 0,
+  frictionMu: 0,
+  v1Initial: 6.0,
+  v2Initial: 0
+};
+
+describe('em-induction-double-rod engine', () => {
+  it('conserves total momentum (< 1e-6) and mechanical+Joule energy (< 1e-4) in smooth double-rod motion', () => {
+    const initial = createInitialState(baseParams);
+    let state = initial;
+    const dt = 0.002;
+    // 运行 6000 步 (t = 12 s ≈ 16 倍时间常数)，使指数衰减残余 < 1e-7
+    for (let i = 0; i < 6000; i++) {
+      state = stepInduction(state, baseParams, dt).nextState;
+    }
+
+    // 解析共速：v_eq = (m1*v10 + m2*v20)/(m1 + m2) = (2*6 + 0)/3 = 4.0 m/s
+    // 理论总焦耳热：Q = 0.5 * (m1*m2/(m1+m2)) * (v10 - v20)^2 = 0.5 * (2/3) * 36 = 12.0 J
+    expect(state.v1).toBeCloseTo(4.0, 4);
+    expect(state.v2).toBeCloseTo(4.0, 4);
+    expect(state.jouleHeat).toBeCloseTo(12.0, 4);
+
+    const reports = checkInvariants(state, initial, baseParams);
+    for (const r of reports) {
+      expect(r.passed).toBe(true);
+    }
+  });
+
+  it('matches analytical terminal speed and capacitor charge for single-rod + capacitor (< 1e-4)', () => {
+    const capParams: InductionParams = {
+      ...baseParams,
+      rodMode: 'single',
+      circuitLoad: 'capacitor',
+      magneticB: 2.0,
+      railWidth: 1.0,
+      mass1: 1.0,
+      resistorR: 1.0,
+      rodResistance1: 0,
+      capacitance: 0.25,
+      v1Initial: 4.0,
+      externalForce: 0
+    };
+    const initial = createInitialState(capParams);
+    let state = initial;
+    for (let i = 0; i < 2000; i++) {
+      state = stepInduction(state, capParams, 0.002).nextState;
+    }
+
+    // 解析稳态速度 v_inf = m1*v0 / (m1 + B^2 * L^2 * C) = 4 / (1 + 4 * 1 * 0.25) = 2.0 m/s
+    // 解析稳态电荷 q_inf = C * B * L * v_inf = 0.25 * 2 * 1 * 2 = 1.0 C
+    expect(state.v1).toBeCloseTo(2.0, 4);
+    expect(state.qCap).toBeCloseTo(1.0, 4);
+
+    const reports = checkInvariants(state, initial, capParams);
+    expect(reports[0]?.passed).toBe(true);
+  });
+
+  it('matches analytical terminal speed and work-energy theorem under constant force', () => {
+    const forceParams: InductionParams = {
+      ...baseParams,
+      rodMode: 'single',
+      circuitLoad: 'resistor',
+      magneticB: 1.0,
+      railWidth: 1.0,
+      mass1: 1.0,
+      resistorR: 2.0,
+      rodResistance1: 0,
+      externalForce: 6.0,
+      v1Initial: 0
+    };
+    const initial = createInitialState(forceParams);
+    let state = initial;
+    const tEnd = 8.0;
+    const dt = 0.002;
+    const steps = Math.round(tEnd / dt);
+    for (let i = 0; i < steps; i++) {
+      state = stepInduction(state, forceParams, dt).nextState;
+    }
+
+    // 任意时刻精确解析解：v(t) = v_term * (1 - exp(-t / tau)), tau = m*R/(B^2*L^2) = 2.0 s
+    const vTerm = 12.0;
+    const tau = 2.0;
+    const exactV = vTerm * (1 - Math.exp(-tEnd / tau));
+    expect(Math.abs(state.v1 - exactV) / exactV).toBeLessThan(1e-4);
+
+    const reports = checkInvariants(state, initial, forceParams);
+    expect(reports[0]?.passed).toBe(true);
+  });
+
+  it('handles B=0, v0=0, dt=0, and friction stop without NaN or Infinity', () => {
+    const roughParams: InductionParams = {
+      ...baseParams,
+      rodMode: 'single',
+      circuitLoad: 'resistor',
+      magneticB: 0,
+      frictionMu: 0.2,
+      v1Initial: 2.0,
+      externalForce: 0
+    };
+    let s = createInitialState(roughParams);
+    s = stepInduction(s, roughParams, 0).nextState;
+    for (let i = 0; i < 150; i++) {
+      s = stepInduction(s, roughParams, 0.01).nextState;
+    }
+    expect(s.rod1Stopped).toBe(true);
+    expect(s.v1).toBe(0);
+
+    const obs = computeObservables(s, roughParams);
+    for (const val of Object.values(obs)) {
+      expect(Number.isFinite(val)).toBe(true);
+    }
+  });
+});
