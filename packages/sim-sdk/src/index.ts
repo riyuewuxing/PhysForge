@@ -204,7 +204,99 @@ export interface FormulaDisplayItem {
 }
 
 /**
- * PhysForge 统一仿真插件契约
+ * 画布直操控制手柄（在工作台拖拽更新仿真参数，保持与左侧滑块双向同步）
+ */
+export interface ControlHandle {
+  id: string;
+  label: string;
+  /** 世界坐标系手柄锚点 */
+  position: { x: number; y: number };
+  handleKind: 'point' | 'vector' | 'angle' | 'radius';
+  /** 矢量或角度手柄的基准原点（用于绘制牵引虚线与计算夹角） */
+  origin?: { x: number; y: number };
+  /** 可选矢量显示（若为空则使用 position - origin） */
+  color?: string;
+  onDrag: (worldPos: { x: number; y: number }) => Record<string, ParamValue>;
+}
+
+/**
+ * Auto-FBD 受力矢量项（供外壳统一绘制箭头、正交分解虚线与碰撞排斥标签）
+ */
+export interface ForceVectorItem {
+  id: string;
+  label: string;
+  origin: { x: number; y: number };
+  force: { x: number; y: number };
+  color?: string;
+  category?: 'gravity' | 'normal' | 'friction' | 'tension' | 'electric' | 'magnetic' | 'net' | 'other';
+  unit?: string;
+}
+
+/**
+ * 随动参考系声明（惯性参考系变换 v' = v - v_ref, r' = r - r_ref）
+ */
+export interface ReferenceFrameSpec<TParams extends ParamRecord = ParamRecord, TState = unknown> {
+  id: string;
+  label: string;
+  description?: string;
+  getOrigin: (state: TState, params: TParams) => { x: number; y: number };
+  getVelocity?: (state: TState, params: TParams) => { x: number; y: number };
+}
+
+/**
+ * 黑白打印级试卷矢量配图中间表示 (DiagramIR)
+ */
+export type DiagramPrimitive =
+  | { kind: 'line'; x1: number; y1: number; x2: number; y2: number; dashed?: boolean; strokeWidth?: number }
+  | { kind: 'arrow'; x1: number; y1: number; x2: number; y2: number; label?: string; dashed?: boolean }
+  | { kind: 'circle'; cx: number; cy: number; r: number; fill?: boolean; dashed?: boolean }
+  | { kind: 'arc'; cx: number; cy: number; r: number; startAngle: number; endAngle: number; dashed?: boolean }
+  | { kind: 'rect'; x: number; y: number; width: number; height: number; hatch?: boolean; dashed?: boolean }
+  | { kind: 'polyline'; points: readonly { x: number; y: number }[]; dashed?: boolean; closed?: boolean }
+  | { kind: 'text'; x: number; y: number; text: string; align?: 'start' | 'middle' | 'end' }
+  | { kind: 'fieldSymbol'; x: number; y: number; symbol: 'cross' | 'dot' };
+
+export interface DiagramExportOptions {
+  showVelocityVectors?: boolean;
+  showTrajectory?: boolean;
+  showForceLabels?: boolean;
+  monochrome?: boolean;
+}
+
+export interface DiagramIR {
+  width: number;
+  height: number;
+  viewBox: { minX: number; minY: number; maxX: number; maxY: number };
+  title: string;
+  primitives: readonly DiagramPrimitive[];
+  metadata?: Record<string, string>;
+}
+
+/**
+ * 可序列化教学场景描述 (SceneDSL)
+ */
+export interface SceneDSL {
+  schemaVersion: '2.0';
+  modelId: string;
+  presetId?: string;
+  title?: string;
+  params: ParamRecord;
+  visibleLayers?: string[];
+  activeFrameId?: string;
+  notes?: string;
+}
+
+/**
+ * Three.js 原生命令式挂载句柄（严禁依赖 R3F，必须支持无泄漏 dispose）
+ */
+export interface ThreeSceneBridge<TParams extends ParamRecord = ParamRecord, TState = unknown> {
+  sync: (state: TState, params: TParams, activeLayers: ReadonlySet<string>) => void;
+  resize: (width: number, height: number) => void;
+  dispose: () => void;
+}
+
+/**
+ * PhysForge 统一仿真插件契约（V1.0 基线）
  */
 export interface SimulationPlugin<TParams extends ParamRecord, TState> {
   meta: SimulationMeta;
@@ -221,6 +313,42 @@ export interface SimulationPlugin<TParams extends ParamRecord, TState> {
     activeLayers: ReadonlySet<string>
   ) => void;
   formatFormulas?: (state: TState, params: TParams) => FormulaDisplayItem[];
+}
+
+/**
+ * PhysForge V2.0 仿真插件扩展契约（100% 向后兼容 V1.0 插件）
+ */
+export interface SimulationPluginV2<TParams extends ParamRecord = ParamRecord, TState = unknown>
+  extends SimulationPlugin<TParams, TState> {
+  renderMode?: 'canvas2d' | 'three3d' | 'hybrid';
+  getControlHandles?: (state: TState, params: TParams) => ControlHandle[];
+  getForceVectors?: (state: TState, params: TParams) => ForceVectorItem[];
+  referenceFrames?: readonly ReferenceFrameSpec<TParams, TState>[];
+  sceneSerializer?: {
+    exportScene: (state: TState, params: TParams) => SceneDSL;
+    importScene: (dsl: SceneDSL) => Partial<TParams>;
+  };
+  exportDiagramIR?: (state: TState, params: TParams, options?: DiagramExportOptions) => DiagramIR;
+  mountThreeScene?: (container: HTMLElement) => ThreeSceneBridge<TParams, TState>;
+}
+
+/**
+ * 判断插件实例是否声明了任意 V2 交互或导出能力
+ */
+export function isSimulationPluginV2<TParams extends ParamRecord, TState>(
+  plugin: SimulationPlugin<TParams, TState>
+): plugin is SimulationPluginV2<TParams, TState> {
+  const candidate = plugin as SimulationPluginV2<TParams, TState>;
+  return (
+    typeof candidate.getControlHandles === 'function' ||
+    typeof candidate.getForceVectors === 'function' ||
+    Array.isArray(candidate.referenceFrames) ||
+    typeof candidate.sceneSerializer === 'object' ||
+    typeof candidate.exportDiagramIR === 'function' ||
+    typeof candidate.mountThreeScene === 'function' ||
+    candidate.renderMode === 'three3d' ||
+    candidate.renderMode === 'hybrid'
+  );
 }
 
 /**
@@ -271,11 +399,11 @@ export function resolvePluginParams<TParams extends ParamRecord>(
 }
 
 /**
- * 注册并校验仿真插件定义的结构完整性
+ * 注册并校验仿真插件定义的结构完整性（同时兼容 V1.0 与 V2.0 插件契约）
  */
 export function defineSimulationPlugin<TParams extends ParamRecord, TState>(
-  plugin: SimulationPlugin<TParams, TState>
-): SimulationPlugin<TParams, TState> {
+  plugin: SimulationPluginV2<TParams, TState>
+): SimulationPluginV2<TParams, TState> {
   if (!plugin.meta.id.trim()) {
     throw new Error('SimulationPlugin meta.id must be a non-empty string.');
   }

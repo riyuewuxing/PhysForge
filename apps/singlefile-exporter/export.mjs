@@ -101,6 +101,18 @@ async function main() {
   if (model !== 'mech-free-sandbox' && html.includes('rapier_wasm2d')) {
     throw new Error(`Singlefile bundle ${finalOutPath} must not include Rapier2D WASM!`);
   }
+  if (html.includes('papaparse') || html.includes('PapaParse')) {
+    throw new Error(`Singlefile bundle ${finalOutPath} must not include papaparse!`);
+  }
+  if (html.includes('fflate') && html.includes('physforge-workspace-vault')) {
+    throw new Error(`Singlefile bundle ${finalOutPath} must not include workspace-vault/fflate!`);
+  }
+  if (html.includes('OrbitControls') || html.includes('THREE.WebGLRenderer')) {
+    throw new Error(`Singlefile bundle ${finalOutPath} must not include Three.js!`);
+  }
+  if (html.includes('mathjs')) {
+    throw new Error(`Singlefile bundle ${finalOutPath} must not include mathjs!`);
+  }
 
   const sizeKb = (Buffer.byteLength(html, 'utf8') / 1024).toFixed(1);
   console.log(`Exported singlefile HTML for "${model}" -> ${finalOutPath} (${sizeKb} KB)`);

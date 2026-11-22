@@ -1,12 +1,39 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
-import type { ParamRecord, PhysicsEvent, Viewport } from '@physforge/sim-sdk';
+import type {
+  ControlHandle,
+  ParamRecord,
+  ParamValue,
+  PhysicsEvent,
+  SimulationPluginV2,
+  Viewport
+} from '@physforge/sim-sdk';
+import {
+  DEFAULT_CAMERA_TRANSFORM,
+  getPixelsPerMeter,
+  panViewport,
+  screenToWorld,
+  worldToScreen,
+  zoomViewportAtCursor,
+  type CameraTransform
+} from '../stage/ViewportController.js';
+import { RulerToolboxOverlay, type MeasureToolKind } from '../stage/RulerToolboxOverlay.js';
+import { AutoFbdBadge, renderAutoFbdToCanvas } from '../stage/AutoFbdOverlay.js';
+
+const LazyThreeStage = React.lazy(() =>
+  import('../stage/ThreeStage.js').then((m) => ({ default: m.ThreeStage }))
+);
 
 interface SnapshotFrame {
   t: number;
   state: unknown;
+  observables: Record<string, number>;
+}
+
+export interface RecordedTelemetryFrame {
+  t: number;
   observables: Record<string, number>;
 }
 
@@ -19,10 +46,19 @@ interface SimulationStageProps {
   strobeEnabled: boolean;
   poeMasked: boolean;
   theme: ClassroomTheme;
+  measureTool: MeasureToolKind;
+  autoFbdEnabled: boolean;
+  fbdComponentsEnabled: boolean;
+  activeFrameId: string;
+  view3dEnabled: boolean;
+  resetViewNonce: number;
   resetNonce: number;
   stepOnceNonce: number;
   scrubTime: number | null;
   canvasRefExternal?: React.RefObject<HTMLCanvasElement | null>;
+  onResetView: () => void;
+  onUpdateParamsBatch: (patch: Record<string, ParamValue>, label?: string) => void;
+  onRegisterSnapshotsGetter?: (getter: () => readonly RecordedTelemetryFrame[]) => void;
   onScrubTime: (t: number | null) => void;
   onTogglePoeMask: () => void;
   onTelemetryUpdate: (summary: TelemetrySummary) => void;
@@ -60,10 +96,19 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   strobeEnabled,
   poeMasked,
   theme,
+  measureTool,
+  autoFbdEnabled,
+  fbdComponentsEnabled,
+  activeFrameId,
+  view3dEnabled,
+  resetViewNonce,
   resetNonce,
   stepOnceNonce,
   scrubTime,
   canvasRefExternal,
+  onResetView,
+  onUpdateParamsBatch,
+  onRegisterSnapshotsGetter,
   onScrubTime,
   onTogglePoeMask,
   onTelemetryUpdate
@@ -102,6 +147,24 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     offsetY: 0
   });
 
+  const [zoomPercent, setZoomPercent] = useState<number>(100);
+  const [fbdCount, setFbdCount] = useState<number>(0);
+  const fbdCountRef = useRef<number>(0);
+  const [overlayViewport, setOverlayViewport] = useState<Viewport>({
+    width: 800,
+    height: 460,
+    dpr: 1,
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0
+  });
+  const cameraRef = useRef<CameraTransform>(DEFAULT_CAMERA_TRANSFORM);
+  const dragModeRef = useRef<
+    | { kind: 'pan'; lastX: number; lastY: number }
+    | { kind: 'handle'; handle: ControlHandle }
+    | null
+  >(null);
+
   // 最新 props ref 供 rAF 与 uPlot hook 无闭包陈旧值访问
   const latestRef = useRef({
     plugin,
@@ -112,9 +175,13 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     strobeEnabled,
     poeMasked,
     theme,
+    autoFbdEnabled,
+    fbdComponentsEnabled,
+    activeFrameId,
     scrubTime,
     channelA,
     channelB,
+    onUpdateParamsBatch,
     onScrubTime,
     onTelemetryUpdate
   });
@@ -127,11 +194,52 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     strobeEnabled,
     poeMasked,
     theme,
+    autoFbdEnabled,
+    fbdComponentsEnabled,
+    activeFrameId,
     scrubTime,
     channelA,
     channelB,
+    onUpdateParamsBatch,
     onScrubTime,
     onTelemetryUpdate
+  };
+
+  useEffect(() => {
+    onRegisterSnapshotsGetter?.(() =>
+      snapshotsRef.current.map((s) => ({ t: s.t, observables: s.observables }))
+    );
+  }, [onRegisterSnapshotsGetter]);
+
+  const computeEffectiveViewport = (baseVp: Viewport, drawState: unknown): {
+    effectiveVp: Viewport;
+    frameOrigin: { x: number; y: number };
+  } => {
+    const cam = cameraRef.current;
+    const zoomedVp: Viewport = {
+      ...baseVp,
+      scale: cam.scale,
+      offsetX: cam.offsetX,
+      offsetY: cam.offsetY
+    };
+    const { plugin: p, params: pm, activeFrameId: frameId } = latestRef.current;
+    const v2 = p as SimulationPluginV2<ParamRecord, unknown>;
+    let frameOrigin = { x: 0, y: 0 };
+    if (frameId !== 'ground' && drawState !== null && v2.referenceFrames) {
+      const spec = v2.referenceFrames.find((f) => f.id === frameId);
+      if (spec) {
+        frameOrigin = spec.getOrigin(drawState, pm);
+      }
+    }
+    const ppm = getPixelsPerMeter(zoomedVp);
+    return {
+      frameOrigin,
+      effectiveVp: {
+        ...zoomedVp,
+        offsetX: zoomedVp.offsetX - frameOrigin.x * ppm,
+        offsetY: zoomedVp.offsetY + frameOrigin.y * ppm
+      }
+    };
   };
 
   const renderFrameToCanvas = () => {
@@ -147,22 +255,25 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       strobeEnabled: strobe,
       poeMasked: masked,
       theme: currentTheme,
+      autoFbdEnabled: showFbd,
+      fbdComponentsEnabled: showFbdComp,
       scrubTime: scrub
     } = latestRef.current;
 
-    const vp = viewportRef.current;
+    const baseVp = viewportRef.current;
     ctx.save();
-    ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
+    ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
 
     // 清空背景（高对比投影白底或黑板深蓝）
     ctx.fillStyle = currentTheme === 'projector' ? '#ffffff' : '#091220';
-    ctx.fillRect(0, 0, vp.width, vp.height);
+    ctx.fillRect(0, 0, baseVp.width, baseVp.height);
 
     const frame =
       scrub !== null
         ? findClosestSnapshot(snapshotsRef.current, scrub)
         : snapshotsRef.current[snapshotsRef.current.length - 1] ?? null;
     const drawState = frame ? frame.state : simStateRef.current;
+    const { effectiveVp: vp, frameOrigin } = computeEffectiveViewport(baseVp, drawState);
 
     if (drawState !== null) {
       const layerSet = new Set(layersArr);
@@ -179,7 +290,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       // 壳层统一 Strobe 频闪打点叠加
       if (strobe && !masked && snapshotsRef.current.length > 2) {
         const currentT = frame ? frame.t : 0;
-        const pxPerMeter = Math.min(vp.width, vp.height) * 0.24 * vp.scale;
+        const pxPerMeter = getPixelsPerMeter(vp);
         const ox = vp.width * 0.45 + vp.offsetX;
         const oy = vp.height * 0.5 + vp.offsetY;
         let lastMarkT = -1;
@@ -197,6 +308,68 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             ctx.fill();
           }
         }
+        ctx.restore();
+      }
+
+      const v2 = p as SimulationPluginV2<ParamRecord, unknown>;
+      // V2 Auto-FBD 受力矢量与正交分解叠绘
+      if (showFbd && !masked && v2.getForceVectors) {
+        const vectors = v2.getForceVectors(drawState, pm);
+        renderAutoFbdToCanvas(ctx, {
+          vectors,
+          viewport: vp,
+          frameOrigin: { x: 0, y: 0 },
+          showComponents: showFbdComp
+        });
+        if (vectors.length !== fbdCountRef.current) {
+          fbdCountRef.current = vectors.length;
+          setFbdCount(vectors.length);
+        }
+      } else if (fbdCountRef.current !== 0) {
+        fbdCountRef.current = 0;
+        setFbdCount(0);
+      }
+
+      // V2 画布直操手柄渲染
+      if (!masked && v2.getControlHandles) {
+        const handles = v2.getControlHandles(drawState, pm);
+        ctx.save();
+        for (const h of handles) {
+          const sPos = worldToScreen(h.position.x, h.position.y, vp);
+          if (h.origin) {
+            const sOrig = worldToScreen(h.origin.x, h.origin.y, vp);
+            ctx.setLineDash([4, 3]);
+            ctx.strokeStyle = h.color ?? '#38bdf8';
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.moveTo(sOrig.x, sOrig.y);
+            ctx.lineTo(sPos.x, sPos.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+          ctx.fillStyle = h.color ?? '#38bdf8';
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sPos.x, sPos.y, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.font = 'bold 11px sans-serif';
+          ctx.fillText(h.label, sPos.x + 10, sPos.y + 4);
+        }
+        ctx.restore();
+      }
+
+      // 若锁定在运动随动参考系，标注左下提示
+      if (latestRef.current.activeFrameId !== 'ground') {
+        ctx.save();
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.9)';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(
+          `随动参考系锁定: (${frameOrigin.x.toFixed(2)}, ${frameOrigin.y.toFixed(2)}) m`,
+          14,
+          vp.height - 14
+        );
         ctx.restore();
       }
     }
@@ -303,11 +476,59 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     emitTelemetrySummary(true);
   }, [stepOnceNonce]);
 
-  // 响应图层、主题、回放指针等非物理步进重绘
+  // 响应图层、主题、回放指针、FBD、参考系等非物理步进重绘
   useEffect(() => {
     renderFrameToCanvas();
     emitTelemetrySummary(true);
-  }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime]);
+  }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
+
+  // 响应视角复位
+  useEffect(() => {
+    if (resetViewNonce === 0) return;
+    cameraRef.current = DEFAULT_CAMERA_TRANSFORM;
+    viewportRef.current = {
+      ...viewportRef.current,
+      scale: 1,
+      offsetX: 0,
+      offsetY: 0
+    };
+    setZoomPercent(100);
+    setOverlayViewport(viewportRef.current);
+    renderFrameToCanvas();
+  }, [resetViewNonce]);
+
+  // 鼠标滚轮以指针为锚点缩放 (0.1x ~ 20x)
+  useEffect(() => {
+    const box = stageBoxRef.current;
+    if (!box) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = box.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const next = zoomViewportAtCursor(
+        cameraRef.current,
+        cx,
+        cy,
+        viewportRef.current.width,
+        viewportRef.current.height,
+        factor
+      );
+      cameraRef.current = next;
+      viewportRef.current = {
+        ...viewportRef.current,
+        scale: next.scale,
+        offsetX: next.offsetX,
+        offsetY: next.offsetY
+      };
+      setZoomPercent(Math.round(next.scale * 100));
+      setOverlayViewport(viewportRef.current);
+      renderFrameToCanvas();
+    };
+    box.addEventListener('wheel', handleWheel, { passive: false });
+    return () => box.removeEventListener('wheel', handleWheel);
+  }, []);
 
   // 响应通道切换更新示波器曲线
   useEffect(() => {
@@ -335,6 +556,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         height,
         dpr
       };
+      setOverlayViewport(viewportRef.current);
       renderFrameToCanvas();
     };
 
@@ -498,13 +720,117 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       {/* 主 Canvas 画布容器 */}
       <div
         ref={stageBoxRef}
+        data-testid="stage-canvas-box"
         className="relative flex-1 min-h-[260px] rounded-xl overflow-hidden border"
         style={{
           borderColor: 'var(--pf-border)',
           backgroundColor: 'var(--pf-canvas-bg)'
         }}
       >
-        <canvas ref={canvasRef} data-testid="simulation-canvas" className="block w-full h-full" />
+        {view3dEnabled ? (
+          <Suspense
+            fallback={
+              <div className="w-full h-full flex items-center justify-center text-sky-300 text-sm">
+                正在按需加载 Vanilla Three.js 3D 舞台...
+              </div>
+            }
+          >
+            <LazyThreeStage
+              plugin={plugin as SimulationPluginV2<ParamRecord, unknown>}
+              simState={simStateRef.current}
+              params={params}
+              activeLayers={new Set(activeLayers)}
+            />
+          </Suspense>
+        ) : (
+          <canvas
+            ref={canvasRef}
+            data-testid="simulation-canvas"
+            className="block w-full h-full touch-none cursor-grab active:cursor-grabbing"
+            onPointerDown={(e) => {
+              const canvas = canvasRef.current;
+              if (!canvas) return;
+              const rect = canvas.getBoundingClientRect();
+              const sx = e.clientX - rect.left;
+              const sy = e.clientY - rect.top;
+              const v2 = plugin as SimulationPluginV2<ParamRecord, unknown>;
+              const state = simStateRef.current;
+              const { effectiveVp } = computeEffectiveViewport(viewportRef.current, state);
+              if (state !== null && v2.getControlHandles && e.button === 0) {
+                const handles = v2.getControlHandles(state, params);
+                for (const h of handles) {
+                  const hs = worldToScreen(h.position.x, h.position.y, effectiveVp);
+                  if (Math.hypot(hs.x - sx, hs.y - sy) <= 14) {
+                    canvas.setPointerCapture?.(e.pointerId);
+                    dragModeRef.current = { kind: 'handle', handle: h };
+                    return;
+                  }
+                }
+              }
+              canvas.setPointerCapture?.(e.pointerId);
+              dragModeRef.current = { kind: 'pan', lastX: e.clientX, lastY: e.clientY };
+            }}
+            onPointerMove={(e) => {
+              const mode = dragModeRef.current;
+              if (!mode) return;
+              const canvas = canvasRef.current;
+              if (!canvas) return;
+              if (mode.kind === 'handle') {
+                const rect = canvas.getBoundingClientRect();
+                const sx = e.clientX - rect.left;
+                const sy = e.clientY - rect.top;
+                const { effectiveVp } = computeEffectiveViewport(
+                  viewportRef.current,
+                  simStateRef.current
+                );
+                const world = screenToWorld(sx, sy, effectiveVp);
+                onUpdateParamsBatch(mode.handle.onDrag(world), `拖拽手柄 ${mode.handle.label}`);
+              } else {
+                const dx = e.clientX - mode.lastX;
+                const dy = e.clientY - mode.lastY;
+                mode.lastX = e.clientX;
+                mode.lastY = e.clientY;
+                const next = panViewport(cameraRef.current, dx, dy);
+                cameraRef.current = next;
+                viewportRef.current = {
+                  ...viewportRef.current,
+                  offsetX: next.offsetX,
+                  offsetY: next.offsetY
+                };
+                setOverlayViewport(viewportRef.current);
+                renderFrameToCanvas();
+              }
+            }}
+            onPointerUp={() => {
+              dragModeRef.current = null;
+            }}
+            onPointerCancel={() => {
+              dragModeRef.current = null;
+            }}
+          />
+        )}
+
+        {/* V2 实测工具箱叠加层（虚拟直尺 / 0.1° 量角器 / 三点圆规） */}
+        <RulerToolboxOverlay
+          activeTool={measureTool}
+          viewport={overlayViewport}
+          frameOrigin={computeEffectiveViewport(overlayViewport, simStateRef.current).frameOrigin}
+        />
+
+        <AutoFbdBadge active={autoFbdEnabled && !poeMasked} count={fbdCount} />
+
+        {/* 右上角视口缩放 HUD */}
+        <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5 rounded-lg bg-slate-900/80 border border-slate-700/70 px-2 py-1 text-xs font-mono text-slate-200">
+          <span data-testid="viewport-zoom-badge">{zoomPercent}%</span>
+          <button
+            type="button"
+            data-testid="btn-reset-view"
+            onClick={onResetView}
+            className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 cursor-pointer"
+          >
+            居中
+          </button>
+        </div>
 
         {/* POE 预测遮罩层 */}
         {poeMasked && (

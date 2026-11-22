@@ -1,27 +1,44 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   BookOpen,
+  Compass,
   Eye,
   EyeOff,
   Maximize2,
   Minimize2,
+  MoveDiagonal2,
   Pause,
   PenTool,
   Play,
+  Redo2,
   RotateCcw,
+  Ruler,
+  Search,
   Sparkles,
   StepForward,
-  SunMoon
+  SunMoon,
+  Undo2
 } from 'lucide-react';
 import { getSimulationById, simulationPlugins } from '@physforge/simulations/registry';
+import type { ParamRecord, SimulationPluginV2 } from '@physforge/sim-sdk';
 import { useClassroomStore } from './store/useClassroomStore.js';
-import { SimulationStage } from './components/SimulationStage.js';
+import { SimulationStage, type RecordedTelemetryFrame } from './components/SimulationStage.js';
 import { LeftCatalogSidebar } from './components/LeftCatalogSidebar.js';
 import { RightControlPanel } from './components/RightControlPanel.js';
 import { TeachingPackDrawer } from './components/TeachingPackDrawer.js';
+import type { MeasureToolKind } from './stage/RulerToolboxOverlay.js';
 
 const LazyExcalidrawOverlay = React.lazy(() =>
   import('./components/ExcalidrawOverlay.js').then((m) => ({ default: m.ExcalidrawOverlay }))
+);
+
+const LazyAnalysisLabDrawer = React.lazy(() =>
+  import('./components/AnalysisLabDrawer.js').then((m) => ({ default: m.AnalysisLabDrawer }))
+);
+
+const LazyCommandPalette = React.lazy(() =>
+  import('./components/CommandPalette.js').then((m) => ({ default: m.CommandPalette }))
 );
 
 const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
@@ -29,24 +46,53 @@ const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
 export const App: React.FC = () => {
   const store = useClassroomStore();
   const simCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const snapshotsGetterRef = useRef<() => readonly RecordedTelemetryFrame[]>(() => []);
   const [teachingPackOpen, setTeachingPackOpen] = useState(false);
+  const [analysisLabOpen, setAnalysisLabOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [labFrames, setLabFrames] = useState<readonly RecordedTelemetryFrame[]>([]);
+
+  const handleRegisterSnapshotsGetter = useCallback(
+    (getter: () => readonly RecordedTelemetryFrame[]) => {
+      snapshotsGetterRef.current = getter;
+    },
+    []
+  );
 
   const plugin = useMemo(
     () => getSimulationById(store.selectedPluginId) ?? simulationPlugins[0]!,
     [store.selectedPluginId]
   );
+  const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
 
   // 同步文档主题属性
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', store.theme);
   }, [store.theme]);
 
-  // 课堂快捷键支持（1-5 预设、Space 播放暂停、S 单步、R 重置、P 遮罩、B 大屏、A 批注）
+  // 课堂快捷键支持（Ctrl+K 全局检索、Ctrl+Z/Shift+Z 撤销重做、1-9 预设、Space 播放、S 单步、R 重置、P 遮罩、B 大屏）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommandPaletteOpen((v) => !v);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) store.redoParam();
+        else store.undoParam();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        store.redoParam();
+        return;
+      }
+
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-      if (store.annotationOpen) return;
+      if (store.annotationOpen || commandPaletteOpen) return;
 
       if (e.key === ' ') {
         e.preventDefault();
@@ -69,7 +115,11 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [plugin, store.annotationOpen]);
+  }, [plugin, store.annotationOpen, commandPaletteOpen]);
+
+  const toggleMeasureTool = (tool: Exclude<MeasureToolKind, 'none'>) => {
+    store.setMeasureTool(store.measureTool === tool ? 'none' : tool);
+  };
 
   return (
     <div
@@ -229,6 +279,156 @@ export const App: React.FC = () => {
 
           <button
             type="button"
+            data-testid="btn-undo"
+            disabled={!store.canUndo}
+            onClick={store.undoParam}
+            title="撤销 (Ctrl+Z)"
+            className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer disabled:opacity-40"
+            style={{ borderColor: 'var(--pf-border)' }}
+          >
+            <Undo2 className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-redo"
+            disabled={!store.canRedo}
+            onClick={store.redoParam}
+            title="重做 (Ctrl+Shift+Z)"
+            className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer disabled:opacity-40"
+            style={{ borderColor: 'var(--pf-border)' }}
+          >
+            <Redo2 className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-tool-ruler"
+            onClick={() => toggleMeasureTool('ruler')}
+            title="虚拟直尺"
+            className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{
+              borderColor: store.measureTool === 'ruler' ? 'var(--pf-accent)' : 'var(--pf-border)',
+              backgroundColor: store.measureTool === 'ruler' ? 'rgba(56, 189, 248, 0.16)' : 'transparent'
+            }}
+          >
+            <Ruler className="w-4 h-4" />
+            <span>直尺</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-tool-protractor"
+            onClick={() => toggleMeasureTool('protractor')}
+            title="0.1° 量角器"
+            className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{
+              borderColor: store.measureTool === 'protractor' ? '#fbbf24' : 'var(--pf-border)',
+              backgroundColor: store.measureTool === 'protractor' ? 'rgba(251, 191, 36, 0.16)' : 'transparent'
+            }}
+          >
+            <MoveDiagonal2 className="w-4 h-4" />
+            <span>量角器</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-tool-compass"
+            onClick={() => toggleMeasureTool('compass')}
+            title="三点圆规"
+            className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{
+              borderColor: store.measureTool === 'compass' ? '#34d399' : 'var(--pf-border)',
+              backgroundColor: store.measureTool === 'compass' ? 'rgba(52, 211, 153, 0.16)' : 'transparent'
+            }}
+          >
+            <Compass className="w-4 h-4" />
+            <span>圆规</span>
+          </button>
+
+          {v2Plugin.getForceVectors && (
+            <button
+              type="button"
+              data-testid="btn-auto-fbd"
+              onClick={store.toggleAutoFbd}
+              className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer"
+              style={{
+                borderColor: store.autoFbdEnabled ? '#fb7185' : 'var(--pf-border)',
+                backgroundColor: store.autoFbdEnabled ? 'rgba(244, 63, 94, 0.16)' : 'transparent'
+              }}
+            >
+              <span>受力FBD</span>
+            </button>
+          )}
+
+          {v2Plugin.referenceFrames && v2Plugin.referenceFrames.length > 0 && (
+            <select
+              aria-label="观察参考系"
+              data-testid="select-reference-frame"
+              value={store.activeFrameId}
+              onChange={(e) => store.setActiveFrameId(e.target.value)}
+              className="pf-touch-target rounded-xl border px-2.5 py-1.5 text-sm cursor-pointer"
+              style={{
+                borderColor: 'var(--pf-border)',
+                backgroundColor: 'var(--pf-surface-elevated)',
+                color: 'var(--pf-text)'
+              }}
+            >
+              <option value="ground">地面参考系</option>
+              {v2Plugin.referenceFrames.map((rf) => (
+                <option key={rf.id} value={rf.id}>
+                  {rf.label}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {(v2Plugin.renderMode === 'three3d' || v2Plugin.renderMode === 'hybrid' || v2Plugin.mountThreeScene) && (
+            <button
+              type="button"
+              data-testid="btn-view-3d"
+              onClick={store.toggleView3d}
+              className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer"
+              style={{
+                borderColor: store.view3dEnabled ? 'var(--pf-accent)' : 'var(--pf-border)',
+                backgroundColor: store.view3dEnabled ? 'rgba(56, 189, 248, 0.16)' : 'transparent'
+              }}
+            >
+              <span>{store.view3dEnabled ? '切回 2D' : '3D 视角'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            data-testid="btn-analysis-lab"
+            onClick={() => {
+              setLabFrames(snapshotsGetterRef.current());
+              setAnalysisLabOpen(true);
+            }}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{
+              borderColor: analysisLabOpen ? 'var(--pf-accent)' : 'var(--pf-border)',
+              backgroundColor: analysisLabOpen ? 'rgba(56, 189, 248, 0.16)' : 'transparent'
+            }}
+          >
+            <Activity className="w-4 h-4" />
+            <span>数据分析</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-command-palette"
+            onClick={() => setCommandPaletteOpen(true)}
+            title="全局检索与 Vault (Ctrl+K)"
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{ borderColor: 'var(--pf-border)' }}
+          >
+            <Search className="w-4 h-4" />
+            <span>检索 Ctrl+K</span>
+          </button>
+
+          <button
+            type="button"
             data-testid="btn-teaching-pack"
             onClick={() => setTeachingPackOpen((v) => !v)}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
@@ -274,10 +474,19 @@ export const App: React.FC = () => {
             strobeEnabled={store.strobeEnabled}
             poeMasked={store.poeMasked}
             theme={store.theme}
+            measureTool={store.measureTool}
+            autoFbdEnabled={store.autoFbdEnabled}
+            fbdComponentsEnabled={store.fbdComponentsEnabled}
+            activeFrameId={store.activeFrameId}
+            view3dEnabled={store.view3dEnabled}
+            resetViewNonce={store.resetViewNonce}
             resetNonce={store.resetNonce}
             stepOnceNonce={store.stepOnceNonce}
             scrubTime={store.scrubTime}
             canvasRefExternal={simCanvasRef}
+            onResetView={store.triggerResetView}
+            onUpdateParamsBatch={store.updateParamsBatch}
+            onRegisterSnapshotsGetter={handleRegisterSnapshotsGetter}
             onScrubTime={store.setScrubTime}
             onTogglePoeMask={store.togglePoeMask}
             onTelemetryUpdate={store.setTelemetry}
@@ -329,6 +538,45 @@ export const App: React.FC = () => {
           }}
           onClose={() => setTeachingPackOpen(false)}
         />
+      )}
+
+      {analysisLabOpen && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/70 text-sky-300 font-semibold">
+              正在按需加载数据分析实验室...
+            </div>
+          }
+        >
+          <LazyAnalysisLabDrawer
+            plugin={plugin}
+            params={store.params}
+            frames={labFrames}
+            theme={store.theme}
+            onScrubTime={store.setScrubTime}
+            onClose={() => setAnalysisLabOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      {commandPaletteOpen && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 text-sky-300 font-semibold">
+              正在加载全局索引与 Vault 资产库...
+            </div>
+          }
+        >
+          <LazyCommandPalette
+            currentModelId={plugin.meta.id}
+            currentModelTitle={plugin.meta.title}
+            currentParams={store.params}
+            onSelectModelPreset={(modelId, presetId, overrideParams) =>
+              store.applyExternalState(modelId, presetId, overrideParams)
+            }
+            onClose={() => setCommandPaletteOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

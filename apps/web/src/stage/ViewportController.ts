@@ -1,0 +1,97 @@
+import type { Viewport } from '@physforge/sim-sdk';
+
+export interface CameraTransform {
+  readonly scale: number;
+  readonly offsetX: number;
+  readonly offsetY: number;
+}
+
+export const MIN_ZOOM_SCALE = 0.1;
+export const MAX_ZOOM_SCALE = 20.0;
+
+export function clampZoomScale(scale: number): number {
+  if (!Number.isFinite(scale)) return 1;
+  return Math.max(MIN_ZOOM_SCALE, Math.min(MAX_ZOOM_SCALE, scale));
+}
+
+export function getViewportAnchor(width: number, height: number): { cx: number; cy: number } {
+  return { cx: width * 0.45, cy: height * 0.5 };
+}
+
+export function getPixelsPerMeter(viewport: Viewport): number {
+  return Math.min(viewport.width, viewport.height) * 0.24 * viewport.scale;
+}
+
+export function worldToScreen(
+  worldX: number,
+  worldY: number,
+  viewport: Viewport,
+  frameOrigin: { x: number; y: number } = { x: 0, y: 0 }
+): { x: number; y: number } {
+  const ppm = getPixelsPerMeter(viewport);
+  const { cx, cy } = getViewportAnchor(viewport.width, viewport.height);
+  const ox = cx + viewport.offsetX;
+  const oy = cy + viewport.offsetY;
+  return {
+    x: ox + (worldX - frameOrigin.x) * ppm,
+    y: oy - (worldY - frameOrigin.y) * ppm
+  };
+}
+
+export function screenToWorld(
+  screenX: number,
+  screenY: number,
+  viewport: Viewport,
+  frameOrigin: { x: number; y: number } = { x: 0, y: 0 }
+): { x: number; y: number } {
+  const ppm = Math.max(1e-6, getPixelsPerMeter(viewport));
+  const { cx, cy } = getViewportAnchor(viewport.width, viewport.height);
+  const ox = cx + viewport.offsetX;
+  const oy = cy + viewport.offsetY;
+  return {
+    x: frameOrigin.x + (screenX - ox) / ppm,
+    y: frameOrigin.y - (screenY - oy) / ppm
+  };
+}
+
+/**
+ * 以鼠标指针所在屏幕坐标 (cursorX, cursorY) 为锚点进行无级缩放 (0.1x ~ 20x)
+ */
+export function zoomViewportAtCursor(
+  prev: CameraTransform,
+  cursorX: number,
+  cursorY: number,
+  width: number,
+  height: number,
+  zoomFactor: number
+): CameraTransform {
+  const nextScale = clampZoomScale(prev.scale * zoomFactor);
+  if (Math.abs(nextScale - prev.scale) < 1e-9) return prev;
+  const { cx, cy } = getViewportAnchor(width, height);
+  const ratio = nextScale / prev.scale;
+  const dx = cursorX - cx;
+  const dy = cursorY - cy;
+  return {
+    scale: nextScale,
+    offsetX: dx - (dx - prev.offsetX) * ratio,
+    offsetY: dy - (dy - prev.offsetY) * ratio
+  };
+}
+
+export function panViewport(
+  prev: CameraTransform,
+  deltaX: number,
+  deltaY: number
+): CameraTransform {
+  return {
+    scale: prev.scale,
+    offsetX: prev.offsetX + deltaX,
+    offsetY: prev.offsetY + deltaY
+  };
+}
+
+export const DEFAULT_CAMERA_TRANSFORM: CameraTransform = {
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0
+};

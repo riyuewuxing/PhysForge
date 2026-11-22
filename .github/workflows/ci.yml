@@ -1,0 +1,45 @@
+name: PhysForge CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm verify:packs
+      - run: pnpm build
+      - name: Check first-screen JS gzip budget (< 350 KB)
+        run: |
+          node -e "
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const zlib = require('node:zlib');
+            const html = fs.readFileSync('apps/web/dist/index.html', 'utf8');
+            const match = html.match(/src=\"[^\"]*assets\/(index-[^\"]+\.js)\"/);
+            if (!match) throw new Error('Main entry JS not found in index.html');
+            const jsPath = path.join('apps/web/dist/assets', match[1]);
+            const gzBytes = zlib.gzipSync(fs.readFileSync(jsPath)).byteLength;
+            const gzKb = gzBytes / 1024;
+            console.log('Main JS chunk:', match[1], gzKb.toFixed(2), 'KB gzip');
+            if (gzKb >= 350) throw new Error('Main JS chunk exceeds 350 KB gzip limit!');
+            const raw = fs.readFileSync(jsPath, 'utf8');
+            for (const banned of ['OrbitControls', 'papaparse', 'rapier_wasm2d', '@excalidraw/excalidraw', 'physforge-workspace-vault', 'mathjs']) {
+              if (raw.includes(banned)) throw new Error('Main chunk eagerly bundled heavy dependency: ' + banned);
+            }
+          "
+      - run: pnpm export:singlefile -- --model=em-bounded-magnetic-field

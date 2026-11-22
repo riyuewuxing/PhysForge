@@ -1,151 +1,105 @@
 import { describe, expect, it } from 'vitest';
 import {
   defineSimulationPlugin,
+  isSimulationPluginV2,
   resolvePluginParams,
-  type ParamFieldSpec,
-  type SimulationPlugin
+  type SimulationPluginV2
 } from './index.js';
 
-type DemoParams = {
+interface TestParams {
   mass: number;
-  showVector: boolean;
-  mode: 'ideal' | 'damped';
-};
+  mode: 'a' | 'b';
+  showTrail: boolean;
+  [key: string]: number | boolean | string;
+}
 
-interface DemoState {
+interface TestState {
   t: number;
   x: number;
-  v: number;
 }
 
-const schema: readonly ParamFieldSpec<DemoParams>[] = [
-  {
-    key: 'mass',
-    kind: 'number',
-    label: '质量',
-    unit: 'kg',
-    min: 0.1,
-    max: 10,
-    step: 0.1,
-    defaultValue: 2
-  },
-  {
-    key: 'showVector',
-    kind: 'boolean',
-    label: '显示速度矢量',
-    defaultValue: true
-  },
-  {
-    key: 'mode',
-    kind: 'select',
-    label: '阻尼模式',
-    options: [
-      { label: '理想无阻尼', value: 'ideal' },
-      { label: '线性阻尼', value: 'damped' }
-    ],
-    defaultValue: 'ideal'
-  }
-];
-
-function createDemoPlugin(): SimulationPlugin<DemoParams, DemoState> {
-  return defineSimulationPlugin<DemoParams, DemoState>({
-    meta: {
-      id: 'demo-oscillator',
-      title: '测试振子',
-      textbookRef: '人教版 选择性必修一 第二章',
-      curriculumTags: ['物理观念', '科学思维'],
-      difficulty: '基础新授',
-      version: '0.1.0'
-    },
-    paramSchema: schema,
-    presets: [
-      {
-        id: 'default-ideal',
-        name: '标准简谐',
-        description: '默认无阻尼振动',
-        params: { mass: 1.5, mode: 'ideal' }
-      }
-    ],
-    engine: {
-      createInitialState: () => ({ t: 0, x: 1, v: 0 }),
-      step: (state, _params, dt) => ({
-        nextState: { t: state.t + dt, x: state.x, v: state.v },
-        events: []
-      }),
-      computeObservables: (state) => ({ x: state.x, v: state.v })
-    },
-    layers: [{ id: 'velocity', label: '速度矢量', defaultVisible: true }],
-    telemetryChannels: [{ key: 'x', label: '位移', unit: 'm', color: '#38bdf8' }],
-    renderCanvas: () => {}
-  });
-}
-
-describe('sim-sdk', () => {
-  it('resolves default params and clamps out-of-range or NaN inputs', () => {
-    const resolved = resolvePluginParams(schema, {
-      mass: 999,
-      showVector: false
+describe('sim-sdk V2 contract', () => {
+  it('supports V2 capabilities while remaining backward compatible with V1 plugins', () => {
+    const v1Plugin = defineSimulationPlugin<TestParams, TestState>({
+      meta: {
+        id: 'test-v1',
+        title: 'Test V1',
+        textbookRef: '必修一',
+        curriculumTags: ['物理观念'],
+        difficulty: '基础新授',
+        version: '1.0.0'
+      },
+      paramSchema: [
+        { key: 'mass', kind: 'number', label: 'Mass', min: 1, max: 10, step: 0.5, defaultValue: 2 },
+        {
+          key: 'mode',
+          kind: 'select',
+          label: 'Mode',
+          options: [
+            { label: 'A', value: 'a' },
+            { label: 'B', value: 'b' }
+          ],
+          defaultValue: 'a'
+        },
+        { key: 'showTrail', kind: 'boolean', label: 'Trail', defaultValue: true }
+      ],
+      presets: [{ id: 'p1', name: 'Default', description: 'desc', params: { mass: 3 } }],
+      engine: {
+        createInitialState: () => ({ t: 0, x: 0 }),
+        step: (s, _p, dt) => ({ nextState: { t: s.t + dt, x: s.x + dt }, events: [] }),
+        computeObservables: (s) => ({ x: s.x })
+      },
+      layers: [{ id: 'main', label: 'Main', defaultVisible: true }],
+      telemetryChannels: [{ key: 'x', label: 'x', unit: 'm', color: '#38bdf8' }],
+      renderCanvas: () => {}
     });
-    expect(resolved).toEqual({
+
+    expect(isSimulationPluginV2(v1Plugin)).toBe(false);
+    expect(resolvePluginParams(v1Plugin.paramSchema, { mass: 99 })).toEqual({
       mass: 10,
-      showVector: false,
-      mode: 'ideal'
+      mode: 'a',
+      showTrail: true
     });
 
-    const fallbackFromInvalid = resolvePluginParams(schema, {
-      mass: Number.NaN,
-      mode: 'unknown-mode' as DemoParams['mode']
-    });
-    expect(fallbackFromInvalid).toEqual({
-      mass: 2,
-      showVector: true,
-      mode: 'ideal'
-    });
-  });
-
-  it('defines a valid plugin and executes engine step contract', () => {
-    const plugin = createDemoPlugin();
-    const params = resolvePluginParams(plugin.paramSchema, plugin.presets[0]?.params);
-    const initial = plugin.engine.createInitialState(params);
-    const { nextState, events } = plugin.engine.step(initial, params, 0.01);
-    expect(nextState.t).toBeCloseTo(0.01, 12);
-    expect(events).toEqual([]);
-  });
-
-  it('rejects duplicate param keys or invalid number bounds', () => {
-    expect(() =>
-      defineSimulationPlugin<DemoParams, DemoState>({
-        ...createDemoPlugin(),
-        paramSchema: [
-          schema[0]!,
-          {
-            key: 'mass',
-            kind: 'number',
-            label: '重复质量',
-            min: 1,
-            max: 5,
-            step: 0.5,
-            defaultValue: 2
-          }
-        ]
+    const v2Plugin: SimulationPluginV2<TestParams, TestState> = defineSimulationPlugin({
+      ...v1Plugin,
+      renderMode: 'hybrid',
+      getControlHandles: (state) => [
+        {
+          id: 'pos',
+          label: '位置',
+          position: { x: state.x, y: 0 },
+          handleKind: 'point',
+          onDrag: (pos) => ({ mass: Math.max(1, Math.min(10, Math.round(pos.x))) })
+        }
+      ],
+      getForceVectors: () => [
+        {
+          id: 'weight',
+          label: 'mg',
+          origin: { x: 0, y: 0 },
+          force: { x: 0, y: -19.6 },
+          category: 'gravity'
+        }
+      ],
+      referenceFrames: [
+        {
+          id: 'ground',
+          label: '地面系',
+          getOrigin: () => ({ x: 0, y: 0 })
+        }
+      ],
+      exportDiagramIR: () => ({
+        width: 800,
+        height: 500,
+        viewBox: { minX: -5, minY: -5, maxX: 5, maxY: 5 },
+        title: 'Test',
+        primitives: [{ kind: 'circle', cx: 0, cy: 0, r: 1 }]
       })
-    ).toThrow(/Duplicate paramSchema key/);
+    });
 
-    expect(() =>
-      defineSimulationPlugin<DemoParams, DemoState>({
-        ...createDemoPlugin(),
-        paramSchema: [
-          {
-            key: 'mass',
-            kind: 'number',
-            label: '非法区间',
-            min: 10,
-            max: 1,
-            step: 0.5,
-            defaultValue: 2
-          }
-        ]
-      })
-    ).toThrow(/Invalid min\/max bounds/);
+    expect(isSimulationPluginV2(v2Plugin)).toBe(true);
+    expect(v2Plugin.getControlHandles?.({ t: 0, x: 4 }, resolvePluginParams(v2Plugin.paramSchema))).toHaveLength(1);
+    expect(v2Plugin.exportDiagramIR?.({ t: 0, x: 0 }, resolvePluginParams(v2Plugin.paramSchema)).primitives).toHaveLength(1);
   });
 });

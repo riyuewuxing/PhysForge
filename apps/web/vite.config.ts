@@ -33,8 +33,14 @@ function copyDirRecursive(srcDir: string, destDir: string): void {
   }
 }
 
+const normalizedBasePath = (() => {
+  const raw = process.env.VITE_BASE_PATH?.trim() || '/';
+  const withLeading = raw.startsWith('/') ? raw : `/${raw}`;
+  return withLeading.endsWith('/') ? withLeading : `${withLeading}/`;
+})();
+
 /**
- * 将 @excalidraw/excalidraw 本地字体与语言包映射至 /excalidraw-assets/，彻底消除运行时外网 CDN 请求
+ * 将 @excalidraw/excalidraw 本地字体与语言包映射至 ${base}excalidraw-assets/，彻底消除运行时外网 CDN 请求
  */
 function excalidrawOfflineAssetsPlugin(): Plugin {
   const excalidrawProdDir = path.resolve(
@@ -42,6 +48,7 @@ function excalidrawOfflineAssetsPlugin(): Plugin {
     'node_modules/@excalidraw/excalidraw/dist/prod'
   );
   const distAssetsDir = path.resolve(__dirname, 'dist/excalidraw-assets');
+  const baseAssetPrefix = `${normalizedBasePath}excalidraw-assets/`;
 
   const serveMiddleware = (
     req: { url?: string },
@@ -49,11 +56,16 @@ function excalidrawOfflineAssetsPlugin(): Plugin {
     next: () => void
   ) => {
     const rawUrl = req.url?.split('?')[0];
-    if (!rawUrl || !rawUrl.startsWith('/excalidraw-assets/')) {
+    if (
+      !rawUrl ||
+      (!rawUrl.startsWith(baseAssetPrefix) && !rawUrl.startsWith('/excalidraw-assets/'))
+    ) {
       next();
       return;
     }
-    const rel = rawUrl.replace(/^\/excalidraw-assets\//, '');
+    const rel = rawUrl.startsWith(baseAssetPrefix)
+      ? rawUrl.slice(baseAssetPrefix.length)
+      : rawUrl.slice('/excalidraw-assets/'.length);
     const candidate = path.resolve(excalidrawProdDir, rel);
     if (!candidate.startsWith(excalidrawProdDir) || !fs.existsSync(candidate)) {
       next();
@@ -88,6 +100,7 @@ function excalidrawOfflineAssetsPlugin(): Plugin {
 }
 
 export default defineConfig({
+  base: normalizedBasePath,
   plugins: [
     react(),
     tailwindcss(),
@@ -101,9 +114,11 @@ export default defineConfig({
         theme_color: '#0b1628',
         background_color: '#0b1628',
         display: 'standalone',
+        start_url: normalizedBasePath,
+        scope: normalizedBasePath,
         icons: [
           {
-            src: '/icon.svg',
+            src: './icon.svg',
             sizes: 'any',
             type: 'image/svg+xml'
           }
@@ -115,6 +130,9 @@ export default defineConfig({
       }
     })
   ],
+  worker: {
+    format: 'es'
+  },
   server: {
     port: 5173
   },
