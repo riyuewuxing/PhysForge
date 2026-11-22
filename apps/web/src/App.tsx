@@ -21,7 +21,6 @@ import {
   SunMoon,
   Undo2
 } from 'lucide-react';
-import { getSimulationById, simulationPlugins } from '@physforge/simulations/registry';
 import type { ParamRecord, SimulationPluginV2 } from '@physforge/sim-sdk';
 import { useClassroomStore } from './store/useClassroomStore.js';
 import { SimulationStage, type RecordedTelemetryFrame } from './components/SimulationStage.js';
@@ -65,10 +64,7 @@ export const App: React.FC = () => {
     []
   );
 
-  const plugin = useMemo(
-    () => getSimulationById(store.selectedPluginId) ?? simulationPlugins[0]!,
-    [store.selectedPluginId]
-  );
+  const plugin = store.loadedPlugin;
   const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
 
   // 同步文档主题属性

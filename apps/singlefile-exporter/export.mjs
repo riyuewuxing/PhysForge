@@ -56,7 +56,16 @@ const KNOWN_MODELS = [
   'mech-spring-separation',
   'mech-collision-recoil',
   'astro-orbital-mechanics',
-  'mech-shm-resonance'
+  'mech-shm-resonance',
+  'em-electrostatic-field',
+  'em-capacitor-millikan',
+  'em-ac-field-oscilloscope',
+  'em-wireframe-rotation',
+  'em-eddy-vortex-field',
+  'em-ac-generator-rms',
+  'em-transformer-grid',
+  'em-lc-rlc-oscillation',
+  'em-3d-magnetic-fields'
 ];
 
 function isSameModelGroup(a, b) {

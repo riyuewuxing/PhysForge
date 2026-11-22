@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Archive, FolderSync, Plus, Search, Upload, X } from 'lucide-react';
-import { simulationPlugins } from '@physforge/simulations/registry';
+import { simulationCatalog } from '@physforge/simulations/catalog';
 import type { ParamRecord } from '@physforge/sim-sdk';
 import {
   WorkspaceVaultStore,
@@ -72,7 +72,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   const searchEntries: GlobalSearchEntry[] = useMemo(() => {
     const list: GlobalSearchEntry[] = [];
-    for (const p of simulationPlugins) {
+    for (const p of simulationCatalog) {
       list.push({
         kind: 'model',
         id: `model:${p.meta.id}`,
@@ -81,17 +81,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         subtitle: `${p.meta.textbookRef} · ${p.meta.difficulty}`,
         keywords: [...p.meta.curriculumTags, p.meta.id]
       });
-      for (const preset of p.presets) {
-        list.push({
-          kind: 'preset',
-          id: `preset:${p.meta.id}:${preset.id}`,
-          modelId: p.meta.id,
-          presetId: preset.id,
-          title: `${preset.name}（${p.meta.title}）`,
-          subtitle: preset.description,
-          keywords: [p.meta.textbookRef, preset.id]
-        });
-      }
     }
     for (const rec of vaultRecords) {
       list.push({

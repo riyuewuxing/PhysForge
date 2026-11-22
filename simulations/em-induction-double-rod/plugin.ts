@@ -1,8 +1,9 @@
-import { defineSimulationPlugin, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
   checkInvariants,
   computeObservables,
   createInitialState,
+  getEffectiveL2,
   stepInduction,
   type InductionParams,
   type InductionState
@@ -43,12 +44,32 @@ const paramSchema: readonly ParamFieldSpec<InductionParams>[] = [
   {
     key: 'railWidth',
     kind: 'number',
-    label: '导轨间距 L',
+    label: '杆 1 导轨间距 L₁',
     unit: 'm',
     min: 0.5,
     max: 2.0,
     step: 0.1,
     defaultValue: 1.0
+  },
+  {
+    key: 'railWidth2',
+    kind: 'number',
+    label: '杆 2 导轨间距 L₂ (0=同 L₁)',
+    unit: 'm',
+    min: 0,
+    max: 2.0,
+    step: 0.1,
+    defaultValue: 0
+  },
+  {
+    key: 'inclineDeg',
+    kind: 'number',
+    label: '导轨倾角 θ',
+    unit: '°',
+    min: 0,
+    max: 45,
+    step: 5,
+    defaultValue: 0
   },
   {
     key: 'mass1',
@@ -172,7 +193,7 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
     textbookRef: '人教版 选择性必修二 第二章 第2–4节',
     curriculumTags: ['物理观念', '科学思维', '科学探究'],
     difficulty: '压轴专题',
-    version: '1.0.0'
+    version: '2.0.0'
   },
   paramSchema,
   presets: [
@@ -255,6 +276,47 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
         v1Initial: 0
       },
       visibleLayers: ['railsAndField', 'rods', 'currentFlow', 'forceVectors']
+    },
+    {
+      id: 'unequal-double-rod-momentum',
+      name: '5. 不等距双杆切割（L₁≠L₂ 广义动量守恒）',
+      description: '杆1在宽轨 L₁=1.2m，杆2在窄轨 L₂=0.6m，系统总动量不守恒但满足 m₁L₂v₁+m₂L₁v₂=const，终态 L₁v₁=L₂v₂。',
+      params: {
+        rodMode: 'double',
+        circuitLoad: 'resistor',
+        magneticB: 1.5,
+        railWidth: 1.2,
+        railWidth2: 0.6,
+        mass1: 2.0,
+        mass2: 1.0,
+        resistorR: 1.5,
+        rodResistance1: 0.5,
+        rodResistance2: 0.5,
+        externalForce: 0,
+        frictionMu: 0,
+        v1Initial: 4.0,
+        v2Initial: 0
+      },
+      visibleLayers: ['railsAndField', 'rods', 'currentFlow', 'forceVectors']
+    },
+    {
+      id: 'single-rod-ideal-cap-constant-force',
+      name: '6. 零阻单杆接电容器恒力驱动（a=F/(m+CB²L²)）',
+      description: '零内阻条件下恒力拉动产生等价惯量匀加速，充电电流恒定且电荷量 q=∫Idt 线性增长。',
+      params: {
+        rodMode: 'single',
+        circuitLoad: 'capacitor',
+        magneticB: 2.0,
+        railWidth: 1.0,
+        mass1: 1.0,
+        resistorR: 0,
+        rodResistance1: 0,
+        capacitance: 0.25,
+        externalForce: 4.0,
+        frictionMu: 0,
+        v1Initial: 0
+      },
+      visibleLayers: ['railsAndField', 'rods', 'currentFlow', 'forceVectors']
     }
   ],
   engine: {
@@ -276,6 +338,86 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
     { key: 'kineticEnergy', label: '总动能 Ek', unit: 'J', color: '#4ade80' },
     { key: 'jouleHeat', label: '累计焦耳热 Q', unit: 'J', color: '#fb7185' }
   ],
+  getControlHandles: (state, params) => [
+    {
+      id: 'external-force-rod1',
+      label: `F外=${params.externalForce.toFixed(1)}N`,
+      position: { x: state.x1 + Math.max(0.25, params.externalForce * 0.1), y: 0 },
+      origin: { x: state.x1, y: 0 },
+      handleKind: 'vector',
+      color: '#4ade80',
+      onDrag: (wp) => ({
+        externalForce: Number(Math.max(0, Math.min(12, (wp.x - state.x1) * 10)).toFixed(1))
+      })
+    }
+  ],
+  getForceVectors: (state, params) => {
+    const BL1 = params.magneticB * params.railWidth;
+    const fAmp = BL1 * state.current;
+    const netElectro1 =
+      params.rodMode === 'single' && params.circuitLoad === 'battery' ? fAmp : -fAmp;
+    return [
+      {
+        id: 'ampere-1',
+        label: 'F安₁',
+        origin: { x: state.x1, y: 0 },
+        force: { x: netElectro1, y: 0 },
+        category: 'magnetic',
+        color: '#fb7185'
+      },
+      {
+        id: 'ext-1',
+        label: 'F外',
+        origin: { x: state.x1, y: 0 },
+        force: { x: params.externalForce, y: 0 },
+        category: 'other',
+        color: '#4ade80'
+      }
+    ];
+  },
+  referenceFrames: [
+    {
+      id: 'rod1',
+      label: '杆 1 随动参考系',
+      getOrigin: (s) => ({ x: s.x1, y: 0 }),
+      getVelocity: (s) => ({ x: s.v1, y: 0 })
+    }
+  ],
+  sceneSerializer: {
+    exportScene: (_s, params) => ({
+      schemaVersion: '2.0',
+      modelId: 'em-induction-double-rod',
+      title: '电磁感应单杆与双杆模型',
+      params
+    }),
+    importScene: (dsl) => dsl.params as Partial<InductionParams>
+  },
+  exportDiagramIR: (state, params) => {
+    const L1 = params.railWidth;
+    const L2 = getEffectiveL2(params);
+    const primitives: DiagramPrimitive[] = [
+      { kind: 'line', x1: -0.5, y1: L1 * 0.5, x2: 4.5, y2: L1 * 0.5, strokeWidth: 2 },
+      { kind: 'line', x1: -0.5, y1: -L1 * 0.5, x2: 4.5, y2: -L1 * 0.5, strokeWidth: 2 },
+      { kind: 'line', x1: state.x1, y1: -L1 * 0.55, x2: state.x1, y2: L1 * 0.55, strokeWidth: 3 },
+      ...(params.rodMode === 'double'
+        ? [{ kind: 'line', x1: state.x2, y1: -L2 * 0.55, x2: state.x2, y2: L2 * 0.55, strokeWidth: 3 } as DiagramPrimitive]
+        : []),
+      {
+        kind: 'mathLabel',
+        x: 4.2,
+        y: 1.0,
+        text: `B=${params.magneticB}\\text{T},\\; q=\\int I\\,dt=${state.qTotalIntegral.toFixed(2)}\\text{C}`,
+        align: 'end'
+      }
+    ];
+    return {
+      width: 720,
+      height: 380,
+      viewBox: { minX: -0.8, minY: -1.3, maxX: 4.6, maxY: 1.4 },
+      title: '电磁感应单杆双杆切割配图',
+      primitives
+    };
+  },
   formatFormulas: (state, params) => {
     const BL = params.magneticB * params.railWidth;
     const emf =

@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./catalog": {
+      "types": "./catalog.ts",
+      "default": "./catalog.ts"
+    },
     "./registry": {
       "types": "./registry.ts",
       "default": "./registry.ts"
@@ -95,6 +99,46 @@
     "./mech-shm-resonance": {
       "types": "./mech-shm-resonance/plugin.ts",
       "default": "./mech-shm-resonance/plugin.ts"
+    },
+    "./em-electrostatic-field": {
+      "types": "./em-electrostatic-field/plugin.ts",
+      "default": "./em-electrostatic-field/plugin.ts"
+    },
+    "./em-capacitor-millikan": {
+      "types": "./em-capacitor-millikan/plugin.ts",
+      "default": "./em-capacitor-millikan/plugin.ts"
+    },
+    "./em-ac-field-oscilloscope": {
+      "types": "./em-ac-field-oscilloscope/plugin.ts",
+      "default": "./em-ac-field-oscilloscope/plugin.ts"
+    },
+    "./em-wireframe-rotation": {
+      "types": "./em-wireframe-rotation/plugin.ts",
+      "default": "./em-wireframe-rotation/plugin.ts"
+    },
+    "./em-eddy-vortex-field": {
+      "types": "./em-eddy-vortex-field/plugin.ts",
+      "default": "./em-eddy-vortex-field/plugin.ts"
+    },
+    "./em-ac-generator-rms": {
+      "types": "./em-ac-generator-rms/plugin.ts",
+      "default": "./em-ac-generator-rms/plugin.ts"
+    },
+    "./em-transformer-grid": {
+      "types": "./em-transformer-grid/plugin.ts",
+      "default": "./em-transformer-grid/plugin.ts"
+    },
+    "./em-lc-rlc-oscillation": {
+      "types": "./em-lc-rlc-oscillation/plugin.ts",
+      "default": "./em-lc-rlc-oscillation/plugin.ts"
+    },
+    "./em-3d-magnetic-fields": {
+      "types": "./em-3d-magnetic-fields/plugin.ts",
+      "default": "./em-3d-magnetic-fields/plugin.ts"
+    },
+    "./em-3d-magnetic-fields/engine": {
+      "types": "./em-3d-magnetic-fields/engine.ts",
+      "default": "./em-3d-magnetic-fields/engine.ts"
     }
   },
   "dependencies": {

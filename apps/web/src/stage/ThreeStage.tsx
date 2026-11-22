@@ -2,12 +2,37 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { ParamRecord, SimulationPluginV2, ThreeSceneBridge } from '@physforge/sim-sdk';
+import {
+  buildConductorSegments,
+  trace3dFieldLines,
+  type Magnetic3dParams,
+  type Magnetic3dState
+} from '@physforge/simulations/em-3d-magnetic-fields/engine';
 
 interface ThreeStageProps {
   readonly plugin: SimulationPluginV2<ParamRecord, unknown>;
   readonly simState: unknown;
   readonly params: ParamRecord;
   readonly activeLayers: ReadonlySet<string>;
+}
+
+function disposeGroupChildren(group: THREE.Group): void {
+  while (group.children.length > 0) {
+    const child = group.children[0]!;
+    group.remove(child);
+    if (
+      child instanceof THREE.Mesh ||
+      child instanceof THREE.Line ||
+      child instanceof THREE.LineSegments
+    ) {
+      child.geometry.dispose();
+      if (Array.isArray(child.material)) {
+        child.material.forEach((m) => m.dispose());
+      } else {
+        child.material.dispose();
+      }
+    }
+  }
 }
 
 /**
@@ -44,14 +69,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       };
     }
 
-    // Fallback generic 3D reference grid + axes when a plugin switches to 3D inspection before adding custom 3D mesh
     const width = Math.max(320, container.clientWidth);
     const height = Math.max(240, container.clientHeight);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#091220');
 
     const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 200);
-    camera.position.set(4, 3.2, 5.5);
+    camera.position.set(3.4, 2.5, 4.4);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -63,14 +87,18 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const grid = new THREE.GridHelper(10, 20, 0x38bdf8, 0x1e293b);
     const axes = new THREE.AxesHelper(2.2);
-    const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.9);
     scene.add(grid, axes, ambient);
 
-    const sphereGeo = new THREE.SphereGeometry(0.18, 24, 24);
-    const sphereMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x075985 });
+    const dynamicGroup = new THREE.Group();
+    scene.add(dynamicGroup);
+
+    const sphereGeo = new THREE.SphereGeometry(0.12, 20, 20);
+    const sphereMat = new THREE.MeshStandardMaterial({ color: 0x4ade80, emissive: 0x166534 });
     const marker = new THREE.Mesh(sphereGeo, sphereMat);
     scene.add(marker);
 
+    let lastConfigSig = '';
     let rafId = 0;
     const renderLoop = () => {
       rafId = requestAnimationFrame(renderLoop);
@@ -89,10 +117,62 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     });
     ro.observe(container);
 
+    const isMag3d = plugin.meta.id === 'em-3d-magnetic-fields';
+
     bridgeRef.current = {
-      sync: (state) => {
-        const s = state as { x?: number; y?: number; z?: number; x1?: number } | null;
-        if (!s) return;
+      sync: (state, curParams, layers) => {
+        if (!state) return;
+        if (isMag3d) {
+          const magState = state as Magnetic3dState;
+          const magParams = curParams as Magnetic3dParams;
+          marker.position.set(magState.position.x, magState.position.z, magState.position.y);
+
+          const sig = `${magParams.geometryType}:${magParams.radiusR}:${magParams.solenoidTurns}:${magParams.currentI}:${layers.has('conductors')}:${layers.has('fieldLines3d')}:${magState.trail.length}`;
+          if (sig !== lastConfigSig) {
+            lastConfigSig = sig;
+            disposeGroupChildren(dynamicGroup);
+
+            if (layers.has('conductors')) {
+              const segs = buildConductorSegments(magParams);
+              if (segs.length > 0) {
+                const posArr = new Float32Array(segs.length * 6);
+                segs.forEach((s, idx) => {
+                  posArr[idx * 6] = s.a.x;
+                  posArr[idx * 6 + 1] = s.a.z;
+                  posArr[idx * 6 + 2] = s.a.y;
+                  posArr[idx * 6 + 3] = s.b.x;
+                  posArr[idx * 6 + 4] = s.b.z;
+                  posArr[idx * 6 + 5] = s.b.y;
+                });
+                const wireGeo = new THREE.BufferGeometry();
+                wireGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+                const wireMat = new THREE.LineBasicMaterial({ color: 0xf59e0b });
+                dynamicGroup.add(new THREE.LineSegments(wireGeo, wireMat));
+              }
+            }
+
+            if (layers.has('fieldLines3d')) {
+              const lines = trace3dFieldLines(magParams);
+              for (const line of lines) {
+                if (line.length < 2) continue;
+                const pts = line.map((p) => new THREE.Vector3(p.x, p.z, p.y));
+                const lGeo = new THREE.BufferGeometry().setFromPoints(pts);
+                const lMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.72 });
+                dynamicGroup.add(new THREE.Line(lGeo, lMat));
+              }
+            }
+
+            if (magState.trail.length > 1) {
+              const tPts = magState.trail.map((p) => new THREE.Vector3(p.x, p.z, p.y));
+              const tGeo = new THREE.BufferGeometry().setFromPoints(tPts);
+              const tMat = new THREE.LineBasicMaterial({ color: 0x4ade80 });
+              dynamicGroup.add(new THREE.Line(tGeo, tMat));
+            }
+          }
+          return;
+        }
+
+        const s = state as { x?: number; y?: number; z?: number; x1?: number };
         marker.position.set(s.x ?? s.x1 ?? 0, s.y ?? 0, s.z ?? 0);
       },
       resize: (w, h) => {
@@ -103,12 +183,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       dispose: () => {
         cancelAnimationFrame(rafId);
         ro.disconnect();
+        disposeGroupChildren(dynamicGroup);
         controls.dispose();
         sphereGeo.dispose();
         sphereMat.dispose();
         grid.dispose();
         axes.dispose();
         renderer.dispose();
+        renderer.forceContextLoss();
         if (renderer.domElement.parentNode === container) {
           container.removeChild(renderer.domElement);
         }

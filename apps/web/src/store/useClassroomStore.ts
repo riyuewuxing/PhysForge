@@ -7,7 +7,12 @@ import {
   type ParamValue,
   type PhysicsEvent
 } from '@physforge/sim-sdk';
-import { getSimulationById, simulationPlugins, type AnySimulationPlugin } from '@physforge/simulations/registry';
+import {
+  loadSimulationById,
+  resolveCanonicalModelId,
+  type AnySimulationPlugin
+} from '@physforge/simulations/catalog';
+import { emBoundedMagneticFieldPlugin } from '@physforge/simulations/em-bounded-magnetic-field';
 import { CommandStack } from '../stage/CommandStack.js';
 import type { MeasureToolKind } from '../stage/RulerToolboxOverlay.js';
 
@@ -25,6 +30,8 @@ const paramCommandStack = new CommandStack(50);
 
 interface ClassroomStore {
   selectedPluginId: string;
+  loadedPlugin: AnySimulationPlugin;
+  isLoadingPlugin: boolean;
   activePresetId: string | null;
   params: ParamRecord;
   activeLayers: string[];
@@ -50,9 +57,13 @@ interface ClassroomStore {
   scrubTime: number | null;
   telemetry: TelemetrySummary;
 
-  selectPlugin: (pluginId: string) => void;
+  selectPlugin: (pluginId: string) => Promise<void> | void;
   applyPreset: (presetId: string) => void;
-  applyExternalState: (pluginId: string, presetId?: string, overrideParams?: ParamRecord) => void;
+  applyExternalState: (
+    pluginId: string,
+    presetId?: string,
+    overrideParams?: ParamRecord
+  ) => Promise<void> | void;
   updateParam: (key: string, value: number | boolean | string) => void;
   updateParamsBatch: (patch: Record<string, ParamValue>, label?: string) => void;
   undoParam: () => void;
@@ -88,12 +99,45 @@ function getDefaultLayers(plugin: AnySimulationPlugin, visibleLayers?: string[])
   return plugin.layers.filter((l) => l.defaultVisible).map((l) => l.id);
 }
 
-const initialPlugin = simulationPlugins[0]!;
+const initialPlugin = emBoundedMagneticFieldPlugin as unknown as AnySimulationPlugin;
 const initialPreset = initialPlugin.presets[0] ?? null;
 const initialParams = resolvePluginParams(initialPlugin.paramSchema, initialPreset?.params);
+const pluginCache = new Map<string, AnySimulationPlugin>([[initialPlugin.meta.id, initialPlugin]]);
+let pluginSelectionSeq = 0;
+
+function applyLoadedPluginState(
+  set: (fn: (state: ClassroomStore) => Partial<ClassroomStore>) => void,
+  plugin: AnySimulationPlugin,
+  presetId?: string,
+  overrideParams?: ParamRecord
+): void {
+  const preset = presetId
+    ? plugin.presets.find((p) => p.id === presetId) ?? null
+    : plugin.presets[0] ?? null;
+  const mergedOverrides = overrideParams ?? preset?.params;
+  const params = resolvePluginParams(plugin.paramSchema, mergedOverrides);
+  set((s) => ({
+    selectedPluginId: plugin.meta.id,
+    loadedPlugin: plugin,
+    isLoadingPlugin: false,
+    activePresetId: preset?.id ?? presetId ?? null,
+    params,
+    activeLayers: getDefaultLayers(plugin, preset?.visibleLayers),
+    isPlaying: false,
+    scrubTime: null,
+    activeFrameId: 'ground',
+    view3dEnabled: (plugin as { renderMode?: string }).renderMode === 'three3d',
+    canUndo: paramCommandStack.canUndo(plugin.meta.id),
+    canRedo: paramCommandStack.canRedo(plugin.meta.id),
+    resetViewNonce: s.resetViewNonce + 1,
+    resetNonce: s.resetNonce + 1
+  }));
+}
 
 export const useClassroomStore = create<ClassroomStore>((set, get) => ({
   selectedPluginId: initialPlugin.meta.id,
+  loadedPlugin: initialPlugin,
+  isLoadingPlugin: false,
   activePresetId: initialPreset?.id ?? null,
   params: initialParams,
   activeLayers: getDefaultLayers(initialPlugin, initialPreset?.visibleLayers),
@@ -125,31 +169,28 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     formulaItems: []
   },
 
-  selectPlugin: (pluginId) => {
-    const plugin = getSimulationById(pluginId);
-    if (!plugin) return;
-    const preset = plugin.presets[0] ?? null;
-    const params = resolvePluginParams(plugin.paramSchema, preset?.params);
-    set((s) => ({
-      selectedPluginId: plugin.meta.id,
-      activePresetId: preset?.id ?? null,
-      params,
-      activeLayers: getDefaultLayers(plugin, preset?.visibleLayers),
-      isPlaying: false,
-      scrubTime: null,
-      activeFrameId: 'ground',
-      view3dEnabled: (plugin as { renderMode?: string }).renderMode === 'three3d',
-      canUndo: paramCommandStack.canUndo(plugin.meta.id),
-      canRedo: paramCommandStack.canRedo(plugin.meta.id),
-      resetViewNonce: s.resetViewNonce + 1,
-      resetNonce: s.resetNonce + 1
-    }));
+  selectPlugin: async (pluginId) => {
+    const canonical = resolveCanonicalModelId(pluginId);
+    const seq = ++pluginSelectionSeq;
+    const cached = pluginCache.get(canonical);
+    if (cached) {
+      applyLoadedPluginState(set, cached);
+      return;
+    }
+    set({ isLoadingPlugin: true });
+    const loaded = await loadSimulationById(canonical);
+    if (!loaded) {
+      if (seq === pluginSelectionSeq) set({ isLoadingPlugin: false });
+      return;
+    }
+    pluginCache.set(loaded.meta.id, loaded);
+    if (seq !== pluginSelectionSeq) return;
+    applyLoadedPluginState(set, loaded);
   },
 
   applyPreset: (presetId) => {
     const cur = get();
-    const plugin = getSimulationById(cur.selectedPluginId);
-    if (!plugin) return;
+    const plugin = cur.loadedPlugin;
     const preset = plugin.presets.find((p) => p.id === presetId);
     if (!preset) return;
     const params = resolvePluginParams(plugin.paramSchema, preset.params);
@@ -171,28 +212,22 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     }));
   },
 
-  applyExternalState: (pluginId, presetId, overrideParams) => {
-    const plugin = getSimulationById(pluginId);
-    if (!plugin) return;
-    const preset = presetId
-      ? plugin.presets.find((p) => p.id === presetId) ?? null
-      : plugin.presets[0] ?? null;
-    const mergedOverrides = overrideParams ?? preset?.params;
-    const params = resolvePluginParams(plugin.paramSchema, mergedOverrides);
-    set((s) => ({
-      selectedPluginId: plugin.meta.id,
-      activePresetId: presetId ?? null,
-      params,
-      activeLayers: getDefaultLayers(plugin, preset?.visibleLayers),
-      isPlaying: false,
-      scrubTime: null,
-      activeFrameId: 'ground',
-      view3dEnabled: (plugin as { renderMode?: string }).renderMode === 'three3d',
-      canUndo: paramCommandStack.canUndo(plugin.meta.id),
-      canRedo: paramCommandStack.canRedo(plugin.meta.id),
-      resetViewNonce: s.resetViewNonce + 1,
-      resetNonce: s.resetNonce + 1
-    }));
+  applyExternalState: async (pluginId, presetId, overrideParams) => {
+    const canonical = resolveCanonicalModelId(pluginId);
+    const seq = ++pluginSelectionSeq;
+    let plugin = pluginCache.get(canonical);
+    if (!plugin) {
+      set({ isLoadingPlugin: true });
+      const loaded = await loadSimulationById(canonical);
+      if (!loaded) {
+        if (seq === pluginSelectionSeq) set({ isLoadingPlugin: false });
+        return;
+      }
+      pluginCache.set(loaded.meta.id, loaded);
+      plugin = loaded;
+    }
+    if (seq !== pluginSelectionSeq) return;
+    applyLoadedPluginState(set, plugin, presetId, overrideParams);
   },
 
   updateParam: (key, value) => {
@@ -201,8 +236,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
 
   updateParamsBatch: (patch, label = '画布参数调整') => {
     const cur = get();
-    const plugin = getSimulationById(cur.selectedPluginId);
-    if (!plugin) return;
+    const plugin = cur.loadedPlugin;
     const merged = { ...cur.params, ...patch };
     const resolved = resolvePluginParams(plugin.paramSchema, merged);
     paramCommandStack.push({

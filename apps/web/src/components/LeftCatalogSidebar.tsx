@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { simulationPlugins, type AnySimulationPlugin } from '@physforge/simulations/registry';
+import { simulationCatalog, type SimulationCatalogEntry } from '@physforge/simulations/catalog';
 import type { CurriculumTag, DifficultyLevel } from '@physforge/sim-sdk';
 
 interface LeftCatalogSidebarProps {
@@ -41,9 +41,9 @@ export const LeftCatalogSidebar: React.FC<LeftCatalogSidebarProps> = ({
   const [tagFilter, setTagFilter] = useState<'全部素养' | CurriculumTag>('全部素养');
   const [diffFilter, setDiffFilter] = useState<'全部难度' | DifficultyLevel>('全部难度');
 
-  const filtered = useMemo<readonly AnySimulationPlugin[]>(() => {
+  const filtered = useMemo<readonly SimulationCatalogEntry[]>(() => {
     const q = search.trim().toLowerCase();
-    return simulationPlugins.filter((p) => {
+    return simulationCatalog.filter((p) => {
       if (textbookFilter !== '全部教材' && !p.meta.textbookRef.includes(textbookFilter)) {
         return false;
       }

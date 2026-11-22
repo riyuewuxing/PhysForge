@@ -1,4 +1,8 @@
-import type { ParamRecord, SimulationPlugin } from '@physforge/sim-sdk';
+import {
+  LEGACY_MODEL_ALIASES,
+  resolveCanonicalModelId,
+  type AnySimulationPlugin
+} from './catalog.js';
 import { emBoundedMagneticFieldPlugin } from './em-bounded-magnetic-field/plugin.js';
 import { waveVibrationCouplingPlugin } from './wave-vibration-coupling/plugin.js';
 import { emInductionDoubleRodPlugin } from './em-induction-double-rod/plugin.js';
@@ -17,27 +21,25 @@ import { mechSpringSeparationPlugin } from './mech-spring-separation/plugin.js';
 import { mechCollisionRecoilPlugin } from './mech-collision-recoil/plugin.js';
 import { astroOrbitalMechanicsPlugin } from './astro-orbital-mechanics/plugin.js';
 import { mechShmResonancePlugin } from './mech-shm-resonance/plugin.js';
+import { emElectrostaticFieldPlugin } from './em-electrostatic-field/plugin.js';
+import { emCapacitorMillikanPlugin } from './em-capacitor-millikan/plugin.js';
+import { emAcFieldOscilloscopePlugin } from './em-ac-field-oscilloscope/plugin.js';
+import { emWireframeRotationPlugin } from './em-wireframe-rotation/plugin.js';
+import { emEddyVortexFieldPlugin } from './em-eddy-vortex-field/plugin.js';
+import { emAcGeneratorRmsPlugin } from './em-ac-generator-rms/plugin.js';
+import { emTransformerGridPlugin } from './em-transformer-grid/plugin.js';
+import { emLcRlcOscillationPlugin } from './em-lc-rlc-oscillation/plugin.js';
+import { em3dMagneticFieldsPlugin } from './em-3d-magnetic-fields/plugin.js';
 
-export type AnySimulationPlugin = SimulationPlugin<ParamRecord, unknown>;
+import type { ParamRecord, SimulationPlugin } from '@physforge/sim-sdk';
+
+export type { AnySimulationPlugin };
+export { LEGACY_MODEL_ALIASES, resolveCanonicalModelId };
 
 function erasePluginType<TParams extends ParamRecord, TState>(
   plugin: SimulationPlugin<TParams, TState>
 ): AnySimulationPlugin {
   return plugin as unknown as AnySimulationPlugin;
-}
-
-/**
- * V1.0 旧模型 ID 到 V2.0 自由建模器规范 ID 的兼容别名映射表（保障教研包与既有预设 100% 不崩）
- */
-export const LEGACY_MODEL_ALIASES: Readonly<Record<string, string>> = {
-  'em-bounded-magnetic-field': 'builder-composite-em-field',
-  'circuit-dc-capacitor-mna': 'builder-circuit-mna',
-  'optics-ray-studio': 'builder-optics-ray',
-  'mech-free-sandbox': 'builder-mechanics-lab'
-};
-
-export function resolveCanonicalModelId(id: string): string {
-  return LEGACY_MODEL_ALIASES[id] ?? id;
 }
 
 /**
@@ -61,7 +63,16 @@ export const simulationPlugins: readonly AnySimulationPlugin[] = [
   erasePluginType(mechSpringSeparationPlugin),
   erasePluginType(mechCollisionRecoilPlugin),
   erasePluginType(astroOrbitalMechanicsPlugin),
-  erasePluginType(mechShmResonancePlugin)
+  erasePluginType(mechShmResonancePlugin),
+  erasePluginType(emElectrostaticFieldPlugin),
+  erasePluginType(emCapacitorMillikanPlugin),
+  erasePluginType(emAcFieldOscilloscopePlugin),
+  erasePluginType(emWireframeRotationPlugin),
+  erasePluginType(emEddyVortexFieldPlugin),
+  erasePluginType(emAcGeneratorRmsPlugin),
+  erasePluginType(emTransformerGridPlugin),
+  erasePluginType(emLcRlcOscillationPlugin),
+  erasePluginType(em3dMagneticFieldsPlugin)
 ];
 
 export function getSimulationById(id: string): AnySimulationPlugin | undefined {

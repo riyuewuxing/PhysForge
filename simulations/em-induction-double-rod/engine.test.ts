@@ -131,4 +131,56 @@ describe('em-induction-double-rod engine', () => {
       expect(Number.isFinite(val)).toBe(true);
     }
   });
+
+  it('matches zero-resistance single-rod capacitor acceleration F/(m + C*B^2*L^2) within < 1e-7', () => {
+    const idealCap: InductionParams = {
+      ...baseParams,
+      rodMode: 'single',
+      circuitLoad: 'capacitor',
+      magneticB: 2.0,
+      railWidth: 1.0,
+      mass1: 1.0,
+      resistorR: 0,
+      rodResistance1: 0,
+      capacitance: 0.25,
+      externalForce: 6.0,
+      v1Initial: 0
+    };
+    const expectedA = 6.0 / (1.0 + 0.25 * 4.0 * 1.0); // 6 / 2 = 3.0 m/s^2
+    let st = createInitialState(idealCap);
+    for (let i = 0; i < 100; i++) {
+      st = stepInduction(st, idealCap, 0.01).nextState;
+    }
+    const expectedV = expectedA * 1.0;
+    expect(Math.abs(st.v1 - expectedV) / expectedV).toBeLessThan(1e-7);
+    expect(Math.abs(st.qCap - 0.25 * 2.0 * expectedV) / st.qCap).toBeLessThan(1e-7);
+  });
+
+  it('conserves generalized momentum and reaches L1*v1 - L2*v2 < 1e-6 with energy conservation < 1e-6 for unequal double rods', () => {
+    const unequal: InductionParams = {
+      ...baseParams,
+      rodMode: 'double',
+      railWidth: 1.2,
+      railWidth2: 0.6,
+      mass1: 2.0,
+      mass2: 1.0,
+      resistorR: 1.5,
+      rodResistance1: 0.5,
+      rodResistance2: 0.5,
+      externalForce: 0,
+      v1Initial: 4.0,
+      v2Initial: 0
+    };
+    const initial = createInitialState(unequal);
+    let st = initial;
+    for (let i = 0; i < 8000; i++) {
+      st = stepInduction(st, unequal, 0.002).nextState;
+    }
+    expect(Math.abs(unequal.railWidth * st.v1 - unequal.railWidth2! * st.v2)).toBeLessThan(1e-6);
+    const reports = checkInvariants(st, initial, unequal);
+    for (const r of reports) {
+      expect(r.passed).toBe(true);
+      expect(r.measuredError).toBeLessThan(1e-6);
+    }
+  });
 });

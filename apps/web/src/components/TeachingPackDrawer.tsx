@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { BookOpen, CheckCircle2, Download, FileText, Printer, X } from 'lucide-react';
 import { parseTeachingPack, type TeachingPack } from '@physforge/pedagogy-schema';
-import { resolveCanonicalModelId } from '@physforge/simulations/registry';
+import { resolveCanonicalModelId } from '@physforge/simulations/catalog';
 
 interface TeachingPackDrawerProps {
   modelId: string;
