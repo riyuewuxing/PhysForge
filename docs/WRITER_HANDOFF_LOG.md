@@ -5,55 +5,49 @@
 
 ---
 
-## 当前权威状态快照（2026-11-22 21:28）
+## 当前权威状态快照（2026-11-22 22:28）
 
 * **Git 分支与基线**：
-  * 本地仓库位于 `main` 分支（`HEAD = 7c252a7` 为已验收的 V2-W3 基线）；当前 `V2-W4` 全部新增与修改文件（按需懒加载目录重构 + `E01–E10`）处于本地工作区未提交状态，未执行 `git commit` / `git push`，等待总控验收。
+  * 本地仓库位于 `main` 分支（`HEAD = e2d4bb6` 为已验收提交并推送的 `V2-W4` 基线）；当前 `V2-W5` 全部改动（8 个修改文件 + 35 个新建文件，共 43 项待提交改动）处于本地工作区未提交状态，未执行 `git commit` / `git push`，等待总控零信任验收。
   * 远端：`origin = https://github.com/riyuewuxing/PhysForge.git`。
 * **权威参考文档**：
-  * 仓库宪法：[AGENTS.md](file:///d:/project%20code/44-PhysForge/AGENTS.md) ｜ V2 权威施工方案：[docs/V2_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V2_WRITER_CONSTRUCTION_PLAN.md) ｜ 第2卷模型规格：[docs/v2-specs/02_MODELS_BUILDERS_AND_MECHANICS_EM.md](file:///d:/project%20code/44-PhysForge/docs/v2-specs/02_MODELS_BUILDERS_AND_MECHANICS_EM.md)
-* **当前施工状态**：**V2-W4（`apps/web` 按需动态加载拆包重构 + 电磁学全矩阵与 3D 空间场 `E01–E10`）已全量竣工并跑通最后一次编辑后的全部门禁与 Playwright 实机验证，等待总控验收**。
+  * 仓库宪法：[AGENTS.md](file:///d:/project%20code/44-PhysForge/AGENTS.md) ｜ V2 权威施工方案：[docs/V2_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V2_WRITER_CONSTRUCTION_PLAN.md) ｜ 第3卷模型规格：[docs/v2-specs/03_MODELS_WAVES_MODERN_STSE_EXP.md](file:///d:/project%20code/44-PhysForge/docs/v2-specs/03_MODELS_WAVES_MODERN_STSE_EXP.md)
+* **当前施工状态**：**V2-W5（波动光学、热学微观与近代物理 `W01–W02, O01, T01–T02, N01–N03`，共 8 单元）已全量竣工并通过最后一次代码编辑后的全部静态扫描、单测、教研包验算、全量构建及 Playwright 无头 Chrome 实机验证**。
 * **最后一次代码编辑后的实测门禁结果**：
-  * **静态合规扫描**：全仓（`packages/`、`simulations/`、`apps/`、`scripts/` 非构建/非 `node_modules` 源码）零 `@ts-ignore`、零 `@ts-expect-error`、零 `as any`、零 `eslint-disable`、零 `.skip(`/`.only(`、零 `Math.random(`（仅 `B5` 恶意用例测试字面量第 22 行含 `'eval("1+1")'`）。
-  * `pnpm typecheck`：退出码 `0`（9/9 有脚本工作区子包 + `scripts/tsconfig.json` 通过）。
-  * `pnpm test`：退出码 `0`（**40 个测试文件、121/121 条用例全绿**，耗时 `2.97s`）。
-  * `pnpm verify:packs`：退出码 `0`（6/6 教研包、20/20 道物理验算题全通过）。
-  * `pnpm build` & 首屏体积（接通全部 27 模型后较 `V2-W3` 逆势大幅回落）：
-    * 主入口 `dist/assets/index-CeReMVYR.js` 体积 `787.68 kB` / Vite gzip **`247.86 kB`**（Node zlib **`242.05 KB`**，远低于 `< 350 KB` CI 红线，预留 >100 KB 空间）；
-    * 异步独立分包：`ThreeStage-Cq5PYtBK.js` (`136.14 kB` gzip)、`AnalysisLabDrawer` (`17.17 kB` gzip)、`esm` (`mathjs`, `209.30 kB` gzip)、`rapier` (`1,283.02 kB` gzip)；PWA `479 entries`。
-  * `pnpm export:singlefile` 实测：`em-electrostatic-field.html`（`2007.4 KB`）、`em-3d-magnetic-fields.html`（`2003.0 KB`），均通过零 CDN 与防 `three`/`mathjs`/`rapier`/`papaparse`/`fflate` 泄漏检查。
-  * **Playwright 无头 Chrome 实机全链路验收**（`http://127.0.0.1:4176/`）：
-    * 首屏未请求任何 `ThreeStage` / `three` 分包（`initialThreeChunks: []`）；
-    * 教材分册筛选（`必修第三册` / `选择性必修二`）准确命中，`E01–E09` 全部 9 个模型 `<canvas>` 非空白渲染且 `ExportStudioDrawer` 均成功导出有效 `<svg>`；
-    * 切入 `E10`（`em-3d-magnetic-fields`）后才按需拉取 `ThreeStage-Cq5PYtBK.js`，WebGL `<canvas>`（`746x425`）成功挂载，切离后 `three-stage-container` 彻底卸载销毁并释放 WebGL；
-    * 全程 `consoleErrors: []`、`pageErrors: []`、`failed404: []`、`externalRequests: []`。
-* **下一优先级动作**：请总控对 `V2-W4` 进行零信任验收；验收通过后按规划推进 `V2-W5`（波动光学、热学微观与近代物理 `W01–W02, O01, T01–T02, N01–N03`，8 单元）。
+  * **静态合规扫描**：全仓（`packages/`、`simulations/`、`apps/`、`scripts/`，排除 `dist/`、`node_modules/`、`.tmp-build/`）零 `@ts-ignore`、零 `@ts-expect-error`、零 `as any`、零 `eslint-disable`、零 `.skip(`/`.only(`、零 `Math.random(`（仅 `B5` 恶意输入用例测试第 22 行含字符串字面量 `'eval("1+1")'`）。
+  * `pnpm typecheck`：退出码 `0`（9/10 工作区包 + `scripts/tsconfig.json` 全通过）。
+  * `pnpm test`：退出码 `0`（**47 个测试文件、144/144 条用例全绿**）。
+  * `pnpm verify:packs`：退出码 `0`（6 份教研包 / 20 道物理验算题全通过）。
+  * `pnpm build` & 包体防泄漏审计：
+    * 主入口 `apps/web/dist/assets/index-ntE5NTrb.js` 体积 `772.80 KB` / Node zlib gzip **`242.95 KB`**（Vite 构建日志 `791.35 kB` / gzip **`248.78 kB`**，远低于 `< 350 KB` 红线）；
+    * 主入口 `OrbitControls`、`papaparse`、`rapier_wasm2d`、`@excalidraw/excalidraw`、`physforge-workspace-vault`、`mathjs` 全部零泄漏（`MAIN_LEAK_CHECK: CLEAN`）；PWA `489 entries (29419.99 KiB)`。
+  * 单文件切片导出：`optics-wave-interference.html` 产出 `2000.6 KB`；Playwright `file://` 打开零外网零报错且 `<canvas>` 非空白（`nonZero=45308`）。
+  * **Playwright 无头 Chrome 实机全链路验收**（`http://127.0.0.1:4175/`）：
+    * 分册筛选 `选择性必修一` / `选择性必修三` 均精确命中；8 个 `V2-W5` 模型逐一加载、单步步进并确认 `<canvas>` 非空白（像素采样 `11945`–`34782`）；
+    * `ExportStudioDrawer` 导出矢量 `<svg>`（长度 `1779`）正常；全程 `console=0`、`page=0`、`failed404=0`、`external=0`。
+* **下一优先级动作**：请总控对 `V2-W5`（`W01–W02, O01, T01–T02, N01–N03`）进行零信任验收；验收通过后按规划推进最后一轮 `V2-W6`（新高考 STSE、真误差实验、强基竞赛 `S01–S04, X01–X02, C01–C03` 共 9 单元 + `ai-copilot` 闭环 + 全项目 43 单元终版封板）。
 
 ---
 
 ## 会话增量记录
 
-### [2026-11-22 21:28 +08:00] 完成 `V2-W4`（首屏按需目录重构 + 电磁学全矩阵与 3D 空间场 `E01–E10`）
+### [2026-11-22 22:28 +08:00] 完成 `V2-W5`（波动光学、热学微观与近代物理 `W01–W02, O01, T01–T02, N01–N03`）
 
-1. **首屏按需动态加载拆包重构（落实总控预警）**：
-   * 新增 [@physforge/simulations/catalog](file:///d:/project%20code/44-PhysForge/simulations/catalog.ts)（仅含 27 个模型 `meta` 摘要 + 显式静态路径 `import('./<dir>/plugin.js')` 动态 `loadSimulationById(id)` + `LEGACY_MODEL_ALIASES`）与一致校验 [catalog.test.ts](file:///d:/project%20code/44-PhysForge/simulations/catalog.test.ts)；
-   * 保留 [simulations/registry.ts](file:///d:/project%20code/44-PhysForge/simulations/registry.ts) 供 `vitest` / `verify:packs` / `sweep.worker.ts` 同步全量引用；
-   * 改造 [useClassroomStore.ts](file:///d:/project%20code/44-PhysForge/apps/web/src/store/useClassroomStore.ts)、[App.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/App.tsx)、[LeftCatalogSidebar.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/LeftCatalogSidebar.tsx)、[CommandPalette.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/CommandPalette.tsx)、[TeachingPackDrawer.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/TeachingPackDrawer.tsx)，仅同步预置默认模型 `B1` 保持首帧零闪烁，其余模型按需异步拆包加载，使首屏主入口逆势从 `304.82 kB` 降至 `247.86 kB` gzip。
-
-2. **电磁学全矩阵与 3D 空间场（`E01–E10`）**：
-   * `E01` [em-electrostatic-field](file:///d:/project%20code/44-PhysForge/simulations/em-electrostatic-field/plugin.ts)：`121×89` `extractIsolines` 等势线与场强正交偏差 `< 1°`、`RK45` 试探粒子能量误差 `< 1e-5`、三点等分法与偏转板公式 `< 1e-6`（4 测）。
-   * `E02` [em-capacitor-millikan](file:///d:/project%20code/44-PhysForge/simulations/em-capacitor-millikan/plugin.ts)：闭合/断开切换、调 $d$ 场强恒不变 `< 1e-12`、上下/中心接地 $\varphi_P$、密立根油滴静悬与 Stokes 终端速度 `< 1e-6`（3 测）。
-   * `E03` [em-ac-field-oscilloscope](file:///d:/project%20code/44-PhysForge/simulations/em-ac-field-oscilloscope/plugin.ts)：方波换向 `bisectEvent` 四相位粒子对比（$t_0=T/4$ 一周期回零 `< 1e-7 m`）、示波管偏转 `< 1e-6` 与余辉李萨如、等效重力摆（4 测）。
-   * `E04` [em-induction-double-rod](file:///d:/project%20code/44-PhysForge/simulations/em-induction-double-rod/plugin.ts)（V2 原地升级）：保留全部 V1 预设与 4 测，新增零阻单杆电容加速度 $\frac{F}{m+CB^2L^2}$ (`< 1e-7`)、不等距双杆 $L_1\neq L_2$ 广义动量及终态 $L_1v_1-L_2v_2<10^{-6}$、导轨倾角、`Auto-FBD`、`rod1` 参考系与 `DiagramIR`（6 测）。
-   * `E05` [em-wireframe-rotation](file:///d:/project%20code/44-PhysForge/simulations/em-wireframe-rotation/plugin.ts)：方/正三角/圆线框切割、`bisectEvent` 同侧跨越边界分裂积分能量守恒 `< 1e-6`、反向双磁场 `2.000x` 电动势与法拉第圆盘（3 测）。
-   * `E06` [em-eddy-vortex-field](file:///d:/project%20code/44-PhysForge/simulations/em-eddy-vortex-field/plugin.ts)：柱内外涡旋电场环流积分 $\oint\mathbf{E}\cdot d\mathbf{l}=-d\Phi_B/dt$ `< 1e-8` 与整块/开槽铜板阻尼对照摆（3 测）。
-   * `E07` [em-ac-generator-rms](file:///d:/project%20code/44-PhysForge/simulations/em-ac-generator-rms/plugin.ts)：2.5D 线圈与中性面提示、分段复合 Simpson 积分检验 6 种波形（正弦/半波/全波/占空比方波/锯齿/直交叠加）有效值全部 `< 1e-6`（2 测）。
-   * `E08` [em-transformer-grid](file:///d:/project%20code/44-PhysForge/simulations/em-transformer-grid/plugin.ts)：原边含 $R_0$ 多副线圈电表 $\uparrow/\downarrow$ 趋势与功率平衡 `< 1e-10`、高压输电升压比翻倍线损严格降为 `1/4`（3 测）。
-   * `E09` [em-lc-rlc-oscillation](file:///d:/project%20code/44-PhysForge/simulations/em-lc-rlc-oscillation/plugin.ts)：LC 20 周期能量漂移 `< 1e-5`、`bisectEvent` 周期误差 `< 1e-5`、RLC 谐振峰值电流 $U_m/R$ `< 1e-4`（3 测）。
-   * `E10` [em-3d-magnetic-fields](file:///d:/project%20code/44-PhysForge/simulations/em-3d-magnetic-fields/plugin.ts) & [ThreeStage.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/stage/ThreeStage.tsx)：无头圆弧积分单环 Biot-Savart `< 1e-4`、3D `BorisPusher` 螺旋螺距 `< 1e-5` 与动能守恒 `< 1e-10`；Vanilla `three` + `OrbitControls` 按需挂载 3D 载流线圈/磁感线/螺旋轨线并在卸载时 `dispose()` 全部几何/材质/上下文（3 测）。
+1. **机械波与波动光学子批（`W01(V2升级), W02, O01`）**：
+   * `W01` [wave-vibration-coupling](file:///d:/project%20code/44-PhysForge/simulations/wave-vibration-coupling/plugin.ts)：在保留 V1 预设、教研包兼容及原有 5 测基础上新增 `'standing'` 驻波模态、`enumerateMultiSolutionSpeeds` 多解波速枚举、`sourceSpeedRatio > 1.0` 超声速马赫锥可视化、`getControlHandles`、`wavefront` 随动参考系、`sceneSerializer` 与 `DiagramIR`（6 测通过）。
+   * `W02` [wave-2d-ripple-fdtd](file:///d:/project%20code/44-PhysForge/simulations/wave-2d-ripple-fdtd/plugin.ts)：基于 `WaveFDTD2D`（`200×150` + `spongeWidth=16`）与硬性 CFL 夹紧（`< 0.5 < 1/√2`），实现双缝/单缝、小孔障碍物绕射、倾角折射块与右屏时均强度分布，2000 步零发散且双缝条纹间距匹配 `< 5%`（3 测通过）。
+   * `O01` [optics-wave-interference](file:///d:/project%20code/44-PhysForge/simulations/optics-wave-interference/plugin.ts)：劈尖空气膜（平整/凸起/凹陷缺陷 + 半波损失）条纹 `< 1e-6`、牛顿环半径平方线性 `< 1e-4`、夫琅禾费单缝/光栅含缺级（$d/a=3$）`< 1e-10`，并以 `wavelengthToRgb` 真彩渲染（4 测通过）。
+2. **热学定律、循环与硬球微观粒子子批（`T01–T02`）**：
+   * `T01` [thermo-piston-gas-laws](file:///d:/project%20code/44-PhysForge/simulations/thermo-piston-gas-laws/plugin.ts)：以 `stepHybridAutomaton`（`biasEndpoint: 'positive'` 消除边界零点乒乓）实现下卡口汽缸“等容 <-> 等压”精确拐点二分（`detachTempK` 误差 `< 1e-7 K`，$PV/(nRT)=1$ 误差 `< 1e-10`），集成水银柱倾转溢出判据与变质量多次抽/打气公式（`< 1e-10`）（3 测通过）。
+   * `T02` [thermo-cycles-kinetic-md](file:///d:/project%20code/44-PhysForge/simulations/thermo-cycles-kinetic-md/plugin.ts)：精确计算卡诺循环与矩形循环净功/内能闭环（`< 1e-10`）；基于 `SpatialHash2D` (`resolveDiskCollisions`) 与 `createSeededPrng` 运行绝热硬球盒与布朗花粉追踪，1000 步动能漂移 `< 1e-8` 且通过 2D Maxwell-Boltzmann 速率分布 KS 检验（3 测通过）。
+3. **近代物理全矩阵子批（`N01–N03`）与全目录按需接入**：
+   * `N01` [modern-photoelectric-compton](file:///d:/project%20code/44-PhysForge/simulations/modern-photoelectric-compton/plugin.ts)：金属光电效应 $I\text{--}U$ 曲线/参考冻结对照与遏止电压 `hν - W₀ = eU_c`（`< 1e-10`），康普顿散射相对论能量及二维矢量动量闭合三角形残差 `< 1e-10`（3 测通过）。
+   * `N02` [modern-rutherford-bohr](file:///d:/project%20code/44-PhysForge/simulations/modern-rutherford-bohr/plugin.ts)：`fm` 核物理 `ScaleContext` 下以 `integrateAdaptiveRK45` 求解卢瑟福库仑散射（与解析公式偏差 `< 1e-4 rad`，能量漂移 `< 1e-6`）；玻尔氢原子 $C_n^2$/单原子跃迁、`wavelengthToRgb` 巴耳末 4 条谱线 `< 0.2 nm` 及光子/电子激发对比（3 测通过）。
+   * `N03` [modern-nuclear-recoil-decay](file:///d:/project%20code/44-PhysForge/simulations/modern-nuclear-recoil-decay/plugin.ts)：静止母核二体相对论衰变接 `stepBorisPusher` 还原 $\alpha$ 外切圆与 $\beta^-$ 内切圆径迹及半径比 $R_1/R_2 = |q_2/q_1|$（`< 1e-6`）；确定性 `createSeededPrng` 模拟 $N_0=4000$ 半衰期指数统计（`< 0.025`）与控制棒临界倍增（3 测通过）。
+   * 上述 8 个单元均已同步注册至 [catalog.ts](file:///d:/project%20code/44-PhysForge/simulations/catalog.ts)、[registry.ts](file:///d:/project%20code/44-PhysForge/simulations/registry.ts)、[package.json](file:///d:/project%20code/44-PhysForge/simulations/package.json) 与 [export.mjs](file:///d:/project%20code/44-PhysForge/apps/singlefile-exporter/export.mjs)，动态目录一致性 [catalog.test.ts](file:///d:/project%20code/44-PhysForge/simulations/catalog.test.ts) 全通。
 
 ---
 
-### [2026-11-22 21:02–21:05 +08:00] 历史归档摘要（V1.0 → V2-W3，均已合入 `origin/main`）
+### [2026-11-22 21:28 +08:00] 历史归档摘要（V1.0 → V2-W4，均已合入 `origin/main`）
 
-* V1.0 (`eb6b34c`–`62f9383`) 与 `V2-W1` (`61cad64`) 完成底层内核、交互/3D 舞台与 CI/Pages；`V2-W2` (`3e86d3b`) 交付 `@physforge/export-studio` 与五大建模器 `B1–B5`（懒加载 `mathjs@15.2.0`）；`V2-W3` (`7c252a7`) 交付力学与天体全矩阵 `M01–M11`（90 测全绿）。
+* V1.0 (`eb6b34c`–`62f9383`) 与 `V2-W1` (`61cad64`) 完成底层内核、交互/3D 舞台与 CI/Pages；`V2-W2` (`3e86d3b`) 交付 `@physforge/export-studio` 与 `B1–B5`（懒加载 `mathjs@15.2.0`）；`V2-W3` (`7c252a7`) 交付力学与天体全矩阵 `M01–M11`；`V2-W4` (`e2d4bb6`) 完成 `@physforge/simulations/catalog` 首屏按需拆包重构与电磁全矩阵/3D 空间场 `E01–E10`（全量 40 测文件 / 121 用例验收推送）。

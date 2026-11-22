@@ -65,7 +65,14 @@ const KNOWN_MODELS = [
   'em-ac-generator-rms',
   'em-transformer-grid',
   'em-lc-rlc-oscillation',
-  'em-3d-magnetic-fields'
+  'em-3d-magnetic-fields',
+  'wave-2d-ripple-fdtd',
+  'optics-wave-interference',
+  'thermo-piston-gas-laws',
+  'thermo-cycles-kinetic-md',
+  'modern-photoelectric-compton',
+  'modern-rutherford-bohr',
+  'modern-nuclear-recoil-decay'
 ];
 
 function isSameModelGroup(a, b) {

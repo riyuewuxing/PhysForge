@@ -5,7 +5,9 @@ import {
   computeObservables,
   computeWaveSpeed,
   createInitialState,
+  enumerateMultiSolutionSpeeds,
   evaluateInterferenceAtPoint,
+  evaluateStandingWave,
   evaluateTransverseWave,
   stepWaveCoupling,
   type WaveCouplingParams
@@ -121,6 +123,40 @@ describe('wave-vibration-coupling engine', () => {
       const obs = computeObservables(s2, p);
       for (const v of Object.values(obs)) {
         expect(Number.isFinite(v)).toBe(true);
+      }
+    }
+  });
+
+  it('enumerates bidirectional multi-solution speeds reproducing waveforms within < 1e-7 and keeps standing nodes < 1e-10', () => {
+    const lambda = 2.0;
+    const dx0 = 0.4;
+    const dt = 0.5;
+    const solutions = enumerateMultiSolutionSpeeds(lambda, dx0, dt, 2);
+    expect(solutions).toHaveLength(6);
+
+    for (const sol of solutions) {
+      const fSol = sol.speed / lambda;
+      const pSol: WaveCouplingParams = {
+        ...baseParams,
+        wavelength: lambda,
+        frequency: fSol,
+        direction: sol.direction
+      };
+      for (let x = -2; x <= 2; x += 0.25) {
+        // Rightward wave shifted +dx0 from t=0; leftward wave shifted -(lambda - dx0) matches shifted target
+        const yInit = evaluateTransverseWave(x, 0, pSol).y;
+        const shift = sol.direction === 'right' ? dx0 : -(lambda - dx0);
+        const yAtDt = evaluateTransverseWave(x + shift, dt, pSol).y;
+        expect(Math.abs(yAtDt - yInit)).toBeLessThan(1e-7);
+      }
+    }
+
+    // Standing wave nodes at x = k * lambda / 2 stay strictly at zero for all t
+    const standP: WaveCouplingParams = { ...baseParams, mode: 'standing', wavelength: 2.0 };
+    for (const t of [0, 0.13, 0.37, 0.91]) {
+      for (const k of [-2, -1, 0, 1, 2]) {
+        const nodeX = k * (standP.wavelength * 0.5);
+        expect(Math.abs(evaluateStandingWave(nodeX, t, standP).y)).toBeLessThan(1e-10);
       }
     }
   });

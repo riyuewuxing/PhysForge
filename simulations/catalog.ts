@@ -44,7 +44,7 @@ export const simulationCatalog: readonly SimulationCatalogEntry[] = [
       textbookRef: '人教版 选择性必修一 第三章 第1–4节',
       curriculumTags: ['物理观念', '科学思维', '科学探究'],
       difficulty: '高三一轮',
-      version: '1.0.0'
+      version: '2.0.0'
     }
   },
   {
@@ -296,6 +296,76 @@ export const simulationCatalog: readonly SimulationCatalogEntry[] = [
       difficulty: '压轴专题',
       version: '2.0.0'
     }
+  },
+  {
+    meta: {
+      id: 'wave-2d-ripple-fdtd',
+      title: '2D FDTD 波动池衍射、折射与干涉 (W02)',
+      textbookRef: '人教版 选择性必修一 第三、四章',
+      curriculumTags: ['物理观念', '科学思维', '科学探究'],
+      difficulty: '压轴专题',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'optics-wave-interference',
+      title: '光的波动性进阶：劈尖、牛顿环与光栅缺级 (O01)',
+      textbookRef: '人教版 选择性必修一 第四章 第4–6节',
+      curriculumTags: ['物理观念', '科学思维', '科学探究'],
+      difficulty: '高三一轮',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'thermo-piston-gas-laws',
+      title: '汽缸活塞卡口、水银柱与变质量充放气 (T01)',
+      textbookRef: '人教版 选择性必修三 第二章',
+      curriculumTags: ['物理观念', '科学思维', '科学探究'],
+      difficulty: '压轴专题',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'thermo-cycles-kinetic-md',
+      title: '热力学循环与硬球分子动理论微观盒 (T02)',
+      textbookRef: '人教版 选择性必修三 第一、三章',
+      curriculumTags: ['物理观念', '科学思维', '科学探究'],
+      difficulty: '压轴专题',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'modern-photoelectric-compton',
+      title: '光电效应与康普顿散射 (N01)',
+      textbookRef: '人教版 选择性必修三 第四章第 2 节',
+      curriculumTags: ['物理观念', '科学思维', '科学探究'],
+      difficulty: '高三一轮',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'modern-rutherford-bohr',
+      title: '卢瑟福散射与玻尔氢原子能级 (N02)',
+      textbookRef: '人教版 选择性必修三 第四章第 3–4 节',
+      curriculumTags: ['物理观念', '科学思维', '科学探究'],
+      difficulty: '高三一轮',
+      version: '2.0.0'
+    }
+  },
+  {
+    meta: {
+      id: 'modern-nuclear-recoil-decay',
+      title: '核衰变反冲径迹与半衰期蒙特卡洛 (N03)',
+      textbookRef: '人教版 选择性必修三 第五章第 2–4 节',
+      curriculumTags: ['物理观念', '科学思维', '科学态度与责任'],
+      difficulty: '高三一轮',
+      version: '2.0.0'
+    }
   }
 ];
 
@@ -353,7 +423,21 @@ const MODEL_LOADERS: Readonly<Record<string, () => Promise<AnySimulationPlugin>>
   'em-lc-rlc-oscillation': async () =>
     erasePluginType((await import('./em-lc-rlc-oscillation/plugin.js')).emLcRlcOscillationPlugin),
   'em-3d-magnetic-fields': async () =>
-    erasePluginType((await import('./em-3d-magnetic-fields/plugin.js')).em3dMagneticFieldsPlugin)
+    erasePluginType((await import('./em-3d-magnetic-fields/plugin.js')).em3dMagneticFieldsPlugin),
+  'wave-2d-ripple-fdtd': async () =>
+    erasePluginType((await import('./wave-2d-ripple-fdtd/plugin.js')).wave2dRippleFdtdPlugin),
+  'optics-wave-interference': async () =>
+    erasePluginType((await import('./optics-wave-interference/plugin.js')).opticsWaveInterferencePlugin),
+  'thermo-piston-gas-laws': async () =>
+    erasePluginType((await import('./thermo-piston-gas-laws/plugin.js')).thermoPistonGasLawsPlugin),
+  'thermo-cycles-kinetic-md': async () =>
+    erasePluginType((await import('./thermo-cycles-kinetic-md/plugin.js')).thermoCyclesKineticMdPlugin),
+  'modern-photoelectric-compton': async () =>
+    erasePluginType((await import('./modern-photoelectric-compton/plugin.js')).modernPhotoelectricComptonPlugin),
+  'modern-rutherford-bohr': async () =>
+    erasePluginType((await import('./modern-rutherford-bohr/plugin.js')).modernRutherfordBohrPlugin),
+  'modern-nuclear-recoil-decay': async () =>
+    erasePluginType((await import('./modern-nuclear-recoil-decay/plugin.js')).modernNuclearRecoilDecayPlugin)
 };
 
 export async function loadSimulationById(id: string): Promise<AnySimulationPlugin | undefined> {

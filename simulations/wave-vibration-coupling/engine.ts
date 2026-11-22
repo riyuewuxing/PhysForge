@@ -1,7 +1,7 @@
 import { degToRad, vec2, type Vec2 } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 
-export type WaveMode = 'transverse' | 'interference' | 'doppler';
+export type WaveMode = 'transverse' | 'interference' | 'doppler' | 'standing';
 
 export type WaveCouplingParams = {
   mode: WaveMode;
@@ -144,6 +144,52 @@ export function computeDopplerFrequencies(params: WaveCouplingParams): {
   return { frontFreq, backFreq };
 }
 
+export interface WaveMultiSolution {
+  readonly order: number;
+  readonly direction: 'right' | 'left';
+  readonly speed: number;
+}
+
+/**
+ * 高考波动多解性枚举器：给定波长、首周期波移与时间差，返回右/左双向全部通解波速
+ */
+export function enumerateMultiSolutionSpeeds(
+  wavelength: number,
+  deltaX0: number,
+  deltaT: number,
+  maxOrder = 2
+): WaveMultiSolution[] {
+  if (wavelength <= 0 || deltaT <= 0) return [];
+  const dxMod = ((deltaX0 % wavelength) + wavelength) % wavelength;
+  const out: WaveMultiSolution[] = [];
+  for (let n = 0; n <= maxOrder; n++) {
+    out.push({ order: n, direction: 'right', speed: (dxMod + n * wavelength) / deltaT });
+    out.push({ order: n, direction: 'left', speed: (wavelength - dxMod + n * wavelength) / deltaT });
+  }
+  return out;
+}
+
+/**
+ * 等幅反向行波叠加驻波解：y(x,t) = 2 A sin(k x) cos(omega t)
+ */
+export function evaluateStandingWave(
+  x: number,
+  t: number,
+  params: WaveCouplingParams
+): { y: number; vy: number; ay: number } {
+  const A = params.amplitude;
+  const f = params.frequency;
+  const lambda = params.wavelength;
+  if (A === 0 || f <= 0 || lambda <= 0) return { y: 0, vy: 0, ay: 0 };
+  const k = (2 * Math.PI) / lambda;
+  const omega = 2 * Math.PI * f;
+  const spatial = 2 * A * Math.sin(k * x);
+  const y = spatial * Math.cos(omega * t);
+  const vy = -spatial * omega * Math.sin(omega * t);
+  const ay = -omega * omega * y;
+  return { y, vy, ay };
+}
+
 function evaluateProbe(
   t: number,
   params: WaveCouplingParams
@@ -155,6 +201,9 @@ function evaluateProbe(
     const res = evaluateInterferenceAtPoint(params.probeX, params.probeY, t, params);
     const omega = 2 * Math.PI * params.frequency;
     return { y: res.displacement, vy: res.vy, ay: -omega * omega * res.displacement };
+  }
+  if (params.mode === 'standing') {
+    return evaluateStandingWave(params.probeX, t, params);
   }
   // doppler 探测点以波源发射后的正弦信号估算局部振动
   const f0 = params.frequency;

@@ -139,6 +139,34 @@
     "./em-3d-magnetic-fields/engine": {
       "types": "./em-3d-magnetic-fields/engine.ts",
       "default": "./em-3d-magnetic-fields/engine.ts"
+    },
+    "./wave-2d-ripple-fdtd": {
+      "types": "./wave-2d-ripple-fdtd/plugin.ts",
+      "default": "./wave-2d-ripple-fdtd/plugin.ts"
+    },
+    "./optics-wave-interference": {
+      "types": "./optics-wave-interference/plugin.ts",
+      "default": "./optics-wave-interference/plugin.ts"
+    },
+    "./thermo-piston-gas-laws": {
+      "types": "./thermo-piston-gas-laws/plugin.ts",
+      "default": "./thermo-piston-gas-laws/plugin.ts"
+    },
+    "./thermo-cycles-kinetic-md": {
+      "types": "./thermo-cycles-kinetic-md/plugin.ts",
+      "default": "./thermo-cycles-kinetic-md/plugin.ts"
+    },
+    "./modern-photoelectric-compton": {
+      "types": "./modern-photoelectric-compton/plugin.ts",
+      "default": "./modern-photoelectric-compton/plugin.ts"
+    },
+    "./modern-rutherford-bohr": {
+      "types": "./modern-rutherford-bohr/plugin.ts",
+      "default": "./modern-rutherford-bohr/plugin.ts"
+    },
+    "./modern-nuclear-recoil-decay": {
+      "types": "./modern-nuclear-recoil-decay/plugin.ts",
+      "default": "./modern-nuclear-recoil-decay/plugin.ts"
     }
   },
   "dependencies": {

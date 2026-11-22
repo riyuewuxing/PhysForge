@@ -1,11 +1,13 @@
-import { defineSimulationPlugin, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
   checkInvariants,
   computeDopplerFrequencies,
   computeObservables,
   computeWaveSpeed,
   createInitialState,
+  enumerateMultiSolutionSpeeds,
   evaluateInterferenceAtPoint,
+  evaluateStandingWave,
   evaluateTransverseWave,
   stepWaveCoupling,
   type WaveCouplingParams,
@@ -19,8 +21,9 @@ const paramSchema: readonly ParamFieldSpec<WaveCouplingParams>[] = [
     label: '波动模型模式',
     options: [
       { label: '一维横波与质点振动联动', value: 'transverse' },
+      { label: '两列等幅反向波叠加驻波（波节/波腹）', value: 'standing' },
       { label: '双波源二维水波干涉', value: 'interference' },
-      { label: '运动波源多普勒效应', value: 'doppler' }
+      { label: '运动波源多普勒效应（含超音速马赫锥）', value: 'doppler' }
     ],
     defaultValue: 'transverse'
   },
@@ -132,7 +135,7 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
     textbookRef: '人教版 选择性必修一 第三章 第1–4节',
     curriculumTags: ['物理观念', '科学思维', '科学探究'],
     difficulty: '高三一轮',
-    version: '1.0.0'
+    version: '2.0.0'
   },
   paramSchema,
   presets: [
@@ -214,6 +217,35 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
         probeY: 0
       },
       visibleLayers: ['dopplerFronts', 'probeParticle']
+    },
+    {
+      id: 'standing-wave-nodes',
+      name: '6. 等幅相向行波叠加形成驻波（固定波节与波腹）',
+      description: '在 x = kλ/2 处始终保持严格静止的波节，相邻波节间质点同相振动且振幅包络为 2A|sin(kx)|。',
+      params: {
+        mode: 'standing',
+        amplitude: 0.45,
+        frequency: 1.2,
+        wavelength: 2.0,
+        probeX: 0.5,
+        probeY: 0
+      },
+      visibleLayers: ['waveform', 'probeParticle', 'vibrationGraph']
+    },
+    {
+      id: 'supersonic-mach-cone',
+      name: '7. 超音速波源与马赫锥 (vs = 1.15 v波)',
+      description: '当波源速率超过波速时，同心球面波前叠加出清晰马赫激波锥，半顶角满足 sin(α)=v/vs。',
+      params: {
+        mode: 'doppler',
+        amplitude: 0.45,
+        frequency: 2.0,
+        wavelength: 0.9,
+        sourceSpeedRatio: 1.15,
+        probeX: 2.0,
+        probeY: 0
+      },
+      visibleLayers: ['dopplerFronts', 'probeParticle']
     }
   ],
   engine: {
@@ -237,6 +269,67 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
     { key: 'probeAy', label: '质点加速度 a_y', unit: 'm/s²', color: '#f472b6' },
     { key: 'analyticalAmplitude', label: '合振幅 A_net', unit: 'm', color: '#fbbf24' }
   ],
+  getControlHandles: (_s, params) => [
+    {
+      id: 'wave-probe',
+      label: `探针 Px=${params.probeX.toFixed(1)}`,
+      position: { x: params.probeX, y: params.probeY },
+      handleKind: 'point',
+      color: '#4ade80',
+      onDrag: (wp) => ({
+        probeX: Number(Math.max(-3.5, Math.min(3.5, wp.x)).toFixed(1)),
+        probeY: Number(Math.max(-2.5, Math.min(2.5, wp.y)).toFixed(1))
+      })
+    }
+  ],
+  referenceFrames: [
+    {
+      id: 'wavefront',
+      label: '波速随动参考系（静止波形）',
+      getOrigin: (s, params) => ({
+        x: (params.direction === 'right' ? 1 : -1) * computeWaveSpeed(params) * s.t,
+        y: 0
+      })
+    }
+  ],
+  sceneSerializer: {
+    exportScene: (_s, params) => ({
+      schemaVersion: '2.0',
+      modelId: 'wave-vibration-coupling',
+      title: '机械波与驻波/多普勒',
+      params
+    }),
+    importScene: (dsl) => dsl.params as Partial<WaveCouplingParams>
+  },
+  exportDiagramIR: (state, params) => {
+    const pts = [];
+    for (let i = 0; i <= 48; i++) {
+      const x = -3 + (i / 48) * 6;
+      const y =
+        params.mode === 'standing'
+          ? evaluateStandingWave(x, state.t, params).y
+          : evaluateTransverseWave(x, state.t, params).y;
+      pts.push({ x, y });
+    }
+    const primitives: DiagramPrimitive[] = [
+      { kind: 'line', x1: -3.2, y1: 0, x2: 3.2, y2: 0 },
+      { kind: 'polyline', points: pts },
+      {
+        kind: 'mathLabel',
+        x: 3.0,
+        y: 1.1,
+        text: `\\lambda=${params.wavelength.toFixed(1)}\\text{m},\\; f=${params.frequency.toFixed(1)}\\text{Hz}`,
+        align: 'end'
+      }
+    ];
+    return {
+      width: 680,
+      height: 360,
+      viewBox: { minX: -3.4, minY: -1.4, maxX: 3.4, maxY: 1.4 },
+      title: '机械波波形配图',
+      primitives
+    };
+  },
   formatFormulas: (state, params) => {
     const vWave = computeWaveSpeed(params);
     if (params.mode === 'doppler') {
@@ -264,14 +357,14 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
     return [
       {
         id: 'wave-speed',
-        label: '波速、波长与频率关系',
+        label: '波速与多解通式',
         latex: 'v = \\lambda f',
-        substitutedLatex: `v = ${params.wavelength.toFixed(2)} \\times ${params.frequency.toFixed(2)} = ${vWave.toFixed(2)}\\text{ m/s}`
+        substitutedLatex: `v = ${vWave.toFixed(2)}\\text{ m/s},\\; \\Delta x_0\\text{ 通解 } v_1=${enumerateMultiSolutionSpeeds(params.wavelength, 0.5, 1, 0)[0]?.speed.toFixed(2) ?? '0'}\\text{ m/s}`
       }
     ];
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    if (params.mode === 'transverse') {
+    if (params.mode === 'transverse' || params.mode === 'standing') {
       const xMin = -4;
       const xMax = 4;
       const showSubGraph = activeLayers.has('vibrationGraph');
@@ -318,7 +411,10 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
         const samples = 240;
         for (let i = 0; i <= samples; i++) {
           const wx = xMin + ((xMax - xMin) * i) / samples;
-          const { y } = evaluateTransverseWave(wx, state.t + dtGhost, params);
+          const { y } =
+            params.mode === 'standing'
+              ? evaluateStandingWave(wx, state.t + dtGhost, params)
+              : evaluateTransverseWave(wx, state.t + dtGhost, params);
           const p = toScreen(wx, y);
           if (i === 0) ctx.moveTo(p.sx, p.sy);
           else ctx.lineTo(p.sx, p.sy);
@@ -336,7 +432,10 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
         const samples = 300;
         for (let i = 0; i <= samples; i++) {
           const wx = xMin + ((xMax - xMin) * i) / samples;
-          const { y } = evaluateTransverseWave(wx, state.t, params);
+          const { y } =
+            params.mode === 'standing'
+              ? evaluateStandingWave(wx, state.t, params)
+              : evaluateTransverseWave(wx, state.t, params);
           const p = toScreen(wx, y);
           if (i === 0) ctx.moveTo(p.sx, p.sy);
           else ctx.lineTo(p.sx, p.sy);
@@ -346,7 +445,10 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
         // 介质采样点
         ctx.fillStyle = 'rgba(56, 189, 248, 0.65)';
         for (let wx = -3.6; wx <= 3.6; wx += 0.4) {
-          const { y } = evaluateTransverseWave(wx, state.t, params);
+          const { y } =
+            params.mode === 'standing'
+              ? evaluateStandingWave(wx, state.t, params)
+              : evaluateTransverseWave(wx, state.t, params);
           const p = toScreen(wx, y);
           ctx.beginPath();
           ctx.arc(p.sx, p.sy, 3.2, 0, Math.PI * 2);
@@ -561,6 +663,21 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
 
     const src = toScreen2D(state.sourceX, 0);
     ctx.save();
+    if (params.sourceSpeedRatio > 1.0 && state.wavefronts.length > 1) {
+      const sinAlpha = 1 / params.sourceSpeedRatio;
+      const halfConeAngle = Math.asin(sinAlpha);
+      const coneLen = viewport.width * 0.65;
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(src.sx, src.sy);
+      ctx.lineTo(src.sx - coneLen * Math.cos(halfConeAngle), src.sy - coneLen * Math.sin(halfConeAngle));
+      ctx.moveTo(src.sx, src.sy);
+      ctx.lineTo(src.sx - coneLen * Math.cos(halfConeAngle), src.sy + coneLen * Math.sin(halfConeAngle));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.fillStyle = '#fbbf24';
     ctx.beginPath();
     ctx.arc(src.sx, src.sy, 8, 0, Math.PI * 2);

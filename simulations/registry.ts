@@ -30,6 +30,13 @@ import { emAcGeneratorRmsPlugin } from './em-ac-generator-rms/plugin.js';
 import { emTransformerGridPlugin } from './em-transformer-grid/plugin.js';
 import { emLcRlcOscillationPlugin } from './em-lc-rlc-oscillation/plugin.js';
 import { em3dMagneticFieldsPlugin } from './em-3d-magnetic-fields/plugin.js';
+import { wave2dRippleFdtdPlugin } from './wave-2d-ripple-fdtd/plugin.js';
+import { opticsWaveInterferencePlugin } from './optics-wave-interference/plugin.js';
+import { thermoPistonGasLawsPlugin } from './thermo-piston-gas-laws/plugin.js';
+import { thermoCyclesKineticMdPlugin } from './thermo-cycles-kinetic-md/plugin.js';
+import { modernPhotoelectricComptonPlugin } from './modern-photoelectric-compton/plugin.js';
+import { modernRutherfordBohrPlugin } from './modern-rutherford-bohr/plugin.js';
+import { modernNuclearRecoilDecayPlugin } from './modern-nuclear-recoil-decay/plugin.js';
 
 import type { ParamRecord, SimulationPlugin } from '@physforge/sim-sdk';
 
@@ -72,7 +79,14 @@ export const simulationPlugins: readonly AnySimulationPlugin[] = [
   erasePluginType(emAcGeneratorRmsPlugin),
   erasePluginType(emTransformerGridPlugin),
   erasePluginType(emLcRlcOscillationPlugin),
-  erasePluginType(em3dMagneticFieldsPlugin)
+  erasePluginType(em3dMagneticFieldsPlugin),
+  erasePluginType(wave2dRippleFdtdPlugin),
+  erasePluginType(opticsWaveInterferencePlugin),
+  erasePluginType(thermoPistonGasLawsPlugin),
+  erasePluginType(thermoCyclesKineticMdPlugin),
+  erasePluginType(modernPhotoelectricComptonPlugin),
+  erasePluginType(modernRutherfordBohrPlugin),
+  erasePluginType(modernNuclearRecoilDecayPlugin)
 ];
 
 export function getSimulationById(id: string): AnySimulationPlugin | undefined {
