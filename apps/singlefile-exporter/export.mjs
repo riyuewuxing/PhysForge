@@ -28,7 +28,10 @@ const KNOWN_MODELS = [
   'em-bounded-magnetic-field',
   'wave-vibration-coupling',
   'em-induction-double-rod',
-  'mech-block-conveyor'
+  'mech-block-conveyor',
+  'optics-ray-studio',
+  'mech-free-sandbox',
+  'circuit-dc-capacitor-mna'
 ];
 
 async function main() {
@@ -94,6 +97,9 @@ async function main() {
   }
   if (html.includes('EXCALIDRAW_ASSET_PATH') || html.includes('@excalidraw/excalidraw')) {
     throw new Error(`Singlefile bundle ${finalOutPath} must not include Excalidraw!`);
+  }
+  if (model !== 'mech-free-sandbox' && html.includes('rapier_wasm2d')) {
+    throw new Error(`Singlefile bundle ${finalOutPath} must not include Rapier2D WASM!`);
   }
 
   const sizeKb = (Buffer.byteLength(html, 'utf8') / 1024).toFixed(1);

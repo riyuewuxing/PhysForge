@@ -1,0 +1,86 @@
+{
+  "id": "pack-circuit-dc-capacitor-mna",
+  "title": "闭合电路欧姆定律与 RC 含容暂态分析",
+  "version": "1.0.0",
+  "curriculum": {
+    "textbook": "人教版 必修第三册",
+    "chapter": "第十二章 电能 能量守恒定律",
+    "section": "第1–3节 闭合电路欧姆定律与含容电路",
+    "curriculumTags": ["物理观念", "科学思维", "科学探究"],
+    "difficulty": "高三一轮",
+    "learningObjectives": [
+      "掌握闭合电路输出功率随外电阻变化极值规律（R = r 时功率最大）",
+      "理解 RC 含容电路充放电指数规律与稳态电势差计算"
+    ]
+  },
+  "poeWorksheets": [
+    {
+      "id": "poe-max-power",
+      "title": "电源输出功率极大值条件 POE 探究",
+      "modelId": "circuit-dc-capacitor-mna",
+      "presetId": "closed-circuit-max-power",
+      "predictPrompt": "电源电动势 E=12 V、内阻 r=2 Ω，外电阻 Rp 从 0.5 Ω 一直调大到 20 Ω，输出功率如何变化？何时最大？",
+      "observeSteps": [
+        "开启 POE 遮罩预测功率最大时的 Rp 阻值与此时电源效率",
+        "取消遮罩调节 Rp 并观察输出功率与效率变化"
+      ],
+      "explainPrompt": "由 P = E²R/(R+r)² 利用均值不等式推导输出功率极大值及对应效率。",
+      "conclusionSummary": "当外电阻 R = r = 2 Ω 时电源输出功率达极大值 18 W，此时电源效率恰为 50%。"
+    }
+  ],
+  "variantQuestions": [
+    {
+      "id": "q-cir-mother",
+      "tier": "母题",
+      "stem": "电源 E=12 V、内阻 r=2 Ω，当外接滑动变阻器调至 R_p=2 Ω 时，求干路电流 I、路端电压 U 与输出功率 P_出。",
+      "options": ["I=3 A, U=6 V, P_出=18 W", "I=6 A, U=12 V, P_出=72 W", "I=3 A, U=12 V, P_出=36 W", "I=2 A, U=8 V, P_出=16 W"],
+      "answer": "A",
+      "analysis": "I = E/(R+r) = 12/4 = 3 A，U = IR = 6 V，P_出 = UI = 18 W。",
+      "modelId": "circuit-dc-capacitor-mna",
+      "presetId": "closed-circuit-max-power",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-4,
+        "simDurationSec": 0,
+        "expectedMetrics": {
+          "totalCurrent": 3.0,
+          "terminalVoltage": 6.0,
+          "outputPower": 18.0,
+          "efficiency": 0.5
+        }
+      }
+    },
+    {
+      "id": "q-cir-advanced",
+      "tier": "进阶",
+      "stem": "E=10 V、r=1 Ω、R₁=9 Ω 与 C=0.05 F 串联充电，经历 1 个时间常数 t = τ = 0.5 s 时，电容两端电压 U_C 与瞬时充电电流 I_C 为多少？",
+      "options": ["U_C≈6.321 V, I_C≈0.368 A", "U_C=5.000 V, I_C=0.500 A", "U_C=10.000 V, I_C=0 A", "U_C≈3.679 V, I_C≈0.632 A"],
+      "answer": "A",
+      "analysis": "τ = (r+R₁)C = 0.5 s，t=τ 时 U_C = 10(1 - e⁻¹) ≈ 6.3212 V，I_C = 1·e⁻¹ ≈ 0.3679 A。",
+      "modelId": "circuit-dc-capacitor-mna",
+      "presetId": "rc-charging-curve",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 0.5,
+        "expectedMetrics": {
+          "capVoltage": 6.321206,
+          "capCurrent": 0.367879
+        }
+      }
+    }
+  ],
+  "misconceptions": [
+    {
+      "id": "mis-power-vs-eff",
+      "title": "混淆“电源输出功率最大”与“电源效率最高”",
+      "misconception": "认为外电阻 R=r 输出功率最大时，电源效率也是最高。",
+      "scientificConcept": "输出功率最大在 R=r 处取得，此时效率仅为 50%；外电阻越大效率 η = R/(R+r) 越高，但输出功率反而下降。",
+      "counterExampleModelId": "circuit-dc-capacitor-mna",
+      "counterExamplePresetId": "closed-circuit-max-power",
+      "diagnosticQuestion": "观察 R=r 时效率读数是否为 0.50（50%）？"
+    }
+  ]
+}

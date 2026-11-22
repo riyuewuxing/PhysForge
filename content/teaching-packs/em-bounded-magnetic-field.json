@@ -1,0 +1,129 @@
+{
+  "id": "pack-em-bounded-magnetic-field",
+  "title": "带电粒子在有界磁场与复合场中的临界运动",
+  "version": "1.0.0",
+  "curriculum": {
+    "textbook": "人教版 选择性必修二",
+    "chapter": "第一章 安培力与洛伦兹力",
+    "section": "第2–3节 洛伦兹力与带电粒子在匀强磁场中的运动",
+    "curriculumTags": ["物理观念", "科学思维", "科学探究"],
+    "difficulty": "压轴专题",
+    "learningObjectives": [
+      "掌握放缩圆、旋转圆确定有界磁场临界轨迹与运动时间的方法",
+      "理解圆形磁场中 R_c = R_field 时的磁聚焦几何不变性",
+      "掌握正交匀强电磁复合场摆线运动的配速法矢量分解"
+    ]
+  },
+  "poeWorksheets": [
+    {
+      "id": "poe-magnetic-focusing",
+      "title": "圆形磁场中的平行粒子磁聚焦探究",
+      "modelId": "em-bounded-magnetic-field",
+      "presetId": "circle-magnetic-focusing",
+      "predictPrompt": "五束水平平行入射的同种带电粒子，若其回旋半径恰好等于圆形磁场半径 R_field，它们穿出磁场时位置有何规律？",
+      "observeSteps": [
+        "开启 POE 预测遮罩，让学生在导学案上作图预测出射交点",
+        "点击揭晓观察并运行仿真，开启“动态圆心与完整辅助圆”图层",
+        "观察五束粒子的穿出点与圆心连线构成的菱形几何关系"
+      ],
+      "dataTableHeaders": ["粒子束序号", "入射偏距 y₀ (m)", "出射汇交点坐标 (m)"],
+      "explainPrompt": "利用入射点到轨道圆心、轨道圆心到最低点 (0, -R) 的距离均为 R，证明为何形成磁聚焦？",
+      "conclusionSummary": "当回旋半径等于圆形磁场半径时，所有平行入射粒子均精确汇聚于边界同一点 (0, -R)。"
+    }
+  ],
+  "variantQuestions": [
+    {
+      "id": "q-em-mother",
+      "tier": "母题",
+      "stem": "质量 m=1 kg、电荷量 q=1 C 的粒子以 v₀=2.4 m/s 沿 +x 方向射入磁感应强度 B=2 T、半径 R=1.2 m 的圆形匀强磁场，求粒子的回旋半径 R_c 与初动能 E_k。",
+      "options": ["R_c=1.2 m, E_k=2.88 J", "R_c=0.6 m, E_k=2.88 J", "R_c=1.2 m, E_k=5.76 J", "R_c=2.4 m, E_k=1.44 J"],
+      "answer": "A",
+      "analysis": "由 R_c = mv₀/(qB) = 1×2.4/(1×2) = 1.2 m（恰等于磁场半径构成磁聚焦），动能 E_k = 0.5×1×2.4² = 2.88 J。",
+      "modelId": "em-bounded-magnetic-field",
+      "presetId": "circle-magnetic-focusing",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-4,
+        "simDurationSec": 0.5,
+        "expectedMetrics": {
+          "larmorRadius": 1.2,
+          "kineticEnergy": 2.88,
+          "speed": 2.4
+        }
+      }
+    },
+    {
+      "id": "q-em-basic",
+      "tier": "基础",
+      "stem": "粒子以 v₀=2.0 m/s、15° 斜射入矩形纯匀强磁场（B=2.4 T, m=1 kg, q=1 C），经历显著偏转后，其出射速率与末动能分别为多少？",
+      "options": ["2.0 m/s, 2.0 J", "1.0 m/s, 0.5 J", "2.4 m/s, 2.88 J", "0 m/s, 0 J"],
+      "answer": "A",
+      "analysis": "洛伦兹力始终与速度垂直且永不做功，因此速率恒为 2.0 m/s，动能恒为 2.0 J。",
+      "modelId": "em-bounded-magnetic-field",
+      "presetId": "misconception-lorentz-work",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-4,
+        "simDurationSec": 1.2,
+        "expectedMetrics": {
+          "speed": 2.0,
+          "kineticEnergy": 2.0
+        }
+      }
+    },
+    {
+      "id": "q-em-advanced",
+      "tier": "进阶",
+      "stem": "旋转圆束第 1 束粒子（m=1 kg, q=1 C, B=2 T, v₀=2.2 m/s）从 (-0.048 m, 0) 以 -40° 偏角斜射入半空间磁场 x≥0（向-y偏转），求其回旋半径 R_c 与穿出磁场边界的精确时刻。",
+      "options": ["R_c=1.1 m, t*≈0.901 s", "R_c=1.1 m, t*≈1.593 s", "R_c=2.2 m, t*≈0.901 s", "R_c=1.1 m, t*≈0.873 s"],
+      "answer": "A",
+      "analysis": "R_c = mv₀/(qB) = 1.1 m；入射前走 0.048/(2.2·cos40°) ≈ 0.02848 s，进入磁场后轨迹圆心角为 180° - 2×40° = 100°，磁场内耗时 (100°/180°)×(π/2) ≈ 0.87266 s，总穿出时刻为 0.90115 s。",
+      "modelId": "em-bounded-magnetic-field",
+      "presetId": "halfspace-rotating-circles",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 1.8,
+        "expectedMetrics": {
+          "larmorRadius": 1.1,
+          "lastEventTime": 0.901151
+        }
+      }
+    },
+    {
+      "id": "q-em-challenge",
+      "tier": "压轴",
+      "stem": "静止粒子（m=1 kg, q=1 C）置于正交匀强电磁场（E_y=3 V/m, B_z=2 T）中做摆线运动。用配速法求漂移速度大小 v_d，以及运动到摆线最高点（t = π/2 s）时的最大瞬时速率与最大纵坐标 y_max。",
+      "options": ["v_d=1.5 m/s, v_max=3.0 m/s, y_max=1.5 m", "v_d=3.0 m/s, v_max=3.0 m/s, y_max=3.0 m", "v_d=1.5 m/s, v_max=1.5 m/s, y_max=0.75 m", "v_d=0.67 m/s, v_max=1.33 m/s, y_max=1.5 m"],
+      "answer": "A",
+      "analysis": "配速漂移 v_d = E_y/B_z = 1.5 m/s；t = π/2 s 时转过半周（ω_c t = π），漂移与圆周速度同向叠加得 v_max = 2 v_d = 3.0 m/s，最大偏移 y_max = 2 R_rot = 2*(1*1.5/(1*2)) = 1.5 m。",
+      "modelId": "em-bounded-magnetic-field",
+      "presetId": "crossed-eb-cycloid",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 1.570796,
+        "expectedMetrics": {
+          "vDriftX": 1.5,
+          "speed": 3.0,
+          "y": 1.5
+        }
+      }
+    }
+  ],
+  "misconceptions": [
+    {
+      "id": "mis-lorentz-work",
+      "title": "误以为洛伦兹力对偏转电荷做功",
+      "misconception": "带电粒子在磁场中运动方向发生 180° 偏转，速度变化巨大，误以为洛伦兹力做了功。",
+      "scientificConcept": "洛伦兹力始终与瞬时速度垂直，瞬时功率为零，只改变速度方向不改变速率与动能。",
+      "counterExampleModelId": "em-bounded-magnetic-field",
+      "counterExamplePresetId": "misconception-lorentz-work",
+      "diagnosticQuestion": "观察底部示波器中的动能曲线 Ek(t) 是否保持水平直线？"
+    }
+  ]
+}

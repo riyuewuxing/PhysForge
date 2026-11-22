@@ -1,5 +1,6 @@
-import React, { Suspense, useEffect, useMemo, useRef } from 'react';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BookOpen,
   Eye,
   EyeOff,
   Maximize2,
@@ -17,6 +18,7 @@ import { useClassroomStore } from './store/useClassroomStore.js';
 import { SimulationStage } from './components/SimulationStage.js';
 import { LeftCatalogSidebar } from './components/LeftCatalogSidebar.js';
 import { RightControlPanel } from './components/RightControlPanel.js';
+import { TeachingPackDrawer } from './components/TeachingPackDrawer.js';
 
 const LazyExcalidrawOverlay = React.lazy(() =>
   import('./components/ExcalidrawOverlay.js').then((m) => ({ default: m.ExcalidrawOverlay }))
@@ -27,6 +29,7 @@ const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
 export const App: React.FC = () => {
   const store = useClassroomStore();
   const simCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [teachingPackOpen, setTeachingPackOpen] = useState(false);
 
   const plugin = useMemo(
     () => getSimulationById(store.selectedPluginId) ?? simulationPlugins[0]!,
@@ -224,6 +227,20 @@ export const App: React.FC = () => {
             <span>大屏模式</span>
           </button>
 
+          <button
+            type="button"
+            data-testid="btn-teaching-pack"
+            onClick={() => setTeachingPackOpen((v) => !v)}
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            style={{
+              borderColor: teachingPackOpen ? 'var(--pf-accent)' : 'var(--pf-border)',
+              backgroundColor: teachingPackOpen ? 'rgba(56, 189, 248, 0.16)' : 'transparent'
+            }}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>教研导学案</span>
+          </button>
+
           {!store.rightSidebarOpen && (
             <button
               type="button"
@@ -298,6 +315,21 @@ export const App: React.FC = () => {
           />
         )}
       </main>
+
+      {teachingPackOpen && (
+        <TeachingPackDrawer
+          modelId={plugin.meta.id}
+          onLoadPreset={(presetId, enablePoeMask) => {
+            store.applyPreset(presetId);
+            if (enablePoeMask && !store.poeMasked) {
+              store.togglePoeMask();
+            } else if (!enablePoeMask && store.poeMasked) {
+              store.togglePoeMask();
+            }
+          }}
+          onClose={() => setTeachingPackOpen(false)}
+        />
+      )}
     </div>
   );
 };

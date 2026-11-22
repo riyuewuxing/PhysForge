@@ -1,0 +1,83 @@
+{
+  "id": "pack-optics-ray-studio",
+  "title": "全反射、玻璃砖侧移与双缝干涉实验",
+  "version": "1.0.0",
+  "curriculum": {
+    "textbook": "人教版 选择性必修一",
+    "chapter": "第四章 光",
+    "section": "第1–4节 光的折射、全反射与双缝干涉",
+    "curriculumTags": ["物理观念", "科学思维", "科学探究"],
+    "difficulty": "高三一轮",
+    "learningObjectives": [
+      "定量应用斯涅尔折射定律与全反射临界角公式 sinC = n₂/n₁",
+      "理解平行玻璃砖测折射率光路侧移规律与双缝干涉条纹间距公式"
+    ]
+  },
+  "poeWorksheets": [
+    {
+      "id": "poe-tir-critical",
+      "title": "光密到光疏界面全反射临界角观测",
+      "modelId": "optics-ray-studio",
+      "presetId": "tir-water-air",
+      "predictPrompt": "光从折射率 1.5 的玻璃射向空气时，增大入射角到什么角度折射光线会突然完全消失？",
+      "observeSteps": [
+        "开启 POE 遮罩预测临界角数值",
+        "运行扫描并观察反射光强度突然跳升为 100% 的临界角瞬间"
+      ],
+      "explainPrompt": "用折射定律 n₁sinθ₁ = n₂sinθ₂ 解释为何折射角达到 90° 后无法继续折射。",
+      "conclusionSummary": "当 θ₁ ≥ arcsin(1/1.5) ≈ 41.81° 时折射光完全消失，发生 100% 全反射。"
+    }
+  ],
+  "variantQuestions": [
+    {
+      "id": "q-opt-mother",
+      "tier": "母题",
+      "stem": "厚 d=1.0 m、折射率 n=1.5 的平行玻璃砖置于空气中，光以 θ₁=50° 入射，求玻璃中折射角 θ₂ 及出射光侧移距离 Δx。",
+      "options": ["θ₂≈30.71°, Δx≈0.384 m", "θ₂≈30.71°, Δx≈0.500 m", "θ₂≈41.81°, Δx≈0.384 m", "θ₂≈25.00°, Δx≈0.220 m"],
+      "answer": "A",
+      "analysis": "由 sinθ₂ = sin50°/1.5 得 θ₂ ≈ 30.71°，侧移量 Δx = d·sin(θ₁-θ₂)/cosθ₂ ≈ 0.3843 m。",
+      "modelId": "optics-ray-studio",
+      "presetId": "parallel-glass-slab",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 0,
+        "expectedMetrics": {
+          "refractedAngleDeg": 30.7102,
+          "lateralShift": 0.38429
+        }
+      }
+    },
+    {
+      "id": "q-opt-basic",
+      "tier": "基础",
+      "stem": "双缝干涉实验中单色光波长 λ=600 nm、双缝间距 d=0.5 mm、屏距 L=1.5 m，求相邻两条亮纹间距 Δx。",
+      "options": ["1.80 mm", "0.90 mm", "3.60 mm", "1.20 mm"],
+      "answer": "A",
+      "analysis": "Δx = Lλ/d = 1.5 × 600×10⁻⁹ / (0.5×10⁻³) = 1.80×10⁻³ m = 1.80 mm。",
+      "modelId": "optics-ray-studio",
+      "presetId": "double-slit-interference",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-4,
+        "simDurationSec": 0,
+        "expectedMetrics": {
+          "fringeSpacingMm": 1.8
+        }
+      }
+    }
+  ],
+  "misconceptions": [
+    {
+      "id": "mis-tir-direction",
+      "title": "忽视全反射前提条件“光密射向光疏”",
+      "misconception": "学生常以为只要入射角足够大，任何界面都能发生全反射。",
+      "scientificConcept": "全反射必须同时满足：光从光密介质射向光疏介质（n₁ > n₂）且入射角 ≥ 临界角 C。",
+      "counterExampleModelId": "optics-ray-studio",
+      "counterExamplePresetId": "tir-water-air",
+      "diagnosticQuestion": "比较 n₁=1.5 射向 n₂=1.0 时的临界角 C 与反向折射现象。"
+    }
+  ]
+}

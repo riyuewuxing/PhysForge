@@ -6,22 +6,25 @@
 PhysForge（智理视界）面向中国普通高中物理（《普通高中物理课程标准（2017年版2025年修订）》与人教版 2019 教材体系），构建“理论物理级数值仿真内核 + 教室白板无缝融合 + AI 人机协同循证教研”三端合一开源平台。
 
 1. **理论物理级数值严谨性**：分级辛积分（`VelocityVerlet`）、电磁 `BorisPusher`、`RK4`/`AdaptiveRK45`、精确二分事件捕获 `bisectEvent`（$|\Delta t| \le 10^{-7}\text{ s}$）与 Vitest 守恒律回归校验。
-2. **一线教室大屏真实可用性**：100% 离线优先、高对比大字号主题、POE 遮罩探究、Excalidraw 透明板书批注、`uPlot` 双向联动示波器与单文件 HTML 切片导出。
-3. **AI 原生插件化长期演进**：强类型 `SimulationPlugin` 契约与 Zod `pedagogy-schema` 数据防幻觉校验。
+2. **一线教室大屏真实可用性**：100% 离线优先、高对比大字号主题（$\ge 18\text{px}$ / 热区 $\ge 44\text{px}$）、POE 遮罩探究、Excalidraw 透明板书批注、`uPlot` 双向联动示波器与单文件 HTML 切片导出。
+3. **AI 原生插件化长期演进**：强类型 `SimulationPlugin` 契约与 Zod `pedagogy-schema` 教研防幻觉自动化验算闭环（`pnpm verify:packs`）。
 
-## 2. 技术栈与分层复用
-- **Monorepo 与构建**：`pnpm` workspace + `Vite 6` + `TypeScript 5.x`（`strict: true`）+ `Vitest`。
-- **应用层（Phase 1+）**：`React 19` + `Tailwind CSS v4` + `Zustand` + `uPlot`（MIT）+ `KaTeX`（MIT）+ `@excalidraw/excalidraw`（MIT，完全本地资源）。
-- **专业生态集成（Phase 3）**：
-  - 几何光学：`ricktu288/ray-optics`（Apache-2.0）封装；
-  - 自由力学沙箱：`@dimforge/rapier2d-compat`（Apache-2.0，按需懒加载）；
-  - 电路求解器：基于公开 MNA（改进节点分析法）纯 TS 自研（严禁复制 GPL `circuitjs1` 源码）。
+## 2. 已落地工具链与核心依赖版本
+- **运行时与包管理**：`Node v24.18.0`、`pnpm 11.24.0`（Workspace Monorepo）
+- **语言与测试**：`TypeScript 7.0.2`（`strict: true` + `noUncheckedIndexedAccess: true`）、`Vitest 5.1.1`、`Zod 4.6.7`、`Playwright 1.65.1`
+- **应用层（`apps/web`）**：`Vite 6.4.6`、`@vitejs/plugin-react 5.2.0`、`React 19.3.1`、`Tailwind CSS 4.3.5`、`Zustand 5.1.0`、`uPlot 1.6.32`、`KaTeX 0.19.1`、`@excalidraw/excalidraw 0.18.1`（MIT，完全本地静态资源）、`vite-plugin-pwa 2.0.0`、`vite-plugin-singlefile 2.3.4`
+- **专业生态集成（Wave 2 已落地）**：
+  - 几何光学：`simulations/optics-ray-studio/`（对齐 `ricktu288/ray-optics` Apache-2.0 场景抽象的零重依赖纯 TS 光线追迹引擎，已在 `THIRD_PARTY_NOTICES.md` 声明）
+  - 自由力学沙箱：`simulations/mech-free-sandbox/`（按需动态懒加载 `@dimforge/rapier2d-compat 0.21.0` Apache-2.0 WASM，严禁进入首屏主 chunk 或其他单文件切片）
+  - 电路求解器：`simulations/circuit-dc-capacitor-mna/`（100% 零 GPL，基于公开 MNA 改进节点分析法纯 TS 从零自研）
 
 ## 3. Monorepo 目录结构
 ```text
 physforge/
 ├── AGENTS.md                         # 仓库工程与物理严谨性宪法
 ├── LICENSE                           # MIT 许可证
+├── THIRD_PARTY_NOTICES.md            # 第三方开源组件许可声明
+├── README.md / CONTRIBUTING.md       # 开源门面与教师无代码贡献指南
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json
 ├── docs/
@@ -32,16 +35,12 @@ physforge/
 │   ├── physics-core/                 # 零 UI 依赖纯 TS 物理计算内核
 │   ├── sim-sdk/                      # SimulationPlugin 统一插件协议
 │   └── pedagogy-schema/              # Zod 教研包与防幻觉校验契约
-├── simulations/                      # 独立自包含仿真模型插件库（Phase 2+）
-├── content/                          # 课堂预设 JSON 与教研包（Phase 2+/4）
+├── simulations/                      # 7 个自包含物理模型插件与全局注册表
+├── content/
+│   ├── presets/                      # 独立预设 JSON 示例
+│   └── teaching-packs/               # 经物理内核验算的 POE/变式题/误区 JSON
+├── scripts/                          # 教研防幻觉自动验算脚本 (verify:packs)
 └── apps/
-    ├── web/                          # 主工作台与教室演示壳（Phase 1）
-    └── singlefile-exporter/          # 单模型离线 HTML 切片导出器（Phase 1）
+    ├── web/                          # 主工作台（教室演示壳 + Excalidraw + PWA + 导学案）
+    └── singlefile-exporter/          # 单模型独立离线 HTML 切片导出器
 ```
-
-## 4. 分阶段里程碑
-- **Phase 0 (M0)**：仓库初始化、`sim-sdk`、`pedagogy-schema`、`physics-core` 与全部数值守恒/事件精度门禁测试。
-- **Phase 1 (M1)**：`apps/web` 教室演示壳 + Excalidraw 离线批注 + POE 遮罩 + PWA + `singlefile-exporter`。
-- **Phase 2 (M2)**：4 个旗舰物理模型（有界磁场/复合场、机械波与振动联动、电磁感应单双杆、动力学板块与传送带）。
-- **Phase 3 (M3)**：`ray-optics`、`rapier2d` 沙箱与自研 MNA 直流/含容电路求解器。
-- **Phase 4 (M4)**：AI 循证教研闭环（POE任务单/三层变式题/误区反例卡 + 数值验算脚本）与社区开源文档。

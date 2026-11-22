@@ -1,0 +1,127 @@
+{
+  "id": "pack-em-induction-double-rod",
+  "title": "电磁感应单杆与双杆切割动力学综合",
+  "version": "1.0.0",
+  "curriculum": {
+    "textbook": "人教版 选择性必修二",
+    "chapter": "第二章 电磁感应",
+    "section": "第2–4节 法拉第电磁感应定律与力学综合",
+    "curriculumTags": ["物理观念", "科学思维", "科学探究"],
+    "difficulty": "压轴专题",
+    "learningObjectives": [
+      "建立双杆无外力切割的动量守恒与焦耳热计算模型",
+      "掌握单杆接电容器系统的微元动量定理与最终稳定速度推导",
+      "分析单杆接恒定电源的反电动势平衡稳态与能量转化"
+    ]
+  },
+  "poeWorksheets": [
+    {
+      "id": "poe-double-rod-momentum",
+      "title": "光滑双杆无外力切割共速与生热探究",
+      "modelId": "em-induction-double-rod",
+      "presetId": "double-rod-momentum-conservation",
+      "predictPrompt": "杆 1（2 kg）以 6 m/s 滑入磁场，静止杆 2（1 kg）随后加速，两杆共速后电流是否为零？损失的动能去向何处？",
+      "observeSteps": [
+        "开启 POE 遮罩观察初始条件，预测最终共速速度",
+        "运行仿真至共速，查看示波器 v1、v2 曲线合拢及右栏能量柱状图"
+      ],
+      "explainPrompt": "为什么双杆不等质量但所受安培力在任一时刻依然满足系统动量守恒？",
+      "conclusionSummary": "回路电流处处相等导致安培力等大反向，系统合外力为零故动量守恒 v_共 = 4 m/s，动能损失全部转化为 12 J 焦耳热。"
+    }
+  ],
+  "variantQuestions": [
+    {
+      "id": "q-ind-mother",
+      "tier": "母题",
+      "stem": "光滑导轨上杆 1（m₁=2 kg, v₁₀=6 m/s）与静止杆 2（m₂=1 kg）构成闭合回路，经历足够长时间（t=12 s）达稳态后，求共同速度 v_共 与回路产生的总焦耳热 Q。",
+      "options": ["v_共=4 m/s, Q=12 J", "v_共=3 m/s, Q=18 J", "v_共=4 m/s, Q=24 J", "v_共=2 m/s, Q=12 J"],
+      "answer": "A",
+      "analysis": "由动量守恒 m₁v₁₀ = (m₁+m₂)v_共 得 v_共 = 12/3 = 4 m/s；Q = 0.5×2×36 - 0.5×3×16 = 36 - 24 = 12 J。",
+      "modelId": "em-induction-double-rod",
+      "presetId": "double-rod-momentum-conservation",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 12.0,
+        "expectedMetrics": {
+          "v1": 4.0,
+          "v2": 4.0,
+          "jouleHeat": 12.0,
+          "momentumTotal": 12.0
+        }
+      }
+    },
+    {
+      "id": "q-ind-basic",
+      "tier": "基础",
+      "stem": "若对上述双杆系统的杆 1 施加 F=6 N 恒定外力由静止拉动 10 s，系统总动量增加到多少？",
+      "options": ["60 kg·m/s", "30 kg·m/s", "20 kg·m/s", "12 kg·m/s"],
+      "answer": "A",
+      "analysis": "两杆所受安培力为系统内力矢量和为零，合外力冲量 Ft = 6 × 10 = 60 kg·m/s。",
+      "modelId": "em-induction-double-rod",
+      "presetId": "double-rod-constant-force",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 10.0,
+        "expectedMetrics": {
+          "momentumTotal": 60.0
+        }
+      }
+    },
+    {
+      "id": "q-ind-advanced",
+      "tier": "进阶",
+      "stem": "光滑导轨（L=1 m, B=2 T）左端接 C=0.25 F 电容器，m₁=1 kg 的杆以 v₀=4 m/s 滑入磁场，求稳定后的末速度 v_∞、电容器最终带电量 q_C 与储能 E_C。",
+      "options": ["v_∞=2 m/s, q_C=1.0 C, E_C=2.0 J", "v_∞=0 m/s, q_C=2.0 C, E_C=8.0 J", "v_∞=2 m/s, q_C=2.0 C, E_C=4.0 J", "v_∞=1 m/s, q_C=0.5 C, E_C=0.5 J"],
+      "answer": "A",
+      "analysis": "由动量定理 -BLq_C = m₁(v_∞ - v₀) 且 q_C = CBLv_∞，解得 v_∞ = m₁v₀/(m₁+B²L²C) = 4/(1+1) = 2 m/s，q_C = 1.0 C，E_C = q²/(2C) = 2.0 J。",
+      "modelId": "em-induction-double-rod",
+      "presetId": "single-rod-capacitor",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 4.0,
+        "expectedMetrics": {
+          "v1": 2.0,
+          "qCap": 1.0,
+          "capacitorEnergy": 2.0,
+          "jouleHeat": 4.0
+        }
+      }
+    },
+    {
+      "id": "q-ind-challenge",
+      "tier": "压轴",
+      "stem": "导轨左端接电动势 E=6 V 恒定电源（B=1.5 T, L=1 m, m₁=1 kg, 总阻 2 Ω），杆从静止被安培力驱动至 8 s 达到稳态时，求最终稳定速度 v_lim。",
+      "options": ["4.0 m/s", "3.0 m/s", "6.0 m/s", "2.0 m/s"],
+      "answer": "A",
+      "analysis": "当反电动势 BLv_lim = E 时电流归零，安培力为零，故 v_lim = E/(BL) = 6/1.5 = 4.0 m/s。",
+      "modelId": "em-induction-double-rod",
+      "presetId": "single-rod-battery-drive",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 8.0,
+        "expectedMetrics": {
+          "v1": 4.0
+        }
+      }
+    }
+  ],
+  "misconceptions": [
+    {
+      "id": "mis-cap-rod-stop",
+      "title": "误以为单杆接电容器会减速到零",
+      "misconception": "套用接电阻模型直觉，认为无外力光滑导轨上的单杆最终必然停下。",
+      "scientificConcept": "电容电压升高到等于感应电动势 BLv_∞ 时回路电流即归零，安培力消失，杆将保持 v_∞ 匀速永动。",
+      "counterExampleModelId": "em-induction-double-rod",
+      "counterExamplePresetId": "single-rod-capacitor",
+      "diagnosticQuestion": "观察单杆接电容预设最终速度 v₁ 是否停在 2.0 m/s 而非 0？"
+    }
+  ]
+}

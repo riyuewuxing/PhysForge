@@ -1,0 +1,20 @@
+{
+  "modelId": "em-bounded-magnetic-field",
+  "preset": {
+    "id": "circle-magnetic-focusing",
+    "name": "圆形磁场磁聚焦 (R_c = R_field)",
+    "description": "人教版选择性必修二第一章典例：五束平行同种电荷射入满足 R_c = R_field 的圆形磁场汇聚于同一边界点。",
+    "params": {
+      "mode": "circular",
+      "family": "focusing",
+      "mass": 1,
+      "charge": 1,
+      "magneticFieldZ": 2,
+      "initialSpeed": 2.4,
+      "fieldScale": 1.2,
+      "launchAngleDeg": 0,
+      "beamCount": 5
+    },
+    "visibleLayers": ["fieldRegion", "trajectory", "larmorCircle", "velocityVector", "eventPins"]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "modelId": "mech-block-conveyor",
+  "preset": {
+    "id": "conveyor-inclined-downward-break",
+    "name": "倾斜向下传送带共速摩擦力突变",
+    "description": "37° 倾斜逆时针传送带（μ = 0.25 < tan37°），演示共速临界点滑动摩擦力反向与 v-t 折线突变。",
+    "params": {
+      "systemMode": "conveyor",
+      "massBlock": 2.0,
+      "muBlockCarrier": 0.25,
+      "inclineDeg": 37,
+      "beltVelocity": -4.0,
+      "blockInitialV": 0
+    },
+    "visibleLayers": ["carrier", "block", "scratchTrack", "forceAndVelocity", "eventPins"]
+  }
+}

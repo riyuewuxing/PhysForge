@@ -82,3 +82,16 @@ input[type="range"].pf-slider::-webkit-slider-thumb {
   --color-surface-lowest: transparent;
   background: transparent !important;
 }
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .pf-printable-drawer {
+    position: static !important;
+    max-width: none !important;
+    width: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+}

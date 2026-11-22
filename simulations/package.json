@@ -23,9 +23,22 @@
     "./mech-block-conveyor": {
       "types": "./mech-block-conveyor/plugin.ts",
       "default": "./mech-block-conveyor/plugin.ts"
+    },
+    "./optics-ray-studio": {
+      "types": "./optics-ray-studio/plugin.ts",
+      "default": "./optics-ray-studio/plugin.ts"
+    },
+    "./mech-free-sandbox": {
+      "types": "./mech-free-sandbox/plugin.ts",
+      "default": "./mech-free-sandbox/plugin.ts"
+    },
+    "./circuit-dc-capacitor-mna": {
+      "types": "./circuit-dc-capacitor-mna/plugin.ts",
+      "default": "./circuit-dc-capacitor-mna/plugin.ts"
     }
   },
   "dependencies": {
+    "@dimforge/rapier2d-compat": "^0.21.0",
     "@physforge/physics-core": "workspace:*",
     "@physforge/sim-sdk": "workspace:*"
   },

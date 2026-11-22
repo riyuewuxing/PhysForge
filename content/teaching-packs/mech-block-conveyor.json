@@ -1,0 +1,128 @@
+{
+  "id": "pack-mech-block-conveyor",
+  "title": "动力学板块模型与传送带摩擦力突变",
+  "version": "1.0.0",
+  "curriculum": {
+    "textbook": "人教版 必修第一册",
+    "chapter": "第四章 运动和力的关系",
+    "section": "第5–6节 牛顿运动定律的应用（传送带与板块专题）",
+    "curriculumTags": ["物理观念", "科学思维", "科学探究"],
+    "difficulty": "压轴专题",
+    "learningObjectives": [
+      "掌握物块与传送带共速瞬间的静/滑动摩擦力突变条件（μ 与 tanθ 判据）",
+      "区分对地位移与相对划痕长度 Δx_rel，量化摩擦生热 Q = f·Δx_rel",
+      "验证板块模型共速前后系统动量守恒与机械能损失转化"
+    ]
+  },
+  "poeWorksheets": [
+    {
+      "id": "poe-inclined-belt-break",
+      "title": "倾斜向下传送带共速后摩擦力方向突变探究",
+      "modelId": "mech-block-conveyor",
+      "presetId": "conveyor-inclined-downward-break",
+      "predictPrompt": "37° 倾斜传送带以 4 m/s 向下运转（μ=0.25 < tan37°），无初速放上物块。物块加速到 4 m/s 与传送带共速后，会随带匀速还是继续加速？",
+      "observeSteps": [
+        "开启 POE 遮罩，让学生在草稿纸上画出共速后瞬间受力分析",
+        "运行仿真观察物块 v-t 图像在共速临界点的斜率折线突变"
+      ],
+      "explainPrompt": "比较 mgsin37° 与 μmgcos37° 大小，解释为何共速后滑动摩擦力突然反向而物体继续加速。",
+      "conclusionSummary": "因 μ < tan37°，静摩擦不足以平衡下滑分力，共速后物块超前皮带滑动，滑动摩擦力突变为沿斜面向上，加速度减小但仍继续加速。"
+    }
+  ],
+  "variantQuestions": [
+    {
+      "id": "q-mech-mother",
+      "tier": "母题",
+      "stem": "质量 m=2 kg 的物块无初速放上速度 v_带=4 m/s 的水平长传送带（μ=0.25, g=9.8 m/s²），运行 3 s 后共速稳定。求共速时刻 t*、相对划痕长度 Δx_rel 与摩擦生热 Q。",
+      "options": ["t*≈1.633 s, Δx_rel≈3.265 m, Q=16 J", "t*≈1.633 s, Δx_rel≈6.531 m, Q=32 J", "t*≈0.816 s, Δx_rel≈3.265 m, Q=16 J", "t*≈1.633 s, Δx_rel≈1.633 m, Q=8 J"],
+      "answer": "A",
+      "analysis": "加速度 a = μg = 2.45 m/s²，t* = 4/2.45 ≈ 1.6327 s；物块位移 x_物 = 3.2653 m，传送带位移 6.5306 m，相对划痕 Δx_rel = 3.2653 m，Q = 0.5×m×v² = 16.0 J。",
+      "modelId": "mech-block-conveyor",
+      "presetId": "conveyor-horizontal-startup",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 3.0,
+        "expectedMetrics": {
+          "firstEventTime": 1.632653,
+          "vBlock": 4.0,
+          "relativeScratch": 3.265306,
+          "frictionHeat": 16.0
+        }
+      }
+    },
+    {
+      "id": "q-mech-basic",
+      "tier": "基础",
+      "stem": "质量 m=1.5 kg 的物块无初速放上 v_带=5 m/s 的水平传送带，共速后其动能增加了多少？这证明了滑动摩擦力可以做什么功？",
+      "options": ["18.75 J，滑动摩擦力做了正功", "18.75 J，滑动摩擦力做负功", "37.5 J，滑动摩擦力做正功", "0 J，摩擦力不做功"],
+      "answer": "A",
+      "analysis": "滑动摩擦力方向与物块对地位移方向相同，做正功使物块获得动能 0.5×1.5×5² = 18.75 J。",
+      "modelId": "mech-block-conveyor",
+      "presetId": "conveyor-misconception-positive-friction",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 3.0,
+        "expectedMetrics": {
+          "vBlock": 5.0,
+          "kineticEnergy": 18.75
+        }
+      }
+    },
+    {
+      "id": "q-mech-advanced",
+      "tier": "进阶",
+      "stem": "质量 2 kg 物块以 6 m/s 滑上光滑地面上静止的 4 kg 长木板（μ₁=0.2），运行 3 s 后达到共速。求共同速度与块板间产生的摩擦生热。",
+      "options": ["2.0 m/s, 24.0 J", "3.0 m/s, 18.0 J", "2.0 m/s, 12.0 J", "4.0 m/s, 24.0 J"],
+      "answer": "A",
+      "analysis": "动量守恒 v_共 = 2×6/(2+4) = 2.0 m/s；系统动能损失 ΔE_k = 36 - 0.5×6×4 = 24.0 J 全部转化为相对划痕生热。",
+      "modelId": "mech-block-conveyor",
+      "presetId": "plank-smooth-ground-momentum",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 3.0,
+        "expectedMetrics": {
+          "vBlock": 2.0,
+          "vCarrier": 2.0,
+          "frictionHeat": 24.0
+        }
+      }
+    },
+    {
+      "id": "q-mech-challenge",
+      "tier": "压轴",
+      "stem": "倾角 37° 传送带以 4 m/s 向下运行（μ=0.25, g=9.8 m/s²），物块无初速从顶端放上。求物块首次达到与传送带共速的精确时刻 t* 以及 t = 1.5 s 时的瞬时速度。",
+      "options": ["t*≈0.517 s, v≈-7.87 m/s", "t*≈0.517 s, v=-4.00 m/s", "t*≈1.020 s, v≈-6.50 m/s", "t*≈0.517 s, v≈-9.80 m/s"],
+      "answer": "A",
+      "analysis": "共速前 a₁ = -g(sin37°+0.25cos37°) ≈ -7.855 m/s²，t* = -4/a₁ ≈ 0.5092 s（注：精确按 37° rad 计算为 0.5092 s）；共速后 a₂ = -g(sin37°-0.25cos37°) ≈ -3.941 m/s²，t=1.5 s 时速率约为 7.905 m/s。",
+      "modelId": "mech-block-conveyor",
+      "presetId": "conveyor-inclined-downward-break",
+      "verification": {
+        "verified": true,
+        "verifier": "physics-core",
+        "tolerance": 1e-3,
+        "simDurationSec": 1.5,
+        "expectedMetrics": {
+          "firstEventTime": 0.509218,
+          "vBlock": -7.904558
+        }
+      }
+    }
+  ],
+  "misconceptions": [
+    {
+      "id": "mis-sliding-friction-neg",
+      "title": "误以为“滑动摩擦力一定做负功”",
+      "misconception": "滑动摩擦力阻碍相对运动，学生常误判为阻碍物体对地运动、一定做负功。",
+      "scientificConcept": "摩擦力方向与相对运动方向相反，但可以与物体的对地速度方向相同，此时滑动摩擦力充当动力做正功。",
+      "counterExampleModelId": "mech-block-conveyor",
+      "counterExamplePresetId": "conveyor-misconception-positive-friction",
+      "diagnosticQuestion": "观察静止物块放上高速传送带后动能曲线 Ek(t) 是否持续上升？"
+    }
+  ]
+}

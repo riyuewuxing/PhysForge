@@ -49,6 +49,7 @@ export const QuestionVerificationSchema = z.object({
   verified: z.boolean(),
   verifier: z.enum(['physics-core', 'sympy', 'manual']),
   tolerance: z.number().positive().optional(),
+  simDurationSec: z.number().nonnegative().finite().optional(),
   expectedMetrics: z.record(z.string(), z.number().finite()),
   checkedAt: z.string().trim().min(1).optional()
 });

@@ -8,41 +8,39 @@
 
 ## 一、当前权威状态快照（Snapshot）
 
-* **最近更新时间**：`2026-11-22 16:58 +08:00`
+* **最近更新时间**：`2026-11-22 17:40 +08:00`
 * **GitHub 远端与本地基线**：
   * 远端仓库：`https://github.com/riyuewuxing/PhysForge`（公开仓库，默认分支 `main`）
-  * 本地仓库：`d:\project code\44-PhysForge`，位于 `main` 分支并绑定 `origin = https://github.com/riyuewuxing/PhysForge.git`；Phase 0 + Wave 1 全量基线已随验收提交并同步至 `origin/main`（具体 SHA 以 `git log -n 1` 为准）。
-* **主线阶段进展（大轮次合并版）**：
-  * **Phase 0（M0）**：✅ **已通过总控验收**。
-  * **Wave 1（第一大轮：教室全栈外壳 + 单文件导出 + 4 大旗舰模型）**：✅ **已通过总控零信任验收**。
-  * **Wave 2（第二大轮，待写手启动）**：`optics-ray-studio`（`ricktu288/ray-optics` Apache-2.0）、`mech-free-sandbox`（`@dimforge/rapier2d-compat` 懒加载）、`circuit-dc-capacitor-mna`（纯 TS 自研 MNA，零 GPL）、`content/teaching-packs/` + `pnpm verify:packs` 防幻觉验算闭环、中英双语 `README.md` / `CONTRIBUTING.md`。
-* **Wave 1 总控独立复验实证（2026-11-22 16:54–16:57 亲跑）**：
-  * `pnpm typecheck`：退出码 `0`（6/6 工作区项目通过）。
-  * `pnpm test`：退出码 `0`（7 测试文件 / **36 条用例全绿**，耗时 `396 ms`）。
-  * `pnpm build`：退出码 `0`（6/6 项目编译通过；`packages/*/dist` 已排除 `*.test.ts`；`apps/web/dist` 生成 PWA SW 预缓存 441 entries 与 `/excalidraw-assets/`；`em-bounded-magnetic-field.html` 产出 `2007.5 KB`）。
-  * `pnpm export:singlefile -- --model=mech-block-conveyor`：退出码 `0`（产出 `mech-block-conveyor.html` `2002.6 KB`，两份单文件 HTML 均无外网 CDN 字面量）。
-  * **Playwright 实机全链路审计（本机 Chrome 无头）**：4 大旗舰模型依次切换运行且 Canvas 非空渲染；`uPlot` 悬停触发时间轴双向回放（`scrubWorking: true`）；POE 遮罩切换正常；大屏模式 `fontSize = 18 px`、30 处 `.pf-touch-target` 零欠尺寸（`undersized: 0`）；Excalidraw 离线透明批注加载并导出合成 PNG（`1036x563`）；`mech-block-conveyor.html` 通过 `file:///` 独立加载运行；全程 `consoleErrors: []`、`pageErrors: []`、`externalRequests: []`。
-  * **静态安全扫描**：`packages` / `simulations` / `apps` 自有源码零 `@ts-ignore`、`@ts-expect-error`、`as any`、`eslint-disable`、`.skip(`、`.only(`。
-* **非阻断性观察项（纳入 Wave 2 顺带优化）**：
-  1. `LeftCatalogSidebar.tsx` 教材筛选下拉目前硬编码 3 册（`必修第一册`/`选择性必修一`/`选择性必修二`），Wave 2 新增模型后需同步补齐其余分册或动态从注册表提取。
-  2. `SimulationStage.tsx` 通用频闪打点层仅消费 `observables.x/y`（`em-bounded-magnetic-field` 生效，其余模型优雅跳过）；Wave 2 可按需由插件图层透传或拓展。
-  3. `@excalidraw/excalidraw` 库自身 chunk 内含默认常量字符串 `ASSETS_FALLBACK_URL = "https://esm.sh/..."`，运行态已被 `main.tsx` 的 `EXCALIDRAW_ASSET_PATH` 完全覆盖（实测 `externalRequests: []`）。
-* **关键避坑与后续红线**：继续严守零 GPL（`circuitjs1` 源码禁入）、`Rapier` 仅在沙箱模型动态懒加载、单文件切片严禁打入 WASM/Excalidraw、角色日志严格隔离与未经确认不 `push`。
+  * 本地仓库：`d:\project code\44-PhysForge`，位于 `main` 分支（前序已验收基线 `eb6b34c`），**Wave 2 全量代码、教研资产与开源文档已通过总控终验并随本轮提交同步至 `origin/main`**（最新 SHA 以 `git log -n 1` 为准）。
+* **主线阶段进展（1.0 完全体全线收官）**：
+  * **Phase 0（M0 地基与内核）**：✅ **已验收**。
+  * **Wave 1（教室外壳 + 单文件导出 + 4 大旗舰模型）**：✅ **已验收并入库 `eb6b34c`**。
+  * **Wave 2（生态整合/无 GPL 电路/沙箱 + 循证教研防幻觉闭环 + 开源社区门面）**：✅ **已通过总控零信任终验**。
+* **Wave 2 总控独立复验实证（2026-11-22 17:38–17:40 亲跑）**：
+  * `pnpm typecheck`：退出码 `0`（6/6 工作区子包 + `scripts/tsconfig.json` 全过）。
+  * `pnpm test`：退出码 `0`（10 测试文件 / **46 条用例全绿**，耗时 `422 ms`）。
+  * `pnpm verify:packs`：退出码 `0`（6/6 教研包、**20/20 道变式题**全部通过 Zod 校验与真实物理内核定量验算）。
+  * `pnpm build`：退出码 `0`（6/6 项目编译通过；`apps/web/dist` 生成 PWA 442 entries，`rapier-Bu0qG0CO.js` 拆分为独立懒加载 chunk；`em-bounded-magnetic-field.html` 2007.5 KB）。
+  * `pnpm export:singlefile` 实测：`circuit-dc-capacitor-mna.html`（2001.3 KB）、`optics-ray-studio.html`（2004.9 KB），通过零 Rapier WASM、零 Excalidraw、零无关模型、零外网 CDN 静态检查。
+  * **Chrome Playwright 全链路终验**：7 个注册模型全部切换运行且 Canvas 非空；验证首屏未加载 Rapier chunk（`rapierLoadedOnInitial: false`）、切入 `mech-free-sandbox` 后按需加载接管（`rapierLoadedAfterSandbox: true`）；教研导学案抽屉 Markdown 导出与题目 Preset 联动跳转正常；`uPlot` 双向回放、POE 遮罩、大屏 `18px` / `26` 处热区 $\ge 44\text{px}$（`undersized: 0`）、Excalidraw 离线批注合成 PNG 导出（`1036x511`）、2 份 Wave 2 单文件 HTML `file:///` 加载运行全部通过；全程 `consoleErrors: []`、`pageErrors: []`、`externalRequests: []`。
+  * **静态安全扫描**：`packages` / `simulations` / `apps` / `scripts` 自有源码零 `@ts-ignore`、`@ts-expect-error`、`as any`、`eslint-disable`、`.skip(`、`.only(`。
+* **关键避坑与长期维护约束**：
+  1. 公开 MIT 仓持续严守零 GPL（`circuitjs1` 源码禁入）与零商用限制 SDK（`tldraw`），第三方开源声明归档于 [THIRD_PARTY_NOTICES.md](file:///d:/project%20code/44-PhysForge/THIRD_PARTY_NOTICES.md)。
+  2. 新增物理模型与教研包须遵守 [AGENTS.md](file:///d:/project%20code/44-PhysForge/AGENTS.md) 与 [CONTRIBUTING.md](file:///d:/project%20code/44-PhysForge/CONTRIBUTING.md)，提交前必须跑通 `pnpm typecheck && pnpm test && pnpm verify:packs && pnpm build`。
+  3. 双交接日志严格隔离，后续新功能迭代直接以 `main` 最新提交为基线展开。
 
 ---
 
 ## 二、会话增量记录
 
-### 2026-11-22 16:58 — Wave 1（Module A–C）总控零信任验收通过
-* **源码与数学核查**：逐文件核对 `packages/{physics-core,sim-sdk,pedagogy-schema}` 收口改动、`apps/web` 全套组件（固定 240Hz 步长累加器、`uPlot` 双向回放、POE 遮罩、本地 `/excalidraw-assets/` 离线白板）、`apps/singlefile-exporter`（`target-plugin` 按模型裁剪）及 4 大旗舰模型（`PHYSICS_SPEC.md`、`engine.ts`、`engine.test.ts`、`plugin.ts`、`registry.ts`）；确认 `ARCHITECT_HANDOFF_LOG.md` 未被写手触碰。
-* **独立实证**：`pnpm typecheck`、`pnpm test`（7 文件 36 用例全绿，`396 ms`）、`pnpm build`、`export:singlefile` 与 Chrome Playwright 全链路验收全部通过且零外网请求/零报错。
-* **下一优先级动作**：待用户确认是否先行提交 Wave 1 Git 基线，随后指示写手按 [WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/WRITER_CONSTRUCTION_PLAN.md) 启动 **Wave 2（Module D → E → F）**。
+### 2026-11-22 17:40 — Wave 2（Module D–F）总控零信任终验通过并提交推送 `origin/main`
+* **源码与合规核查**：
+  * 审阅 [optics-ray-studio/engine.ts](file:///d:/project%20code/44-PhysForge/simulations/optics-ray-studio/engine.ts)（纯 TS 零重依赖光线追迹与干涉）、[mech-free-sandbox/rapierLoader.ts](file:///d:/project%20code/44-PhysForge/simulations/mech-free-sandbox/rapierLoader.ts) & [engine.ts](file:///d:/project%20code/44-PhysForge/simulations/mech-free-sandbox/engine.ts)（`@dimforge/rapier2d-compat` 真正动态懒加载）、[circuit-dc-capacitor-mna/mnaSolver.ts](file:///d:/project%20code/44-PhysForge/simulations/circuit-dc-capacitor-mna/mnaSolver.ts) & [engine.ts](file:///d:/project%20code/44-PhysForge/simulations/circuit-dc-capacitor-mna/engine.ts)（零 GPL 自研 MNA 与梯形伴随 RC 求解器）。
+  * 核查 [scripts/verify-teaching-packs.ts](file:///d:/project%20code/44-PhysForge/scripts/verify-teaching-packs.ts)、[TeachingPackDrawer.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/TeachingPackDrawer.tsx)、[LeftCatalogSidebar.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/LeftCatalogSidebar.tsx)（已扩充覆盖全 6 册筛选）、[export.mjs](file:///d:/project%20code/44-PhysForge/apps/singlefile-exporter/export.mjs)（已拦截非沙箱切片夹带 `rapier_wasm2d`）及中英 [README.md](file:///d:/project%20code/44-PhysForge/README.md) / [CONTRIBUTING.md](file:///d:/project%20code/44-PhysForge/CONTRIBUTING.md) / [THIRD_PARTY_NOTICES.md](file:///d:/project%20code/44-PhysForge/THIRD_PARTY_NOTICES.md)。
+* **独立实证**：亲跑 `typecheck`、`test`（10 文件 46 用例）、`verify:packs`（6 包 20 题）、`build`、2 份单文件 HTML 导出与 Chrome Playwright 全链路验收全部零报错零外网通过。
 
-### 2026-11-22 16:05 — 按用户节奏优化：将剩余施工重编为 Wave 1 / Wave 2 两大高产出轮次
-* 将原 Phase 1+2 合并为 Wave 1，原 Phase 3+4 合并为 Wave 2，写手施工方案落盘于 [WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/WRITER_CONSTRUCTION_PLAN.md)。
+### 2026-11-22 16:58 — Wave 1（Module A–C）总控零信任验收通过并提交推送 `eb6b34c`
+* 核查 `apps/web`、`apps/singlefile-exporter` 与 4 大旗舰模型，跑通 36 条单测与 Chrome Playwright 验收后提交推送至 `origin/main`（`eb6b34c`）。
 
-### 2026-11-22 16:00 — Phase 0（M0 地基与物理内核）总控零信任验收通过
-* 核查并实跑 `sim-sdk`、`pedagogy-schema`、`physics-core` 全套源码与 18 条内核守恒/事件单测全部通过。
-
-### 2026-11-22 15:20 — 项目冷启动：接任本地总控、核验 GitHub 空仓并落盘施工与双交接体系
-* 通读 [physforge_ai.md](file:///d:/project%20code/44-PhysForge/physforge_ai.md)，核实 `riyuewuxing/PhysForge` 公开空仓及本地工具链，建立施工方案与双角色交接文件。
+### 2026-11-22 16:05 — 施工节奏重编（Wave 1 / Wave 2）与 Phase 0（M0）验收归档
+* 将剩余建设整合为 Wave 1/2 两轮高产出交付；Phase 0（18 条内核与契约单测）通过零信任验收。

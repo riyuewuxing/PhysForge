@@ -8,7 +8,15 @@ interface LeftCatalogSidebarProps {
   onClose: () => void;
 }
 
-const TEXTBOOKS = ['全部教材', '必修第一册', '选择性必修一', '选择性必修二'] as const;
+const TEXTBOOKS = [
+  '全部教材',
+  '必修第一册',
+  '必修第二册',
+  '必修第三册',
+  '选择性必修一',
+  '选择性必修二',
+  '选择性必修三'
+] as const;
 const TAGS: readonly ('全部素养' | CurriculumTag)[] = [
   '全部素养',
   '物理观念',
