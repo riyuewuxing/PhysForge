@@ -1,4 +1,5 @@
-import { defineSimulationPlugin, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
 import {
   checkInvariants,
   computeObservables,
@@ -204,6 +205,72 @@ export const mechBlockConveyorPlugin = defineSimulationPlugin<
     { key: 'frictionHeat', label: '摩擦生热 Q', unit: 'J', color: '#fb7185' },
     { key: 'kineticEnergy', label: '总动能 Ek', unit: 'J', color: '#4ade80' }
   ],
+  getControlHandles: (_state, params) => [
+    {
+      id: 'belt-velocity',
+      label: `${params.systemMode === 'conveyor' ? 'v带' : 'v板'}=${params.beltVelocity.toFixed(1)}m/s`,
+      position: { x: params.beltVelocity * 0.3, y: -0.6 },
+      origin: { x: 0, y: -0.6 },
+      handleKind: 'vector',
+      color: '#fbbf24',
+      onDrag: (wp) => ({
+        beltVelocity: Number(Math.max(-6, Math.min(6, Math.round((wp.x / 0.3) * 2) / 2)).toFixed(1))
+      })
+    }
+  ],
+  getForceVectors: (state, params) => {
+    const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
+    const m = params.massBlock;
+    const g = CLASSROOM_GRAVITY;
+    const mg = m * g;
+    const normalMag = mg * Math.cos(theta);
+    const vRel = state.vBlock - state.vCarrier;
+    const fMax = params.muBlockCarrier * normalMag;
+    const fAlong = state.coMovingLocked ? m * g * Math.sin(theta) : Math.abs(vRel) < 1e-9 ? 0 : vRel > 0 ? -fMax : fMax;
+    const bx = state.xBlock * 0.25;
+    const by = bx * Math.tan(theta);
+    return [
+      { id: 'gravity', label: 'mg', origin: { x: bx, y: by }, force: { x: 0, y: -mg }, color: '#fbbf24', unit: 'N' },
+      { id: 'normal', label: 'F_N', origin: { x: bx, y: by }, force: { x: -normalMag * Math.sin(theta), y: normalMag * Math.cos(theta) }, color: '#38bdf8', unit: 'N' },
+      { id: 'friction', label: 'f', origin: { x: bx, y: by }, force: { x: fAlong * Math.cos(theta), y: fAlong * Math.sin(theta) }, color: '#f472b6', unit: 'N' }
+    ];
+  },
+  referenceFrames: [
+    {
+      id: 'carrier',
+      label: '传送带/长木板参考系',
+      getOrigin: (state, params) => {
+        const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
+        const s = state.xCarrier * 0.25;
+        return { x: s * Math.cos(theta), y: s * Math.sin(theta) };
+      }
+    }
+  ],
+  sceneSerializer: {
+    exportScene: (_s, params) => ({
+      schemaVersion: '2.0',
+      modelId: 'mech-block-conveyor',
+      title: '传送带与板块动力学',
+      params
+    }),
+    importScene: (dsl) => dsl.params as Partial<BlockConveyorParams>
+  },
+  exportDiagramIR: (state, params) => {
+    const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
+    const primitives: DiagramPrimitive[] = [
+      { kind: 'hatchedGround', x1: -3.2 * Math.cos(theta), y1: -3.2 * Math.sin(theta) - 0.25, x2: 3.2 * Math.cos(theta), y2: 3.2 * Math.sin(theta) - 0.25 },
+      { kind: 'block', cx: 0, cy: 0.1, width: 0.7, height: 0.45, angleDeg: params.inclineDeg, label: 'm_1' },
+      { kind: 'arrow', x1: 0, y1: 0.1, x2: 0, y2: -0.9, label: 'mg' },
+      { kind: 'mathLabel', x: 2.6, y: 1.4, text: `\\mu=${params.muBlockCarrier}, Q=${state.frictionHeat.toFixed(2)} J`, align: 'end' }
+    ];
+    return {
+      width: 720,
+      height: 400,
+      viewBox: { minX: -3.5, minY: -2, maxX: 3.5, maxY: 2 },
+      title: '板块与倾斜传送带受力配图',
+      primitives
+    };
+  },
   formatFormulas: (state) => [
     {
       id: 'scratch-heat',

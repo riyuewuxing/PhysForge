@@ -7,6 +7,16 @@ import { opticsRayStudioPlugin } from './optics-ray-studio/plugin.js';
 import { mechFreeSandboxPlugin } from './mech-free-sandbox/plugin.js';
 import { circuitDcCapacitorMnaPlugin } from './circuit-dc-capacitor-mna/plugin.js';
 import { builderCustomOdeLabPlugin } from './builder-custom-ode-lab/plugin.js';
+import { mechKinematicsChasePlugin } from './mech-kinematics-chase/plugin.js';
+import { mechDynamicEquilibriumPlugin } from './mech-dynamic-equilibrium/plugin.js';
+import { mechConstrainedVelocityPlugin } from './mech-constrained-velocity/plugin.js';
+import { mechProjectileCouplingPlugin } from './mech-projectile-coupling/plugin.js';
+import { mechVerticalCircularPlugin } from './mech-vertical-circular/plugin.js';
+import { mechConicalTurntablePlugin } from './mech-conical-turntable/plugin.js';
+import { mechSpringSeparationPlugin } from './mech-spring-separation/plugin.js';
+import { mechCollisionRecoilPlugin } from './mech-collision-recoil/plugin.js';
+import { astroOrbitalMechanicsPlugin } from './astro-orbital-mechanics/plugin.js';
+import { mechShmResonancePlugin } from './mech-shm-resonance/plugin.js';
 
 export type AnySimulationPlugin = SimulationPlugin<ParamRecord, unknown>;
 
@@ -41,7 +51,17 @@ export const simulationPlugins: readonly AnySimulationPlugin[] = [
   erasePluginType(opticsRayStudioPlugin),
   erasePluginType(mechFreeSandboxPlugin),
   erasePluginType(circuitDcCapacitorMnaPlugin),
-  erasePluginType(builderCustomOdeLabPlugin)
+  erasePluginType(builderCustomOdeLabPlugin),
+  erasePluginType(mechKinematicsChasePlugin),
+  erasePluginType(mechDynamicEquilibriumPlugin),
+  erasePluginType(mechConstrainedVelocityPlugin),
+  erasePluginType(mechProjectileCouplingPlugin),
+  erasePluginType(mechVerticalCircularPlugin),
+  erasePluginType(mechConicalTurntablePlugin),
+  erasePluginType(mechSpringSeparationPlugin),
+  erasePluginType(mechCollisionRecoilPlugin),
+  erasePluginType(astroOrbitalMechanicsPlugin),
+  erasePluginType(mechShmResonancePlugin)
 ];
 
 export function getSimulationById(id: string): AnySimulationPlugin | undefined {
@@ -61,5 +81,8 @@ export {
   mechFreeSandboxPlugin as builderMechanicsLabPlugin,
   circuitDcCapacitorMnaPlugin,
   circuitDcCapacitorMnaPlugin as builderCircuitMnaPlugin,
-  builderCustomOdeLabPlugin
+  builderCustomOdeLabPlugin,
+  mechCollisionRecoilPlugin,
+  astroOrbitalMechanicsPlugin,
+  mechShmResonancePlugin
 };

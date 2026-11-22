@@ -8,42 +8,41 @@
 
 ## 一、当前权威状态快照（Snapshot）
 
-* **最近更新时间**：`2026-11-22 20:37 +08:00`
+* **最近更新时间**：`2026-11-22 21:05 +08:00`
 * **GitHub 远端与本地基线**：
   * 远端仓库：`https://github.com/riyuewuxing/PhysForge`（公开仓库，默认分支 `main`）
-  * 代码与发布状态：**`V2-W2`（`@physforge/export-studio` + `B1–B5` 五大自由建模器 + `LEGACY_MODEL_ALIASES` + `--preset-file`）零信任验收通过**，即将提交并推送至 `origin/main`。
+  * 代码与发布状态：**`V2-W3`（力学与天体全矩阵 `M01–M11`，11 单元）零信任验收通过**，即将提交并推送至 `origin/main`。
 * **V2.0 总体规划进展**：
-  * ✅ **V2.0 需求对齐、全网调研与写手施工方案定稿**（合入 `61cad64`）。
-  * ✅ **`V2-W1` 已验收并合入 `main@61cad64`**：`physics-core` V2 底座、`sim-sdk` V2、`analysis-lab`、`workspace-vault`、交互/3D 舞台与双路径 CI/Pages。
-  * ✅ **`V2-W2` 已验收通过**：
-    * `@physforge/export-studio`（SVG/TikZ/600 DPI PNG/WebM 录屏/频闪长图）与按需加载 [ExportStudioDrawer.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/ExportStudioDrawer.tsx)；
-    * [simulations/registry.ts](file:///d:/project%20code/44-PhysForge/simulations/registry.ts) `LEGACY_MODEL_ALIASES` 兼顾 `verify:packs`、`TeachingPackDrawer` 与 `--preset-file` 跨版本映射；
-    * 五大建模器：`B1`（9 粒子磁聚焦 + Brent 反解 + Auto-FBD + 参考系）、`B2`（非线性 MNA 二极管/灯泡 + 短路告警）、`B3`（薄透镜 $1/u+1/v=1/f$）、`B4`（Udwadia-Kalaba 阿特伍德机 + 弹簧振子 + 质心系）、`B5`（`mathjs@15.2.0` 严格懒加载 + 白名单 AST 沙箱，零 `eval`/`new Function`）。
-  * ⏳ **下一待写手启动：`V2-W3`**（力学与天体全矩阵 `M01–M11`，11 单元）。
-  * 后续轮次：`V2-W4`（`E01–E10`）→ `V2-W5`（`W01–W02, O01, T01–T02, N01–N03`）→ `V2-W6`（`S01–S04, X01–X02, C01–C03` + `ai-copilot` + V2.0 终版封板）。
+  * ✅ **`V2-W1`（`main@61cad64`）**：`physics-core` V2 底座、`sim-sdk` V2、`analysis-lab`、`workspace-vault`、交互/3D 舞台与双路径 CI/Pages。
+  * ✅ **`V2-W2`（`main@3e86d3b`）**：`@physforge/export-studio`、`LEGACY_MODEL_ALIASES`、`--preset-file` 与 `B1–B5` 五大自由建模器（`mathjs@15.2.0` 懒加载 AST 沙箱）。
+  * ✅ **`V2-W3` 已验收通过**：`M01` 追及相遇、`M02` 动态平衡、`M03` 关联速度、`M04` 抛体耦合、`M05` 板块传送带（V2 原地升级）、`M06` 竖直圆周（Udwadia-Kalaba + 脱轨二分）、`M07` 圆盘双物块与圆锥摆、`M08` 弹簧连接体分离、`M09` 碰撞与反冲、`M10` 万有引力与天体力学（`ScaleContext` + 四阶 Yoshida 辛积分 + 霍曼转移 + Lagrange `L1–L5` + Roche 等势线）、`M11` 简谐/单摆/受迫共振（`Scale` & `bisectEvent`）。
+  * ⏳ **下一待写手启动：`V2-W4`**（电磁学全矩阵与 3D 空间场 `E01–E10`，10 单元 + **首屏注册表按需懒加载拆分**）。
+  * 后续轮次：`V2-W5`（`W01–W02, O01, T01–T02, N01–N03`）→ `V2-W6`（`S01–S04, X01–X02, C01–C03` + `ai-copilot` + V2.0 终版封板）。
+* **⚠️ `V2-W4` 首屏体积硬预警（必读约束）**：
+  * `V2-W3` 接入 18 个模型后，`apps/web` 主 HTML 入口 `index-*.js` 已达 **`304.82 kB` Vite gzip**（`.NET Gzip` `295.31 KB`），距离 `ci.yml` `< 350 KB` 门禁仅余约 `45 KB` 空间。
+  * **要求写手在 `V2-W4` 率先落实模型代码按需异步拆分**（建议在 `@physforge/simulations` 暴露轻量化目录元数据 `@physforge/simulations/catalog` + 动态异步 `loadSimulationById(id)` 供 `apps/web` 首屏按需加载单个模型 `plugin.ts`，同时保留 `@physforge/simulations/registry` 给单测、`verify:packs` 与 `sweep.worker.ts`），严禁 43 模型同步静态打入 `index-*.js` 突破 `350 KB` 红线！
 
 ---
 
 ## 二、会话增量记录
 
-### 2026-11-22 20:37 — `V2-W2` 零信任验收通过（准备合入 `origin/main`）
-* **核查发现与核验结果**：
-  * `safeAstCompiler.ts` 仅允许 `mathjs@15.2.0` 异步 `import('mathjs')` 且限定白名单变量/一元二元初等函数/长度≤256/AST 节点≤80，拒绝 `constructor`/`__proto__`/`eval`/`import`/`process`/`createUnit` 与成员点号访问。
-  * `export.mjs` 完整阻断非 B5 切片打入 `mathjs`、非 B4 切片打入 `rapier_wasm2d` 及任何切片夹带 `three` / `papaparse` / `fflate` / Excalidraw。
+### 2026-11-22 21:05 — `V2-W3` 零信任验收通过（准备合入 `origin/main`）
+* **逐模型源码与物理严谨性核验**：
+  * 全部 11 个 `M01–M11` 引擎零 DOM/Canvas/React、零 `Math.random()`；`M01/M04/M05/M06/M08/M09/M11` 使用 `bisectEvent` 精确捕临界；`M06` 使用 `solveUdwadiaKalaba` 求支/拉力、`arccos(2/3)` 误差 `< 1e-6 rad`；`M10` 使用 `ScaleContext` 无量纲化 + 四阶 Yoshida `stepVelocityVerlet` 辛组合、`findRootBrent` 与 `extractIsolines`，50 周期能量/半长轴漂移 `< 1e-6`、角动量 `< 1e-7`。
 * **最后一次代码改动后的实测验收证据**：
-  * **静态扫描 & 版本核验**：全仓源码零 `@ts-ignore` / `@ts-expect-error` / `\bas any\b` / `eslint-disable` / `.skip(` / `.only(` / `Math.random(` / 真实 `eval(` / `new Function(`（仅 `B5` 恶意用例测试字面量第 22 行）；`mathjs` 实装版本 `15.2.0`。
-  * **`pnpm typecheck`**：退出码 `0`（9/10 工作区有脚本子包及 `scripts/tsconfig.json` 全部通过）。
-  * **`pnpm test`**：退出码 `0`（**20 个测试文件 / 71 条用例全绿**，耗时 `2.03s`）。
-  * **`pnpm verify:packs`**：退出码 `0`（6 份教研包 / 20 题经 `LEGACY_MODEL_ALIASES` 全通过）。
-  * **`pnpm build` 与包体隔离**：主 HTML 入口 `index-BOEjHW8I.js` gzip `268.56 KB`（Vite 输出 `277.19 kB`，`< 350 KB`），`mathjs` 独立拆包 `esm-B95djzaa.js`（`209.30 kB` gzip），主包零打入禁止提前依赖；3 类单文件切片 `em-bounded-magnetic-field.html`（`2012.0 KB`）、`builder-custom-ode-lab.html`（`2740.0 KB`）、`builder-circuit-mna.html`（`2008.6 KB`）均通过防泄漏校验。
-  * **Playwright 无头 Chrome 实机 E2E**：主站 + 3 份单文件 `file://` 全绿（`consoleErrors: []`, `pageErrors: []`, `failed404: []`, `externalRequests: []`）；实测别名教研包加载、Auto-FBD 叠绘、ExportStudio 下载黑白矢量 SVG / 600 DPI PNG / 频闪长图 PNG / TikZ 源码、切入 B5 后按需触发 `mathjs` 懒加载（`2 -> 5 scripts`）及 B4 质心参考系切换。
-* **下一优先级动作**：通知用户 `V2-W2` 已验收合入并推送 `origin/main`，由写手读取 [WRITER_HANDOFF_LOG.md](file:///d:/project%20code/44-PhysForge/docs/WRITER_HANDOFF_LOG.md) 与 [V2_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V2_WRITER_CONSTRUCTION_PLAN.md) 启动 **`V2-W3`**（`M01–M11`）。
+  * **静态合规扫描**：全仓（`packages/simulations/apps/scripts`）零 `@ts-ignore` / `@ts-expect-error` / `\bas any\b` / `eslint-disable` / `.skip(` / `.only(` / `Math.random(` / 真实 `eval(` / `new Function(`（仅 `B5` 恶意用例测试字面量第 22 行）。
+  * **`pnpm typecheck`**：退出码 `0`（9/10 工作区有脚本子包 + `scripts/tsconfig.json` 全部通过）。
+  * **`pnpm test`**：退出码 `0`（**30 个测试文件 / 90 条用例全绿**，耗时 `2.66s`）。
+  * **`pnpm verify:packs`**：退出码 `0`（6 份教研包 / 20 道物理验算题通过）。
+  * **`pnpm build` 与包体隔离**：主 HTML 入口 `index-DXvy7LOr.js`（`969.55 kB`，`.NET Gzip` `295.31 KB` / Vite gzip `304.82 kB`，`< 350 KB`），主包零打入 `OrbitControls` / `papaparse` / `rapier_wasm2d` / `@excalidraw/excalidraw` / `physforge-workspace-vault` / `mathjs`；`M10` 单文件导出 `astro-orbital-mechanics.html`（`2009.4 KB`）通过防泄漏校验。
+  * **Playwright 无头 Chrome 实机 E2E**：校验教材分册筛选（`必修第二册`）并依次切换运行 `M01–M11` 全部 11 个模型，确认 `<canvas>` 非空白渲染、支持 `Auto-FBD`、`ExportStudioDrawer` SVG 渲染及 `astro-orbital-mechanics.html` `file://` 运行全绿（`consoleErrors: []`, `pageErrors: []`, `failed404: []`, `externalRequests: []`）。
+* **下一优先级动作**：通知用户 `V2-W3` 已验收合入并推送 `origin/main`，由写手读取 [WRITER_HANDOFF_LOG.md](file:///d:/project%20code/44-PhysForge/docs/WRITER_HANDOFF_LOG.md) 与本预警后启动 **`V2-W4`**（先将 `apps/web` 改为轻量化目录 + 模型插件动态 `import()` 懒加载，再落地 `E01–E10`）。
 
-### 2026-11-22 20:11 — `V2-W1` 零信任验收通过并合入 `main@61cad64`
-* 验证 `physics-core` V2 底座、`sim-sdk` V2、`analysis-lab`、`workspace-vault`、`ThreeStage` 及双路径（`/` 与 `/PhysForge/`）全绿；顺手修复 `SimulationStage.tsx` `fbdCountRef` 60fps 闭包重渲染隐患，提交并推送 `origin/main@61cad64`。
+### 2026-11-22 20:37 — `V2-W2` 零信任验收通过并合入 `main@3e86d3b`
+* 验收通过 `@physforge/export-studio`、单文件 `--preset-file` 增强、`LEGACY_MODEL_ALIASES` 与 `B1–B5`（含 `mathjs@15.2.0` 懒加载 AST 沙箱）；71 测全绿，提交并推送 `origin/main@3e86d3b`。
 
 ---
 
-## 历史归档摘要（V1.0 & V2 规划基线）
-* **V1.0 基线（`eb6b34c` → `62f9383`）**：交付 Monorepo、7 大教学模型、PWA、离线 Excalidraw、单文件切片、6 套防幻觉教研包与 `verify:packs`（46 测 20 题）。
-* **V2 规范定稿（`2026-11-22 19:35`）**：完成三卷全规格（`docs/v2-specs/01~03.md`）、`AGENTS.md` V2 宪法与 `V2_WRITER_CONSTRUCTION_PLAN.md`（确立 `V2-W1 ~ V2-W6` 及 6 项安全/生态纠偏）。
+## 历史归档摘要（V1.0 & V2 早期轮次，已合入 `origin/main`）
+* **V1.0 基线（`eb6b34c` → `62f9383`）**：Monorepo、7 大模型、PWA、离线 Excalidraw、单文件切片、6 教研包与 `verify:packs`（46 测 20 题）。
+* **V2-W1（`61cad64`）**：三卷全规格定稿、6 项全网纠偏、`physics-core` V2 底座、`sim-sdk` V2、`analysis-lab`、`workspace-vault`、交互/3D 舞台及双路径 CI/Pages。

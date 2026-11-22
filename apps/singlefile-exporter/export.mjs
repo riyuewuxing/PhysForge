@@ -46,7 +46,17 @@ const KNOWN_MODELS = [
   'builder-mechanics-lab',
   'circuit-dc-capacitor-mna',
   'builder-circuit-mna',
-  'builder-custom-ode-lab'
+  'builder-custom-ode-lab',
+  'mech-kinematics-chase',
+  'mech-dynamic-equilibrium',
+  'mech-constrained-velocity',
+  'mech-projectile-coupling',
+  'mech-vertical-circular',
+  'mech-conical-turntable',
+  'mech-spring-separation',
+  'mech-collision-recoil',
+  'astro-orbital-mechanics',
+  'mech-shm-resonance'
 ];
 
 function isSameModelGroup(a, b) {

@@ -55,6 +55,46 @@
     "./builder-custom-ode-lab": {
       "types": "./builder-custom-ode-lab/plugin.ts",
       "default": "./builder-custom-ode-lab/plugin.ts"
+    },
+    "./mech-kinematics-chase": {
+      "types": "./mech-kinematics-chase/plugin.ts",
+      "default": "./mech-kinematics-chase/plugin.ts"
+    },
+    "./mech-dynamic-equilibrium": {
+      "types": "./mech-dynamic-equilibrium/plugin.ts",
+      "default": "./mech-dynamic-equilibrium/plugin.ts"
+    },
+    "./mech-constrained-velocity": {
+      "types": "./mech-constrained-velocity/plugin.ts",
+      "default": "./mech-constrained-velocity/plugin.ts"
+    },
+    "./mech-projectile-coupling": {
+      "types": "./mech-projectile-coupling/plugin.ts",
+      "default": "./mech-projectile-coupling/plugin.ts"
+    },
+    "./mech-vertical-circular": {
+      "types": "./mech-vertical-circular/plugin.ts",
+      "default": "./mech-vertical-circular/plugin.ts"
+    },
+    "./mech-conical-turntable": {
+      "types": "./mech-conical-turntable/plugin.ts",
+      "default": "./mech-conical-turntable/plugin.ts"
+    },
+    "./mech-spring-separation": {
+      "types": "./mech-spring-separation/plugin.ts",
+      "default": "./mech-spring-separation/plugin.ts"
+    },
+    "./mech-collision-recoil": {
+      "types": "./mech-collision-recoil/plugin.ts",
+      "default": "./mech-collision-recoil/plugin.ts"
+    },
+    "./astro-orbital-mechanics": {
+      "types": "./astro-orbital-mechanics/plugin.ts",
+      "default": "./astro-orbital-mechanics/plugin.ts"
+    },
+    "./mech-shm-resonance": {
+      "types": "./mech-shm-resonance/plugin.ts",
+      "default": "./mech-shm-resonance/plugin.ts"
     }
   },
   "dependencies": {
