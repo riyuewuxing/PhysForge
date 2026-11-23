@@ -1,5 +1,5 @@
-import { degToRad } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
+import { defineSimulationPlugin, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { conicalTurntablePresets } from './presets.js';
 import {
   checkInvariants,
@@ -60,16 +60,76 @@ export const mechConicalTurntablePlugin = defineSimulationPlugin<
     { key: 'frictionBN', label: '外块静摩擦 fB', unit: 'N', color: '#f472b6' },
     { key: 'coneAngleDeg', label: '圆锥半顶角 θ', unit: '°', color: '#fbbf24' }
   ],
-  getControlHandles: (_s, params) => [
-    {
+  getControlHandles: (state, params) => {
+    const angle = state.angleRad;
+    const x = params.mode === 'turntable-dual' ? state.rB * Math.cos(angle) : params.radiusB;
+    const y = params.mode === 'turntable-dual' ? -state.rB * Math.sin(angle) : 0;
+    return [{
       id: 'radius-b',
       label: `rB=${params.radiusB.toFixed(1)}m`,
-      position: { x: params.radiusB, y: 0 },
+      position: { x, y },
+      origin: { x: 0, y: 0 },
       handleKind: 'radius',
       color: '#f472b6',
       onDrag: (wp) => ({ radiusB: Number(Math.max(0.8, Math.min(2.4, Math.hypot(wp.x, wp.y))).toFixed(1)) })
+    }];
+  },
+  getForceVectors: (state, params): ForceVectorItem[] => {
+    if (params.mode === 'conical-pendulum') {
+      const theta = (state.coneAngleDeg * Math.PI) / 180;
+      const pivot = { x: 0, y: 1.1 };
+      const bob = {
+        x: params.pendulumLength * Math.sin(theta) * Math.cos(state.angleRad),
+        y: pivot.y - params.pendulumLength * Math.cos(theta)
+      };
+      const dx = pivot.x - bob.x;
+      const dy = pivot.y - bob.y;
+      const length = Math.max(1e-9, Math.hypot(dx, dy));
+      const tension = { x: (state.tensionN * dx) / length, y: (state.tensionN * dy) / length };
+      const gravity = { x: 0, y: -params.massA * CLASSROOM_GRAVITY };
+      return [
+        { id: 'gravity', label: 'mg', origin: bob, force: gravity, color: '#fbbf24', category: 'gravity' },
+        { id: 'tension', label: 'T', origin: bob, force: tension, color: '#38bdf8', category: 'tension' },
+        { id: 'net', label: 'F_合', origin: bob, force: { x: tension.x, y: tension.y + gravity.y }, color: '#4ade80', category: 'net' }
+      ];
     }
-  ],
+
+    const angle = state.angleRad;
+    const a = { x: -state.rA * Math.cos(angle), y: state.rA * Math.sin(angle) };
+    const b = { x: state.rB * Math.cos(angle), y: -state.rB * Math.sin(angle) };
+    const inwardA = { x: -a.x / Math.max(1e-9, state.rA), y: -a.y / Math.max(1e-9, state.rA) };
+    const inwardB = { x: -b.x / Math.max(1e-9, state.rB), y: -b.y / Math.max(1e-9, state.rB) };
+    const vectors: ForceVectorItem[] = [];
+    if (Math.abs(state.frictionAN) > 1e-5) {
+      vectors.push({
+        id: 'friction-a', label: 'f_A', origin: a,
+        force: { x: state.frictionAN * inwardA.x, y: state.frictionAN * inwardA.y },
+        color: '#4ade80', category: 'friction'
+      });
+    }
+    if (Math.abs(state.frictionBN) > 1e-5) {
+      vectors.push({
+        id: 'friction-b', label: 'f_B', origin: b,
+        force: { x: state.frictionBN * inwardB.x, y: state.frictionBN * inwardB.y },
+        color: '#f472b6', category: 'friction'
+      });
+    }
+    if (state.tensionN > 1e-5) {
+      vectors.push(
+        {
+          id: 'tension-a', label: 'T_A', origin: a,
+          force: { x: state.tensionN * inwardA.x, y: state.tensionN * inwardA.y },
+          color: '#38bdf8', category: 'tension'
+        },
+        {
+          id: 'tension-b', label: 'T_B', origin: b,
+          force: { x: state.tensionN * inwardB.x, y: state.tensionN * inwardB.y },
+          color: '#38bdf8', category: 'tension'
+        }
+      );
+    }
+    return vectors;
+  },
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -96,8 +156,8 @@ export const mechConicalTurntablePlugin = defineSimulationPlugin<
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.18 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
+    const ppm = Math.min(viewport.width, viewport.height) * 0.24 * viewport.scale;
+    const cx = viewport.width * 0.45 + viewport.offsetX;
     const cy = viewport.height * 0.5 + viewport.offsetY;
 
     ctx.save();

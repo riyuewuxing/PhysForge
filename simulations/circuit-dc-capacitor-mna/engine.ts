@@ -261,7 +261,12 @@ export function createInitialState(params: CircuitParams): CircuitState {
   const initCapV = params.topology === 'rc-transient' && !params.switchClosed ? params.emf : 0;
   const first = solveTopology(params, initCapV, 0, 0);
   const events: PhysicsEvent[] = [];
-  if (params.internalR <= 1e-6 && params.sliderR <= 1e-6 && params.emf > 0) {
+  if (
+    params.topology === 'closed-power' &&
+    params.internalR <= 1e-6 &&
+    params.sliderR <= 1e-6 &&
+    params.emf > 0
+  ) {
     events.push({
       id: 'SHORT_CIRCUIT',
       time: 0,

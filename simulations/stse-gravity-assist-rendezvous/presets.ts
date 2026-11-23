@@ -10,7 +10,6 @@ export const gravityAssistPresets: readonly PresetSpec<GravityAssistRendezvousPa
     params: {
       mode: 'gravity-assist',
       flybySide: 'trailing',
-      frameView: 'heliocentric',
       muPlanet: 0.16,
       planetOrbitRadius: 5.0,
       impactParam: 0.38,
@@ -26,7 +25,6 @@ export const gravityAssistPresets: readonly PresetSpec<GravityAssistRendezvousPa
     params: {
       mode: 'gravity-assist',
       flybySide: 'leading',
-      frameView: 'planet-frame',
       muPlanet: 0.16,
       planetOrbitRadius: 5.0,
       impactParam: 0.38,
@@ -42,7 +40,6 @@ export const gravityAssistPresets: readonly PresetSpec<GravityAssistRendezvousPa
     params: {
       mode: 'rendezvous',
       flybySide: 'trailing',
-      frameView: 'heliocentric',
       muPlanet: 0.16,
       planetOrbitRadius: 5.0,
       impactParam: 0.38,

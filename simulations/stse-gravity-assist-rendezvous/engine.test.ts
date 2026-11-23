@@ -54,4 +54,21 @@ describe('stse-gravity-assist-rendezvous invariants (S04)', () => {
     const st = createInitialState(p);
     expect(stepGravityAssistRendezvous(st, p, 0).nextState.t).toBe(0);
   });
+
+  it('provides a signed impact-parameter aiming handle and planet-frame origin/velocity', () => {
+    const params = getPreset(0);
+    const state = createInitialState(params);
+    const frames = stseGravityAssistRendezvousPlugin.referenceFrames ?? [];
+    const planetFrame = frames.find((frame) => frame.id === 'planet-frame');
+    const heliocentric = frames.find((frame) => frame.id === 'heliocentric');
+    const handle = stseGravityAssistRendezvousPlugin.getControlHandles?.(state, params)
+      .find((item) => item.id === 'impact-parameter');
+
+    expect(planetFrame?.getOrigin(state, params)).toEqual({ x: state.planetPos.x * 0.5, y: state.planetPos.y * 0.5 });
+    expect(planetFrame?.getVelocity?.(state, params)).toEqual({ x: state.planetVel.x * 0.5, y: state.planetVel.y * 0.5 });
+    expect(heliocentric?.getOrigin(state, params)).toEqual({ x: 0, y: 0 });
+    expect(handle).toBeDefined();
+    expect(handle?.onDrag({ x: handle.position.x, y: 0.7 })['flybySide']).toBe('leading');
+    expect(handle?.onDrag({ x: handle.position.x, y: -0.7 })['flybySide']).toBe('trailing');
+  });
 });

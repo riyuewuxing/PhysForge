@@ -1,4 +1,4 @@
-import { resolvePluginParams } from '@physforge/sim-sdk';
+import { resolvePluginParams, type SimulationPluginV2 } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { compRigidRollingSlipPlugin } from './plugin.js';
 import { rigidRollingPresets } from './presets.js';
@@ -49,5 +49,28 @@ describe('comp-rigid-rolling-slip hybrid & rotational invariants (C01)', () => {
     const p = getPreset(0);
     const st = createInitialState(p);
     expect(stepRigidRollingSlip(st, p, 0).nextState.t).toBe(0);
+  });
+
+  it('shows signed contact friction and direct initial-condition handles', () => {
+    const params = resolvePluginParams(compRigidRollingSlipPlugin.paramSchema, {
+      scenario: 'flat-bowling-slip',
+      v0Mps: 7,
+      omega0Radps: 0
+    });
+    const state = createInitialState(params);
+    const plugin = compRigidRollingSlipPlugin as SimulationPluginV2<typeof params, typeof state>;
+    const vectors = plugin.getForceVectors?.(state, params) ?? [];
+    const friction = vectors.find((vector) => vector.id === 'friction');
+    const handles = plugin.getControlHandles?.(state, params) ?? [];
+
+    expect(friction?.origin.y).toBeCloseTo(0, 10);
+    expect(friction?.force.x).toBeLessThan(0);
+    expect(handles.map((handle) => handle.id)).toEqual(['initial-velocity', 'initial-omega']);
+    expect(Number(handles[0]?.onDrag({ x: 1.5, y: 0 })['v0Mps'])).toBeGreaterThan(0);
+
+    const rollingParams = { ...params, v0Mps: 1, omega0Radps: 1 / params.radiusM };
+    const rollingState = createInitialState(rollingParams);
+    const rollingVectors = plugin.getForceVectors?.(rollingState, rollingParams) ?? [];
+    expect(rollingVectors.some((vector) => vector.id === 'friction')).toBe(false);
   });
 });

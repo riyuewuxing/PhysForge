@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "2.0",
+  "modelId": "builder-circuit-mna",
+  "presetId": "gaokao-nonlinear-diode-workpoint",
+  "title": "含内阻电源驱动非线性负载",
+  "params": {
+    "topology": "nonlinear-lamp-diode",
+    "emf": 5,
+    "internalR": 0.5,
+    "r1": 9,
+    "r2": 6,
+    "sliderR": 10,
+    "capacitance": 0.05,
+    "switchClosed": true
+  },
+  "visibleLayers": ["schematic", "potential-labels", "current-flow", "short-circuit", "meters"],
+  "notes": "采用含电源内阻与串联滑变的非线性 MNA 支路，观察肖克利二极管导通工作点与支路电流。"
+}

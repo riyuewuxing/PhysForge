@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "2.0",
+  "modelId": "exp-electrical-error-lab",
+  "presetId": "gaokao-ammeter-half-deflection",
+  "title": "半偏法测电流表内阻的系统误差",
+  "params": {
+    "mode": "half-bias-rg",
+    "emfWiring": "voltmeter-across-source",
+    "emfVolts": 3,
+    "rInternalOhm": 1.5,
+    "rAmmeterOhm": 0.2,
+    "rVoltmeterOhm": 1000,
+    "bulbWiring": "voltage-divider",
+    "rheostatMaxOhm": 20,
+    "rheostatTapFrac": 0.5,
+    "rgTrueOhm": 100,
+    "halfBiasSupplyV": 6,
+    "targetVernierMm": 23.46,
+    "vernierDivisions": "50",
+    "targetMicrometerMm": 5.73
+  },
+  "visibleLayers": ["main"],
+  "notes": "以较大的辅助电阻和 100 Ω 表头真值观察半偏法测量的系统偏差，并比较支路闭合前后的电流变化。"
+}

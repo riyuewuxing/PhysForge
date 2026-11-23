@@ -1,4 +1,6 @@
+import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
+import { circuitDcCapacitorMnaPlugin } from './plugin.js';
 import {
   checkInvariants,
   computeObservables,
@@ -94,5 +96,31 @@ describe('circuit-dc-capacitor-mna engine', () => {
     for (const v of Object.values(obs)) {
       expect(Number.isFinite(v)).toBe(true);
     }
+  });
+
+  it('reports a near-zero-resistance short circuit as a structured event without throwing', () => {
+    const shortParams = { ...baseParams, internalR: 0, sliderR: 0 };
+
+    expect(() => createInitialState(shortParams)).not.toThrow();
+    const state = createInitialState(shortParams);
+
+    expect(state.events).toContainEqual(
+      expect.objectContaining({ id: 'SHORT_CIRCUIT', time: 0 })
+    );
+    expect(Number.isFinite(state.totalCurrent)).toBe(true);
+  });
+
+  it('allows an exact zero-ohm demo through the controls and does not flag unrelated topologies', () => {
+    const zeroOhm = resolvePluginParams(circuitDcCapacitorMnaPlugin.paramSchema, {
+      topology: 'closed-power',
+      internalR: 0,
+      sliderR: 0
+    });
+    expect(zeroOhm.internalR).toBe(0);
+    expect(zeroOhm.sliderR).toBe(0);
+    expect(createInitialState(zeroOhm).events.some((event) => event.id === 'SHORT_CIRCUIT')).toBe(true);
+
+    const rcState = createInitialState({ ...zeroOhm, topology: 'rc-transient', r1: 4 });
+    expect(rcState.events.some((event) => event.id === 'SHORT_CIRCUIT')).toBe(false);
   });
 });

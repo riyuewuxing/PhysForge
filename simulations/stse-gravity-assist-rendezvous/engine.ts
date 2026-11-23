@@ -3,13 +3,11 @@ import type { InvariantReport, StepResult } from '@physforge/sim-sdk';
 
 export type SpaceFlightMode = 'gravity-assist' | 'rendezvous';
 export type FlybySide = 'trailing' | 'leading';
-export type FrameView = 'heliocentric' | 'planet-frame';
 export type RendezvousBurn = 'prograde-boost' | 'retro-lower-catchup';
 
 export type GravityAssistRendezvousParams = {
   mode: SpaceFlightMode;
   flybySide: FlybySide;
-  frameView: FrameView;
   muPlanet: number;
   planetOrbitRadius: number;
   impactParam: number;

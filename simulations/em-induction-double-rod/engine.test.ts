@@ -1,4 +1,6 @@
+import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
+import { emInductionDoubleRodPlugin } from './plugin.js';
 import {
   checkInvariants,
   computeObservables,
@@ -154,6 +156,18 @@ describe('em-induction-double-rod engine', () => {
     const expectedV = expectedA * 1.0;
     expect(Math.abs(st.v1 - expectedV) / expectedV).toBeLessThan(1e-7);
     expect(Math.abs(st.qCap - 0.25 * 2.0 * expectedV) / st.qCap).toBeLessThan(1e-7);
+  });
+
+  it('allows the zero-resistance capacitor mode through the model parameter schema', () => {
+    const resolved = resolvePluginParams(emInductionDoubleRodPlugin.paramSchema, {
+      rodMode: 'single',
+      circuitLoad: 'capacitor',
+      resistorR: 0,
+      rodResistance1: 0
+    });
+
+    expect(resolved.resistorR).toBe(0);
+    expect(createInitialState({ ...baseParams, ...resolved }).current).toBe(0);
   });
 
   it('conserves generalized momentum and reaches L1*v1 - L2*v2 < 1e-6 with energy conservation < 1e-6 for unequal double rods', () => {

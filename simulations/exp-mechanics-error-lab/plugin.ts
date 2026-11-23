@@ -9,6 +9,15 @@ import {
   type MechanicsErrorState
 } from './engine.js';
 
+const TAPE_RULER_BASE_X = -1.3;
+const TAPE_RULER_OFFSET_WORLD_PER_CM = 0.05;
+const TAPE_RULER_Y = 1.4;
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
 const paramSchema: readonly ParamFieldSpec<MechanicsErrorParams>[] = [
   {
     key: 'scenario',
@@ -28,6 +37,7 @@ const paramSchema: readonly ParamFieldSpec<MechanicsErrorParams>[] = [
   { key: 'frictionForceN', kind: 'number', label: '轨道阻力 f', unit: 'N', defaultValue: 0.06, min: 0, max: 0.3, step: 0.01 },
   { key: 'readingNoiseMm', kind: 'number', label: '刻度读数高斯噪声 σ', unit: 'mm', defaultValue: 0, min: 0, max: 0.8, step: 0.05 },
   { key: 'seed', kind: 'number', label: 'PRNG 随机种子', defaultValue: 20261122, min: 1, max: 99999999, step: 1 },
+  { key: 'rulerOffsetCm', kind: 'number', label: '纸带刻度尺零点偏移', unit: 'cm', defaultValue: 0, min: -5, max: 20, step: 0.1 },
   {
     key: 'phyphoxOverlayCsv',
     kind: 'select',
@@ -67,6 +77,19 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
     { key: 'interceptFitA', label: '拟合 a 轴截距', unit: 'm/s²', color: '#f59e0b' },
     { key: 'rSquared', label: '线性拟合决定系数 R²', unit: '', color: '#a855f7' }
   ],
+  getControlHandles: (_state, params) => [{
+    id: 'tape-ruler-origin',
+    label: `零点 ${(params.rulerOffsetCm ?? 0).toFixed(1)}cm`,
+    position: {
+      x: TAPE_RULER_BASE_X + (params.rulerOffsetCm ?? 0) * TAPE_RULER_OFFSET_WORLD_PER_CM,
+      y: TAPE_RULER_Y
+    },
+    handleKind: 'point',
+    color: '#fbbf24',
+    onDrag: (worldPos) => ({
+      rulerOffsetCm: Number(clamp((worldPos.x - TAPE_RULER_BASE_X) / TAPE_RULER_OFFSET_WORLD_PER_CM, -5, 20).toFixed(1))
+    })
+  }],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -91,25 +114,52 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
       primitives
     };
   },
-  renderCanvas: (ctx, state, _params, viewport, activeLayers) => {
+  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const w = viewport.width;
     const h = viewport.height;
+    const ppm = Math.min(w, h) * 0.24 * viewport.scale;
+    const anchorX = w * 0.45 + viewport.offsetX;
+    const anchorY = h * 0.5 + viewport.offsetY;
+    const toScreen = (x: number, y: number) => ({ x: anchorX + x * ppm, y: anchorY - y * ppm });
     ctx.save();
 
     if (activeLayers.has('tape')) {
-      const ty = h * 0.16;
+      const rulerZeroX = TAPE_RULER_BASE_X + (params.rulerOffsetCm ?? 0) * TAPE_RULER_OFFSET_WORLD_PER_CM;
+      const rulerLeft = toScreen(TAPE_RULER_BASE_X - 0.18, TAPE_RULER_Y + 0.12);
+      const rulerRight = toScreen(TAPE_RULER_BASE_X + 2.05, TAPE_RULER_Y - 0.12);
       ctx.fillStyle = '#e2e8f0';
-      ctx.fillRect(w * 0.08, ty, w * 0.84, 34);
-      const maxCm = Math.max(20, state.tapeDots[state.tapeDots.length - 1]?.posCm ?? 20);
+      ctx.fillRect(rulerLeft.x, rulerLeft.y, rulerRight.x - rulerLeft.x, rulerRight.y - rulerLeft.y);
+      const zero = toScreen(rulerZeroX, TAPE_RULER_Y);
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1.2;
+      for (let cm = -5; cm <= 20; cm++) {
+        const tick = toScreen(rulerZeroX + cm * TAPE_RULER_OFFSET_WORLD_PER_CM, TAPE_RULER_Y);
+        const tickEnd = toScreen(rulerZeroX + cm * TAPE_RULER_OFFSET_WORLD_PER_CM, TAPE_RULER_Y - (cm % 5 === 0 ? 0.16 : 0.08));
+        ctx.beginPath();
+        ctx.moveTo(tick.x, tick.y);
+        ctx.lineTo(tickEnd.x, tickEnd.y);
+        ctx.stroke();
+        if (cm % 5 === 0) {
+          ctx.font = '10px ui-sans-serif, system-ui';
+          ctx.fillStyle = '#0f172a';
+          ctx.fillText(String(cm), tick.x - 4, tick.y + 16);
+        }
+      }
       state.tapeDots.forEach((d) => {
-        const px = w * 0.1 + (d.posCm / maxCm) * (w * 0.78);
+        const point = toScreen(TAPE_RULER_BASE_X + d.posCm * TAPE_RULER_OFFSET_WORLD_PER_CM, TAPE_RULER_Y - 0.27);
         ctx.fillStyle = '#0f172a';
         ctx.beginPath();
-        ctx.arc(px, ty + 17, 3.5, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
         ctx.fill();
         ctx.font = '10px ui-sans-serif, system-ui';
-        ctx.fillText(`x${d.index}:${d.posCm.toFixed(2)}`, px - 14, ty + 48);
+        ctx.fillText(`x${d.index}:${d.posCm.toFixed(2)}`, point.x - 14, point.y + 16);
       });
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(zero.x, zero.y - 4);
+      ctx.lineTo(zero.x, zero.y + 26);
+      ctx.stroke();
     }
 
     if (activeLayers.has('afCurve')) {

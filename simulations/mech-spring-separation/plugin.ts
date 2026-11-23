@@ -1,5 +1,6 @@
 import { degToRad } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
+import { defineSimulationPlugin, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { springSepPresets } from './presets.js';
 import {
   checkInvariants,
@@ -46,16 +47,84 @@ export const mechSpringSeparationPlugin = defineSimulationPlugin<SpringSepParams
     { key: 'v2', label: 'm₂ 速度 v₂', unit: 'm/s', color: '#f472b6' },
     { key: 's1', label: 'm₁ 位移 s₁', unit: 'm', color: '#4ade80' }
   ],
-  getControlHandles: (_s, params) => [
-    {
+  getControlHandles: (state, params) => {
+    const theta = degToRad(params.inclineDeg);
+    const tangent = { x: Math.cos(theta), y: Math.sin(theta) };
+    const normal = { x: -Math.sin(theta), y: Math.cos(theta) };
+    const normalOffset = 0.12;
+    return [{
       id: 'initial-compression',
       label: `x₀=${params.initialComp.toFixed(1)}m`,
-      position: { x: -params.initialComp, y: 0 },
+      position: {
+        x: state.s1 * tangent.x + normalOffset * normal.x,
+        y: state.s1 * tangent.y + normalOffset * normal.y
+      },
       handleKind: 'point',
       color: '#38bdf8',
-      onDrag: (wp) => ({ initialComp: Number(Math.max(0.4, Math.min(1.8, -wp.x)).toFixed(1)) })
+      onDrag: (worldPos) => ({
+        initialComp: Number(Math.max(0.4, Math.min(1.8, -(worldPos.x * tangent.x + worldPos.y * tangent.y))).toFixed(1))
+      })
+    }];
+  },
+  getForceVectors: (state, params): ForceVectorItem[] => {
+    const theta = degToRad(params.inclineDeg);
+    const tangent = { x: Math.cos(theta), y: Math.sin(theta) };
+    const normal = { x: -Math.sin(theta), y: Math.cos(theta) };
+    const blockWidth = 0.34;
+    const blockHeight = 0.24;
+    const normalOffset = blockHeight / 2;
+    const center = (s: number) => ({
+      x: s * tangent.x + normalOffset * normal.x,
+      y: s * tangent.y + normalOffset * normal.y
+    });
+    const block1 = center(state.s1);
+    const block2 = center(state.s2 + blockWidth);
+    const springForce = -params.springK * state.s1;
+    const contact = state.separated ? 0 : state.normalForceN;
+    const vectors: ForceVectorItem[] = [
+      {
+        id: 'gravity-1', label: 'm₁g', origin: block1,
+        force: { x: 0, y: -params.mass1 * CLASSROOM_GRAVITY },
+        color: '#fbbf24', category: 'gravity'
+      },
+      {
+        id: 'normal-1', label: 'N₁', origin: block1,
+        force: { x: normal.x * params.mass1 * CLASSROOM_GRAVITY * Math.cos(theta), y: normal.y * params.mass1 * CLASSROOM_GRAVITY * Math.cos(theta) },
+        color: '#38bdf8', category: 'normal'
+      },
+      {
+        id: 'gravity-2', label: 'm₂g', origin: block2,
+        force: { x: 0, y: -params.mass2 * CLASSROOM_GRAVITY },
+        color: '#fbbf24', category: 'gravity'
+      },
+      {
+        id: 'normal-2', label: 'N₂', origin: block2,
+        force: { x: normal.x * params.mass2 * CLASSROOM_GRAVITY * Math.cos(theta), y: normal.y * params.mass2 * CLASSROOM_GRAVITY * Math.cos(theta) },
+        color: '#38bdf8', category: 'normal'
+      }
+    ];
+    if (Math.abs(springForce) > 1e-5) {
+      vectors.push({
+        id: 'spring-1', label: 'F_弹', origin: block1,
+        force: { x: springForce * tangent.x, y: springForce * tangent.y },
+        color: '#fbbf24', category: 'other'
+      });
     }
-  ],
+    if (Math.abs(params.externalForce) > 1e-5) {
+      vectors.push({
+        id: 'external-2', label: 'F_外', origin: block2,
+        force: { x: params.externalForce * tangent.x, y: params.externalForce * tangent.y },
+        color: '#a78bfa', category: 'other'
+      });
+    }
+    if (contact > 1e-5) {
+      vectors.push(
+        { id: 'contact-21', label: 'F₂₁', origin: block1, force: { x: -contact * tangent.x, y: -contact * tangent.y }, color: '#f472b6', category: 'normal' },
+        { id: 'contact-12', label: 'F₁₂', origin: block2, force: { x: contact * tangent.x, y: contact * tangent.y }, color: '#f472b6', category: 'normal' }
+      );
+    }
+    return vectors;
+  },
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -80,28 +149,30 @@ export const mechSpringSeparationPlugin = defineSimulationPlugin<SpringSepParams
   }),
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const th = degToRad(params.inclineDeg);
-    const ppm = Math.min(viewport.width, viewport.height) * 0.16 * viewport.scale;
+    const ppm = Math.min(viewport.width, viewport.height) * 0.24 * viewport.scale;
     ctx.save();
-    ctx.translate(viewport.width * 0.45 + viewport.offsetX, viewport.height * 0.62 + viewport.offsetY);
+    ctx.translate(viewport.width * 0.45 + viewport.offsetX, viewport.height * 0.5 + viewport.offsetY);
     ctx.rotate(-th);
 
     if (activeLayers.has('spring')) {
       const wallX = -2.2 * ppm;
       const b1X = state.s1 * ppm;
-      const b2X = state.s2 * ppm + 42;
+      const blockWidth = 0.34;
+      const blockHeight = 0.24;
+      const b2X = (state.s2 + blockWidth) * ppm;
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(wallX, -50);
-      ctx.lineTo(wallX, 2);
-      ctx.lineTo(2.8 * ppm, 2);
+      ctx.moveTo(wallX, -blockHeight * ppm);
+      ctx.lineTo(wallX, 0);
+      ctx.lineTo(2.8 * ppm, 0);
       ctx.stroke();
 
       // Spring zigzag
       ctx.strokeStyle = '#fbbf24';
       ctx.lineWidth = 2.2;
       ctx.beginPath();
-      const sEnd = b1X - 20;
+      const sEnd = b1X - (blockWidth / 2) * ppm;
       ctx.moveTo(wallX, -20);
       for (let i = 1; i < 10; i++) {
         const sx = wallX + ((sEnd - wallX) * i) / 10;
@@ -112,9 +183,9 @@ export const mechSpringSeparationPlugin = defineSimulationPlugin<SpringSepParams
       ctx.stroke();
 
       ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(b1X - 20, -40, 40, 40);
+      ctx.fillRect(b1X - (blockWidth / 2) * ppm, -blockHeight * ppm, blockWidth * ppm, blockHeight * ppm);
       ctx.fillStyle = '#f472b6';
-      ctx.fillRect(b2X - 20, -40, 40, 40);
+      ctx.fillRect(b2X - (blockWidth / 2) * ppm, -blockHeight * ppm, blockWidth * ppm, blockHeight * ppm);
     }
 
     if (activeLayers.has('eventPins') && state.separated && state.separationPosS !== null) {
@@ -122,8 +193,8 @@ export const mechSpringSeparationPlugin = defineSimulationPlugin<SpringSepParams
       ctx.strokeStyle = '#4ade80';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(sx + 20, -70);
-      ctx.lineTo(sx + 20, 20);
+      ctx.moveTo(sx + 0.17 * ppm, -0.5 * ppm);
+      ctx.lineTo(sx + 0.17 * ppm, 0.2 * ppm);
       ctx.stroke();
       ctx.setLineDash([]);
     }

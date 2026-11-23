@@ -1,4 +1,4 @@
-import { resolvePluginParams } from '@physforge/sim-sdk';
+import { resolvePluginParams, type SimulationPluginV2 } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { expMechanicsErrorLabPlugin } from './plugin.js';
 import { mechanicsErrorPresets } from './presets.js';
@@ -41,5 +41,16 @@ describe('exp-mechanics-error-lab invariants (X01)', () => {
     const s2 = createInitialState(p);
     expect(s1.aDiffMeasuredMps2).toBe(s2.aDiffMeasuredMps2);
     expect(stepMechanicsErrorLab(s1, p, 0).nextState.t).toBe(0);
+  });
+
+  it('keeps the draggable ruler offset visual-only and clamps its range', () => {
+    const params = resolvePluginParams(expMechanicsErrorLabPlugin.paramSchema, { rulerOffsetCm: 2.4 });
+    const state = createInitialState(params);
+    const plugin = expMechanicsErrorLabPlugin as SimulationPluginV2<typeof params, typeof state>;
+    const handle = plugin.getControlHandles?.(state, params)?.find((item) => item.id === 'tape-ruler-origin');
+
+    expect(handle).toBeDefined();
+    expect(Number(handle?.onDrag({ x: 99, y: handle.position.y })['rulerOffsetCm'])).toBe(20);
+    expect(solveMechanicsErrorAnalysis(params).aDiffMeasuredMps2).toBe(state.aDiffMeasuredMps2);
   });
 });

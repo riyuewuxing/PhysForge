@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "2.0",
+  "modelId": "mech-vertical-circular",
+  "presetId": "gaokao-inner-loop-derail-threshold",
+  "title": "竖直内圆轨道临界脱轨",
+  "params": {
+    "trackMode": "inner-loop",
+    "mass": 1,
+    "radius": 1.6,
+    "vLaunch": 7.4,
+    "startAngleDeg": 0.5
+  },
+  "visibleLayers": ["track", "trajectory"],
+  "notes": "光滑竖直内圆轨道，初速度约为 √(3.5gR)，位于从底端恰能通过顶端的临界速度与轨道约束上限之间。"
+}

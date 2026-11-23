@@ -30,16 +30,6 @@ const paramSchema: readonly ParamFieldSpec<GravityAssistRendezvousParams>[] = [
       { value: 'leading', label: '绕行星前侧（减速）' }
     ]
   },
-  {
-    key: 'frameView',
-    kind: 'select',
-    label: '观察参考系',
-    defaultValue: 'heliocentric',
-    options: [
-      { value: 'heliocentric', label: '日心惯性系' },
-      { value: 'planet-frame', label: '行星共动参考系' }
-    ]
-  },
   { key: 'muPlanet', kind: 'number', label: '行星引力参数 μ_p', defaultValue: 0.16, min: 0.05, max: 0.4, step: 0.02 },
   { key: 'planetOrbitRadius', kind: 'number', label: '行星轨道半径 r_p', defaultValue: 5.0, min: 2.0, max: 8.0, step: 0.5 },
   { key: 'impactParam', kind: 'number', label: '瞄准距离 b', defaultValue: 0.38, min: 0.15, max: 1.2, step: 0.04 },
@@ -84,6 +74,47 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     { key: 'deltaHelioEnergy', label: '日心比机械能变化 ΔE', unit: '', color: '#4ade80' },
     { key: 'planetFrameSpeedRelErr', label: '行星系速率守恒误差', unit: '', color: '#fbbf24' }
   ],
+  getControlHandles: (state, params) => {
+    if (params.mode !== 'gravity-assist') return [];
+    const sign = params.flybySide === 'trailing' ? -1 : 1;
+    return [{
+      id: 'impact-parameter',
+      label: `b=${params.impactParam.toFixed(2)}`,
+      position: {
+        x: (params.planetOrbitRadius - 3.2) * 0.5,
+        y: sign * params.impactParam * 0.5
+      },
+      handleKind: 'point',
+      color: '#4ade80',
+      onDrag: (worldPos) => {
+        const signedDistance = worldPos.y * 2;
+        return {
+          impactParam: Number(Math.max(0.15, Math.min(1.2, Math.abs(signedDistance))).toFixed(2)),
+          flybySide: signedDistance > 0 ? 'leading' : signedDistance < 0 ? 'trailing' : params.flybySide
+        };
+      }
+    }];
+  },
+  referenceFrames: [
+    {
+      id: 'heliocentric',
+      label: '太阳系（惯性系）',
+      description: '以日心惯性坐标描述探测器与行星轨迹。',
+      getOrigin: () => ({ x: 0, y: 0 }),
+      getVelocity: () => ({ x: 0, y: 0 })
+    },
+    {
+      id: 'planet-frame',
+      label: '行星随动参考系',
+      description: '原点随行星平移，用于比较掠飞前后的相对速率。',
+      getOrigin: (state, params) => params.mode === 'gravity-assist'
+        ? { x: state.planetPos.x * 0.5, y: state.planetPos.y * 0.5 }
+        : { x: 0, y: 0 },
+      getVelocity: (state, params) => params.mode === 'gravity-assist'
+        ? { x: state.planetVel.x * 0.5, y: state.planetVel.y * 0.5 }
+        : { x: 0, y: 0 }
+    }
+  ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -111,11 +142,11 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     const h = viewport.height;
     if (!activeLayers.has('orbit')) return;
     ctx.save();
-    const cx = w * 0.5;
-    const cy = h * 0.52;
+    const cx = w * 0.45 + viewport.offsetX;
+    const cy = h * 0.5 + viewport.offsetY;
 
     if (params.mode === 'rendezvous') {
-      const scale = Math.min(w, h) * 0.34;
+      const scale = Math.min(w, h) * 0.34 * viewport.scale;
       ctx.strokeStyle = 'rgba(148,163,184,0.45)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -158,15 +189,12 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
       return;
     }
 
-    const scale = Math.min(w, h) * 0.12;
-    const isPlanet = params.frameView === 'planet-frame';
-    const refX = isPlanet ? state.planetPos.x : params.planetOrbitRadius;
-    const refY = isPlanet ? state.planetPos.y : 0;
+    const scale = Math.min(w, h) * 0.12 * viewport.scale;
 
     // Planet marker
     ctx.fillStyle = '#f59e0b';
     ctx.beginPath();
-    ctx.arc(cx + (state.planetPos.x - refX) * scale, cy - (state.planetPos.y - refY) * scale, 10, 0, Math.PI * 2);
+    ctx.arc(cx + state.planetPos.x * scale, cy - state.planetPos.y * scale, 10, 0, Math.PI * 2);
     ctx.fill();
 
     // Spacecraft trail
@@ -175,8 +203,8 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
       ctx.lineWidth = 2.4;
       ctx.beginPath();
       state.trail.forEach((pt, idx) => {
-        const px = isPlanet ? pt.x - pt.px : pt.x - refX;
-        const py = isPlanet ? pt.y - pt.py : pt.y - refY;
+        const px = pt.x;
+        const py = pt.y;
         const sx = cx + px * scale;
         const sy = cy - py * scale;
         if (idx === 0) ctx.moveTo(sx, sy);
@@ -187,7 +215,7 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
 
     ctx.fillStyle = '#4ade80';
     ctx.beginPath();
-    ctx.arc(cx + (state.pos.x - refX) * scale, cy - (state.pos.y - refY) * scale, 6, 0, Math.PI * 2);
+    ctx.arc(cx + state.pos.x * scale, cy - state.pos.y * scale, 6, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = '#e2e8f0';

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
+import { resolvePluginParams, type SimulationPluginV2 } from '@physforge/sim-sdk';
+import { mechConicalTurntablePlugin } from './plugin.js';
 import {
   checkInvariants,
   computeCriticalOmegas,
@@ -39,5 +41,26 @@ describe('M07 mech-conical-turntable verification', () => {
       slipState = stepConicalTurntable(slipState, slipParams, 0.01).nextState;
     }
     expect(slipState.rB).toBeGreaterThan(base.radiusB);
+  });
+
+  it('exposes the signed inward friction and string tension in Auto-FBD vectors', () => {
+    const params = resolvePluginParams(mechConicalTurntablePlugin.paramSchema, {
+      mode: 'turntable-dual',
+      omega: 1.5
+    });
+    const state = createInitialState(params);
+    const plugin = mechConicalTurntablePlugin as SimulationPluginV2<typeof params, typeof state>;
+    const vectors = plugin.getForceVectors?.(state, params) ?? [];
+
+    expect(vectors.map((vector) => vector.id)).toContain('friction-a');
+    expect(vectors.map((vector) => vector.id)).toContain('tension-a');
+    const frictionA = vectors.find((vector) => vector.id === 'friction-a');
+    expect(frictionA?.force.x).toBeGreaterThan(0);
+
+    const highOmegaParams = { ...params, omega: 1.7 };
+    const highOmegaState = createInitialState(highOmegaParams);
+    const highOmegaVectors = plugin.getForceVectors?.(highOmegaState, highOmegaParams) ?? [];
+    const reversedFrictionA = highOmegaVectors.find((vector) => vector.id === 'friction-a');
+    expect(reversedFrictionA?.force.x).toBeLessThan(0);
   });
 });

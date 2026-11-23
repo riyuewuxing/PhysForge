@@ -46,4 +46,20 @@ describe('comp-chaos-normal-coriolis physics invariants (C02)', () => {
     }
     expect(stC.coriolisDeviation).toBeLessThan(1e-6);
   });
+
+  it('provides two draggable double-pendulum release angles and both declared frame origins', () => {
+    const params = getPreset(0);
+    const state = createInitialState(params);
+    const plugin = compChaosNormalCoriolisPlugin as import('@physforge/sim-sdk').SimulationPluginV2<
+      typeof params,
+      typeof state
+    >;
+    const handles = plugin.getControlHandles?.(state, params) ?? [];
+    const frames = plugin.referenceFrames ?? [];
+
+    expect(handles.map((handle) => handle.id)).toEqual(['double-pendulum-bob1', 'double-pendulum-bob2']);
+    expect(Number(handles[0]?.onDrag({ x: 0.5, y: -0.5 })['theta1Deg'])).toBeCloseTo(45, 0);
+    expect(frames.map((frame) => frame.id)).toEqual(['inertial', 'rotating-disk']);
+    expect(frames[1]?.getOrigin(state, params)).toEqual({ x: 0, y: 0 });
+  });
 });

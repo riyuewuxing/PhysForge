@@ -96,7 +96,7 @@ const paramSchema: readonly ParamFieldSpec<InductionParams>[] = [
     kind: 'number',
     label: '外接电阻 R',
     unit: 'Ω',
-    min: 0.2,
+    min: 0,
     max: 6,
     step: 0.2,
     defaultValue: 1.5

@@ -9,6 +9,17 @@ import {
   type ElectricalErrorState
 } from './engine.js';
 
+const CALIPER_ZERO_X = -1.0;
+const CALIPER_RULER_Y = 0.85;
+const CALIPER_MM_WORLD = 0.04;
+const MICROMETER_ZERO_X = -0.8;
+const MICROMETER_RULER_Y = -0.65;
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
 const paramSchema: readonly ParamFieldSpec<ElectricalErrorParams>[] = [
   {
     key: 'mode',
@@ -91,6 +102,42 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
     { key: 'rgMeasuredOhm', label: '半偏法测得 R_g', unit: 'Ω', color: '#4ade80' },
     { key: 'vernierReadoutMm', label: '游标卡尺读数', unit: 'mm', color: '#a855f7' }
   ],
+  getControlHandles: (_state, params) => {
+    if (params.mode !== 'caliper-micrometer') return [];
+    const divisions = Number(params.vernierDivisions) || 50;
+    const vernierStep = 1 / divisions;
+    return [
+      {
+        id: 'vernier-jaw',
+        label: `${params.targetVernierMm.toFixed(2)}mm`,
+        position: {
+          x: CALIPER_ZERO_X + params.targetVernierMm * CALIPER_MM_WORLD,
+          y: CALIPER_RULER_Y
+        },
+        handleKind: 'point',
+        color: '#a855f7',
+        onDrag: (worldPos) => {
+          const rawMm = clamp((worldPos.x - CALIPER_ZERO_X) / CALIPER_MM_WORLD, 0, 50);
+          const snappedMm = Math.round(rawMm / vernierStep) * vernierStep;
+          return { targetVernierMm: Number(snappedMm.toFixed(3)) };
+        }
+      },
+      {
+        id: 'micrometer-thimble',
+        label: `${params.targetMicrometerMm.toFixed(2)}mm`,
+        position: {
+          x: MICROMETER_ZERO_X + params.targetMicrometerMm * CALIPER_MM_WORLD,
+          y: MICROMETER_RULER_Y
+        },
+        handleKind: 'point',
+        color: '#38bdf8',
+        onDrag: (worldPos) => {
+          const rawMm = clamp((worldPos.x - MICROMETER_ZERO_X) / CALIPER_MM_WORLD, 0, 20);
+          return { targetMicrometerMm: Number((Math.round(rawMm / 0.01) * 0.01).toFixed(2)) };
+        }
+      }
+    ];
+  },
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -124,25 +171,55 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
     ctx.save();
 
     if (params.mode === 'caliper-micrometer') {
-      // Top: Vernier caliper ruler zoomed scale
-      const y1 = h * 0.25;
+      const ppm = Math.min(w, h) * 0.24 * viewport.scale;
+      const anchorX = w * 0.45 + viewport.offsetX;
+      const anchorY = h * 0.5 + viewport.offsetY;
+      const toScreen = (x: number, y: number) => ({ x: anchorX + x * ppm, y: anchorY - y * ppm });
+      const jawX = CALIPER_ZERO_X + state.instrument.vernierReadoutMm * CALIPER_MM_WORLD;
+      const thimbleX = MICROMETER_ZERO_X + state.instrument.microReadoutMm * CALIPER_MM_WORLD;
+
+      // Main scale and sliding vernier jaw.
       ctx.fillStyle = '#e2e8f0';
-      ctx.fillRect(w * 0.08, y1, w * 0.84, 42);
+      const mainStart = toScreen(CALIPER_ZERO_X - 0.15, CALIPER_RULER_Y + 0.12);
+      const mainEnd = toScreen(CALIPER_ZERO_X + 2.15, CALIPER_RULER_Y - 0.16);
+      ctx.fillRect(mainStart.x, mainStart.y, mainEnd.x - mainStart.x, mainEnd.y - mainStart.y);
       ctx.fillStyle = '#0f172a';
       ctx.font = 'bold 12px ui-sans-serif, system-ui';
-      ctx.fillText(`主尺整毫米 = ${state.instrument.vernierMainMm} mm | 第 ${state.instrument.vernierCoincidentIndex} 格对齐`, w * 0.1, y1 + 26);
+      const jawTop = toScreen(jawX, CALIPER_RULER_Y + 0.12);
+      const jawBottom = toScreen(jawX, CALIPER_RULER_Y - 0.22);
+      ctx.strokeStyle = '#7c3aed';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(jawTop.x, jawTop.y);
+      ctx.lineTo(jawBottom.x, jawBottom.y);
+      ctx.stroke();
+      ctx.fillText(`主尺整毫米 = ${state.instrument.vernierMainMm} mm | 第 ${state.instrument.vernierCoincidentIndex} 格对齐`, mainStart.x, mainStart.y - 8);
+      for (let mm = 0; mm <= 50; mm++) {
+        const tick = toScreen(CALIPER_ZERO_X + mm * CALIPER_MM_WORLD, CALIPER_RULER_Y);
+        const tickEnd = toScreen(CALIPER_ZERO_X + mm * CALIPER_MM_WORLD, CALIPER_RULER_Y - (mm % 10 === 0 ? 0.16 : 0.08));
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = mm % 10 === 0 ? 1.6 : 0.8;
+        ctx.beginPath();
+        ctx.moveTo(tick.x, tick.y);
+        ctx.lineTo(tickEnd.x, tickEnd.y);
+        ctx.stroke();
+        if (mm % 10 === 0) ctx.fillText(String(mm), tick.x - 4, tick.y + 17);
+      }
 
-      // Bottom: Micrometer sleeve + thimble
-      const y2 = h * 0.56;
+      // Micrometer sleeve and thimble use the same millimeter scale.
       ctx.fillStyle = '#cbd5e1';
-      ctx.fillRect(w * 0.12, y2, w * 0.45, 52);
+      const sleeveStart = toScreen(MICROMETER_ZERO_X - 0.1, MICROMETER_RULER_Y + 0.16);
+      const sleeveEnd = toScreen(MICROMETER_ZERO_X + 1.05, MICROMETER_RULER_Y - 0.16);
+      ctx.fillRect(sleeveStart.x, sleeveStart.y, sleeveEnd.x - sleeveStart.x, sleeveEnd.y - sleeveStart.y);
       ctx.fillStyle = '#94a3b8';
-      ctx.fillRect(w * 0.57, y2 - 12, w * 0.24, 76);
+      const thimbleTop = toScreen(thimbleX - 0.08, MICROMETER_RULER_Y + 0.28);
+      const thimbleBottom = toScreen(thimbleX + 0.12, MICROMETER_RULER_Y - 0.28);
+      ctx.fillRect(thimbleTop.x, thimbleTop.y, thimbleBottom.x - thimbleTop.x, thimbleBottom.y - thimbleTop.y);
       ctx.fillStyle = '#0f172a';
       ctx.fillText(
         `固定刻度 ${state.instrument.microFixedHalfMmCount * 0.5} mm + 可动 ${state.instrument.microThimbleDiv}×0.01 = ${state.instrument.microReadoutMm.toFixed(2)} mm`,
-        w * 0.14,
-        y2 + 30
+        sleeveStart.x,
+        sleeveStart.y - 8
       );
 
       ctx.fillStyle = '#e2e8f0';

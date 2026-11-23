@@ -42,6 +42,51 @@ export interface RigidRollingState {
   readonly events: readonly PhysicsEvent[];
 }
 
+export interface RollingFrictionResult {
+  readonly frictionAlongTangent: number;
+  readonly mode: 'slip-forward' | 'slip-backward' | 'pure-roll';
+  readonly label: 'f_动' | 'f_静' | '';
+}
+
+export function computeRollingFriction(
+  v: number,
+  omega: number,
+  radius: number,
+  mass: number,
+  mu: number,
+  kappa: number,
+  inclineRad: number,
+  g = CLASSROOM_GRAVITY,
+  slipEps = 1e-3
+): RollingFrictionResult {
+  const safeRadius = Math.max(0.05, Number.isFinite(radius) ? radius : 0.05);
+  const safeMass = Math.max(0, Number.isFinite(mass) ? mass : 0);
+  const safeMu = Math.max(0, Number.isFinite(mu) ? mu : 0);
+  const safeKappa = Math.max(0, Number.isFinite(kappa) ? kappa : 0);
+  const safeTheta = Number.isFinite(inclineRad) ? inclineRad : 0;
+  const safeG = Math.max(0, Number.isFinite(g) ? g : CLASSROOM_GRAVITY);
+  const safeSlipEps = Math.max(0, Number.isFinite(slipEps) ? slipEps : 1e-3);
+  const contactSpeed = v - omega * safeRadius;
+  const normal = safeMass * safeG * Math.max(0, Math.cos(safeTheta));
+
+  if (Math.abs(contactSpeed) > safeSlipEps) {
+    const direction = contactSpeed > 0 ? -1 : 1;
+    return {
+      frictionAlongTangent: direction * safeMu * normal,
+      mode: contactSpeed > 0 ? 'slip-forward' : 'slip-backward',
+      label: 'f_动'
+    };
+  }
+
+  if (Math.abs(safeTheta) < 1e-6) {
+    return { frictionAlongTangent: 0, mode: 'pure-roll', label: '' };
+  }
+
+  const required = (safeKappa / (1 + safeKappa)) * safeMass * safeG * Math.sin(safeTheta);
+  const staticFriction = Math.sign(required) * Math.min(Math.abs(required), safeMu * normal);
+  return { frictionAlongTangent: -staticFriction, mode: 'pure-roll', label: 'f_静' };
+}
+
 function computeTotalEnergyJ(x: number, v: number, omega: number, params: RigidRollingParams): number {
   const m = Math.max(0.2, params.massKg);
   const R = Math.max(0.05, params.radiusM);

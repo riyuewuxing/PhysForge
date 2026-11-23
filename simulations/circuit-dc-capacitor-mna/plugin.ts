@@ -8,6 +8,130 @@ import {
   type CircuitState
 } from './engine.js';
 
+const branchPhaseMap = new Map<string, number>();
+let lastCircuitFrameTimeMs: number | undefined;
+
+export interface CurrentParticleOptions {
+  spacingPx?: number;
+  maxSpeedPx?: number;
+  refCurrentAmp?: number;
+  isShorted?: boolean;
+}
+
+export function voltageToColor(voltage: number | undefined, vMin: number, vMax: number): string {
+  if (voltage === undefined || !Number.isFinite(voltage)) return '#94a3b8';
+
+  const min = Number.isFinite(vMin) ? vMin : 0;
+  const max = Number.isFinite(vMax) ? vMax : min + 1;
+  const span = Math.max(max - min, 1e-3);
+  const t = Math.max(0, Math.min(1, (voltage - min) / span));
+  const hue = Math.round(215 - t * 210);
+  return `hsl(${hue}, 88%, 48%)`;
+}
+
+export function drawCurrentParticles(
+  ctx: CanvasRenderingContext2D,
+  branchId: string,
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  currentAmp: number,
+  dtSec: number,
+  options?: CurrentParticleOptions
+): void {
+  if (!Number.isFinite(currentAmp) || Math.abs(currentAmp) < 1e-6) return;
+
+  const requestedSpacing = options?.spacingPx ?? 28;
+  const spacing = Number.isFinite(requestedSpacing) ? Math.max(8, requestedSpacing) : 28;
+  const requestedMaxSpeed = options?.maxSpeedPx ?? 140;
+  const maxSpeed = Number.isFinite(requestedMaxSpeed) ? Math.max(1, requestedMaxSpeed) : 140;
+  const requestedReference = options?.refCurrentAmp ?? 1;
+  const reference = Number.isFinite(requestedReference) ? Math.max(1e-6, requestedReference) : 1;
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 12 || !Number.isFinite(length)) return;
+
+  const clampedDt = Number.isFinite(dtSec) ? Math.max(0, Math.min(dtSec, 0.05)) : 0;
+  const direction = Math.sign(currentAmp);
+  const speed = direction * maxSpeed * Math.tanh(Math.abs(currentAmp) / reference);
+  const previousPhase = branchPhaseMap.get(branchId) ?? 0;
+  const phase = (((previousPhase + speed * clampedDt) % spacing) + spacing) % spacing;
+  branchPhaseMap.set(branchId, phase);
+
+  const ux = dx / length;
+  const uy = dy / length;
+  const angle = Math.atan2(uy * direction, ux * direction);
+  ctx.save();
+  ctx.fillStyle = options?.isShorted ? '#ef4444' : '#facc15';
+  ctx.strokeStyle = options?.isShorted ? '#7f1d1d' : '#713f12';
+  ctx.lineWidth = 1;
+
+  for (let distance = phase; distance < length; distance += spacing) {
+    ctx.save();
+    ctx.translate(p1.x + ux * distance, p1.y + uy * distance);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(5, 0);
+    ctx.lineTo(-3.5, -3.5);
+    ctx.lineTo(-2, 0);
+    ctx.lineTo(-3.5, 3.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+export function drawShortCircuitGlow(
+  ctx: CanvasRenderingContext2D,
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  nowMs: number
+): void {
+  const safeTime = Number.isFinite(nowMs) ? nowMs : 0;
+  const pulse = 0.55 + 0.45 * Math.sin(safeTime * 0.012);
+  ctx.save();
+  ctx.strokeStyle = `rgba(239, 68, 68, ${pulse.toFixed(2)})`;
+  ctx.lineWidth = 8;
+  ctx.lineCap = 'round';
+  ctx.shadowColor = '#dc2626';
+  ctx.shadowBlur = 18 * pulse;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y);
+  ctx.lineTo(p2.x, p2.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function drawShortCircuitBanner(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  detailMessage: string
+): void {
+  const width = Number.isFinite(canvasWidth) ? Math.max(0, canvasWidth) : 0;
+  const barWidth = Math.min(Math.max(0, width - 32), 560);
+  const x = (width - barWidth) / 2;
+  const y = 14;
+  const barHeight = 36;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = 'rgba(153, 27, 27, 0.92)';
+  ctx.strokeStyle = '#f87171';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x, y, barWidth, barHeight, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#fef2f2';
+  ctx.font = 'bold 13px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`警告：检测到电路短路（${detailMessage}），已触发拓扑保护`, x + barWidth / 2, y + barHeight / 2);
+  ctx.restore();
+}
+
 const paramSchema: readonly ParamFieldSpec<CircuitParams>[] = [
   {
     key: 'topology',
@@ -37,7 +161,7 @@ const paramSchema: readonly ParamFieldSpec<CircuitParams>[] = [
     kind: 'number',
     label: '电源内阻 r',
     unit: 'Ω',
-    min: 0.2,
+    min: 0,
     max: 5,
     step: 0.2,
     defaultValue: 1
@@ -67,7 +191,7 @@ const paramSchema: readonly ParamFieldSpec<CircuitParams>[] = [
     kind: 'number',
     label: '滑动变阻器 R_p',
     unit: 'Ω',
-    min: 0.5,
+    min: 0,
     max: 20,
     step: 0.5,
     defaultValue: 2
@@ -107,7 +231,7 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
       handleKind: 'point',
       color: '#f472b6',
       onDrag: (worldPos) => {
-        const nextR = Math.max(0.5, Math.min(20, ((worldPos.x + 1.5) / 3.0) * 20));
+        const nextR = Math.max(0, Math.min(20, ((worldPos.x + 1.5) / 3.0) * 20));
         return { sliderR: Math.round(nextR * 2) / 2 };
       }
     }
@@ -206,6 +330,21 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
         sliderR: 10,
         switchClosed: true
       }
+    },
+    {
+      id: 'closed-power-short-circuit',
+      name: '6. 闭合电路零欧姆短路保护告警',
+      description: '理想电源经零欧姆外电阻短接；节点电压着色、电流粒子与短路横幅共同显示拓扑保护状态。',
+      params: {
+        topology: 'closed-power',
+        emf: 12,
+        internalR: 0,
+        r1: 9,
+        r2: 6,
+        sliderR: 0,
+        capacitance: 0.05,
+        switchClosed: true
+      }
     }
   ],
   engine: {
@@ -216,6 +355,9 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
   },
   layers: [
     { id: 'schematic', label: '交互电路图与节点电势', defaultVisible: true },
+    { id: 'potential-labels', label: '节点电势数值标签', defaultVisible: true },
+    { id: 'current-flow', label: '支路电流方向粒子', defaultVisible: true },
+    { id: 'short-circuit', label: '短路红光与告警', defaultVisible: true },
     { id: 'meters', label: '电流/电压实时数字表头', defaultVisible: true }
   ],
   telemetryChannels: [
@@ -253,17 +395,66 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
     const right = cx + 0.5 * w;
     const top = cy - 0.5 * h;
     const bot = cy + 0.5 * h;
+    const finiteVoltages = state.nodeVoltages.filter(Number.isFinite);
+    const vMin = Math.min(0, ...finiteVoltages);
+    const vMax = Math.max(1, ...finiteVoltages);
+    const nodeVoltage = (index: number): number | undefined => state.nodeVoltages[index];
+    const sourceVoltage = nodeVoltage(1);
+    const loadVoltage = nodeVoltage(2);
+    const groundVoltage = nodeVoltage(0) ?? 0;
+    const shortEvent = state.events.find((event) => event.id === 'SHORT_CIRCUIT');
+    const overcurrent = [state.totalCurrent, state.branchCurrent1, state.branchCurrent2].some(
+      (current) => Number.isFinite(current) && Math.abs(current) > 50
+    );
+    const isShorted = Boolean(shortEvent) || overcurrent;
+    const nowMs = typeof performance !== 'undefined' ? performance.now() : state.t * 1000;
+    const dtSec = lastCircuitFrameTimeMs === undefined
+      ? 0
+      : Math.max(0, Math.min((nowMs - lastCircuitFrameTimeMs) / 1000, 0.05));
+    lastCircuitFrameTimeMs = nowMs;
+    const branchReturnCurrent = params.topology === 'series-parallel-dynamic' || params.topology === 'rc-bridge-charge'
+      ? state.branchCurrent1 + state.branchCurrent2
+      : state.totalCurrent;
+
+    const drawVoltageSegment = (
+      p1: { x: number; y: number },
+      p2: { x: number; y: number },
+      fromVoltage: number | undefined,
+      toVoltage: number | undefined,
+      width = 3
+    ): void => {
+      const gradient = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+      gradient.addColorStop(0, voltageToColor(fromVoltage, vMin, vMax));
+      gradient.addColorStop(1, voltageToColor(toVoltage, vMin, vMax));
+      ctx.save();
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+      ctx.restore();
+    };
 
     if (activeLayers.has('schematic')) {
       ctx.save();
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(left, top, w, h);
+      const topLeft = { x: left, y: top };
+      const topRight = { x: right, y: top };
+      const bottomRight = { x: right, y: bot };
+      const bottomLeft = { x: left, y: bot };
+      drawVoltageSegment(topLeft, topRight, sourceVoltage, loadVoltage);
+      drawVoltageSegment(topRight, bottomRight, loadVoltage, groundVoltage);
+      drawVoltageSegment(bottomRight, bottomLeft, groundVoltage, groundVoltage);
+      drawVoltageSegment(bottomLeft, topLeft, groundVoltage, sourceVoltage);
 
       // 左侧电源符号 (E, r)
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(left - 18, cy - 28, 36, 56);
-      ctx.strokeStyle = '#fbbf24';
+      const sourceGradient = ctx.createLinearGradient(left, cy - 28, left, cy + 28);
+      sourceGradient.addColorStop(0, voltageToColor(sourceVoltage, vMin, vMax));
+      sourceGradient.addColorStop(1, voltageToColor(groundVoltage, vMin, vMax));
+      ctx.strokeStyle = sourceGradient;
+      ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(left - 14, cy - 8);
       ctx.lineTo(left + 14, cy - 8);
@@ -276,7 +467,11 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
 
       // 顶部 R1 电阻框
       ctx.fillStyle = '#1e293b';
-      ctx.strokeStyle = '#38bdf8';
+      const resistorGradient = ctx.createLinearGradient(cx - 42, top - 16, cx + 42, top + 16);
+      resistorGradient.addColorStop(0, voltageToColor(sourceVoltage, vMin, vMax));
+      resistorGradient.addColorStop(1, voltageToColor(loadVoltage, vMin, vMax));
+      ctx.strokeStyle = resistorGradient;
+      ctx.lineWidth = 3;
       ctx.fillRect(cx - 42, top - 16, 84, 32);
       ctx.strokeRect(cx - 42, top - 16, 84, 32);
       ctx.fillStyle = '#38bdf8';
@@ -290,7 +485,10 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
       if (params.topology === 'rc-transient') {
         ctx.fillStyle = '#0f172a';
         ctx.fillRect(right - 16, cy - 20, 32, 40);
-        ctx.strokeStyle = '#4ade80';
+        const capacitorGradient = ctx.createLinearGradient(right, cy - 20, right, cy + 20);
+        capacitorGradient.addColorStop(0, voltageToColor(loadVoltage, vMin, vMax));
+        capacitorGradient.addColorStop(1, voltageToColor(groundVoltage, vMin, vMax));
+        ctx.strokeStyle = capacitorGradient;
         ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.moveTo(right - 16, cy - 10);
@@ -302,8 +500,11 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
         ctx.fillText(`C=${params.capacitance}F`, right - 75, cy + 5);
       } else {
         ctx.fillStyle = '#1e293b';
-        ctx.strokeStyle = '#f472b6';
-        ctx.lineWidth = 2.5;
+        const loadGradient = ctx.createLinearGradient(right, cy - 34, right, cy + 34);
+        loadGradient.addColorStop(0, voltageToColor(loadVoltage, vMin, vMax));
+        loadGradient.addColorStop(1, voltageToColor(groundVoltage, vMin, vMax));
+        ctx.strokeStyle = loadGradient;
+        ctx.lineWidth = 3;
         ctx.fillRect(right - 18, cy - 34, 36, 68);
         ctx.strokeRect(right - 18, cy - 34, 36, 68);
         ctx.fillStyle = '#f472b6';
@@ -316,6 +517,38 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
         );
       }
       ctx.restore();
+    }
+
+    if (activeLayers.has('potential-labels') && activeLayers.has('schematic')) {
+      const nodeLabels = [
+        { id: 1, voltage: sourceVoltage, x: left + 6, y: top - 10 },
+        { id: 2, voltage: loadVoltage, x: right - 72, y: top - 10 },
+        { id: 0, voltage: groundVoltage, x: right - 52, y: bot + 18 }
+      ];
+      ctx.save();
+      ctx.font = '12px ui-monospace, SFMono-Regular, Consolas, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      for (const node of nodeLabels) {
+        ctx.fillStyle = voltageToColor(node.voltage, vMin, vMax);
+        ctx.beginPath();
+        ctx.arc(node.x, node.y + (node.id === 0 ? -4 : 10), 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText(`N${node.id}=${node.voltage?.toFixed(2) ?? '—'}V`, node.x + 8, node.y);
+      }
+      ctx.restore();
+    }
+
+    if (activeLayers.has('current-flow') && activeLayers.has('schematic')) {
+      const branchOptions = { isShorted };
+      drawCurrentParticles(ctx, 'builder-circuit-mna-top-a', { x: left + 20, y: top }, { x: cx - 48, y: top }, state.totalCurrent, dtSec, branchOptions);
+      drawCurrentParticles(ctx, 'builder-circuit-mna-top-b', { x: cx + 48, y: top }, { x: right - 20, y: top }, state.totalCurrent, dtSec, branchOptions);
+      drawCurrentParticles(ctx, 'builder-circuit-mna-return', { x: right, y: top + 40 }, { x: right, y: bot - 40 }, branchReturnCurrent, dtSec, branchOptions);
+    }
+
+    if (isShorted && activeLayers.has('short-circuit')) {
+      drawShortCircuitGlow(ctx, { x: left, y: top }, { x: right, y: top }, nowMs);
+      drawShortCircuitGlow(ctx, { x: right, y: top }, { x: right, y: bot }, nowMs);
     }
 
     if (activeLayers.has('meters')) {
@@ -338,6 +571,14 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
         86
       );
       ctx.restore();
+    }
+
+    if (isShorted && activeLayers.has('short-circuit')) {
+      drawShortCircuitBanner(
+        ctx,
+        ctx.canvas.width,
+        shortEvent?.label ?? `支路电流超过 50 A（I=${Math.max(Math.abs(state.totalCurrent), Math.abs(state.branchCurrent1), Math.abs(state.branchCurrent2)).toFixed(1)} A）`
+      );
     }
   }
 });

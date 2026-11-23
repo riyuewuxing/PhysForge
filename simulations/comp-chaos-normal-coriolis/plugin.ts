@@ -44,6 +44,11 @@ const paramSchema: readonly ParamFieldSpec<ChaosNormalCoriolisParams>[] = [
   { key: 'puckSpeedMps', kind: 'number', label: '冰球惯性射速 v₀', unit: 'm/s', defaultValue: 0.9, min: 0.3, max: 2.0, step: 0.1 }
 ];
 
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
 export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
   ChaosNormalCoriolisParams,
   ChaosNormalCoriolisState
@@ -72,6 +77,54 @@ export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
     { key: 'dpDivergenceRad', label: '双初值分离角距', unit: 'rad', color: '#f43f5e' },
     { key: 'x1Nm', label: '振子 1 位移', unit: 'm', color: '#38bdf8' },
     { key: 'x2Nm', label: '振子 2 位移', unit: 'm', color: '#fbbf24' }
+  ],
+  getControlHandles: (state, params) => {
+    if (params.mode !== 'double-pendulum') return [];
+    const theta1 = state.dpState[0]!;
+    const theta2 = state.dpState[1]!;
+    const bob1 = { x: params.l1M * Math.sin(theta1), y: -params.l1M * Math.cos(theta1) };
+    const bob2 = {
+      x: bob1.x + params.l2M * Math.sin(theta2),
+      y: bob1.y - params.l2M * Math.cos(theta2)
+    };
+    const angleFrom = (x: number, y: number) => {
+      const thetaDeg = (Math.atan2(x, -y) * 180) / Math.PI;
+      return Number(clamp(thetaDeg, 10, 175).toFixed(1));
+    };
+    return [
+      {
+        id: 'double-pendulum-bob1',
+        label: `θ₁=${params.theta1Deg.toFixed(1)}°`,
+        position: bob1,
+        handleKind: 'point',
+        color: '#38bdf8',
+        onDrag: (worldPos) => ({ theta1Deg: angleFrom(worldPos.x, worldPos.y) })
+      },
+      {
+        id: 'double-pendulum-bob2',
+        label: `θ₂=${params.theta2Deg.toFixed(1)}°`,
+        position: bob2,
+        handleKind: 'point',
+        color: '#fbbf24',
+        onDrag: (worldPos) => ({ theta2Deg: angleFrom(worldPos.x - bob1.x, worldPos.y - bob1.y) })
+      }
+    ];
+  },
+  referenceFrames: [
+    {
+      id: 'inertial',
+      label: '地面惯性系',
+      description: '惯性实验室坐标系，原点位于旋转圆盘中心。',
+      getOrigin: () => ({ x: 0, y: 0 }),
+      getVelocity: () => ({ x: 0, y: 0 })
+    },
+    {
+      id: 'rotating-disk',
+      label: '旋转圆盘非惯性系',
+      description: '圆盘中心与惯性系重合；科里奥利模式的并列视图同时展示两系轨迹。',
+      getOrigin: () => ({ x: 0, y: 0 }),
+      getVelocity: () => ({ x: 0, y: 0 })
+    }
   ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
@@ -103,9 +156,9 @@ export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
     ctx.save();
 
     if (params.mode === 'double-pendulum') {
-      const cx = w * 0.5;
-      const cy = h * 0.42;
-      const sc = Math.min(w, h) * 0.16;
+      const cx = w * 0.45 + viewport.offsetX;
+      const cy = h * 0.5 + viewport.offsetY;
+      const sc = Math.min(w, h) * 0.24 * viewport.scale;
       const drawDp = (s: readonly [number, number, number, number], col: string) => {
         const x1 = cx + params.l1M * sc * Math.sin(s[0]);
         const y1 = cy + params.l1M * sc * Math.cos(s[0]);

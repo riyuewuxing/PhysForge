@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "2.0",
+  "modelId": "optics-wave-interference",
+  "presetId": "gaokao-sodium-newton-rings",
+  "title": "钠黄光牛顿环与半波损失",
+  "params": {
+    "mode": "newtons-rings",
+    "wavelengthNm": 589,
+    "refractiveIndexN2": 1,
+    "wedgeAngleDeg": 0.012,
+    "defectMode": "flat",
+    "lensRadiusR": 2,
+    "slitWidthMicron": 4,
+    "gratingPitchMicron": 12,
+    "slitCountN": 6,
+    "halfWaveLoss": true
+  },
+  "visibleLayers": ["fringes", "intensityCurve"],
+  "notes": "使用 λ=589 nm 钠黄光和 2 m 透镜曲率半径，比较计入反射半波损失时的牛顿环明暗级次。"
+}

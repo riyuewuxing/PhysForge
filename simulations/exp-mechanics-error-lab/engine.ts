@@ -16,6 +16,7 @@ export type MechanicsErrorParams = {
   readingNoiseMm: number;
   seed: number;
   phyphoxOverlayCsv: string;
+  rulerOffsetCm?: number;
 };
 
 export interface TapePoint {

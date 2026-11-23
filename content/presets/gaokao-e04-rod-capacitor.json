@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "2.0",
+  "modelId": "em-induction-double-rod",
+  "presetId": "gaokao-single-rod-capacitor-drive",
+  "title": "单杆切割磁感线并向电容充电",
+  "params": {
+    "rodMode": "single",
+    "circuitLoad": "capacitor",
+    "magneticB": 1.5,
+    "railWidth": 1.2,
+    "railWidth2": 0,
+    "inclineDeg": 0,
+    "mass1": 2,
+    "mass2": 1,
+    "resistorR": 0,
+    "rodResistance1": 0,
+    "rodResistance2": 0.5,
+    "capacitance": 0.3,
+    "batteryEmf": 6,
+    "externalForce": 6,
+    "frictionMu": 0,
+    "v1Initial": 0,
+    "v2Initial": 0
+  },
+  "visibleLayers": ["railsAndField", "rods", "currentFlow", "forceVectors"],
+  "notes": "零总电阻单杆电容模式下，等效质量 m_eq=m+C B²L²=2.972 kg、加速度 a=F/m_eq；观察恒流与 q=CBLv 的线性增长。"
+}

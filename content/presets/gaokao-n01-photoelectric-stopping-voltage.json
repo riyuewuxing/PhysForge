@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "2.0",
+  "modelId": "modern-photoelectric-compton",
+  "presetId": "gaokao-sodium-photoelectric-stopping-voltage",
+  "title": "钠阴极光电效应遏止电压",
+  "params": {
+    "mode": "photoelectric",
+    "cathodeMetal": "Na",
+    "customWorkFunctionEv": 2.36,
+    "wavelengthNm": 405,
+    "intensityRel": 1.4,
+    "anodeVoltageV": 0,
+    "freezeRefEnabled": true,
+    "refWavelengthNm": 450,
+    "refIntensityRel": 0.8,
+    "xrayWavelengthNm": 0.071,
+    "scatterAngleDeg": 90
+  },
+  "visibleLayers": ["apparatus", "characteristic"],
+  "notes": "405 nm 光照射钠阴极，联合比较入射光强、光电流与遏止电压，区分光强和频率的影响。"
+}

@@ -16,15 +16,21 @@ export function createCanvasWebmRecorder(
   }
 
   const candidates = [
+    'video/webm',
     'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm'
+    'video/webm;codecs=vp8'
   ];
-  const mimeType =
-    candidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
+  const supported = candidates.find((m) => MediaRecorder.isTypeSupported(m));
+  const mimeType = supported ?? 'video/webm';
 
   const stream = canvas.captureStream(fps);
-  const recorder = new MediaRecorder(stream, { mimeType });
+  const videoTrack = stream.getVideoTracks()[0];
+  const requestFrame = (): void => {
+    if (videoTrack && 'requestFrame' in videoTrack && typeof videoTrack.requestFrame === 'function') {
+      videoTrack.requestFrame();
+    }
+  };
+  const recorder = supported ? new MediaRecorder(stream, { mimeType: supported }) : new MediaRecorder(stream);
   const chunks: BlobPart[] = [];
 
   recorder.ondataavailable = (ev) => {
@@ -38,6 +44,7 @@ export function createCanvasWebmRecorder(
     start: () => {
       chunks.length = 0;
       recorder.start(100);
+      requestFrame();
     },
     stop: () =>
       new Promise<Blob>((resolve, reject) => {
@@ -49,6 +56,10 @@ export function createCanvasWebmRecorder(
           resolve(new Blob(chunks, { type: mimeType }));
         };
         if (recorder.state !== 'inactive') {
+          if (recorder.state === 'recording') {
+            requestFrame();
+            recorder.requestData();
+          }
           recorder.stop();
         } else {
           resolve(new Blob(chunks, { type: mimeType }));

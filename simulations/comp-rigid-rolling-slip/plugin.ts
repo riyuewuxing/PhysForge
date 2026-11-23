@@ -1,8 +1,10 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
+import { defineSimulationPlugin, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { rigidRollingPresets } from './presets.js';
 import {
   SHAPE_INERTIA_COEFF,
   checkInvariants,
+  computeRollingFriction,
   computeObservables,
   createInitialState,
   stepRigidRollingSlip,
@@ -10,6 +12,11 @@ import {
   type RigidRollingParams,
   type RigidRollingState
 } from './engine.js';
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
 
 const paramSchema: readonly ParamFieldSpec<RigidRollingParams>[] = [
   {
@@ -68,6 +75,88 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
     { key: 'slipSpeed', label: '触地相对滑速 v-ωR', unit: 'm/s', color: '#f43f5e' },
     { key: 'currentEnergyJ', label: '机械能 E', unit: 'J', color: '#4ade80' }
   ],
+  getControlHandles: (state, params) => {
+    if (params.scenario !== 'flat-bowling-slip' || state.t > 1e-12) return [];
+    const radius = Math.max(0.05, params.radiusM);
+    const velocityScale = 0.15;
+    const angularScale = 0.015;
+    const originY = radius;
+    return [
+      {
+        id: 'initial-velocity',
+        label: `v₀=${params.v0Mps.toFixed(2)}m/s`,
+        position: { x: params.v0Mps * velocityScale, y: originY + 0.4 },
+        origin: { x: 0, y: originY + 0.4 },
+        handleKind: 'vector',
+        color: '#38bdf8',
+        onDrag: (worldPos) => ({ v0Mps: Number(clamp(worldPos.x / velocityScale, -10, 15).toFixed(2)) })
+      },
+      {
+        id: 'initial-omega',
+        label: `ω₀=${params.omega0Radps.toFixed(1)}rad/s`,
+        position: { x: params.omega0Radps * radius * angularScale, y: originY },
+        origin: { x: 0, y: originY },
+        handleKind: 'vector',
+        color: '#fbbf24',
+        onDrag: (worldPos) => ({ omega0Radps: Number(clamp(worldPos.x / (radius * angularScale), -150, 100).toFixed(2)) })
+      }
+    ];
+  },
+  getForceVectors: (state, params): ForceVectorItem[] => {
+    const incline = params.scenario === 'incline-race' ? degToRad(params.inclineDeg) : 0;
+    const tangent = { x: Math.cos(incline), y: -Math.sin(incline) };
+    const normal = { x: Math.sin(incline), y: Math.cos(incline) };
+    const radius = Math.max(0.05, params.radiusM);
+    const rowIndex: Record<RigidBodyShape, number> = {
+      'solid-sphere': 0,
+      'solid-cylinder': 1,
+      'hollow-sphere': 2,
+      'thin-ring': 3
+    };
+    let alongTrack = state.x;
+    let rowY = 0;
+    if (params.scenario === 'incline-race') {
+      const maxX = Math.max(8, ...Object.values(state.inclinePositions));
+      alongTrack = -1.4 + (state.inclinePositions[params.shape]! / maxX) * 2.8;
+      rowY = 1.5 - rowIndex[params.shape] * 1.0;
+    }
+    const center = {
+      x: alongTrack * tangent.x + radius * normal.x,
+      y: rowY + alongTrack * tangent.y + radius * normal.y
+    };
+    const contact = { x: center.x - radius * normal.x, y: center.y - radius * normal.y };
+    const friction = computeRollingFriction(
+      state.v,
+      state.omega,
+      radius,
+      params.massKg,
+      params.muK,
+      SHAPE_INERTIA_COEFF[params.shape],
+      incline,
+      CLASSROOM_GRAVITY
+    );
+    const weight = params.massKg * CLASSROOM_GRAVITY;
+    const normalForce = weight * Math.max(0, Math.cos(incline));
+    const vectors: ForceVectorItem[] = [
+      { id: 'gravity', label: 'mg', origin: center, force: { x: 0, y: -weight }, color: '#fbbf24', category: 'gravity' },
+      {
+        id: 'normal', label: 'F_N', origin: contact,
+        force: { x: normalForce * normal.x, y: normalForce * normal.y },
+        color: '#38bdf8', category: 'normal'
+      }
+    ];
+    if (Math.abs(friction.frictionAlongTangent) > 1e-5) {
+      vectors.push({
+        id: 'friction', label: friction.label, origin: contact,
+        force: {
+          x: friction.frictionAlongTangent * tangent.x,
+          y: friction.frictionAlongTangent * tangent.y
+        },
+        color: '#f472b6', category: 'friction'
+      });
+    }
+    return vectors;
+  },
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -98,6 +187,11 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
     if (!activeLayers.has('main')) return;
     ctx.save();
 
+    const ppm = Math.min(w, h) * 0.24 * viewport.scale;
+    const anchorX = w * 0.45 + viewport.offsetX;
+    const anchorY = h * 0.5 + viewport.offsetY;
+    const toScreen = (x: number, y: number) => ({ x: anchorX + x * ppm, y: anchorY - y * ppm });
+
     if (params.scenario === 'incline-race') {
       const shapes: { key: RigidBodyShape; label: string; col: string }[] = [
         { key: 'solid-sphere', label: '实心球 (c=0.40)', col: '#4ade80' },
@@ -106,29 +200,35 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
         { key: 'thin-ring', label: '薄圆环 (c=1.00)', col: '#f43f5e' }
       ];
       const maxX = Math.max(8, ...Object.values(state.inclinePositions));
+      const incline = degToRad(params.inclineDeg);
+      const tangent = { x: Math.cos(incline), y: -Math.sin(incline) };
+      const normal = { x: Math.sin(incline), y: Math.cos(incline) };
       shapes.forEach((sh, idx) => {
-        const y = h * 0.24 + idx * (h * 0.17);
+        const rowY = 1.5 - idx * 1.0;
+        const start = toScreen(-1.4 * tangent.x, rowY - 1.4 * tangent.y);
+        const end = toScreen(1.4 * tangent.x, rowY + 1.4 * tangent.y);
         ctx.strokeStyle = '#475569';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(w * 0.12, y);
-        ctx.lineTo(w * 0.9, y);
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
         ctx.stroke();
 
-        const px = w * 0.14 + Math.min(1, state.inclinePositions[sh.key]! / maxX) * (w * 0.72);
+        const along = -1.4 + (state.inclinePositions[sh.key]! / maxX) * 2.8;
+        const center = toScreen(along * tangent.x + params.radiusM * normal.x, rowY + along * tangent.y + params.radiusM * normal.y);
         ctx.fillStyle = sh.col;
         ctx.beginPath();
-        ctx.arc(px, y - 16, 15, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, Math.max(8, params.radiusM * ppm), 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = '#e2e8f0';
         ctx.font = 'bold 12px ui-sans-serif, system-ui';
-        ctx.fillText(`${sh.label}: x=${state.inclinePositions[sh.key]!.toFixed(2)}m`, w * 0.12, y - 34);
+        ctx.fillText(`${sh.label}: x=${state.inclinePositions[sh.key]!.toFixed(2)}m`, start.x, start.y - 16);
       });
       ctx.restore();
       return;
     }
 
-    const groundY = h * 0.65;
+    const groundY = anchorY;
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -136,9 +236,10 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
     ctx.lineTo(w * 0.92, groundY);
     ctx.stroke();
 
-    const rPx = 38;
-    const ballX = ((w * 0.2 + state.x * 38) % (w * 0.72)) + w * 0.1;
-    const ballY = groundY - rPx;
+    const rPx = Math.max(8, params.radiusM * ppm);
+    const ball = toScreen(state.x, params.radiusM);
+    const ballX = ball.x;
+    const ballY = ball.y;
     ctx.fillStyle = state.mode === 'pure-rolling' ? 'rgba(74, 222, 128, 0.25)' : 'rgba(244, 63, 94, 0.25)';
     ctx.strokeStyle = state.mode === 'pure-rolling' ? '#4ade80' : '#f43f5e';
     ctx.lineWidth = 3;

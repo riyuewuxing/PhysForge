@@ -1,4 +1,4 @@
-import { resolvePluginParams } from '@physforge/sim-sdk';
+import { resolvePluginParams, type SimulationPluginV2 } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { expElectricalErrorLabPlugin } from './plugin.js';
 import { electricalErrorPresets } from './presets.js';
@@ -51,5 +51,22 @@ describe('exp-electrical-error-lab MNA & precision instrument invariants (X02)',
     const p = getPreset(0);
     const st = createInitialState(p);
     expect(stepElectricalErrorLab(st, p, 0).nextState.t).toBe(0);
+  });
+
+  it('exposes draggable caliper and micrometer controls with their measurement precision', () => {
+    const params = resolvePluginParams(expElectricalErrorLabPlugin.paramSchema, {
+      mode: 'caliper-micrometer',
+      vernierDivisions: '50'
+    });
+    const state = createInitialState(params);
+    const plugin = expElectricalErrorLabPlugin as SimulationPluginV2<typeof params, typeof state>;
+    const handles = plugin.getControlHandles?.(state, params) ?? [];
+    const jaw = handles.find((handle) => handle.id === 'vernier-jaw');
+    const thimble = handles.find((handle) => handle.id === 'micrometer-thimble');
+
+    expect(jaw).toBeDefined();
+    expect(thimble).toBeDefined();
+    expect(Number(jaw?.onDrag({ x: 1.234, y: jaw.position.y })['targetVernierMm'])).toBe(50);
+    expect(Number(thimble?.onDrag({ x: 2.345, y: thimble.position.y })['targetMicrometerMm'])).toBe(20);
   });
 });
