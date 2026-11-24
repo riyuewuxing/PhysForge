@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { StoryRunner, isSimulationPluginV3, resolvePluginParams, selectLiveFormulas, type ParamRecord } from '@physforge/sim-sdk';
 import { loadSimulationById } from '@physforge/simulations/catalog';
+import { renderInteractiveLatex } from './liveFormulaEngine.js';
 import { validStoryView2D, validStoryView3D } from './storyCamera.js';
 
 const models = [
@@ -67,6 +68,15 @@ describe('authored flagship classroom decks', () => {
         expect(runner.goTo(index, 0)).toBe(true);
         runner.tick(1000);
         expect(params).toEqual(target);
+        const readouts = plugin.formatFormulas?.(state, params) ?? [];
+        expect(readouts.some(item => Boolean(item.substitutedLatex)), beat.id).toBe(true);
+        for (const item of readouts) {
+          expect(renderInteractiveLatex(item.latex), item.id).not.toContain('katex-error');
+          if (item.substitutedLatex) {
+            expect(item.substitutedLatex).not.toMatch(/NaN|Infinity/);
+            expect(renderInteractiveLatex(item.substitutedLatex), item.id).not.toContain('katex-error');
+          }
+        }
         let obs = plugin.engine.computeObservables(state, params);
         if (beat.autoFreeze) {
           expect(Number.isFinite(obs[beat.autoFreeze.observableKey]), beat.id).toBe(true);
@@ -107,5 +117,30 @@ describe('authored flagship classroom decks', () => {
     expect(hole).toBeCloseTo(-electron, 12);
     expect(read('s02-mhd-match').mhdOutputWatt).toBeCloseTo(288000, 6);
     expect(read('s02-mhd-match').mhdOutputWatt!).toBeGreaterThan(read('s02-mhd-low').mhdOutputWatt!);
+  });
+});
+
+describe('mode-specific physical formula readouts', () => {
+  it('E10 uniform field readout remains finite for zero charge-to-mass ratio', async () => {
+    const p = await loadSimulationById('em-3d-magnetic-fields');
+    if (!p) throw new Error('Missing E10');
+    const params = resolvePluginParams(p.paramSchema, { geometryType: 'uniform-helix', qOverM: 0 });
+    const items = p.formatFormulas?.(p.engine.createInitialState(params), params) ?? [];
+    expect(items.map(item => item.id)).toContain('uniform-helix-state');
+    expect(items.map(item => item.substitutedLatex).join(' ')).not.toMatch(/NaN|Infinity/);
+    expect(items.map(item => item.id)).not.toContain('biot-savart-lorentz');
+  });
+  it('binary orbit and tokamak do not inherit unrelated diagnostic equations', async () => {
+    for (const [id, patch, expected, excluded] of [
+      ['astro-orbital-mechanics', { mode: 'binary-lagrange' }, 'binary-state', 'orbit-state'],
+      ['stse-tokamak-magnetic-mirror', { mode: 'tokamak' }, 'tokamak-field', 'magnetic-mirror-mu']
+    ] as const) {
+      const p = await loadSimulationById(id);
+      if (!p) throw new Error('Missing ' + id);
+      const params = resolvePluginParams(p.paramSchema, patch);
+      const items = p.formatFormulas?.(p.engine.createInitialState(params), params) ?? [];
+      expect(items.map(item => item.id)).toContain(expected);
+      expect(items.map(item => item.id)).not.toContain(excluded);
+    }
   });
 });
