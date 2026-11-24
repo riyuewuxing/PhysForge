@@ -101,6 +101,16 @@ describe('StoryRunner V3 headless', () => {
     expect(callbacks.onAutoFreezeTriggered).toHaveBeenCalledTimes(2);
   });
 
+  it('lets a manual parameter edit cancel an in-flight tween', () => {
+    const { runner, params, callbacks } = setup([beat('a', { paramPatch: { speed: 20 }, paramTweenMs: 1000 })]);
+    runner.next(0);
+    runner.tick(500);
+    runner.cancelTween();
+    callbacks.applyParamsImperative({ speed: 7 });
+    runner.tick(1000);
+    expect(params()['speed']).toBe(7);
+  });
+
   it('does not fabricate a crossing across invalid observations or when starting at threshold', () => {
     const { runner, callbacks } = setup([beat('a', { autoFreeze: { observableKey: 'x', operator: 'cross', threshold: 2, badgeText: 'hit' } })]);
     runner.next(0);
