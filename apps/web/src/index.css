@@ -429,3 +429,10 @@ input[type="range"].pf-slider::-moz-range-thumb {
 [data-theme="projector"] [data-testid="formula-card"] { background: #f1f5f9; border-color: var(--pf-border); }
 [data-theme="projector"] [data-testid="right-control-panel"] option { background: #fff; color: #0f172a; }
 [data-theme="projector"] [data-testid="formula-card"] [class*="text-emerald-"] { color: #166534; }
+
+/* H3: same potential stops in the Canvas, both legends and paper mode. */
+[data-divider-palette="range"] { background:linear-gradient(90deg,#67e8f9 0%,#d3dbd9 25%,#ffc76f 50%,#ff7d77 100%); }
+[data-divider-palette="zero"] { background:#67e8f9; }
+[data-theme="projector"] [data-divider-palette="range"] { background:linear-gradient(90deg,#075985 0%,#475569 25%,#92400e 50%,#b91c1c 100%);box-shadow:none; }
+[data-theme="projector"] [data-divider-palette="zero"] { background:#075985;box-shadow:none; }
+[data-theme="projector"] [data-testid="b2-potential-scale"] { color:var(--pf-text); }

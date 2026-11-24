@@ -48,6 +48,10 @@ function getDefaultScopeChannels(
     const b = channels.find(c => c.key === preferred[1])?.key;
     if (a && b) return [a, b];
   }
+  if(modelId==='builder-circuit-mna' && params.topology==='divider-lamp'){
+    const a=channels.find(c=>c.key==='totalCurrent')?.key,b=channels.find(c=>c.key==='lampCurrent')?.key;
+    if(a&&b)return [a,b];
+  }
   const singleRodE04 = modelId === 'em-induction-double-rod' && params.rodMode === 'single';
   const defaultA = singleRodE04
     ? channels.find((channel) => channel.key === 'current')?.key
@@ -232,7 +236,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -871,7 +875,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     storySpatialCommandRef.current = null;
     applyDefaultCameraView(viewportRef.current.width, viewportRef.current.height);
     renderFrameToCanvas();
-  }, [plugin.meta.id, resetViewNonce]);
+  }, [plugin.meta.id, resetViewNonce, plugin.meta.id==='builder-circuit-mna'?params.topology:undefined]);
 
   // 鼠标滚轮以指针为锚点缩放 (0.1x ~ 20x)
   useEffect(() => {
@@ -1383,7 +1387,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               {(plugin.meta.id === 'builder-circuit-mna' || plugin.meta.id === 'circuit-dc-capacitor-mna') && (
                 <div data-testid="b2-potential-scale" className="pf-floating-glass flex items-center gap-2.5 rounded-xl border border-white/10 px-3 py-1.5 font-mono text-[10px] text-slate-300 shadow-xl">
                   <span>0V / {Number(params.emf ?? 12).toFixed(0)}V</span>
-                  <span className="h-1.5 w-20 rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400" />
+                  <span data-divider-palette={params.topology==='divider-lamp'?(params.emf===0?'zero':'range'):undefined} className="h-1.5 w-20 rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400" />
                 </div>
               )}
               <div className="pf-floating-glass flex items-center gap-1 rounded-2xl border border-white/10 p-1.5 shadow-xl">

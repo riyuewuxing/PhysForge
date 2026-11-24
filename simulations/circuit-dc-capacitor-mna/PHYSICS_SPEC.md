@@ -4,3 +4,12 @@
 - **核心算法**：改进节点电压法（MNA）+ 列主元 LU 消元 + 孤岛 $G_{\min}=10^{-12}\text{ S}$ 泄放 + 电容/电感二阶梯形伴随模型 + Newton-Raphson 非线性迭代（幂律小灯泡、肖克利二极管阻尼步长限幅防指数溢出）。
 - **异常处理**：电源极端短路极限下触发 `SHORT_CIRCUIT` 事件提示，杜绝 `NaN`/`Infinity`。
 - **V2 能力**：`ControlHandle` 画布拖拽变阻、`SceneDSL` 序列化及 `DiagramIR` 黑白标准电路图导出。
+
+## V3.1 H3：分压电路小灯泡（定量模型与显示契约）
+
+20 Ω 理想滑动变阻器下段 R_d=clamp(R_p,0,20)，上段 R_u=20−R_d。电源 E、内阻 r≥0、上段串联，再到滑片节点 V_L；下段和灯泡并联接地。灯泡正向近似幂律 I_L=0.25(|U_L|+10⁻⁶)⁻⁰·³⁵U_L（不是额定灯泡的真实热动态模型）。理想电流表串在灯泡支路，理想电压表并联在灯泡两端，对求解无负载。内部求解仍使用 MNA/NR，串联 r+R_u 合并消元；实际电源外端 U_s=E−I_s r，与灯泡 U_L 区分。节点数组兼容保留 [0,E,U_L]；terminalVoltage 在此模式兼容旧接口仍表示 U_L，新增明确观测量 sourceTerminalVoltage、lampVoltage、lampCurrent、sourcePower、internalLoss、upperLoss、lowerLoss、dividerLowerResistance、dividerUpperResistance。
+
+- KCL: I_s=I_d+I_L；KVL: E=I_s(r+R_u)+U_L；P_s=I_s²r+I_s²R_u+I_d²R_d+U_L I_L。
+- 0 Ω 下端点：灯泡两端等势、I_L=0，I_s=E/(20+r)。20 Ω 上端点且 r=0：U_L=E，I_d=E/20，I_s=I_d+I_L。用解析拓扑约化处理精确零电阻，避免奇异矩阵，不再把 0/20 Ω 隐式钳成 1/19 Ω。
+- 等势导线为相同颜色，电阻/负载跨越的电势差才渐变；色带按 0～E 统一青蓝/琥珀/珊瑚，E=0 全部等势。电流箭头为约定正电流方向的示意，动画相位来自仿真 t（暂停时停止），速度仅为可视化映射，不当作漂移速度。理想电压表支路无电流箭头。
+- 主图、滑片拖拽和 DiagramIR 共用世界几何；曲线坐标注明 A/V，点位由同一灯泡定律与 MNA 实时工作点产生；灯泡光晕按实际 P_L 视觉压缩。此静态分压预设没有开关与电容，不能用 RC 开关假装断开灯泡。其他拓扑独立验收。

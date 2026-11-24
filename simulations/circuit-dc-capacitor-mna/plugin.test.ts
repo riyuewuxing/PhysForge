@@ -8,6 +8,7 @@ import {
   voltageToColor
 } from './plugin.js';
 import { createInitialState, type CircuitParams } from './engine.js';
+import { dividerPotentialColor, dividerWiperLabelAnchor, dividerWiperX, dividerWiperY } from './dividerView.js';
 
 function createMockContext(): CanvasRenderingContext2D {
   return {
@@ -81,6 +82,57 @@ describe('circuit-dc-capacitor-mna visual helpers', () => {
     expect(handle?.position.y).toBeCloseTo(0.167, 3);
     expect(handle?.onDrag({ x: 0.17, y: -1.093 }).sliderR).toBe(0);
     expect(handle?.onDrag({ x: 0.17, y: 1.427 }).sliderR).toBe(20);
+  });
+
+  it('keeps the wiper label clear of the top and bottom wires without moving the drag target', () => {
+    const top=dividerWiperY(20),bottom=dividerWiperY(0);
+    for (const r of [0,.1,1,5,10,15,19,19.9,20]) {
+      const anchor=dividerWiperLabelAnchor(r);
+      expect(anchor.y-bottom).toBeGreaterThanOrEqual(.279999);
+      expect(top-anchor.y).toBeGreaterThanOrEqual(.279999);
+      expect(dividerWiperX-anchor.x).toBeCloseTo(.35,12);
+    }
+    expect(dividerWiperLabelAnchor(10).y).toBeCloseTo(dividerWiperY(10),12);
+    expect(dividerWiperY(0)).toBeCloseTo(-1.093,12);
+    expect(dividerWiperY(20)).toBeCloseTo(1.427,12);
+  });
+
+  it('exports series ammeter, parallel voltmeter and grounded divider with exact endpoints', () => {
+    for(const sliderR of [0,10,20]){
+      const p=resolvePluginParams<CircuitParams>(circuitDcCapacitorMnaPlugin.paramSchema,{topology:'divider-lamp',sliderR});
+      const state=createInitialState(p);
+      const ir=circuitDcCapacitorMnaPlugin.exportDiagramIR?.(state,p);
+      const elements=ir?.primitives.filter(q=>q.kind==='circuitElement')??[];
+      const a=elements.find(q=>q.element==='ammeter'),v=elements.find(q=>q.element==='voltmeter'),l=elements.find(q=>q.element==='lamp');
+      expect(a?.x2).toBeLessThan(l!.x1);
+      expect(a?.y1).toBe(l?.y1);
+      expect(v?.y1).toBeGreaterThan(l!.y1);
+      expect(v?.x1).toBeGreaterThan(a!.x2);
+      expect(elements.filter(q=>q.element==='resistor')).toHaveLength(sliderR===0||sliderR===20?2:3);
+      // Independent electrical-net connectivity: union only ideal wires,
+      // never a resistor, lamp, or meter. V must share both lamp nets and
+      // A's downstream net must share lamp's positive net.
+      const parent=new Map<string,string>();
+      const key=(x:number,y:number)=>x.toFixed(6)+','+y.toFixed(6);
+      const find=(k:string):string=>{const q=parent.get(k);return q&&q!==k?find(q):k;};
+      for(const line of ir?.primitives??[])if(line.kind==='line'){
+        const k=key(line.x1,line.y1),j=key(line.x2,line.y2);
+        parent.set(find(k),find(j));
+      }
+      const node=(x:number,y:number)=>find(key(x,y));
+      expect(node(v!.x1,v!.y1)).toBe(node(l!.x1,l!.y1));
+      expect(node(v!.x2,v!.y2)).toBe(node(l!.x2,l!.y2));
+      expect(node(a!.x2,a!.y2)).toBe(node(l!.x1,l!.y1));
+      expect(node(a!.x1,a!.y1)).toBe(node(.17,dividerWiperY(sliderR)));
+      expect(node(a!.x1,a!.y1)).not.toBe(node(a!.x2,a!.y2));
+      expect(node(l!.x1,l!.y1)).not.toBe(node(l!.x2,l!.y2));
+      expect(circuitDcCapacitorMnaPlugin.getControlHandles?.(state,p)[0]?.position.y).toBeCloseTo(dividerWiperY(sliderR),12);
+    }
+    expect(dividerPotentialColor(0,12)).toBe('#67e8f9');
+    expect(dividerPotentialColor(3,12)).toBe('#d3dbd9');
+    expect(dividerPotentialColor(6,12)).toBe('#ffc76f');
+    expect(dividerPotentialColor(12,12)).toBe('#ff7d77');
+    expect(dividerPotentialColor(0,0)).toBe(dividerPotentialColor(0,12));
   });
 
   it('shows the nonlinear lamp law for the divider-lamp preset instead of capacitor equations', () => {

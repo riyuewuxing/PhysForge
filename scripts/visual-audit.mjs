@@ -663,18 +663,21 @@ async function main() {
           const slider = document.querySelector('[data-testid="param-slider-sliderR"]');
           if (!(canvas instanceof HTMLCanvasElement) || !(slider instanceof HTMLInputElement)) return null;
           const rect = canvas.getBoundingClientRect();
-          const ppm = Math.min(rect.width, rect.height) * 0.24;
-          const ratio = Math.max(0.05, Math.min(0.95, Number(slider.value) / 20));
-          const worldY = -1.093 + ratio * 2.52;
-          return {
-            x: rect.left + rect.width * 0.45 + 0.17 * ppm,
-            y: rect.top + rect.height * 0.5 - worldY * ppm
-          };
+          const base=Math.min(rect.width,rect.height)*.24,usable=rect.width-(rect.width>=900?300:0);
+          const scale=Math.max(.1,Math.min(1.05,(usable-36)/(5*base),(rect.height-125)/(3.6*base))),ppm=base*scale;
+          const worldY=-1.093+Number(slider.value)/20*2.52;
+          return {x:rect.left+usable/2-.10*ppm+.17*ppm,y:rect.top+rect.height*.465-worldY*ppm,ppm};
         });
         if (handlePoint) {
           await page.mouse.move(handlePoint.x, handlePoint.y);
           await page.waitForTimeout(120);
           await page.screenshot({ path: path.join(OUT_DIR, 'B2_00_slider_hover.png') });
+          await page.mouse.down();
+          await page.mouse.move(handlePoint.x,handlePoint.y-handlePoint.ppm*.63,{steps:10});
+          await page.mouse.up();
+          await page.waitForFunction(()=>Math.abs(Number(document.querySelector('[data-testid="param-slider-sliderR"]')?.value)-15)<.1);
+          await page.screenshot({path:path.join(OUT_DIR,'H3_B2_wiper_drag.png')});
+          await selectPreset(page,'divider-lamp-measurement');
           await page.mouse.move(24, 24);
         } else {
           layout.issues.push('Could not locate the divider-lamp Rp handle for hover audit');
@@ -875,6 +878,36 @@ async function main() {
         if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
       }
       if (testCase.id === 'builder-circuit-mna') {
+        await selectPreset(page,'divider-lamp-measurement');
+        const readouts=()=>page.evaluate(()=>Object.fromEntries(['sourceTerminalVoltage','lampVoltage','lampCurrent','outputPower'].map(k=>[k,parseFloat(document.querySelector('[data-testid="b2-'+k+'"]')?.textContent??'')])));
+        await page.waitForFunction(()=>parseFloat(document.querySelector('[data-testid="b2-lampVoltage"]')?.textContent??'')>0);
+        const initial=await readouts();
+        if(!(initial.sourceTerminalVoltage>initial.lampVoltage&&initial.lampVoltage>0&&Math.abs(initial.outputPower-initial.lampVoltage*initial.lampCurrent)<.015))throw new Error('B2 terminal/lamp readout mismatch '+JSON.stringify(initial));
+        await page.screenshot({path:path.join(OUT_DIR,'H3_B2_nominal.png')});
+        for(const [target,tag] of [[0,'bottom'],[20,'top']]){
+          // Native range keyboard reaches exact endpoints; canvas wiper
+          // drag was independently verified 10->15 Ω above.
+          await page.getByTestId('param-slider-sliderR').focus();
+          await page.getByTestId('param-slider-sliderR').press(target===0?'Home':'End');
+          await page.waitForFunction(target=>Number(document.querySelector('[data-testid="param-slider-sliderR"]')?.value)===target,target);
+          await page.waitForTimeout(180);
+          const data=await readouts();
+          if(target===0&&(data.lampVoltage!==0||data.lampCurrent!==0||data.outputPower!==0))throw new Error('B2 bottom contact must short only lamp '+JSON.stringify(data));
+          if(target===20&&Math.abs(data.lampVoltage-data.sourceTerminalVoltage)>.001)throw new Error('B2 top contact must equal source terminal '+JSON.stringify(data));
+          await page.screenshot({path:path.join(OUT_DIR,'H3_B2_'+tag+'.png')});
+        }
+        await page.getByTestId('param-slider-emf').focus();
+        await page.getByTestId('param-slider-emf').press('Home');
+        await page.waitForFunction(()=>document.querySelector('[data-testid="b2-inspector-potential"]')?.getAttribute('data-divider-palette')==='zero'&&parseFloat(document.querySelector('[data-testid="b2-outputPower"]')?.textContent??'')===0);
+        await page.screenshot({path:path.join(OUT_DIR,'H3_B2_zero_emf.png')});
+        await selectPreset(page,'divider-lamp-measurement');
+        await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+        if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+        await page.screenshot({path:path.join(OUT_DIR,'H3_B2_projector.png')});
+        await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+        if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
         const selectedPreset = await selectPreset(page, 'rc-charging-curve');
         await page.waitForTimeout(250);
         const rcCheck = await page.evaluate(() => {
