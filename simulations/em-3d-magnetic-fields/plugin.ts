@@ -1,3 +1,4 @@
+import { magnetic3dStoryDecks } from './storyDecks.js';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { magnetic3dPresets } from './presets.js';
 import {
@@ -318,7 +319,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
       }
     ];
   }
-}), { liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
+}), { storyDecks: magnetic3dStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
   default3DAzimuthRad: 0.67, default3DPolarRad: 1.08 } });
 
 export default em3dMagneticFieldsPlugin;
