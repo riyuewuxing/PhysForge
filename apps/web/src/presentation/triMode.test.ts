@@ -81,6 +81,31 @@ describe('V3 tri-mode shell', () => {
     expect(get().resetNonce).toBe(current.resetNonce);
     expect(get().canUndo).toBe(current.canUndo);
   });
+  it('ignores identical parameter writes and closes gesture context on a discrete mode change', () => {
+    const get = useClassroomStore.getState;
+    const before = get();
+    const field = before.loadedPlugin.paramSchema.find(item => item.kind === 'select' && item.options.some(option => option.value !== before.params[item.key]));
+    if (field?.kind !== 'select') throw new Error('Expected select field');
+    const previous = before.params[field.key];
+    if (typeof previous !== 'string') throw new Error('Expected select value');
+    before.updateParam(field.key, previous);
+    expect(get().resetNonce).toBe(before.resetNonce);
+    const alternative = field.options.find(option => option.value !== previous);
+    if (!alternative) throw new Error('Missing alternative');
+    before.updateParam(field.key, alternative.value);
+    expect(get().paramContextEpoch).toBe(before.paramContextEpoch + 1);
+    expect(get().params[field.key]).toBe(alternative.value);
+    get().undoParam();
+    expect(get().params[field.key]).toBe(previous);
+  });
+  it('resuming playback clears an obsolete freeze indication', () => {
+    const get = useClassroomStore.getState;
+    get().setPlaying(false);
+    get().setAutoFreezeBadge('critical');
+    get().togglePlaying();
+    expect(get().autoFreezeBadge).toBeNull();
+    get().setPlaying(false);
+  });
   it('manual reset clears the old freeze and invalidates prior gesture scope', () => {
     const get = useClassroomStore.getState;
     get().setAutoFreezeBadge('stale');
