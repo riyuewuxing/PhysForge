@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { InductionParams } from '../../../../simulations/em-induction-double-rod/engine.js';
 import { describe, expect, it } from 'vitest';
 import { createWorldMapper, resolvePluginParams } from '@physforge/sim-sdk';
 import { emInductionDoubleRodPlugin, rodDisplayX } from '@physforge/simulations/em-induction-double-rod';
@@ -8,7 +9,7 @@ import { CameraMorphController, alignedCanvasViewport } from './cameraMorphContr
 describe('flagship physical display alignment', () => {
   it('shares the moving E04 origin between actual rod, force and flat projection', () => {
     const p = emInductionDoubleRodPlugin;
-    const params = resolvePluginParams(p.paramSchema, { externalForce: 2 });
+    const params = resolvePluginParams<InductionParams>(p.paramSchema, { externalForce: 2 });
     const initial = p.engine.createInitialState(params);
     const state = { ...initial, x1: 8.2, x2: 7 };
     const x = rodDisplayX(state, state.x1);
@@ -27,7 +28,7 @@ describe('flagship physical display alignment', () => {
     const driver = createPlanarFlagshipScene('em-induction-double-rod', scene);
     expect(driver).not.toBeNull();
     const p = emInductionDoubleRodPlugin;
-    const params = resolvePluginParams(p.paramSchema);
+    const params = resolvePluginParams<InductionParams>(p.paramSchema);
     driver?.sync(p.engine.createInitialState(params), params, new Set(p.layers.map(layer => layer.id)));
     expect(scene.children.length).toBe(1);
     driver?.dispose();
