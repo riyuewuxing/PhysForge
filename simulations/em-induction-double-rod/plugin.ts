@@ -1,9 +1,10 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { inductionStoryDecks } from './storyDecks.js';
+import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints } from './diagramGeometry.js';
+export { rodDisplayX } from './diagramGeometry.js';
 import {
   createWorldMapper,
   defineSimulationPlugin,
-  drawDotCrossField,
   drawGlowVectorArrow,
   drawGlowingConductorRod,
   drawMetallicRail,
@@ -196,10 +197,6 @@ const paramSchema: readonly ParamFieldSpec<InductionParams>[] = [
 ];
 
 
-/** Display-space origin shared by rods, handles, FBD and the orthographic 3D stage. */
-export function rodDisplayX(state: { x1: number }, x: number): number {
-  return x - (1.2 + Math.max(0, state.x1 - 1.6));
-}
 
 const liveFormulas: readonly LiveFormulaSpec[] = [
   {
@@ -547,30 +544,24 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     importScene: (dsl) => dsl.params as Partial<InductionParams>
   },
   exportDiagramIR: (state, params) => {
-    const L1 = params.railWidth;
-    const L2 = getEffectiveL2(params);
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'line', x1: -0.5, y1: L1 * 0.5, x2: 4.5, y2: L1 * 0.5, strokeWidth: 2 },
-      { kind: 'line', x1: -0.5, y1: -L1 * 0.5, x2: 4.5, y2: -L1 * 0.5, strokeWidth: 2 },
-      { kind: 'line', x1: state.x1, y1: -L1 * 0.55, x2: state.x1, y2: L1 * 0.55, strokeWidth: 3 },
-      ...(params.rodMode === 'double'
-        ? [{ kind: 'line', x1: state.x2, y1: -L2 * 0.55, x2: state.x2, y2: L2 * 0.55, strokeWidth: 3 } as DiagramPrimitive]
-        : []),
-      {
-        kind: 'mathLabel',
-        x: 4.2,
-        y: 1.0,
-        text: `B=${params.magneticB}\\text{T},\\; q=\\int I\\,dt=${state.qTotalIntegral.toFixed(2)}\\text{C}`,
-        align: 'end'
-      }
-    ];
-    return {
-      width: 720,
-      height: 380,
-      viewBox: { minX: -0.8, minY: -1.3, maxX: 4.6, maxY: 1.4 },
-      title: '电磁感应单杆双杆切割配图',
-      primitives
-    };
+    const g=inductionDiagramGeometry(state,params),current=inductionDiagramCurrent(state,params).current;
+    const primitives:DiagramPrimitive[]=g.rails.map(seg=>({kind:'line',x1:seg.start.x,y1:seg.start.y,x2:seg.end.x,y2:seg.end.y,strokeWidth:2}));
+    for(const seg of [g.rod1,...(g.double?[g.rod2]:[])])primitives.push({kind:'line',x1:seg.start.x,y1:seg.start.y,x2:seg.end.x,y2:seg.end.y,strokeWidth:3});
+    if(!g.double)primitives.push({kind:'circuitElement',element:params.circuitLoad==='battery'?'battery':params.circuitLoad==='capacitor'?'capacitor':'resistor',
+      x1:g.x2,y1:-g.l1/2,x2:g.x2,y2:g.l1/2,label:params.circuitLoad==='battery'?'E':params.circuitLoad==='capacitor'?'C':'R'});
+    for(const p of inductionFieldPoints(params))primitives.push({kind:'fieldMarker',x:p.x,y:p.y,symbol:params.magneticB>=0?'cross':'dot',radius:0.035});
+    if(Math.abs(current)>0.02)for(const [index,seg] of g.currentGuides.entries()){
+      if(index===1&&!g.double)continue;
+      const dx=seg.end.x-seg.start.x,dy=seg.end.y-seg.start.y,length=Math.hypot(dx,dy);
+      if(length<0.08)continue;
+      const cx=(seg.start.x+seg.end.x)/2,cy=(seg.start.y+seg.end.y)/2;
+      const scale=Math.sign(current)*Math.min(0.32,length*0.6)/length;
+      primitives.push({kind:'arrow',x1:cx-dx*scale/2,y1:cy-dy*scale/2,x2:cx+dx*scale/2,y2:cy+dy*scale/2});
+    }
+    if(g.schematicStep)primitives.push({kind:'text',x:(g.minX+g.maxX)/2,y:Math.max(g.l1,g.l2)/2+0.2,text:'不同杆长 · 连接线为示意',align:'middle'});
+    const halfHeight=Math.max(g.l1,g.l2)/2+0.65;
+    return {width:720,height:380,viewBox:{minX:g.minX-0.3,minY:-halfHeight,maxX:g.maxX+0.3,maxY:halfHeight},
+      title:'电磁感应单杆双杆切割配图',primitives};
   },
   formatFormulas: (state, params) => {
     const BL1 = params.magneticB * params.railWidth;
@@ -601,35 +592,36 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     const m = createWorldMapper(viewport);
     const toX = (worldX: number) => m.toX(rodDisplayX(state, worldX));
     const center = m.toScreen(0, 0);
-    const pixelsPerMeter = m.ppm;
-    const halfGap = Math.max(84, params.railWidth * pixelsPerMeter * 0.62);
+    const g=inductionDiagramGeometry(state,params);
     const railMidY = center.y;
-    const railTopY = railMidY - halfGap;
-    const railBotY = railMidY + halfGap;
-    const basePixelsPerMeter = Math.min(viewport.width, viewport.height) * 0.24 * 1.5;
-    const spanHalf = m.len(320 / basePixelsPerMeter);
-    const railLeft = center.x - spanHalf - m.len(40 / basePixelsPerMeter);
-    const railRight = center.x + spanHalf - m.len(20 / basePixelsPerMeter);
+    const railTopY = m.toY(g.l1/2);
+    const railBotY = m.toY(-g.l1/2);
     const labels: Array<{ id: string; x: number; y: number; text: string; color: string; font?: string }> = [];
 
     if (activeLayers.has('railsAndField')) {
-      drawDotCrossField(
-        ctx,
-        railLeft + 24,
-        railTopY + 12,
-        railRight - railLeft - 48,
-        railBotY - railTopY - 24,
-        'in',
-        m.len(76 / basePixelsPerMeter),
-        m.len(56 / basePixelsPerMeter)
-      );
-      drawMetallicRail(ctx, railLeft, railTopY, railRight, 8);
-      drawMetallicRail(ctx, railLeft, railBotY, railRight, 8);
+      ctx.save();ctx.strokeStyle='rgba(148,163,184,0.35)';ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=1.4;ctx.lineCap='round';
+      for(const p of inductionFieldPoints(params)){
+        const q=m.toScreen(p.x,p.y);
+        ctx.beginPath();
+        if(params.magneticB>=0){ctx.moveTo(q.x-4,q.y-4);ctx.lineTo(q.x+4,q.y+4);ctx.moveTo(q.x+4,q.y-4);ctx.lineTo(q.x-4,q.y+4);ctx.stroke();}
+        else{ctx.arc(q.x,q.y,2.2,0,Math.PI*2);ctx.fill();}
+      }
+      ctx.restore();
+      if(!g.schematicStep){
+        for(const rail of g.rails)drawMetallicRail(ctx,m.toX(rail.start.x),m.toY(rail.start.y),m.toX(rail.end.x),8);
+      }else{
+        ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#64748b';ctx.lineWidth=8;
+        for(const rail of g.rails){const a=m.toScreen(rail.start.x,rail.start.y),b=m.toScreen(rail.end.x,rail.end.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+        ctx.strokeStyle='#e2e8f0';ctx.lineWidth=2;
+        for(const rail of g.rails){const a=m.toScreen(rail.start.x,rail.start.y),b=m.toScreen(rail.end.x,rail.end.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+        ctx.restore();
+        labels.push({id:'unequal-rail-note',x:center.x,y:m.toY(Math.max(g.l1,g.l2)/2)-26,text:'不同杆长 · 连接线为示意',color:'#94a3b8'});
+      }
     }
 
     if (activeLayers.has('rods')) {
       if (params.rodMode === 'single') {
-        const loadX = railLeft + m.len(18 / basePixelsPerMeter);
+        const loadX = m.toX(g.x2);
         ctx.save();
         ctx.strokeStyle = '#fbbf24';
         ctx.lineWidth = 2.4;
@@ -664,8 +656,8 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
 
       if (params.rodMode === 'double') {
         const x2 = toX(state.x2);
-        drawGlowingConductorRod(ctx, x2, railTopY, railBotY, state.v2, '#f472b6', '#fbcfe8', 10);
-        labels.push({ id: 'rod2-label', x: x2, y: railBotY + 31, text: `杆2 v₂=${state.v2.toFixed(2)} m/s`, color: '#f9a8d4' });
+        drawGlowingConductorRod(ctx, x2, m.toY(g.l2/2), m.toY(-g.l2/2), state.v2, '#f472b6', '#fbcfe8', 10);
+        labels.push({ id: 'rod2-label', x: x2, y: m.toY(-g.l2/2) + 31, text: `杆2 v₂=${state.v2.toFixed(2)} m/s`, color: '#f9a8d4' });
       }
       const x1 = toX(state.x1);
       drawGlowingConductorRod(ctx, x1, railTopY, railBotY, state.v1, '#38bdf8', '#e0f2fe', 11);
@@ -677,12 +669,18 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
       }
     }
 
-    if (activeLayers.has('currentFlow') && Math.abs(state.current) > 0.02) {
-      const x1 = toX(state.x1);
-      const direction = state.current >= 0 ? 1 : -1;
-      const start = x1 - 56 * direction;
-      drawGlowVectorArrow(ctx, start, railBotY + 18, start + 58 * direction, railBotY + 18, '#f59e0b', 4, 13);
-      labels.push({ id: 'current-label', x: start + 28 * direction, y: railBotY + 28, text: `I = ${Math.abs(state.current).toFixed(2)} A`, color: '#fbbf24', font: '600 14px system-ui, sans-serif' });
+    const signedCurrent=inductionDiagramCurrent(state,params).current;
+    if (activeLayers.has('currentFlow') && Math.abs(signedCurrent) > 0.02) {
+      for(const [index,seg] of g.currentGuides.entries()){
+        if(index===1&&!g.double)continue;
+        const a=m.toScreen(seg.start.x,seg.start.y),b=m.toScreen(seg.end.x,seg.end.y);
+        const dx=b.x-a.x,dy=b.y-a.y,length=Math.hypot(dx,dy);
+        if(length<16)continue;
+        const scale=Math.sign(signedCurrent)*Math.min(54,length*0.65)/length;
+        const cx=(a.x+b.x)/2,cy=(a.y+b.y)/2;
+        drawGlowVectorArrow(ctx,cx-dx*scale/2,cy-dy*scale/2,cx+dx*scale/2,cy+dy*scale/2,'#f59e0b',3,10);
+      }
+      labels.push({id:'current-label',x:(m.toX(g.x1)+m.toX(g.x2))/2,y:m.toY(-Math.max(g.l1,g.l2)/2)+24,text:`I = ${Math.abs(state.current).toFixed(2)} A`,color:'#fbbf24',font:'600 14px system-ui, sans-serif'});
     }
 
     if (activeLayers.has('forceVectors')) {
