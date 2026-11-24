@@ -196,6 +196,11 @@ const paramSchema: readonly ParamFieldSpec<InductionParams>[] = [
 ];
 
 
+/** Display-space origin shared by rods, handles, FBD and the orthographic 3D stage. */
+export function rodDisplayX(state: { x1: number }, x: number): number {
+  return x - (1.2 + Math.max(0, state.x1 - 1.6));
+}
+
 const liveFormulas: readonly LiveFormulaSpec[] = [{
   "id": "rod-emf",
   "title": "杆长、速度与磁场互相垂直",
@@ -235,6 +240,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  renderMode: 'hybrid',
   defaultView: { scale: 1.5, offsetRatioY: -0.105 },
   paramSchema,
   presets: [
@@ -383,12 +389,12 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     {
       id: 'external-force-rod1',
       label: `F外=${params.externalForce.toFixed(1)}N`,
-      position: { x: state.x1 + Math.max(0.25, params.externalForce * 0.1), y: 0 },
-      origin: { x: state.x1, y: 0 },
+      position: { x: rodDisplayX(state, state.x1) + Math.max(0.25, params.externalForce * 0.1), y: 0 },
+      origin: { x: rodDisplayX(state, state.x1), y: 0 },
       handleKind: 'vector',
       color: '#4ade80',
       onDrag: (wp) => ({
-        externalForce: Number(Math.max(0, Math.min(12, (wp.x - state.x1) * 10)).toFixed(1))
+        externalForce: Number(Math.max(0, Math.min(12, (wp.x - rodDisplayX(state, state.x1)) * 10)).toFixed(1))
       })
     }
   ] : [],
@@ -401,7 +407,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
       {
         id: 'ampere-1',
         label: 'F安₁',
-        origin: { x: state.x1, y: 0 },
+        origin: { x: rodDisplayX(state, state.x1), y: 0 },
         force: { x: netElectro1, y: 0 },
         category: 'magnetic',
         color: '#fb7185'
@@ -409,7 +415,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
       {
         id: 'ext-1',
         label: 'F外',
-        origin: { x: state.x1, y: 0 },
+        origin: { x: rodDisplayX(state, state.x1), y: 0 },
         force: { x: params.externalForce, y: 0 },
         category: 'other',
         color: '#4ade80'
@@ -420,7 +426,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     {
       id: 'rod1',
       label: '杆 1 随动参考系',
-      getOrigin: (s) => ({ x: s.x1, y: 0 }),
+      getOrigin: (s) => ({ x: rodDisplayX(s, s.x1), y: 0 }),
       getVelocity: (s) => ({ x: s.v1, y: 0 })
     }
   ],
@@ -474,9 +480,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
-    const camShift = Math.max(0, state.x1 - 1.6);
-    const frameOrigin = { x: 1.2 + camShift, y: 0 };
-    const toX = (worldX: number) => m.toX(worldX - frameOrigin.x);
+    const toX = (worldX: number) => m.toX(rodDisplayX(state, worldX));
     const center = m.toScreen(0, 0);
     const pixelsPerMeter = m.ppm;
     const halfGap = Math.max(84, params.railWidth * pixelsPerMeter * 0.62);
@@ -595,6 +599,6 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
 
     resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
   }
-}), { storyDecks: inductionStoryDecks, liveFormulas });
+}), { storyDecks: inductionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6, default3DAzimuthRad: 0.65, default3DPolarRad: 0.9 } });
 
 export default emInductionDoubleRodPlugin;
