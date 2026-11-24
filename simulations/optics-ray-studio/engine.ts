@@ -41,6 +41,9 @@ export interface OpticsState {
   readonly criticalAngleDeg: number | null;
   readonly isTotalInternalReflection: boolean;
   readonly refractedAngleDeg: number | null;
+  /** Power fractions for a lossless, nonmagnetic, unpolarized interface. */
+  readonly interfaceReflectance?: number;
+  readonly interfaceTransmittance?: number;
   readonly lateralShift: number;
   readonly prismDeviationDeg: number;
   readonly fringeSpacingMm: number;
@@ -93,6 +96,19 @@ export function refractVector2D(
   };
 }
 
+/** Fresnel power fractions, not electric-field amplitudes or display brightness. */
+export function fresnelPowerUnpolarized(n1: number, n2: number, angleDeg: number): { R: number; T: number } {
+  const theta = degToRad(Math.max(0, Math.min(90, angleDeg)));
+  if (n1 === n2) return { R: 0, T: 1 };
+  const sinT = n1 / n2 * Math.sin(theta);
+  if (sinT >= 1 - 1e-12) return { R: 1, T: 0 };
+  const ci = Math.cos(theta), ct = Math.sqrt(Math.max(0, 1 - sinT * sinT));
+  const rs = (n1 * ci - n2 * ct) / (n1 * ci + n2 * ct);
+  const rp = (n2 * ci - n1 * ct) / (n2 * ci + n1 * ct);
+  const R = Math.max(0, Math.min(1, (rs * rs + rp * rp) / 2));
+  return { R, T: 1 - R };
+}
+
 function solveRayTrace(
   activeAngleDeg: number,
   params: OpticsParams
@@ -115,12 +131,13 @@ function solveRayTrace(
       params.n2
     );
     const isTir = refracted === null;
-    rays.push({
+    const power = isTir ? { R: 1, T: 0 } : fresnelPowerUnpolarized(params.n1, params.n2, radToDeg(theta1));
+    if (power.R > 1e-12) rays.push({
       from: origin,
       to: vec2(reflected.x * 2.2, reflected.y * 2.2),
-      color: isTir ? '#f472b6' : '#fbbf24',
-      intensity: isTir ? 1 : 0.35,
-      label: isTir ? '全反射光 (100%)' : '反射光'
+      color: '#fbbf24',
+      intensity: power.R,
+      label: isTir ? '全反射光' : '反射光'
     });
 
     let refractedAngleDeg: number | null = null;
@@ -130,7 +147,7 @@ function solveRayTrace(
         from: origin,
         to: vec2(refracted.x * 2.4, refracted.y * 2.4),
         color: '#38bdf8',
-        intensity: 0.9,
+        intensity: power.T,
         label: '折射光'
       });
     }
@@ -141,6 +158,8 @@ function solveRayTrace(
       criticalAngleDeg,
       isTotalInternalReflection: isTir,
       refractedAngleDeg,
+      interfaceReflectance: power.R,
+      interfaceTransmittance: power.T,
       lateralShift: 0,
       prismDeviationDeg: 0,
       fringeSpacingMm: 0
@@ -473,7 +492,9 @@ export function computeObservables(state: OpticsState): Record<string, number> {
     prismDeviationDeg: state.prismDeviationDeg,
     fringeSpacingMm: state.fringeSpacingMm,
     imageDistanceM: state.imageDistanceM ?? 0,
-    magnification: state.magnification ?? 0
+    magnification: state.magnification ?? 0,
+    ...(state.interfaceReflectance !== undefined && state.interfaceTransmittance !== undefined
+      ? { interfaceReflectance: state.interfaceReflectance, interfaceTransmittance: state.interfaceTransmittance } : {})
   };
 }
 
