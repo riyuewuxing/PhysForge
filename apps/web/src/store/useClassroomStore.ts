@@ -48,7 +48,8 @@ export function getStoryDecks(plugin: AnySimulationPlugin): readonly StoryDeck[]
       id: preset.id, title: preset.name, caption: preset.name,
       speakerNotes: preset.curriculumNotes ?? preset.description,
       paramPatch: resolvePluginParams(plugin.paramSchema, preset.params),
-      paramTweenMs: 0, simAction: 'reset-pause'
+      paramTweenMs: 0, simAction: 'reset-pause',
+      layerOverrides: { visibleLayerIds: getDefaultLayers(plugin, preset.visibleLayers) }
     }))
   }];
 }
@@ -126,6 +127,7 @@ interface ClassroomStore {
   setStoryBeat: (index: number) => void;
   setAutoFreezeBadge: (badge: string | null) => void;
   syncStoryParams: (modelId: string, params: ParamRecord) => void;
+  setStoryLayers: (modelId: string, layerIds: readonly string[]) => void;
   beginLiveFormula: (modelId: string, key: string) => void;
   updateLiveFormula: (modelId: string, key: string, value: number) => void;
   endLiveFormula: (modelId: string, key: string) => void;
@@ -420,6 +422,12 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     if (get().selectedPluginId !== modelId || get().params === params) return;
     // Already normalized by the imperative stage; no reset/undo entry per animation frame.
     set({ params, activePresetId: null, scrubTime: null });
+  },
+  setStoryLayers: (modelId, layerIds) => {
+    const state = get();
+    if (state.selectedPluginId !== modelId) return;
+    const allowed = new Set(state.loadedPlugin.layers.map((layer) => layer.id));
+    set({ activeLayers: [...new Set(layerIds.filter((id) => allowed.has(id)))] });
   },
   beginLiveFormula: (modelId, key) => {
     if (get().selectedPluginId !== modelId) return;
