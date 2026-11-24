@@ -337,7 +337,14 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     version: '2.0.0'
   },
   renderMode: 'hybrid',
-  defaultView: { scale: 1.5, offsetRatioY: -0.105 },
+  defaultView: {
+    // The inspector occupies the right 272 px. Fit the initial circuit
+    // (including the single-rod load and rail ends) into the unobscured area.
+    scale: (_params, { width, height }) =>
+      Math.min(1.5, Math.max(0.1, (width - 320) / (4.8 * Math.min(width, height) * 0.24))),
+    offsetRatioX: (_params, { width }) => (width - 280) / (2 * width) - 0.45,
+    offsetRatioY: -0.105
+  },
   paramSchema,
   presets: [
     {
@@ -633,7 +640,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
           for(let i=1;i<=6;i++)ctx.lineTo(loadX+(i===6?0:(i%2===0?1:-1)*halfPlate*0.65),upper+(lower-upper)*i/6);
         }
         ctx.moveTo(loadX,lower);ctx.lineTo(loadX,railBotY);ctx.stroke();ctx.restore();
-        labels.push({ id: 'load-label', x: loadX, y: railMidY + 34, text: params.circuitLoad === 'battery' ? '电源 E' : params.circuitLoad === 'capacitor' ? '电容 C' : '电阻 R', color: '#fcd34d' });
+        labels.push({ id: 'load-label', x: loadX, y: railBotY + 28, text: params.circuitLoad === 'battery' ? '电源 E' : params.circuitLoad === 'capacitor' ? '电容 C' : '电阻 R', color: '#fcd34d' });
       }
 
       if (params.rodMode === 'double') {

@@ -77,10 +77,15 @@ export function getWorkFunctionEv(params: PhotoelectricComptonParams): number {
   return METAL_WORK_FUNCTIONS_EV[params.cathodeMetal];
 }
 
+/** Empirical asymptote shared by the observable and plotted response. */
+export function photoelectricSaturationCurrentMa(intensityRel: number, maxKineticEv: number): number {
+  return 2.4 * Math.max(0.05, intensityRel) * (1 - 0.15 * Math.exp(-maxKineticEv));
+}
+
 export function computePhotocurrentMa(voltageV: number, pe: PhotoelectricSolution, intensityRel: number): number {
   if (!pe.thresholdPassed) return 0;
   if (voltageV <= -pe.stoppingVoltageV) return 0;
-  const iSat = 2.4 * Math.max(0.05, intensityRel) * (1 - 0.15 * Math.exp(-pe.maxKineticEv));
+  const iSat = photoelectricSaturationCurrentMa(intensityRel, pe.maxKineticEv);
   const vAboveStop = voltageV + pe.stoppingVoltageV;
   const scaleV = Math.max(0.6, 0.75 * pe.stoppingVoltageV + 0.5);
   return iSat * (1 - Math.exp((-2.8 * vAboveStop) / scaleV));
@@ -97,7 +102,7 @@ export function solvePhotoelectric(params: PhotoelectricComptonParams): Photoele
   const thresholdPassed = photonEnergyEv > workFunctionEv;
   const maxKineticEv = thresholdPassed ? photonEnergyEv - workFunctionEv : 0;
   const stoppingVoltageV = maxKineticEv; // E_km (eV) = e * U_c => numerical equality in V
-  const saturationCurrentMa = thresholdPassed ? 2.4 * Math.max(0.05, params.intensityRel) : 0;
+  const saturationCurrentMa = thresholdPassed ? photoelectricSaturationCurrentMa(params.intensityRel, maxKineticEv) : 0;
 
   const baseSol: PhotoelectricSolution = {
     workFunctionEv,

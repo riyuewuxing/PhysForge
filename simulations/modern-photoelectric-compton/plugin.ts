@@ -8,6 +8,7 @@ import {
   createInitialState,
   solvePhotoelectric,
   stepPhotoelectricCompton,
+  type ComptonSolution,
   type PhotoelectricComptonParams,
   type PhotoelectricComptonState
 } from './engine.js';
@@ -46,6 +47,23 @@ const paramSchema: readonly ParamFieldSpec<PhotoelectricComptonParams>[] = [
   { key: 'xrayWavelengthNm', kind: 'number', label: '入射 X 射线波长 λ', unit: 'nm', defaultValue: 0.071, min: 0.01, max: 0.2, step: 0.002 },
   { key: 'scatterAngleDeg', kind: 'number', label: '光子散射角 θ', unit: '°', defaultValue: 90, min: 10, max: 180, step: 5 }
 ];
+
+// Diagram coordinates are illustrative; physical axis values are explicit.
+const plot = { x: 0.05, y: -0.9, width: 2.05, height: 1.8, uMin: -5, uMax: 6, iMax: 7.5 };
+function graphX(u: number): number { return plot.x + (u - plot.uMin) / (plot.uMax - plot.uMin) * plot.width; }
+function graphY(i: number): number { return plot.y + i / plot.iMax * plot.height; }
+
+export function comptonMomentumVectors(solution: ComptonSolution, scatterAngleDeg: number, length = 0.95) {
+  const theta = scatterAngleDeg * Math.PI / 180;
+  const phi = solution.recoilAngleDeg * Math.PI / 180;
+  return {
+    incident: { x: length, y: 0 },
+    scattered: { x: length * solution.pScattered / solution.pIncident * Math.cos(theta),
+      y: length * solution.pScattered / solution.pIncident * Math.sin(theta) },
+    recoil: { x: length * solution.pElectron / solution.pIncident * Math.cos(phi),
+      y: length * solution.pElectron / solution.pIncident * Math.sin(phi) }
+  };
+}
 
 export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
   PhotoelectricComptonParams,
@@ -88,34 +106,43 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
     importScene: (dsl) => dsl.params as Partial<PhotoelectricComptonParams>
   },
   exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'arrow', x1: -2.0, y1: -1.2, x2: 2.0, y2: -1.2, label: 'U(V)' },
-      { kind: 'arrow', x1: 0, y1: -1.4, x2: 0, y2: 1.4, label: 'I(mA)' }
-    ];
+    const primitives: DiagramPrimitive[] = [];
     if (params.mode === 'photoelectric') {
-      const pts: { x: number; y: number }[] = [];
-      for (let i = 0; i <= 40; i++) {
-        const u = -4 + (i / 40) * 8;
-        const curr = computePhotocurrentMa(u, state.photoelectric, params.intensityRel);
-        pts.push({ x: u * 0.45, y: -1.2 + curr * 0.35 });
-      }
-      primitives.push({ kind: 'polyline', points: pts });
-    } else {
-      const th = (params.scatterAngleDeg * Math.PI) / 180;
-      const ph = (state.compton.recoilAngleDeg * Math.PI) / 180;
+      // Use the same normalized graph geometry and response as the canvas.
       primitives.push(
-        { kind: 'arrow', x1: -2, y1: 0, x2: 0, y2: 0, label: 'p_γ' },
-        { kind: 'arrow', x1: 0, y1: 0, x2: 1.4 * Math.cos(th), y2: 1.4 * Math.sin(th), label: "p'_γ" },
-        { kind: 'arrow', x1: 0, y1: 0, x2: 1.2 * Math.cos(ph), y2: 1.2 * Math.sin(ph), dashed: true, label: 'p_e' }
+        { kind: 'arrow', x1: graphX(plot.uMin), y1: plot.y, x2: graphX(plot.uMax)+0.12, y2: plot.y, label: 'U_AK (V)' },
+        { kind: 'arrow', x1: graphX(0), y1: plot.y, x2: graphX(0), y2: graphY(plot.iMax)+0.12, label: 'I (mA)' },
+        { kind: 'text', x: graphX(0), y: plot.y-0.12, text: '0', align: 'middle' }
       );
+      const curve = (solution: typeof state.photoelectric, intensity: number) =>
+        Array.from({length: 101}, (_, i) => {
+          const u = plot.uMin + i / 100 * (plot.uMax - plot.uMin);
+          return { x: graphX(u), y: graphY(computePhotocurrentMa(u, solution, intensity)) };
+        });
+      if (params.freezeRefEnabled) {
+        const reference = solvePhotoelectric({ ...params, wavelengthNm: params.refWavelengthNm, intensityRel: params.refIntensityRel });
+        primitives.push({ kind: 'polyline', points: curve(reference, params.refIntensityRel), dashed: true });
+      }
+      primitives.push({ kind: 'polyline', points: curve(state.photoelectric, params.intensityRel) });
+      if (state.photoelectric.thresholdPassed && -state.photoelectric.stoppingVoltageV >= plot.uMin) {
+        const stopX = graphX(-state.photoelectric.stoppingVoltageV);
+        primitives.push({kind:'circle',cx:stopX,cy:plot.y,r:0.025},
+          {kind:'text',x:stopX,y:plot.y-0.27,text:'−Uc',align:'middle'});
+      }
+      primitives.push({kind:'circle',cx:graphX(params.anodeVoltageV),cy:graphY(state.photoelectric.currentMa),r:0.024,fill:true});
+      return { width: 680, height: 400, viewBox: {minX: -0.28, minY: -1.38, maxX: 2.65, maxY: 1.28},
+        title: '光电效应伏安特性配图', primitives };
     }
-    return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.4, minY: -1.6, maxX: 2.4, maxY: 1.6 },
-      title: params.mode === 'photoelectric' ? '光电效应伏安特性配图' : '康普顿散射动量闭合示意图',
-      primitives
-    };
+    const v = comptonMomentumVectors(state.compton, params.scatterAngleDeg, 1.3);
+    primitives.push(
+      { kind:'arrow', x1:-v.incident.x, y1:0, x2:0, y2:0, label:'pγ' },
+      { kind:'arrow', x1:0, y1:0, x2:v.scattered.x, y2:v.scattered.y, label:'p′γ' },
+      { kind:'arrow', x1:0, y1:0, x2:v.recoil.x, y2:v.recoil.y, label:'pe' },
+      { kind:'line', x1:v.scattered.x, y1:v.scattered.y, x2:v.incident.x, y2:0, dashed:true },
+      { kind:'line', x1:v.recoil.x, y1:v.recoil.y, x2:v.incident.x, y2:0, dashed:true }
+    );
+    return {width:680,height:400,viewBox:{minX:-1.65,minY:-1.6,maxX:3.05,maxY:1.6},
+      title:'康普顿散射动量闭合示意图',primitives};
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
@@ -124,23 +151,27 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
 
     if (params.mode === 'compton') {
       const origin = m.toScreen(-0.8, 0);
-      const incoming = m.toScreen(-1.85, 0);
-      const th = (params.scatterAngleDeg * Math.PI) / 180;
-      const ph = (state.compton.recoilAngleDeg * Math.PI) / 180;
+      const vectors = comptonMomentumVectors(state.compton, params.scatterAngleDeg);
+      const incoming = m.toScreen(-0.8 - vectors.incident.x, 0);
 
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = m.len(0.015);
       drawGlowVectorArrow(ctx, incoming.x, incoming.y, origin.x, origin.y, '#38bdf8', m.len(0.015), m.len(0.06));
 
-      const scattered = m.toScreen(-0.8 + 0.95 * (state.compton.pScattered / state.compton.pIncident) * Math.cos(th), 0.95 * (state.compton.pScattered / state.compton.pIncident) * Math.sin(th));
+      const scattered = m.toScreen(-0.8 + vectors.scattered.x, vectors.scattered.y);
       drawGlowVectorArrow(ctx, origin.x, origin.y, scattered.x, scattered.y, '#a855f7', m.len(0.015), m.len(0.06));
 
-      const recoil = m.toScreen(-0.8 + 0.95 * (state.compton.pElectron / state.compton.pIncident) * Math.cos(ph), -0.95 * (state.compton.pElectron / state.compton.pIncident) * Math.sin(ph));
+      const recoil = m.toScreen(-0.8 + vectors.recoil.x, vectors.recoil.y);
       drawGlowVectorArrow(ctx, origin.x, origin.y, recoil.x, recoil.y, '#f59e0b', m.len(0.015), m.len(0.06));
+      const resultant = m.toScreen(-0.8 + vectors.incident.x, 0);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(148,163,184,0.6)'; ctx.lineWidth = 1.4; ctx.setLineDash([5,4]);
+      ctx.beginPath(); ctx.moveTo(scattered.x,scattered.y); ctx.lineTo(resultant.x,resultant.y);
+      ctx.moveTo(recoil.x,recoil.y); ctx.lineTo(resultant.x,resultant.y); ctx.stroke(); ctx.restore();
       labels.push(
         { id: 'compton-incident-label', ...m.toScreen(-1.4, 0.1), text: 'pγ', color: '#38bdf8' },
-        { id: 'compton-scattered-label', ...m.toScreen(-0.3, 0.45), text: "p′γ", color: '#a855f7' },
-        { id: 'compton-recoil-label', ...m.toScreen(-0.3, -0.42), text: 'pe', color: '#f59e0b' },
+        { id: 'compton-scattered-label', ...m.toScreen(-0.8 + vectors.scattered.x * 0.65, vectors.scattered.y * 0.65 + 0.14), text: "p′γ", color: '#a855f7' },
+        { id: 'compton-recoil-label', ...m.toScreen(-0.8 + vectors.recoil.x * 0.65, vectors.recoil.y * 0.65 - 0.14), text: 'pe', color: '#f59e0b' },
         { id: 'compton-shift-summary', ...m.toScreen(0.65, 1.38), text: `Δλ = ${(state.compton.deltaLambdaNm * 1000).toFixed(3)} pm | λ′ = ${state.compton.scatteredWavelengthNm.toFixed(5)} nm`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' },
         { id: 'compton-recoil-summary', ...m.toScreen(0.65, 1.16), text: `反冲电子角 φ = ${state.compton.recoilAngleDeg.toFixed(2)}° | Eke = ${state.compton.electronKineticKev.toFixed(3)} keV`, color: '#e2e8f0', font: '13px ui-sans-serif, system-ui' }
       );
@@ -216,15 +247,9 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
     }
 
     if (activeLayers.has('characteristic')) {
-      const gx0 = 0.05;
-      const gy0 = -0.9;
-      const gw = 2.05;
-      const gh = 1.8;
-      const uMin = -5;
-      const uMax = 6;
-      const iMax = 7.5;
-      const toPx = (u: number) => m.toX(gx0 + ((u - uMin) / (uMax - uMin)) * gw);
-      const toPy = (curr: number) => m.toY(gy0 + (curr / iMax) * gh);
+      const { x: gx0, y: gy0, width: gw, height: gh, uMin, uMax } = plot;
+      const toPx = (u: number) => m.toX(graphX(u));
+      const toPy = (curr: number) => m.toY(graphY(curr));
 
       ctx.strokeStyle = 'rgba(148,163,184,0.28)';
       ctx.lineWidth = 1;
@@ -235,7 +260,27 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
       ctx.lineTo(toPx(0), m.toY(gy0 + gh));
       ctx.stroke();
 
+      const axisColor = '#94a3b8';
+      ctx.strokeStyle = axisColor; ctx.lineWidth = 1;
+      for (const tick of [-5,-3,0,3,6]) {
+        ctx.beginPath(); ctx.moveTo(toPx(tick),toPy(0)); ctx.lineTo(toPx(tick),toPy(0)+5); ctx.stroke();
+        labels.push({id:'voltage-tick-'+tick,x:toPx(tick),y:toPy(0)+15,text:String(tick),color:axisColor});
+      }
+      for (const tick of [2,4,6]) {
+        ctx.beginPath(); ctx.moveTo(toPx(0)-5,toPy(tick)); ctx.lineTo(toPx(0),toPy(tick)); ctx.stroke();
+        labels.push({id:'current-tick-'+tick,x:toPx(0)-15,y:toPy(tick),text:String(tick),color:axisColor});
+      }
+      labels.push({id:'voltage-axis',x:toPx(uMax),y:toPy(0)+32,text:'U_AK (V)',color:axisColor},
+        {id:'current-axis',x:toPx(0),y:toPy(plot.iMax)-15,text:'I (mA)',color:axisColor});
+      if (state.photoelectric.thresholdPassed && -state.photoelectric.stoppingVoltageV >= uMin) {
+        const x = toPx(-state.photoelectric.stoppingVoltageV);
+        ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.arc(x,toPy(0),4,0,Math.PI*2); ctx.stroke();
+        labels.push({id:'stopping-point',x,y:toPy(0)+32,text:'−Uc='+(-state.photoelectric.stoppingVoltageV).toFixed(3)+' V',color:'#67e8f9'});
+      }
       if (params.freezeRefEnabled) {
+        labels.push({id:'reference-curve-legend',...m.toScreen(1.36,-1.2),
+          text:'虚线：参考光 λ='+params.refWavelengthNm.toFixed(0)+' nm',color:axisColor});
         const refSol = solvePhotoelectric({
           ...params,
           wavelengthNm: params.refWavelengthNm,
@@ -275,7 +320,7 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
     }
 
     if (params.mode === 'photoelectric') {
-      labels.push({ id: 'photoelectric-summary', ...m.toScreen(0.9, 1.12), text: `hν = ${state.photoelectric.photonEnergyEv.toFixed(3)} eV | W₀ = ${state.photoelectric.workFunctionEv.toFixed(2)} eV | Uc = ${state.photoelectric.stoppingVoltageV.toFixed(3)} V`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
+      labels.push({ id: 'photoelectric-summary', ...m.toScreen(0.9, 1.12), text: `hν = ${state.photoelectric.photonEnergyEv.toFixed(3)} eV | W₀ = ${state.photoelectric.workFunctionEv.toFixed(2)} eV | ${state.photoelectric.thresholdPassed ? 'Uc = '+state.photoelectric.stoppingVoltageV.toFixed(3)+' V' : '未超过阈频 · 无光电流'}`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
     }
     resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
@@ -300,17 +345,17 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
       ];
     }
 
-    const voltageX = 0.05 + ((params.anodeVoltageV + 5) / 11) * 2.05;
-    const currentY = -0.9 + (state.photoelectric.currentMa / 7.5) * 1.8;
+    const voltageX = graphX(params.anodeVoltageV);
+    const currentY = graphY(state.photoelectric.currentMa);
     return [
       {
         id: 'anode-voltage-point',
-        label: `U=${params.anodeVoltageV.toFixed(1)} V`,
+        label: `U_AK=${params.anodeVoltageV.toFixed(1)} V`,
         position: { x: voltageX, y: currentY },
         handleKind: 'point',
         color: '#fbbf24',
         onDrag: (world) => ({
-          anodeVoltageV: Number(Math.max(-5, Math.min(6, Math.round((-5 + ((world.x - 0.05) / 2.05) * 11) * 10) / 10)).toFixed(1))
+          anodeVoltageV: Number(Math.max(-5, Math.min(6, Math.round((plot.uMin + ((world.x - plot.x) / plot.width) * (plot.uMax - plot.uMin)) * 10) / 10)).toFixed(1))
         })
       },
       {
@@ -329,10 +374,12 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
     {
       id: 'einstein-compton',
       label: params.mode === 'photoelectric' ? '爱因斯坦光电效应方程' : '康普顿波长偏移与能量守恒',
-      latex: params.mode === 'photoelectric' ? 'h\\nu - W_0 = eU_c' : '\\Delta\\lambda = \\frac{h}{m_e c}(1 - \\cos\\theta)',
+      latex: params.mode === 'photoelectric' ? (state.photoelectric.thresholdPassed ? 'h\\nu - W_0 = eU_c' : 'h\\nu \\le W_0,\\quad I=0') : '\\Delta\\lambda = \\frac{h}{m_e c}(1 - \\cos\\theta)',
       substitutedLatex:
         params.mode === 'photoelectric'
-          ? `h\\nu=${state.photoelectric.photonEnergyEv.toFixed(3)}\\text{ eV},\\; W_0=${state.photoelectric.workFunctionEv.toFixed(2)}\\text{ eV},\\; U_c=${state.photoelectric.stoppingVoltageV.toFixed(3)}\\text{ V}`
+          ? (state.photoelectric.thresholdPassed
+            ? `\\begin{aligned}U_c&=${state.photoelectric.stoppingVoltageV.toFixed(3)}\\text{ V}\\\\U_{AK}&=${params.anodeVoltageV.toFixed(1)}\\text{ V}\\\\ I&=${state.photoelectric.currentMa.toFixed(2)}\\text{ mA}\\end{aligned}`
+            : `\\begin{aligned}h\\nu&=${state.photoelectric.photonEnergyEv.toFixed(3)}\\text{ eV}\\\\W_0&=${state.photoelectric.workFunctionEv.toFixed(2)}\\text{ eV}\\\\I&=0\\text{ mA}\\end{aligned}`)
           : `\\Delta\\lambda=${(state.compton.deltaLambdaNm * 1000).toFixed(3)}\\text{ pm},\\; \\varphi=${state.compton.recoilAngleDeg.toFixed(2)}^\\circ`
     }
   ]
