@@ -7,7 +7,8 @@
 
 ## 当前施工快照（2026-11-24，V3.0，未封板）
 
-* **第三轮累计交付入口（最新）**：`handoff/v3-complete-source-r3`，基于 r2，含 [#25](https://github.com/riyuewuxing/PhysForge/pull/25) @cb00fbd 与 [#26](https://github.com/riyuewuxing/PhysForge/pull/26) @0a7ee4c。#25 为 E10/S01/S02/M10 的 5 套新课件、21 分镜（累计 8 套；六旗舰均有课件）；#26 为演说屏独立可收起数值区、POE 遮罩、切模型/预设清除旧遥测、E10/S01/M10/M06/E04/S02 模式正确数值读出。新增实际引擎分镜定格、KaTeX 公式、参数 schema 与数值变化/DOM 稳定性回归断言。源码已提交，未运行完整门禁，先由本地总控验收；不要将累计分支直接合并 main。
+* **第四轮累计交付入口（最新）**：`handoff/v3-complete-source-r4`，基于 r3，含 [#27](https://github.com/riyuewuxing/PhysForge/pull/27) @93d711c 和 [#28](https://github.com/riyuewuxing/PhysForge/pull/28) @a49d5a0。#27：参数上下文代数隔离旧分镜拖拽/副屏指令，复位重播当前教学分镜，清除过期定格提示；#28：二维、三维与遥测统一实时/历史显示帧，拒绝旧模型或复位代数状态，POE 图层与手柄选择同步。新增单测及浏览器脚本（跨三维模型切换、分镜复位恢复参数）。本轮源码已提交；未执行全量门禁或实际看图。
+* **第三轮累计交付入口**：`handoff/v3-complete-source-r3`，基于 r2，含 [#25](https://github.com/riyuewuxing/PhysForge/pull/25) @cb00fbd 与 [#26](https://github.com/riyuewuxing/PhysForge/pull/26) @0a7ee4c。#25 为 E10/S01/S02/M10 的 5 套新课件、21 分镜（累计 8 套；六旗舰均有课件）；#26 为演说屏独立可收起数值区、POE 遮罩、切模型/预设清除旧遥测、E10/S01/M10/M06/E04/S02 模式正确数值读出。新增实际引擎分镜定格、KaTeX 公式、参数 schema 与数值变化/DOM 稳定性回归断言。源码已提交，未运行完整门禁，先由本地总控验收；不要将累计分支直接合并 main。
 * **第二轮累计交付入口**：`handoff/v3-complete-source-r2`，源码顶端 #24 @22dad2d；基于上一轮累计分支 d91eba0，叠加 #22→#23→#24。上一轮入口保留。仅供本地 Agent 审查、修复和整栈验收，不作为 main 合并目标。
   * [#22](https://github.com/riyuewuxing/PhysForge/pull/22)：活公式按实际子模式显示；E10、S01、M10、S02 绑定与量纲显示，微小量科学计数法，卸载取消未提交的拖动。S02 拖动审计显式选择速度选择器。
   * [#23](https://github.com/riyuewuxing/PhysForge/pull/23)：其余十个模型的模式相关公式与 B1 漂移参考系辅助圆统一，保持原求解器和观测键。
@@ -20,7 +21,7 @@
   * [#19](https://github.com/riyuewuxing/PhysForge/pull/19) @d9a533c：插值结束再按目标参数复位；逐 240 Hz 物理步检测临界观测，保留命中快照；预设图层继承；真实分镜浏览器审计脚本。
   * [#20](https://github.com/riyuewuxing/PhysForge/pull/20) @d0a5f5a：E04 双杆安培力、电流箭头与累计电荷驱动的示意脉冲、不等杆长动生电动势公式；B1 数值引擎报告的出入边界标记。
   * [#21](https://github.com/riyuewuxing/PhysForge/pull/21) @b34722d：副屏指令绑定模型/分镜身份，拒绝旧课件命令，并增加直接跳转。
-* **本地首要行动**：保留当前工作区，执行 `git fetch origin`；在独立分支或 worktree 检出 `origin/handoff/v3-complete-source-r3`。按项目约定安装现有依赖，再执行 `pnpm typecheck`、`pnpm test`、`pnpm verify:packs`、`pnpm verify:scenes`、`pnpm verify:vault`、`pnpm build`、`pnpm test:e2e:subpath`、`pnpm audit:visual`、`pnpm export:release --v3-audit`；检查 /PhysForge/ 子路径、gzip 首屏、六旗舰单文件预算与截图。真实 BYOK 联调必须由本地用户提供 Key，不提交 Key。
+* **本地首要行动**：保留当前工作区，执行 `git fetch origin`；在独立分支或 worktree 检出 `origin/handoff/v3-complete-source-r4`。按项目约定安装现有依赖，再执行 `pnpm typecheck`、`pnpm test`、`pnpm verify:packs`、`pnpm verify:scenes`、`pnpm verify:vault`、`pnpm build`、`pnpm test:e2e:subpath`、`pnpm audit:visual`、`pnpm export:release --v3-audit`；检查 /PhysForge/ 子路径、gzip 首屏、六旗舰单文件预算与截图。真实 BYOK 联调必须由本地用户提供 Key，不提交 Key。
 * **重点验收/修复顺序**：类型与构建 → 分镜快速切换/暂停/定格时间/公式拖拽与状态一致性 → 双屏跨模型与断开重连 → 六旗舰实机画质、2D/3D 投影及资源释放 → 全部导出。E04 电流脉冲仅为方向与累计电荷示意，非微观漂移速度；不等宽导轨连接仍为示意。S02、S01、M10 原有示意边界不变。本轮未执行运行测试，新回归测试仅为已提交的待执行代码。禁止提前声称 3.0 已验收。
 
 
