@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { inductionStoryDecks } from './storyDecks.js';
 import {
   createWorldMapper,
@@ -194,6 +195,34 @@ const paramSchema: readonly ParamFieldSpec<InductionParams>[] = [
   }
 ];
 
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "rod-emf",
+  "title": "杆长、速度与磁场互相垂直",
+  "latex": "|\\mathcal E_1|=\\htmlClass{pf-live-var}{\\htmlData{param=magneticB}{B}}\\htmlClass{pf-live-var}{\\htmlData{param=railWidth}{L_1}}|v_1|",
+  "bindings": [
+    {
+      "tokenKey": "magneticB",
+      "paramKey": "magneticB",
+      "label": "磁感应强度 B",
+      "unit": "T",
+      "min": 0,
+      "max": 3,
+      "step": 0.1,
+      "precision": 2
+    },
+    {
+      "tokenKey": "railWidth",
+      "paramKey": "railWidth",
+      "label": "杆 1 导轨间距 L₁",
+      "unit": "m",
+      "min": 0.5,
+      "max": 2,
+      "step": 0.1,
+      "precision": 2
+    }
+  ]
+}];
 export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
   InductionParams,
   InductionState
@@ -566,6 +595,6 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
 
     resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
   }
-}), { storyDecks: inductionStoryDecks });
+}), { storyDecks: inductionStoryDecks, liveFormulas });
 
 export default emInductionDoubleRodPlugin;

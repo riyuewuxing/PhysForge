@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { emDevicesPresets } from './presets.js';
 import {
@@ -53,7 +54,35 @@ const paramSchema: readonly ParamFieldSpec<EmDevicesParams>[] = [
   { key: 'flowDiameterM', kind: 'number', label: '流量计管径 D', unit: 'm', defaultValue: 0.2, min: 0.05, max: 0.6, step: 0.05 }
 ];
 
-export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, EmDevicesState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "velocity-selector",
+  "title": "正交电磁速度选择器（电磁力平衡）",
+  "latex": "v_s=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=eFieldVPerM}{E}}}{\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}}",
+  "bindings": [
+    {
+      "tokenKey": "eFieldVPerM",
+      "paramKey": "eFieldVPerM",
+      "label": "电场强度 E",
+      "unit": "V/m",
+      "min": 10000,
+      "max": 500000,
+      "step": 10000,
+      "precision": 0
+    },
+    {
+      "tokenKey": "bFieldT",
+      "paramKey": "bFieldT",
+      "label": "主磁场 B",
+      "unit": "T",
+      "min": 0.2,
+      "max": 4,
+      "step": 0.1,
+      "precision": 2
+    }
+  ]
+}];
+export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmDevicesParams, EmDevicesState>({
   meta: {
     id: 'stse-em-devices-suite',
     title: '现代电磁科技器件集成台 (S02)',
@@ -263,6 +292,6 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
           : `P=${state.mhdOutputWatt.toFixed(1)}\\text{ W},\\; R_{\\text{int}}=${state.mhdInternalOhm.toFixed(2)}\\ \\Omega`
     }
   ]
-});
+}), { liveFormulas });
 
 export default stseEmDevicesSuitePlugin;
