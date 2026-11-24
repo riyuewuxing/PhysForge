@@ -875,7 +875,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     storySpatialCommandRef.current = null;
     applyDefaultCameraView(viewportRef.current.width, viewportRef.current.height);
     renderFrameToCanvas();
-  }, [plugin.meta.id, resetViewNonce]);
+  }, [plugin.meta.id, resetViewNonce, plugin.meta.id==='builder-circuit-mna'?params.topology:undefined]);
 
   // 鼠标滚轮以指针为锚点缩放 (0.1x ~ 20x)
   useEffect(() => {

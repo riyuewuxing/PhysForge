@@ -96,9 +96,27 @@ describe('circuit-dc-capacitor-mna visual helpers', () => {
       expect(v?.y1).toBeGreaterThan(l!.y1);
       expect(v?.x1).toBeGreaterThan(a!.x2);
       expect(elements.filter(q=>q.element==='resistor')).toHaveLength(sliderR===0||sliderR===20?2:3);
+      // Independent electrical-net connectivity: union only ideal wires,
+      // never a resistor, lamp, or meter. V must share both lamp nets and
+      // A's downstream net must share lamp's positive net.
+      const parent=new Map<string,string>();
+      const key=(x:number,y:number)=>x.toFixed(6)+','+y.toFixed(6);
+      const find=(k:string):string=>{const q=parent.get(k);return q&&q!==k?find(q):k;};
+      for(const line of ir?.primitives??[])if(line.kind==='line'){
+        const k=key(line.x1,line.y1),j=key(line.x2,line.y2);
+        parent.set(find(k),find(j));
+      }
+      const node=(x:number,y:number)=>find(key(x,y));
+      expect(node(v!.x1,v!.y1)).toBe(node(l!.x1,l!.y1));
+      expect(node(v!.x2,v!.y2)).toBe(node(l!.x2,l!.y2));
+      expect(node(a!.x2,a!.y2)).toBe(node(l!.x1,l!.y1));
+      expect(node(a!.x1,a!.y1)).toBe(node(.17,dividerWiperY(sliderR)));
+      expect(node(a!.x1,a!.y1)).not.toBe(node(a!.x2,a!.y2));
+      expect(node(l!.x1,l!.y1)).not.toBe(node(l!.x2,l!.y2));
       expect(circuitDcCapacitorMnaPlugin.getControlHandles?.(state,p)[0]?.position.y).toBeCloseTo(dividerWiperY(sliderR),12);
     }
     expect(dividerPotentialColor(0,12)).toBe('#67e8f9');
+    expect(dividerPotentialColor(3,12)).toBe('#d3dbd9');
     expect(dividerPotentialColor(6,12)).toBe('#ffc76f');
     expect(dividerPotentialColor(12,12)).toBe('#ff7d77');
     expect(dividerPotentialColor(0,0)).toBe(dividerPotentialColor(0,12));

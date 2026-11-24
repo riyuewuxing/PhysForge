@@ -885,7 +885,10 @@ async function main() {
         if(!(initial.sourceTerminalVoltage>initial.lampVoltage&&initial.lampVoltage>0&&Math.abs(initial.outputPower-initial.lampVoltage*initial.lampCurrent)<.015))throw new Error('B2 terminal/lamp readout mismatch '+JSON.stringify(initial));
         await page.screenshot({path:path.join(OUT_DIR,'H3_B2_nominal.png')});
         for(const [target,tag] of [[0,'bottom'],[20,'top']]){
-          await dragRangeTo(page,page.getByTestId('param-slider-sliderR'),target);
+          // Native range keyboard reaches exact endpoints; canvas wiper
+          // drag was independently verified 10->15 Ω above.
+          await page.getByTestId('param-slider-sliderR').focus();
+          await page.getByTestId('param-slider-sliderR').press(target===0?'Home':'End');
           await page.waitForFunction(target=>Number(document.querySelector('[data-testid="param-slider-sliderR"]')?.value)===target,target);
           await page.waitForTimeout(180);
           const data=await readouts();
@@ -893,7 +896,8 @@ async function main() {
           if(target===20&&Math.abs(data.lampVoltage-data.sourceTerminalVoltage)>.001)throw new Error('B2 top contact must equal source terminal '+JSON.stringify(data));
           await page.screenshot({path:path.join(OUT_DIR,'H3_B2_'+tag+'.png')});
         }
-        await dragRangeTo(page,page.getByTestId('param-slider-emf'),0);
+        await page.getByTestId('param-slider-emf').focus();
+        await page.getByTestId('param-slider-emf').press('Home');
         await page.waitForFunction(()=>document.querySelector('[data-testid="b2-inspector-potential"]')?.getAttribute('data-divider-palette')==='zero'&&parseFloat(document.querySelector('[data-testid="b2-outputPower"]')?.textContent??'')===0);
         await page.screenshot({path:path.join(OUT_DIR,'H3_B2_zero_emf.png')});
         await selectPreset(page,'divider-lamp-measurement');

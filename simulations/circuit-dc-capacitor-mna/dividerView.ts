@@ -23,9 +23,10 @@ export function dividerDefaultCamera(width:number,height:number):{scale:number;o
 }
 
 export function dividerPotentialColor(v:number,emf:number,paper=false):string {
-  const stops=paper?[[7,89,133],[146,64,14],[185,28,28]]:[[103,232,249],[255,199,111],[255,125,119]];
+  // A neutral highlight between cyan and amber avoids a misleading green band.
+  const stops=paper?[[7,89,133],[71,85,105],[146,64,14],[185,28,28]]:[[103,232,249],[211,219,217],[255,199,111],[255,125,119]];
   const t=emf>1e-9?Math.max(0,Math.min(1,v/emf)):0;
-  const n=t<.5?0:1,k=t<.5?t*2:(t-.5)*2;
+  const n=t<.25?0:t<.5?1:2,k=t<.25?t*4:t<.5?(t-.25)*4:(t-.5)*2;
   const a=stops[n]!,b=stops[n+1]!;
   return '#'+a.map((x,i)=>Math.round(x+(b[i]!-x)*k).toString(16).padStart(2,'0')).join('');
 }
@@ -37,7 +38,7 @@ function geometry(sliderR:number) {
     rStart:pt(-1.60,Y_TOP),rEnd:pt(-.75,Y_TOP),
     sliderTop:pt(X_WIPER,Y_TOP),sliderBottom:pt(X_WIPER,Y_BOTTOM),wiper:pt(X_WIPER,w),
     branchIn:[pt(X_WIPER,w),pt(X_TURN,w),pt(X_TURN,Y_LAMP),pt(X_A-A_R,Y_LAMP)],
-    afterA:[pt(X_A+A_R,Y_LAMP),pt(X_LAMP-L_R,Y_LAMP)],
+    afterA:[pt(X_A+A_R,Y_LAMP),pt(X_POS,Y_LAMP),pt(X_LAMP-L_R,Y_LAMP)],
     lampReturn:[pt(X_LAMP+L_R,Y_LAMP),pt(X_NEG,Y_LAMP),pt(X_NEG,Y_BOTTOM),pt(X_WIPER,Y_BOTTOM)],
     groundReturn:[pt(X_WIPER,Y_BOTTOM),pt(X_SOURCE,Y_BOTTOM)],
     vIn:[pt(X_POS,Y_LAMP),pt(X_POS,Y_V),pt(X_LAMP-V_R,Y_V)],
@@ -85,8 +86,10 @@ export function renderDivider(ctx:CanvasRenderingContext2D,state:CircuitState,pa
     }
     ctx.strokeStyle=paint;ctx.beginPath();ctx.moveTo(first.x,first.y);
     for(const p of ps.slice(1))ctx.lineTo(p.x,p.y);
-    if(!paper){ctx.shadowColor=from;ctx.shadowBlur=13;ctx.lineWidth=width*1.65;ctx.globalAlpha=.24;ctx.stroke();}
-    ctx.shadowBlur=paper?0:7;ctx.globalAlpha=1;ctx.lineWidth=width;ctx.stroke();ctx.restore();
+    if(!paper){ctx.shadowColor=from;ctx.shadowBlur=17;ctx.lineWidth=width*1.40;ctx.globalAlpha=.18;ctx.stroke();}
+    ctx.shadowBlur=paper?0:5;ctx.globalAlpha=1;ctx.lineWidth=width;ctx.stroke();
+    if(!paper){ctx.shadowBlur=0;ctx.strokeStyle='rgba(255,255,255,.19)';ctx.lineWidth=Math.max(.6,width*.32);ctx.stroke();}
+    ctx.restore();
   }
   function resistor(a:Point,b:Point,c1:string,c2:string) {
     const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy);if(d<1e-8)return;
@@ -143,8 +146,20 @@ export function renderDivider(ctx:CanvasRenderingContext2D,state:CircuitState,pa
   // not a fixed animation or an alleged absolute photometric brightness.
   const q=s(g.lamp),rr=len(L_R),light=Math.min(1,Math.sqrt(Math.max(0,state.outputPower)/8));
   if(!paper&&light>0){const halo=ctx.createRadialGradient(q.x,q.y,0,q.x,q.y,rr*2.3);halo.addColorStop(0,'rgba(255,185,70,'+(.34*light)+')');halo.addColorStop(1,'rgba(255,185,70,0)');ctx.fillStyle=halo;ctx.beginPath();ctx.arc(q.x,q.y,rr*2.3,0,Math.PI*2);ctx.fill();}
-  ctx.fillStyle=paper?'#fff':'#24282b';ctx.strokeStyle=light>.01?warm:(paper?'#64748b':'#8394a5');ctx.lineWidth=Math.max(1.6,len(.012));ctx.shadowColor=warm;ctx.shadowBlur=paper?0:12*light;
+  const bulbGlass=ctx.createRadialGradient(q.x-rr*.30,q.y-rr*.35,0,q.x,q.y,rr);
+  bulbGlass.addColorStop(0,paper?'#fff':light>.01?'rgba(255,222,166,'+(.25+.45*light)+')':'#49525d');
+  bulbGlass.addColorStop(.65,paper?'#fafafa':light>.01?'#5b4630':'#252c34');
+  bulbGlass.addColorStop(1,paper?'#f1f5f9':'#24282b');
+  ctx.fillStyle=bulbGlass;ctx.strokeStyle=light>.01?warm:(paper?'#64748b':'#8394a5');ctx.lineWidth=Math.max(1.6,len(.012));ctx.shadowColor=warm;ctx.shadowBlur=paper?0:12*light;
   ctx.beginPath();ctx.arc(q.x,q.y,rr,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
+  if(light>.02&&!paper){
+    ctx.save();ctx.strokeStyle=warm;ctx.globalAlpha=.22+.48*light;ctx.lineWidth=Math.max(1.1,len(.008));ctx.lineCap='round';
+    for(const angle of [-2.25,-1.57,-.89,.89,1.57,2.25]){
+      const u=Math.cos(angle),v=Math.sin(angle);ctx.beginPath();ctx.moveTo(q.x+u*rr*1.12,q.y+v*rr*1.12);
+      ctx.lineTo(q.x+u*rr*(1.22+.19*light),q.y+v*rr*(1.22+.19*light));ctx.stroke();
+    }
+    ctx.restore();
+  }
   trace([pt(X_LAMP-L_R,Y_LAMP),pt(X_LAMP-.07,Y_LAMP),pt(X_LAMP-.04,Y_LAMP+.07),pt(X_LAMP+.01,Y_LAMP-.065),pt(X_LAMP+.06,Y_LAMP+.05),pt(X_LAMP+.09,Y_LAMP),pt(X_LAMP+L_R,Y_LAMP)],light>.01?warm:ink,light>.01?warm:ink,Math.max(1.5,wireWidth*.48));
   // Junctions mark only actual connections, not nearby labels.
   for(const p of [g.wiper])node(p,tap,.035);
@@ -168,22 +183,24 @@ export function renderDivider(ctx:CanvasRenderingContext2D,state:CircuitState,pa
   if(layers.has('potential-labels')){
     label(pt(X_SOURCE+.23,Y_TOP+.16),source.toFixed(2)+' V',high);
     label(pt(X_WIPER+.12,Y_TOP+.16),terminal.toFixed(2)+' V',mid);
-    label(pt(X_TURN+.06,Y_LAMP-.16),lamp.toFixed(2)+' V',tap,Math.max(9,f*.86));
+    label(pt(.88,Y_LAMP+.26),lamp.toFixed(2)+' V',tap,Math.max(9,f*.86));
     label(pt(-.90,Y_BOTTOM-.14),'0.00 V',low);
   }
   // Actual I(U) law and operating point, in a dedicated lane inside the loop.
   const c1=s(pt(.70,-.02)),c2=s(pt(2.12,-.90)),w=c2.x-c1.x,h=c2.y-c1.y;
   const card=ctx.createLinearGradient(c1.x,c1.y,c2.x,c2.y);card.addColorStop(0,paper?'#fff':'#394049');card.addColorStop(1,paper?'#eef2f6':'#20262e');
   ctx.fillStyle=card;ctx.strokeStyle=paper?'#94a3b8':'#5c6570';ctx.lineWidth=1;ctx.beginPath();ctx.roundRect(c1.x,c1.y,w,h,Math.max(3,len(.06)));ctx.fill();ctx.stroke();
-  const plotLeft=c1.x+w*.15,plotRight=c1.x+w*.90,plotTop=c1.y+h*.25,plotBottom=c1.y+h*.78;
+  const plotLeft=c1.x+w*.20,plotRight=c1.x+w*.90,plotTop=c1.y+h*.28,plotBottom=c1.y+h*.78;
   const maxU=Math.max(1,params.emf),samples=sampleDividerLampIvCurve(maxU,48),maxI=Math.max(.001,samples.at(-1)!.i);
   const cp=(u:number,i:number)=>pt(plotLeft+(plotRight-plotLeft)*u/maxU,plotBottom-(plotBottom-plotTop)*i/maxI);
   ctx.strokeStyle=paper?'#64748b':'#8b99a6';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(plotLeft,plotTop);ctx.lineTo(plotLeft,plotBottom);ctx.lineTo(plotRight,plotBottom);ctx.stroke();
   const curve=ctx.createLinearGradient(plotLeft,plotBottom,plotRight,plotTop);curve.addColorStop(0,low);curve.addColorStop(.5,dividerPotentialColor(maxU*.5,maxU,paper));curve.addColorStop(1,dividerPotentialColor(maxU,maxU,paper));
+  const area=ctx.createLinearGradient(0,plotTop,0,plotBottom);area.addColorStop(0,paper?'rgba(146,64,14,.15)':'rgba(255,155,106,.22)');area.addColorStop(1,'rgba(103,232,249,.035)');
+  ctx.fillStyle=area;ctx.beginPath();ctx.moveTo(plotLeft,plotBottom);samples.forEach(p=>{const q=cp(p.u,p.i);ctx.lineTo(q.x,q.y);});ctx.lineTo(plotRight,plotBottom);ctx.closePath();ctx.fill();
   ctx.strokeStyle=curve;ctx.lineWidth=Math.max(1.5,len(.015));ctx.beginPath();samples.forEach((p,i)=>{const q=cp(p.u,p.i);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);});ctx.stroke();
   const op=cp(lamp,state.branchCurrent2);ctx.fillStyle=warm;ctx.beginPath();ctx.arc(op.x,op.y,Math.max(2,len(.023)),0,Math.PI*2);ctx.fill();
   ctx.font='500 '+Math.max(8,Math.min(12,len(.065)))+'px system-ui, sans-serif';ctx.textBaseline='middle';ctx.textAlign='left';ctx.fillStyle=ink;
-  ctx.fillText('I–U 模型曲线',c1.x+w*.10,c1.y+h*.10);ctx.fillText('I/A',plotLeft,plotTop-h*.07);ctx.fillText(maxI.toFixed(2),c1.x+w*.02,plotTop);
+  ctx.fillText('I–U 模型曲线',c1.x+w*.10,c1.y+h*.11);ctx.fillText('I/A',c1.x+w*.025,plotTop-h*.08);ctx.fillText(maxI.toFixed(2),c1.x+w*.025,plotTop);
   ctx.fillText('0',plotLeft-w*.07,plotBottom+h*.09);ctx.textAlign='right';ctx.fillText(maxU.toFixed(0)+' U/V',plotRight,plotBottom+h*.10);
   ctx.restore();
 }
