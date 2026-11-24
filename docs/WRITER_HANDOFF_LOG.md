@@ -7,13 +7,19 @@
 
 ## 当前施工快照（2026-11-24，V3.0，未封板）
 
-* **本轮交付入口**：`handoff/v3-complete-source`，供本地 Agent 拉取和整栈测试的累计源码分支，不是 release 或 main 合并目标。包含原 #2→#17 施工链、本轮 #18→#21、独立 #1 BYOK 五个文件（逐个 Git blob SHA 与 #1 一致）。#1 正式 PR 仍独立；不要把交付分支和各正式 PR 重复合并。保持总控的原子 PR 验收流程。
+* **第二轮累计交付入口（最新）**：`handoff/v3-complete-source-r2`，源码顶端 #24 @22dad2d；基于上一轮累计分支 d91eba0，叠加 #22→#23→#24。上一轮入口保留。仅供本地 Agent 审查、修复和整栈验收，不作为 main 合并目标。
+  * [#22](https://github.com/riyuewuxing/PhysForge/pull/22)：活公式按实际子模式显示；E10、S01、M10、S02 绑定与量纲显示，微小量科学计数法，卸载取消未提交的拖动。S02 拖动审计显式选择速度选择器。
+  * [#23](https://github.com/riyuewuxing/PhysForge/pull/23)：其余十个模型的模式相关公式与 B1 漂移参考系辅助圆统一，保持原求解器和观测键。
+  * [#24](https://github.com/riyuewuxing/PhysForge/pull/24)：E10 proper rotation (det=+1)，统一侧视并修正比动能、洛伦兹加速度标注；M10 双星真实运动位置、引力矢量和随动系投影统一。新增几何断言。
+* **本轮未执行运行验收**；优先检查公式条件/绑定、S02 模式切换、B1 漂移半径、E10 叉乘手性与 M10 共转系，再执行下述全部门禁。沿用原子 PR 验收规则。main 本轮末核实为 `3a667f88219c504fced84212881c49080b3ae372`。
+
+* **上一轮交付入口**：`handoff/v3-complete-source`，供本地 Agent 拉取和整栈测试的累计源码分支，不是 release 或 main 合并目标。包含原 #2→#17 施工链、本轮 #18→#21、独立 #1 BYOK 五个文件（逐个 Git blob SHA 与 #1 一致）。#1 正式 PR 仍独立；不要把交付分支和各正式 PR 重复合并。保持总控的原子 PR 验收流程。
 * 本轮用户明确要求云端写手推进源码，本地 Agent 负责测试、修复与实际验收。本轮新增：
   * [#18](https://github.com/riyuewuxing/PhysForge/pull/18) @330350e：实际执行 2D/3D 教学镜头关键帧、相机缓动与公式高亮；E04/B1 切镜，M06 取景；分镜选择和 FBD 控件。
   * [#19](https://github.com/riyuewuxing/PhysForge/pull/19) @d9a533c：插值结束再按目标参数复位；逐 240 Hz 物理步检测临界观测，保留命中快照；预设图层继承；真实分镜浏览器审计脚本。
   * [#20](https://github.com/riyuewuxing/PhysForge/pull/20) @d0a5f5a：E04 双杆安培力、电流箭头与累计电荷驱动的示意脉冲、不等杆长动生电动势公式；B1 数值引擎报告的出入边界标记。
   * [#21](https://github.com/riyuewuxing/PhysForge/pull/21) @b34722d：副屏指令绑定模型/分镜身份，拒绝旧课件命令，并增加直接跳转。
-* **本地首要行动**：保留当前工作区，执行 `git fetch origin`；在独立分支或 worktree 检出 `origin/handoff/v3-complete-source`。按项目约定安装现有依赖，再执行 `pnpm typecheck`、`pnpm test`、`pnpm verify:packs`、`pnpm verify:scenes`、`pnpm verify:vault`、`pnpm build`、`pnpm test:e2e:subpath`、`pnpm audit:visual`、`pnpm export:release --v3-audit`；检查 /PhysForge/ 子路径、gzip 首屏、六旗舰单文件预算与截图。真实 BYOK 联调必须由本地用户提供 Key，不提交 Key。
+* **本地首要行动**：保留当前工作区，执行 `git fetch origin`；在独立分支或 worktree 检出 `origin/handoff/v3-complete-source-r2`。按项目约定安装现有依赖，再执行 `pnpm typecheck`、`pnpm test`、`pnpm verify:packs`、`pnpm verify:scenes`、`pnpm verify:vault`、`pnpm build`、`pnpm test:e2e:subpath`、`pnpm audit:visual`、`pnpm export:release --v3-audit`；检查 /PhysForge/ 子路径、gzip 首屏、六旗舰单文件预算与截图。真实 BYOK 联调必须由本地用户提供 Key，不提交 Key。
 * **重点验收/修复顺序**：类型与构建 → 分镜快速切换/暂停/定格时间/公式拖拽与状态一致性 → 双屏跨模型与断开重连 → 六旗舰实机画质、2D/3D 投影及资源释放 → 全部导出。E04 电流脉冲仅为方向与累计电荷示意，非微观漂移速度；不等宽导轨连接仍为示意。S02、S01、M10 原有示意边界不变。本轮未执行运行测试，新回归测试仅为已提交的待执行代码。禁止提前声称 3.0 已验收。
 
 
