@@ -282,33 +282,190 @@ const paramSchema: readonly ParamFieldSpec<CircuitParams>[] = [
 ];
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "linear-dc",
-  "title": "线性直流稳态闭合电路",
-  "latex": "I=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=emf}{E}}}{R_{\\rm eq}+\\htmlClass{pf-live-var}{\\htmlData{param=internalR}{r}}}",
-  "bindings": [
-    {
-      "tokenKey": "emf",
-      "paramKey": "emf",
-      "label": "电源电动势 E",
-      "unit": "V",
-      "min": 0,
-      "max": 24,
-      "step": 1,
-      "precision": 1
-    },
-    {
-      "tokenKey": "internalR",
-      "paramKey": "internalR",
-      "label": "电源内阻 r",
-      "unit": "Ω",
-      "min": 0,
-      "max": 5,
-      "step": 0.2,
-      "precision": 2
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "linear-dc",
+    "title": "线性直流稳态闭合电路",
+    "latex": "I=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=emf}{E}}}{R_{\\rm eq}+\\htmlClass{pf-live-var}{\\htmlData{param=internalR}{r}}}",
+    "bindings": [
+      {
+        "tokenKey": "emf",
+        "paramKey": "emf",
+        "label": "电源电动势 E",
+        "unit": "V",
+        "min": 0,
+        "max": 24,
+        "step": 1,
+        "precision": 1
+      },
+      {
+        "tokenKey": "internalR",
+        "paramKey": "internalR",
+        "label": "电源内阻 r",
+        "unit": "Ω",
+        "min": 0,
+        "max": 5,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "topology": [
+        "closed-power",
+        "series-parallel-dynamic"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "closed-power",
+    "title": "纯电阻外负载输出功率（R+r>0）",
+    "latex": "P_R=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=emf}{E}}^2\\htmlClass{pf-live-var}{\\htmlData{param=sliderR}{R}}}{(R+\\htmlClass{pf-live-var}{\\htmlData{param=internalR}{r}})^2}",
+    "bindings": [
+      {
+        "tokenKey": "emf",
+        "paramKey": "emf",
+        "label": "电源电动势 E",
+        "unit": "V",
+        "min": 0,
+        "max": 24,
+        "step": 1,
+        "precision": 1
+      },
+      {
+        "tokenKey": "sliderR",
+        "paramKey": "sliderR",
+        "label": "滑动变阻器电阻 R_p",
+        "unit": "Ω",
+        "min": 0,
+        "max": 20,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "internalR",
+        "paramKey": "internalR",
+        "label": "电源内阻 r",
+        "unit": "Ω",
+        "min": 0,
+        "max": 5,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "topology": [
+        "closed-power"
+      ]
+    }
+  },
+  {
+    "id": "resistor-network",
+    "title": "串并联外电路等效电阻",
+    "latex": "R_{\\rm eq}=\\htmlClass{pf-live-var}{\\htmlData{param=r1}{R_1}}+\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=r2}{R_2}}\\htmlClass{pf-live-var}{\\htmlData{param=sliderR}{R_p}}}{R_2+R_p}",
+    "bindings": [
+      {
+        "tokenKey": "r1",
+        "paramKey": "r1",
+        "label": "定值电阻 R₁",
+        "unit": "Ω",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "r2",
+        "paramKey": "r2",
+        "label": "定值电阻 R₂",
+        "unit": "Ω",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "sliderR",
+        "paramKey": "sliderR",
+        "label": "滑动变阻器电阻 R_p",
+        "unit": "Ω",
+        "min": 0,
+        "max": 20,
+        "step": 0.5,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "topology": [
+        "series-parallel-dynamic"
+      ]
+    }
+  },
+  {
+    "id": "capacitor-charge",
+    "title": "含容支路的电荷及储能",
+    "latex": "Q=\\htmlClass{pf-live-var}{\\htmlData{param=capacitance}{C}}U_C,\\quad W_C=\\tfrac12 C U_C^2",
+    "bindings": [
+      {
+        "tokenKey": "capacitance",
+        "paramKey": "capacitance",
+        "label": "电容 C",
+        "unit": "F",
+        "min": 0.01,
+        "max": 0.5,
+        "step": 0.01,
+        "precision": 3
+      }
+    ],
+    "when": {
+      "topology": [
+        "rc-transient",
+        "rc-bridge-charge"
+      ]
+    }
+  },
+  {
+    "id": "nonlinear-kvl",
+    "title": "非线性负载串联回路电压方程",
+    "latex": "\\htmlClass{pf-live-var}{\\htmlData{param=emf}{E}}=I(\\htmlClass{pf-live-var}{\\htmlData{param=internalR}{r}}+\\htmlClass{pf-live-var}{\\htmlData{param=sliderR}{R_p}})+U_L",
+    "bindings": [
+      {
+        "tokenKey": "emf",
+        "paramKey": "emf",
+        "label": "电源电动势 E",
+        "unit": "V",
+        "min": 0,
+        "max": 24,
+        "step": 1,
+        "precision": 1
+      },
+      {
+        "tokenKey": "internalR",
+        "paramKey": "internalR",
+        "label": "电源内阻 r",
+        "unit": "Ω",
+        "min": 0,
+        "max": 5,
+        "step": 0.2,
+        "precision": 2
+      },
+      {
+        "tokenKey": "sliderR",
+        "paramKey": "sliderR",
+        "label": "滑动变阻器电阻 R_p",
+        "unit": "Ω",
+        "min": 0,
+        "max": 20,
+        "step": 0.5,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "topology": [
+        "nonlinear-lamp-diode"
+      ]
+    }
+  }
+];
 export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<CircuitParams, CircuitState>({
   meta: {
     id: 'builder-circuit-mna',

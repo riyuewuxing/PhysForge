@@ -150,43 +150,232 @@ const paramSchema: readonly ParamFieldSpec<OpticsParams>[] = [
 ];
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "snell",
-  "title": "折射定律（存在传播折射光）",
-  "latex": "\\htmlClass{pf-live-var}{\\htmlData{param=n1}{n_1}}\\sin \\htmlClass{pf-live-var}{\\htmlData{param=incidentAngleDeg}{\\theta_1}}=\\htmlClass{pf-live-var}{\\htmlData{param=n2}{n_2}}\\sin\\theta_2",
-  "bindings": [
-    {
-      "tokenKey": "n1",
-      "paramKey": "n1",
-      "label": "介质 1 / 玻璃折射率 n₁",
-      "unit": "",
-      "min": 1,
-      "max": 2.2,
-      "step": 0.05,
-      "precision": 3
-    },
-    {
-      "tokenKey": "incidentAngleDeg",
-      "paramKey": "incidentAngleDeg",
-      "label": "入射角 θ₁",
-      "unit": "°",
-      "min": 0,
-      "max": 85,
-      "step": 1,
-      "precision": 1
-    },
-    {
-      "tokenKey": "n2",
-      "paramKey": "n2",
-      "label": "介质 2 / 包层折射率 n₂",
-      "unit": "",
-      "min": 1,
-      "max": 2,
-      "step": 0.05,
-      "precision": 3
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "snell",
+    "title": "折射定律（存在传播折射光）",
+    "latex": "\\htmlClass{pf-live-var}{\\htmlData{param=n1}{n_1}}\\sin \\htmlClass{pf-live-var}{\\htmlData{param=incidentAngleDeg}{\\theta_1}}=\\htmlClass{pf-live-var}{\\htmlData{param=n2}{n_2}}\\sin\\theta_2",
+    "bindings": [
+      {
+        "tokenKey": "n1",
+        "paramKey": "n1",
+        "label": "介质 1 / 玻璃折射率 n₁",
+        "unit": "",
+        "min": 1,
+        "max": 2.2,
+        "step": 0.05,
+        "precision": 3
+      },
+      {
+        "tokenKey": "incidentAngleDeg",
+        "paramKey": "incidentAngleDeg",
+        "label": "入射角 θ₁",
+        "unit": "°",
+        "min": 0,
+        "max": 85,
+        "step": 1,
+        "precision": 1
+      },
+      {
+        "tokenKey": "n2",
+        "paramKey": "n2",
+        "label": "介质 2 / 包层折射率 n₂",
+        "unit": "",
+        "min": 1,
+        "max": 2,
+        "step": 0.05,
+        "precision": 3
+      }
+    ],
+    "when": {
+      "sceneMode": [
+        "tir-interface"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "slab-snell",
+    "title": "平行玻璃砖第一界面（空气射入玻璃）",
+    "latex": "\\sin \\htmlClass{pf-live-var}{\\htmlData{param=incidentAngleDeg}{\\theta_1}}=\\htmlClass{pf-live-var}{\\htmlData{param=n1}{n_{\\rm glass}}}\\sin\\theta_2",
+    "bindings": [
+      {
+        "tokenKey": "incidentAngleDeg",
+        "paramKey": "incidentAngleDeg",
+        "label": "入射角 θ₁",
+        "unit": "°",
+        "min": 0,
+        "max": 85,
+        "step": 1,
+        "precision": 0
+      },
+      {
+        "tokenKey": "n1",
+        "paramKey": "n1",
+        "label": "介质 1 折射率 n₁",
+        "unit": "",
+        "min": 1,
+        "max": 2.2,
+        "step": 0.05,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "sceneMode": [
+        "parallel-slab"
+      ]
+    }
+  },
+  {
+    "id": "slab-offset",
+    "title": "玻璃砖出射光线的侧移量",
+    "latex": "\\Delta x=\\htmlClass{pf-live-var}{\\htmlData{param=slabThickness}{d}}\\frac{\\sin(\\theta_1-\\theta_2)}{\\cos\\theta_2}",
+    "bindings": [
+      {
+        "tokenKey": "slabThickness",
+        "paramKey": "slabThickness",
+        "label": "玻璃砖厚度 d",
+        "unit": "m",
+        "min": 0.3,
+        "max": 1.8,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "sceneMode": [
+        "parallel-slab"
+      ]
+    }
+  },
+  {
+    "id": "prism-apex",
+    "title": "三棱镜内的两次折射角（光线从两腰穿过时）",
+    "latex": "r_1+r_2=\\htmlClass{pf-live-var}{\\htmlData{param=prismApexDeg}{A}}",
+    "bindings": [
+      {
+        "tokenKey": "prismApexDeg",
+        "paramKey": "prismApexDeg",
+        "label": "三棱镜顶角 A",
+        "unit": "°",
+        "min": 30,
+        "max": 75,
+        "step": 5,
+        "precision": 0
+      }
+    ],
+    "when": {
+      "sceneMode": [
+        "prism-dispersion"
+      ]
+    }
+  },
+  {
+    "id": "fiber-critical-angle",
+    "title": "纤芯/包层有效折射率（模型限制 n包<n芯）",
+    "latex": "\\sin C=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=n2}{n_{\\rm clad}}}}{\\htmlClass{pf-live-var}{\\htmlData{param=n1}{n_{\\rm core}}}}",
+    "bindings": [
+      {
+        "tokenKey": "n2",
+        "paramKey": "n2",
+        "label": "介质 2 折射率 n₂",
+        "unit": "",
+        "min": 1,
+        "max": 2,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "n1",
+        "paramKey": "n1",
+        "label": "介质 1 折射率 n₁",
+        "unit": "",
+        "min": 1,
+        "max": 2.2,
+        "step": 0.05,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "sceneMode": [
+        "optical-fiber"
+      ]
+    }
+  },
+  {
+    "id": "young-fringe-spacing",
+    "title": "双缝干涉近轴相邻同类条纹间距",
+    "latex": "\\Delta x=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=screenDistanceM}{L}}\\htmlClass{pf-live-var}{\\htmlData{param=wavelengthNm}{\\lambda}}}{\\htmlClass{pf-live-var}{\\htmlData{param=slitSeparationMm}{d}}}",
+    "bindings": [
+      {
+        "tokenKey": "screenDistanceM",
+        "paramKey": "screenDistanceM",
+        "label": "屏到双缝距离 L",
+        "unit": "m",
+        "min": 0.5,
+        "max": 3,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "wavelengthNm",
+        "paramKey": "wavelengthNm",
+        "label": "入射光波长 λ",
+        "unit": "nm",
+        "min": 400,
+        "max": 720,
+        "step": 10,
+        "precision": 0
+      },
+      {
+        "tokenKey": "slitSeparationMm",
+        "paramKey": "slitSeparationMm",
+        "label": "双缝间距 d",
+        "unit": "mm",
+        "min": 0.2,
+        "max": 1.5,
+        "step": 0.05,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "sceneMode": [
+        "double-slit"
+      ]
+    }
+  },
+  {
+    "id": "thin-lens",
+    "title": "理想薄凸透镜成像（虚像像距取负）",
+    "latex": "\\frac1{\\htmlClass{pf-live-var}{\\htmlData{param=objectDistanceM}{u}}}+\\frac1v=\\frac1{\\htmlClass{pf-live-var}{\\htmlData{param=focalLengthM}{f}}}",
+    "bindings": [
+      {
+        "tokenKey": "objectDistanceM",
+        "paramKey": "objectDistanceM",
+        "label": "物距 u",
+        "unit": "m",
+        "min": 0.25,
+        "max": 2.5,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "focalLengthM",
+        "paramKey": "focalLengthM",
+        "label": "凸透镜焦距 f",
+        "unit": "m",
+        "min": 0.3,
+        "max": 1.5,
+        "step": 0.05,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "sceneMode": [
+        "thin-lens-imaging"
+      ]
+    }
+  }
+];
 export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<OpticsParams, OpticsState>({
   meta: {
     id: 'builder-optics-ray',

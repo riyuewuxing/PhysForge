@@ -32,33 +32,88 @@ const paramSchema: readonly ParamFieldSpec<ProjectileCouplingParams>[] = [
 ];
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "launch-velocity",
-  "title": "初速度水平分量",
-  "latex": "v_{0x}=\\htmlClass{pf-live-var}{\\htmlData{param=v0}{v_0}}\\cos \\htmlClass{pf-live-var}{\\htmlData{param=launchAngleDeg}{\\alpha}}",
-  "bindings": [
-    {
-      "tokenKey": "v0",
-      "paramKey": "v0",
-      "label": "发射初速率 v₀",
-      "unit": "m/s",
-      "min": 1,
-      "max": 14,
-      "step": 0.5,
-      "precision": 2
-    },
-    {
-      "tokenKey": "launchAngleDeg",
-      "paramKey": "launchAngleDeg",
-      "label": "斜抛仰角 α",
-      "unit": "°",
-      "min": 0,
-      "max": 85,
-      "step": 5,
-      "precision": 1
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "launch-velocity",
+    "title": "初速度水平分量",
+    "latex": "v_{0x}=\\htmlClass{pf-live-var}{\\htmlData{param=v0}{v_0}}\\cos \\htmlClass{pf-live-var}{\\htmlData{param=launchAngleDeg}{\\alpha}}",
+    "bindings": [
+      {
+        "tokenKey": "v0",
+        "paramKey": "v0",
+        "label": "发射初速率 v₀",
+        "unit": "m/s",
+        "min": 1,
+        "max": 14,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "launchAngleDeg",
+        "paramKey": "launchAngleDeg",
+        "label": "斜抛仰角 α",
+        "unit": "°",
+        "min": 0,
+        "max": 85,
+        "step": 5,
+        "precision": 1
+      }
+    ],
+    "when": {
+      "mode": [
+        "semicircle-trough",
+        "safety-envelope"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "horizontal-launch",
+    "title": "水平抛出且忽略空气阻力时的水平位移",
+    "latex": "x-x_0=\\htmlClass{pf-live-var}{\\htmlData{param=v0}{v_0}}t",
+    "bindings": [
+      {
+        "tokenKey": "v0",
+        "paramKey": "v0",
+        "label": "发射初速率 v₀",
+        "unit": "m/s",
+        "min": 1,
+        "max": 14,
+        "step": 0.5,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "incline-flat"
+      ],
+      "dragCoeff": [
+        0
+      ]
+    }
+  },
+  {
+    "id": "horizontal-launch-initial",
+    "title": "水平抛出的初速度分量",
+    "latex": "v_{0x}=\\htmlClass{pf-live-var}{\\htmlData{param=v0}{v_0}},\\quad v_{0y}=0",
+    "bindings": [
+      {
+        "tokenKey": "v0",
+        "paramKey": "v0",
+        "label": "发射初速率 v₀",
+        "unit": "m/s",
+        "min": 1,
+        "max": 14,
+        "step": 0.5,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "incline-flat"
+      ]
+    }
+  }
+];
 export const mechProjectileCouplingPlugin = Object.assign(defineSimulationPlugin<
   ProjectileCouplingParams,
   ProjectileCouplingState
