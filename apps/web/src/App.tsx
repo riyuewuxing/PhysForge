@@ -25,8 +25,8 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { ParamRecord, SimulationPluginV2 } from '@physforge/sim-sdk';
-import { useClassroomStore } from './store/useClassroomStore.js';
-import { SimulationStage, type RecordedTelemetryFrame } from './components/SimulationStage.js';
+import { getStoryDecks, resolvePresentationHotkey, useClassroomStore } from './store/useClassroomStore.js';
+import { SimulationStage, type RecordedTelemetryFrame, type StoryNavigation } from './components/SimulationStage.js';
 import { LeftCatalogSidebar } from './components/LeftCatalogSidebar.js';
 import { RightControlPanel } from './components/RightControlPanel.js';
 import { TeachingPackDrawer } from './components/TeachingPackDrawer.js';
@@ -52,6 +52,8 @@ const LazyExportStudioDrawer = React.lazy(() =>
 const LazyAiCopilotDrawer = React.lazy(() =>
   import('./components/AiCopilotDrawer.js').then((m) => ({ default: m.AiCopilotDrawer }))
 );
+
+const LazyStoryStageHud = React.lazy(() => import('./presentation/StoryStageHud.js').then((m) => ({ default: m.StoryStageHud })));
 
 const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
 const WORKBENCH_TITLES: Readonly<Record<string, string>> = {
@@ -84,6 +86,13 @@ export const App: React.FC = () => {
 
   const plugin = store.loadedPlugin;
   const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
+  const storyNavigationRef = useRef<StoryNavigation | null>(null);
+  const decks = useMemo(() => getStoryDecks(plugin), [plugin]);
+  const storyDeck = store.appMode === 'story' ? decks.find((deck) => deck.id === store.activeDeckId) : undefined;
+  const has3dView =
+    v2Plugin.renderMode === 'three3d' ||
+    v2Plugin.renderMode === 'hybrid' ||
+    Boolean(v2Plugin.mountThreeScene);
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
@@ -101,6 +110,32 @@ export const App: React.FC = () => {
   // 课堂快捷键支持（Ctrl+K 全局检索、Ctrl+Z/Shift+Z 撤销重做、1-9 预设、Space 播放、S 单步、R 重置、P 遮罩、B 大屏、F 演说）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.closest('input, select, textarea, [contenteditable="true"]')) return;
+      if (store.annotationOpen || commandPaletteOpen || teachingPackOpen || analysisLabOpen || exportStudioOpen || aiCopilotOpen) return;
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.shiftKey && e.key === 'F5') {
+        e.preventDefault();
+        store.setAppMode('story', decks[0]?.id);
+        return;
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'F11') {
+        e.preventDefault();
+        store.setAppMode(store.appMode === 'studio' ? 'stage' : 'studio');
+        return;
+      }
+      if (store.appMode !== 'studio' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const command = resolvePresentationHotkey(store.appMode, e.key);
+        if (command) {
+          e.preventDefault();
+          if (command === 'next') storyNavigationRef.current?.next();
+          else if (command === 'prev') storyNavigationRef.current?.prev();
+          else if (command === 'play-toggle') store.togglePlaying();
+          else if (command === 'blackout') store.toggleBlackout();
+          else if (command === 'mirror' && has3dView) store.toggleView3d();
+          else if (command === 'exit') store.setAppMode('studio');
+        }
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setCommandPaletteOpen((v) => !v);
@@ -118,15 +153,7 @@ export const App: React.FC = () => {
         return;
       }
 
-      if (e.key === 'Escape' && store.fullscreenPresentation) {
-        e.preventDefault();
-        store.toggleFullscreenPresentation();
-        return;
-      }
-
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-      if (store.annotationOpen || commandPaletteOpen) return;
+      if (store.appMode !== 'studio') return;
 
       if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
         store.toggleFullscreenPresentation();
@@ -154,7 +181,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [plugin, store.annotationOpen, store.fullscreenPresentation, commandPaletteOpen]);
+  }, [plugin, store.appMode, store.annotationOpen, commandPaletteOpen, teachingPackOpen, analysisLabOpen, exportStudioOpen, aiCopilotOpen, has3dView, decks]);
 
   const toggleMeasureTool = (tool: Exclude<MeasureToolKind, 'none'>) => {
     store.setMeasureTool(store.measureTool === tool ? 'none' : tool);
@@ -168,15 +195,11 @@ export const App: React.FC = () => {
     store.updateParam(key, value);
   };
 
-  const has3dView =
-    v2Plugin.renderMode === 'three3d' ||
-    v2Plugin.renderMode === 'hybrid' ||
-    Boolean(v2Plugin.mountThreeScene);
-
   return (
     <div
       data-testid="app-shell"
       data-model-id={plugin.meta.id}
+      data-app-mode={store.appMode}
       className={`h-screen w-screen flex flex-col overflow-hidden select-none ${
         store.bigScreenMode ? 'big-screen-mode' : ''
       }`}
@@ -613,13 +636,21 @@ export const App: React.FC = () => {
             onScrubTime={store.setScrubTime}
             onTogglePoeMask={store.togglePoeMask}
             onTelemetryUpdate={store.setTelemetry}
+            storyDeck={storyDeck}
+            storyNavigationRef={storyNavigationRef}
+            onStoryParams={store.syncStoryParams}
+            onStoryBeat={store.setStoryBeat}
+            onStoryFreeze={store.setAutoFreezeBadge}
+            onStoryPlaying={store.setPlaying}
+            onStoryFbd={(enabled) => { if (useClassroomStore.getState().autoFbdEnabled !== enabled) store.toggleAutoFbd(); }}
+            onStoryFrame={store.setActiveFrameId}
           />
 
           {store.fullscreenPresentation && (
             <>
               <div data-testid="fullscreen-title" className="pointer-events-none absolute left-[68px] top-6 z-20 max-w-[min(44vw,620px)] text-slate-100 drop-shadow-lg">
                 <div className="truncate text-2xl font-semibold tracking-tight">{WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title}</div>
-                <div className="mt-1 text-xs tracking-wide text-slate-400">全屏课堂演说模式</div>
+                <div className="mt-1 text-xs tracking-wide text-slate-400">{store.appMode === 'story' ? '分镜讲课模式' : '全屏课堂演说模式'}</div>
               </div>
               {store.telemetry.formulaItems.length > 0 && (
                 <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
@@ -636,8 +667,19 @@ export const App: React.FC = () => {
                     {store.view3dEnabled ? '2D 剖面' : '3D 空间'}
                   </button>
                 )}
+                <button type="button" data-testid="btn-toggle-story" disabled={!decks.length} onClick={() => store.setAppMode(store.appMode === 'story' ? 'stage' : 'story', decks[0]?.id)} className="rounded-full px-3 py-2 text-xs hover:bg-white/10 disabled:opacity-40">
+                  {store.appMode === 'story' ? '自由演说' : '分镜讲课'}
+                </button>
+                <button type="button" data-testid="btn-stage-blackout" onClick={store.toggleBlackout} className="rounded-full px-3 py-2 text-xs hover:bg-white/10">黑屏</button>
+                <button type="button" data-testid="btn-presenter" disabled title="副屏同步将在 PR-1C 接入" className="rounded-full px-3 py-2 text-xs opacity-40">副屏</button>
                 <button type="button" data-testid="btn-exit-fullscreen-speech" onClick={store.toggleFullscreenPresentation} className="rounded-full border border-white/10 px-3 py-2 text-xs hover:bg-white/10">退出全屏</button>
               </div>
+              <Suspense fallback={null}>
+                <LazyStoryStageHud deck={storyDeck} index={store.storyBeatIndex} blackout={store.isBlackout}
+                  freezeBadge={store.autoFreezeBadge} onPrev={() => storyNavigationRef.current?.prev()}
+                  onNext={() => storyNavigationRef.current?.next()} onGoTo={(index) => storyNavigationRef.current?.goTo(index)}
+                  onUnblackout={store.toggleBlackout} />
+              </Suspense>
             </>
           )}
 
