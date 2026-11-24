@@ -46,6 +46,10 @@ describe('modern-photoelectric-compton physics invariants (N01)', () => {
       expect(v.recoil.y).toBeLessThanOrEqual(1e-12);
       expect(v.scattered.y+v.recoil.y).toBeCloseTo(0,9);
       expect(v.scattered.x+v.recoil.x).toBeCloseTo(v.incident.x,9);
+      const handle = modernPhotoelectricComptonPlugin.getControlHandles?.(s,p)[0];
+      expect(handle?.position.x).toBeCloseTo(-0.8+v.scattered.x,12);
+      expect(handle?.position.y).toBeCloseTo(v.scattered.y,12);
+      expect(handle?.onDrag({x:-0.8,y:1}).scatterAngleDeg).toBe(90);
       const ir = modernPhotoelectricComptonPlugin.exportDiagramIR?.(s,p);
       const arrows = ir?.primitives.filter(q=>q.kind==='arrow') ?? [];
       expect(arrows).toHaveLength(3);

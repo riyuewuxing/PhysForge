@@ -882,6 +882,28 @@ async function main() {
     await dragRangeTo(page,angleSlider,135);
     if (await angleSlider.inputValue()===angleBefore) throw new Error('Compton angle slider not responsive');
     await page.screenshot({path:path.join(OUT_DIR,'N01_05_compton_angle.png')});
+    // Direct drag from the signed scattered momentum endpoint (physical p is
+    // ~10^-23 kg m/s, not a value that may be clamped to a generic 10^-9).
+    await selectPreset(page,'compton-molybdenum-90deg');
+    const handlePoint=await page.evaluate(() => {
+      const canvas=document.querySelector('[data-testid="simulation-canvas"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return null;
+      const rect=canvas.getBoundingClientRect();
+      const ppm=Math.min(rect.width,rect.height)*0.24;
+      const ratio=0.071/(0.071+0.00242631024);
+      const cx=rect.left+rect.width*0.40-0.8*ppm;
+      const cy=rect.top+rect.height*0.5;
+      const r=0.95*ratio*ppm;
+      return { x:cx, y:cy-r, tx:cx+r/Math.sqrt(2), ty:cy-r/Math.sqrt(2) };
+    });
+    if (!handlePoint) throw new Error('Compton canvas missing');
+    await page.mouse.move(handlePoint.x,handlePoint.y);
+    await page.mouse.down();
+    await page.mouse.move(handlePoint.tx,handlePoint.ty,{steps:10});
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    if (Math.abs(Number(await angleSlider.inputValue())-45)>5) throw new Error('Compton canvas handle does not follow momentum endpoint');
+    await page.screenshot({path:path.join(OUT_DIR,'N01_06_compton_direct_drag.png')});
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));

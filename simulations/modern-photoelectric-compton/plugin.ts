@@ -327,13 +327,12 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
   },
   getControlHandles: (state, params) => {
     if (params.mode === 'compton') {
-      const theta = (params.scatterAngleDeg * Math.PI) / 180;
-      const length = 0.95 * (state.compton.pScattered / Math.max(1e-9, state.compton.pIncident));
+      const { scattered } = comptonMomentumVectors(state.compton, params.scatterAngleDeg);
       return [
         {
           id: 'compton-scatter-angle',
           label: `θ=${params.scatterAngleDeg.toFixed(0)}°`,
-          position: { x: -0.8 + length * Math.cos(theta), y: length * Math.sin(theta) },
+          position: { x: -0.8 + scattered.x, y: scattered.y },
           origin: { x: -0.8, y: 0 },
           handleKind: 'angle',
           color: '#a855f7',
