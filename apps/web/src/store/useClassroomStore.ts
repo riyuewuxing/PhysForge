@@ -196,6 +196,7 @@ function applyLoadedPluginState(
     selectedPluginId: plugin.meta.id,
     loadedPlugin: plugin,
     isLoadingPlugin: false,
+    telemetry: { t: 0, observables: {}, events: [], invariants: [], formulaItems: [] },
     activePresetId: preset?.id ?? presetId ?? null,
     params,
     activeLayers: getDefaultLayers(plugin, preset?.visibleLayers),
@@ -293,6 +294,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       activePresetId: preset.id,
       params,
+      telemetry: { t: 0, observables: {}, events: [], invariants: [], formulaItems: [] },
       activeLayers: getDefaultLayers(plugin, preset.visibleLayers),
       isPlaying: false,
       oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, params),
