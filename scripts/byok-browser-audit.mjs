@@ -4,7 +4,11 @@ import { chromium } from 'playwright';
 
 const out = 'artifacts/byok-audit';
 const live = 'https://riyuewuxing.github.io/PhysForge/';
-const preview = 'http://127.0.0.1:4173/PhysForge/';
+const verifyDeployment = process.env.PHYSFORGE_VERIFY_DEPLOYMENT === '1';
+const expectedEntry = process.env.PHYSFORGE_EXPECTED_ENTRY;
+if (verifyDeployment && !expectedEntry) throw new Error('Missing expected deployed entry');
+const publicUrl = verifyDeployment ? live + '?pf-verify=' + encodeURIComponent(process.env.GITHUB_SHA ?? 'local') : live;
+const preview = verifyDeployment ? publicUrl : 'http://127.0.0.1:4173/PhysForge/';
 const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(await fs.readFile(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
 const report = { sha: process.env.GITHUB_SHA ?? 'local', headSha: event.pull_request?.head.sha ?? null, checks: {}, cors: [] };
 let fixturePage;
@@ -46,13 +50,25 @@ try {
   const publicErrors = [];
   publicPage.on('pageerror', () => publicErrors.push('pageerror'));
   try {
-    const response = await publicPage.goto(live, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    const response = await publicPage.goto(publicUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
     assert.equal(response?.status(), 200);
+    const actualEntry = await publicPage.locator('script[type="module"][src]').first().getAttribute('src');
+    report.deployedEntry = actualEntry;
+    if (verifyDeployment) {
+      assert.equal(new URL(actualEntry ?? '', live).pathname, new URL(expectedEntry, live).pathname, 'Wrong deployed build entry');
+    }
     await publicPage.getByTestId('app-shell').waitFor({ timeout: 30000 });
     await publicPage.getByTestId('simulation-canvas').or(publicPage.getByTestId('three-stage-container')).first().waitFor({ timeout: 30000 });
     await shot(publicPage, '01-live-pages');
     await openDrawer(publicPage);
-    await shot(publicPage, '02-live-ai-baseline');
+    if (verifyDeployment) {
+      await publicPage.getByTestId('byok-enabled').check();
+      assert.equal(await publicPage.getByTestId('byok-model').inputValue(), 'deepseek-flash');
+      assert.equal(await publicPage.getByTestId('btn-run-ai-copilot').isDisabled(), true);
+      await shot(publicPage, '02-live-ai-config-empty');
+    } else {
+      await shot(publicPage, '02-live-ai-baseline');
+    }
     assert.equal(publicErrors.length, 0);
     report.checks.publicPages = 'PASS';
   } catch (error) {
@@ -150,7 +166,12 @@ try {
   await page.getByTestId('simulation-canvas').waitFor();
   assert.equal(await page.getByTestId('tools-menu').isVisible(), false, 'Tool menu must not obscure applied simulation');
   assert.equal(Number(await page.getByTestId('param-slider-wavelengthNm').inputValue()), 400);
+  assert.equal(await page.getByTestId('preset-select').inputValue(), '', 'Custom scene must not retain 405 nm preset label');
+  assert.equal(await page.getByTestId('preset-select').locator('option:checked').textContent(), '自定义参数');
   await shot(page, '05-applied-physics');
+  await page.getByTestId('preset-select').selectOption('photoelectric-sodium-violet');
+  assert.equal(Number(await page.getByTestId('param-slider-wavelengthNm').inputValue()), 405);
+  await shot(page, '08-restored-preset');
   await openDrawer(page);
   await page.getByTestId('ai-prompt-input').fill(prompt);
   fixturePhase = 'safe error / clear / reload';

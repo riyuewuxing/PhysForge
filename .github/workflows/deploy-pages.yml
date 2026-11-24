@@ -17,6 +17,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      entry: ${{ steps.build-entry.outputs.entry }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -30,6 +32,10 @@ jobs:
       - run: pnpm --filter @physforge/web build
         env:
           VITE_BASE_PATH: /PhysForge/
+      - name: Record expected public entry
+        id: build-entry
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const html = fs.readFileSync("apps/web/dist/index.html", "utf8"); const match = html.match(/src="([^"]*\/assets\/index-[^"]+\.js)"/); if (!match) throw new Error("Main entry not found"); console.log("entry=" + match[1]);' >> "$GITHUB_OUTPUT"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -44,3 +50,33 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  verify-live:
+    name: Verify deployed build and BYOK browser flow
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Public website smoke and intercepted BYOK fixture
+        env:
+          PHYSFORGE_VERIFY_DEPLOYMENT: '1'
+          PHYSFORGE_EXPECTED_ENTRY: ${{ needs.build.outputs.entry }}
+        run: node scripts/byok-browser-audit.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pages-byok-live
+          path: artifacts/byok-audit/
+          retention-days: 7
