@@ -920,11 +920,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const loop = (nowMs: number) => {
       rafId = requestAnimationFrame(loop);
       if (advanceStoryCamera2D(nowMs)) renderFrameToCanvas();
-      const runner = storyRunnerRef.current;
-      if (runner && requestedStoryDeckRef.current === storyOwnerRef.current && storyOwnerRef.current?.modelId === latestRef.current.plugin.meta.id) {
+      const runner = requestedStoryDeckRef.current === storyOwnerRef.current &&
+        storyOwnerRef.current?.modelId === latestRef.current.plugin.meta.id ? storyRunnerRef.current : null;
+      if (runner) {
         const current = latestRef.current;
-        const observables = simStateRef.current === null ? undefined : current.plugin.engine.computeObservables(simStateRef.current, current.params);
-        runner.tick(nowMs, observables);
+        // The tween may reset the physical state; sample only after applying its new params.
+        runner.tick(nowMs);
+        if (runner.hasArmedFreeze && simStateRef.current !== null &&
+            runner.checkAutoFreeze(current.plugin.engine.computeObservables(simStateRef.current, current.params))) {
+          accumulatorRef.current = 0;
+          renderFrameToCanvas();
+          emitTelemetrySummary(true);
+        }
         if (storyDirtyRef.current) {
           if (!latestRef.current.isPlaying) renderFrameToCanvas();
           emitTelemetrySummary(false);
@@ -950,6 +957,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       );
 
       let stepped = false;
+      let freezeHit = false;
       let cur = simStateRef.current;
       let simT = simulationTimeRef.current;
 
@@ -964,13 +972,21 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           eventsRef.current = [...eventsRef.current, ...res.events];
         }
 
-        if (simT - lastSnapshotTRef.current >= SNAPSHOT_INTERVAL) {
-          const obs = p.engine.computeObservables(cur, pm);
+        // Detect at each actual 240 Hz physics sample, never only at the next browser frame.
+        const armedObs = runner?.hasArmedFreeze ? p.engine.computeObservables(cur, pm) : undefined;
+        freezeHit = armedObs !== undefined && runner !== null && runner.checkAutoFreeze(armedObs);
+        if (freezeHit || simT - lastSnapshotTRef.current >= SNAPSHOT_INTERVAL) {
+          const obs = armedObs ?? p.engine.computeObservables(cur, pm);
           snapshotsRef.current.push({ t: simT, state: cur, observables: obs });
           if (snapshotsRef.current.length > MAX_SNAPSHOTS) {
             snapshotsRef.current.shift();
           }
           lastSnapshotTRef.current = simT;
+        }
+        if (freezeHit) {
+          accumulatorRef.current = 0;
+          lastFrameMsRef.current = null;
+          break;
         }
       }
 
@@ -978,8 +994,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         simulationTimeRef.current = simT;
         simStateRef.current = cur;
         renderFrameToCanvas();
-        syncUPlotData();
-        emitTelemetrySummary(false);
+        syncUPlotData(freezeHit);
+        emitTelemetrySummary(freezeHit);
       }
     };
 
