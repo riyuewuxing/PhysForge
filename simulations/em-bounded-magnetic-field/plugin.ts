@@ -9,7 +9,8 @@ import {
   fieldSignedDistance,
   stepBoundedMagnetic,
   type BoundedMagneticParams,
-  type BoundedMagneticState
+  type BoundedMagneticState,
+  type ParticleTrack
 } from './engine.js';
 
 const paramSchema: readonly ParamFieldSpec<BoundedMagneticParams>[] = [
@@ -160,53 +161,107 @@ function drawArrow(
 }
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "larmor-initial",
-  "title": "纯磁场初始回旋半径（qB ≠ 0）",
-  "latex": "r_0=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=mass}{m}}\\htmlClass{pf-live-var}{\\htmlData{param=initialSpeed}{v_0}}}{|\\htmlClass{pf-live-var}{\\htmlData{param=charge}{q}}\\htmlClass{pf-live-var}{\\htmlData{param=magneticFieldZ}{B_z}}|}",
-  "bindings": [
-    {
-      "tokenKey": "mass",
-      "paramKey": "mass",
-      "label": "粒子质量 m",
-      "unit": "kg",
-      "min": 0.2,
-      "max": 5,
-      "step": 0.1,
-      "precision": 2
-    },
-    {
-      "tokenKey": "initialSpeed",
-      "paramKey": "initialSpeed",
-      "label": "入射初速率 v₀",
-      "unit": "m/s",
-      "min": 0,
-      "max": 6,
-      "step": 0.2,
-      "precision": 2
-    },
-    {
-      "tokenKey": "charge",
-      "paramKey": "charge",
-      "label": "粒子电荷量 q",
-      "unit": "C",
-      "min": -3,
-      "max": 3,
-      "step": 0.5,
-      "precision": 2
-    },
-    {
-      "tokenKey": "magneticFieldZ",
-      "paramKey": "magneticFieldZ",
-      "label": "磁感应强度 Bz",
-      "unit": "T",
-      "min": -4,
-      "max": 4,
-      "step": 0.2,
-      "precision": 2
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "larmor-initial",
+    "title": "纯磁场初始回旋半径（qB ≠ 0）",
+    "latex": "r_0=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=mass}{m}}\\htmlClass{pf-live-var}{\\htmlData{param=initialSpeed}{v_0}}}{|\\htmlClass{pf-live-var}{\\htmlData{param=charge}{q}}\\htmlClass{pf-live-var}{\\htmlData{param=magneticFieldZ}{B_z}}|}",
+    "bindings": [
+      {
+        "tokenKey": "mass",
+        "paramKey": "mass",
+        "label": "粒子质量 m",
+        "unit": "kg",
+        "min": 0.2,
+        "max": 5,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "initialSpeed",
+        "paramKey": "initialSpeed",
+        "label": "入射初速率 v₀",
+        "unit": "m/s",
+        "min": 0,
+        "max": 6,
+        "step": 0.2,
+        "precision": 2
+      },
+      {
+        "tokenKey": "charge",
+        "paramKey": "charge",
+        "label": "粒子电荷量 q",
+        "unit": "C",
+        "min": -3,
+        "max": 3,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "magneticFieldZ",
+        "paramKey": "magneticFieldZ",
+        "label": "磁感应强度 Bz",
+        "unit": "T",
+        "min": -4,
+        "max": 4,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "half-space",
+        "circular",
+        "rectangular"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "crossed-field-drift",
+    "title": "正交匀强复合场漂移速度（q≠0、B_z≠0）",
+    "latex": "v_d=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=electricFieldY}{E_y}}}{\\htmlClass{pf-live-var}{\\htmlData{param=magneticFieldZ}{B_z}}}",
+    "bindings": [
+      {
+        "tokenKey": "electricFieldY",
+        "paramKey": "electricFieldY",
+        "label": "电场强度 E_y",
+        "unit": "V/m",
+        "min": -6,
+        "max": 6,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "magneticFieldZ",
+        "paramKey": "magneticFieldZ",
+        "label": "磁场强度 B_z",
+        "unit": "T",
+        "min": -4,
+        "max": 4,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "crossed-eb"
+      ]
+    }
+  }
+];
+/** Display-only auxiliary circle in the uniformly translating E×B drift frame.
+ * In pure B the unmodified engine helper is exact; in crossed fields reuse its geometry
+ * with the velocity relative to the drift. No change to integrated state or observables. */
+export function displayLarmorCircleForTrack(track: ParticleTrack, params: BoundedMagneticParams) {
+  if (params.mode !== 'crossed-eb') return track.inField ? computeLarmorCircleForTrack(track, params) : null;
+  if (params.magneticFieldZ === 0 || params.charge === 0) return null;
+  const vd = params.electricFieldY / params.magneticFieldZ;
+  return computeLarmorCircleForTrack({
+    ...track,
+    state: { ...track.state, velocity: { ...track.state.velocity, x: track.state.velocity.x - vd } }
+  }, params);
+}
+
 export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin<
   BoundedMagneticParams,
   BoundedMagneticState
@@ -487,29 +542,26 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
     { key: 'kineticEnergy', label: '动能 Ek', unit: 'J', color: '#4ade80' },
     { key: 'x', label: '横坐标 x', unit: 'm', color: '#fbbf24' },
     { key: 'y', label: '纵坐标 y', unit: 'm', color: '#f472b6' },
-    { key: 'larmorRadius', label: '瞬时回旋半径 R', unit: 'm', color: '#a78bfa' }
+    { key: 'larmorRadius', label: 'mv/|qB|（纯磁场内回旋半径）', unit: 'm', color: '#a78bfa' }
   ],
   formatFormulas: (state, params) => {
     const obs = computeObservables(state, params);
     const qB = Math.abs(params.charge * params.magneticFieldZ);
-    const radiusStr = qB > 0 ? (obs.larmorRadius ?? 0).toFixed(3) : '\\infty';
-    const items = [
-      {
-        id: 'larmor-r',
-        label: '洛伦兹力回旋半径公式',
-        latex: 'R = \\frac{mv}{|qB|}',
-        substitutedLatex: `R = \\frac{${params.mass.toFixed(1)} \\times ${(obs.speed ?? 0).toFixed(2)}}{|${params.charge.toFixed(1)} \\times ${params.magneticFieldZ.toFixed(1)}|} = ${radiusStr}\\text{ m}`
-      }
-    ];
-    if (params.mode === 'crossed-eb' && Math.abs(params.magneticFieldZ) > 0) {
-      items.push({
-        id: 'drift-v',
-        label: '正交复合场配速漂移速度',
-        latex: 'v_d = \\frac{E_y}{B_z}',
-        substitutedLatex: `v_d = \\frac{${params.electricFieldY.toFixed(1)}}{${params.magneticFieldZ.toFixed(1)}} = ${(obs.vDriftX ?? 0).toFixed(2)}\\text{ m/s}`
-      });
+    if (qB === 0) return [{
+      id: 'no-magnetic-gyration', label: '无磁回旋（qB=0）',
+      latex: '\\omega_c=0',
+      substitutedLatex: '\\text{无磁回旋；电场作用须单独判断}'
+    }];
+    if (params.mode === 'crossed-eb') {
+      const drift = obs.vDriftX ?? 0;
+      const relativeSpeed = obs.vRotMag ?? 0;
+      return [{ id: 'drift-v', label: '漂移系中的回旋半径与漂移速度',
+        latex: '\\begin{aligned}v_d&=E_y/B_z\\\\ R_{\\rm rot}&=\\frac{m|\\mathbf v-\\mathbf v_d|}{|qB_z|}\\end{aligned}',
+        substitutedLatex: `v_d=${drift.toFixed(3)}\\text{ m/s},\\quad R_{\\rm rot}=${(params.mass * relativeSpeed / qB).toFixed(3)}\\text{ m}` }];
     }
-    return items;
+    return [{ id: 'larmor-r', label: '纯磁场内的回旋半径',
+      latex: 'R=\\frac{mv}{|qB|}',
+      substitutedLatex: `R=${(obs.larmorRadius ?? 0).toFixed(3)}\\text{ m}` }];
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const pxPerMeter = Math.min(viewport.width, viewport.height) * 0.24 * viewport.scale;
@@ -618,8 +670,7 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
     // 2. 动态圆辅助圆与圆心
     if (activeLayers.has('larmorCircle')) {
       for (const track of state.particles) {
-        if (!track.inField && params.mode !== 'crossed-eb') continue;
-        const circle = computeLarmorCircleForTrack(track, params);
+        const circle = displayLarmorCircleForTrack(track, params);
         if (!circle) continue;
         const centerScreen = toScreen(circle.center.x, circle.center.y);
         const posScreen = toScreen(track.state.position.x, track.state.position.y);
