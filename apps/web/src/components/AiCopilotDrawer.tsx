@@ -74,10 +74,10 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
     setProbeMsg('');
     invalidateResult();
   };
-  const clearAllKeys = () => {
+  const clearAllKeys = (disableOnline = false) => {
     lockAiVault();
     clearKey();
-    setUseByok(false);
+    if (disableOnline) setUseByok(false);
     setVaultLockRevision(n => n + 1);
   };
   const activateVaultProfile = (profile: AiVaultProfile) => {
@@ -215,13 +215,13 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
         </div>
 
         <AiVaultPanel busy={running || probing} onActivate={activateVaultProfile}
-          onLock={clearAllKeys} onBusy={setVaultBusy} lockRevision={vaultLockRevision} />
+          onLock={() => clearAllKeys(true)} onBusy={setVaultBusy} lockRevision={vaultLockRevision} />
         <div className="rounded-xl border p-3 space-y-2" style={{ borderColor: 'var(--pf-border)' }}>
           <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
             <input data-testid="byok-enabled" type="checkbox" checked={useByok} disabled={busy} onChange={(e) => { setUseByok(e.target.checked); setAiOnlineEnabled(e.target.checked); setProbeMsg(''); invalidateResult(); }} />
             <span>启用可选 BYOK 外部大模型 API（Generate-then-Refine 3 轮自修正；默认离线规则引擎）</span>
           </label>
-          {!useByok && saved && <div className="flex items-center justify-between gap-2 text-xs opacity-80"><span>在线模式已关闭；本页内存仍保留已保存的密钥。</span><button type="button" data-testid="btn-clear-offline-byok" onClick={clearAllKeys} disabled={busy} className="rounded-lg border px-2 py-1" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button></div>}
+          {!useByok && saved && <div className="flex items-center justify-between gap-2 text-xs opacity-80"><span>在线模式已关闭；本页内存仍保留已保存的密钥。</span><button type="button" data-testid="btn-clear-offline-byok" onClick={() => clearAllKeys()} disabled={busy} className="rounded-lg border px-2 py-1" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button></div>}
           {useByok && (
             <div className="grid grid-cols-1 gap-2 pt-1 text-xs">
               <div className="flex flex-wrap gap-1.5">
@@ -302,7 +302,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
                   {saved ? '本页面已保存' : '保存至本页面内存'}
                 </button>
                 <button type="button" data-testid="btn-clear-byok" disabled={busy}
-                  onClick={clearAllKeys} className="rounded-lg border px-2.5 py-1.5 disabled:opacity-50" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button>
+                  onClick={() => clearAllKeys()} className="rounded-lg border px-2.5 py-1.5 disabled:opacity-50" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button>
               </div>
               <div className="opacity-80">手动保存仅在本次页面有效；长期使用请导入上方加密保险库。测试模型目录不代表模型能生成；运行建模将发送题干及模型 Schema，最多 3 次付费请求。</div>
               <button
@@ -351,7 +351,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
               <button
                 type="button"
                 data-testid="btn-apply-ai-scene"
-                disabled={!result.accepted || running || probing}
+                disabled={!result.accepted || busy}
                 onClick={() => {
                   if (!result.accepted || !result.finalScene) return;
                   onApplyScene(
