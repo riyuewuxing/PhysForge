@@ -5,7 +5,18 @@
 
 ---
 
-## 当前权威状态快照（2026-11-24，V3 全波次草稿代码提交，未封板）
+## 当前施工快照（2026-11-24，V3.0，未封板）
+
+* main 最后核实为 `3a667f88219c504fced84212881c49080b3ae372`；以下均为独立 Draft PR 或校验专用分支，不能视为已合并或发布。
+* V3 实施依据：`docs/V3_WRITER_CONSTRUCTION_PLAN.md` 与 `docs/v3-specs/V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md`；不改动 engine 与旧物理阈值，不替代总控验收。
+* 施工链：[#1](https://github.com/riyuewuxing/PhysForge/pull/1) BYOK；[#2](https://github.com/riyuewuxing/PhysForge/pull/2) SDK/StoryRunner；[#3](https://github.com/riyuewuxing/PhysForge/pull/3) 三态演说；[#4](https://github.com/riyuewuxing/PhysForge/pull/4) 双屏；[#5](https://github.com/riyuewuxing/PhysForge/pull/5) 三个课件；[#6](https://github.com/riyuewuxing/PhysForge/pull/6) 活公式拖拽；[#7](https://github.com/riyuewuxing/PhysForge/pull/7) 与 [#8](https://github.com/riyuewuxing/PhysForge/pull/8) 15 模型绑定；[#9](https://github.com/riyuewuxing/PhysForge/pull/9) 3D 压平数学与材质；[#10](https://github.com/riyuewuxing/PhysForge/pull/10) E10；[#12](https://github.com/riyuewuxing/PhysForge/pull/12) E04/B1；[#14](https://github.com/riyuewuxing/PhysForge/pull/14) S02/M10；[#15](https://github.com/riyuewuxing/PhysForge/pull/15) S01；最终验收脚本分支 `chore/v3-w4b-audit-release`。#16 为已关闭的替代施工分支，不重复合入。
+* 已核实 CI：#1、#2；[#11](https://github.com/riyuewuxing/PhysForge/pull/11) W1A+W1B（run 45365320013，verify 与 Playwright 均成功）；[#13](https://github.com/riyuewuxing/PhysForge/pull/13) W3A 独立数学核心（run 45365665722，同样成功）。#11/#13 为 CI-only 校验，禁止合入。其余实际累计链尚未取得全量 CI 实证，不能以独立测试通过代替累计通过。
+* 最终门禁：保留旧视觉审计，增加六旗舰双向切镜、实际中间帧、WebGL 上下文失效、暂停时钟保持、自动定格与活公式真实指针拖拽；单文件六旗舰上限 2,500,000 bytes 与 Three.js module graph 防泄漏。脚本已写入，**尚未实际运行最终累计链**。
+* 未闭环：本地按施工链逐个审查、CI 全量运行、实际查看 3D/2D 截图，验证每个物理投影/标签布局与资源释放（context lost 不等同于测得显存归零）；真实 BYOK 联调须用户配置 Key。E04 部分导轨为示意；S02 归一化轨迹/间隙提示是原理示意，非真实 RF 相位；M10 球体大小非按比例。通过全部门禁后由总控决定 merge 和 v3.0.0 tag。禁止提前声称封板。
+
+---
+
+## V2 历史状态快照（2026-11-24，V3 全波次草稿代码提交，未封板）
 
 * 写手起点 main@3a667f88219c504fced84212881c49080b3ae372；未直推 main、未合并、未打 v3.0.0 标签。
 * 独立 #1 Step 0；依赖链 #2→#3→#4→#5→#6→#7→#8→#9→#10→#12→#14→#15→本分支 `chore/v3-w4b-audit-release`。全部是待总控审阅的原子 PR。六旗舰空间视图、15 个高频模型活公式及三套示范课已提交代码；不能视为通过整体验收。
