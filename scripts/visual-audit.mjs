@@ -483,6 +483,33 @@ async function auditV3Morph(page, origin, screenshot) {
   return report;
 }
 
+async function auditV3DeviceGeometry(page, origin, screenshot) {
+  const url = new URL(origin);
+  url.searchParams.set('model', 'stse-em-devices-suite');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === 'stse-em-devices-suite');
+  const report = [];
+  for (const device of ['velocity-selector','mass-spectrometer','cyclotron','hall-sensor','mhd-generator','em-flowmeter']) {
+    // The real model selector, not a synthetic scene or a screenshot mock.
+    await page.locator('#param-device').selectOption(device);
+    await page.getByTestId('btn-fullscreen-speech').click();
+    const toggle = page.getByTestId('btn-view-3d-fullscreen');
+    if ((await toggle.textContent())?.includes('3D 空间')) await toggle.click();
+    const stage = page.getByTestId('three-stage-container');
+    await stage.waitFor({ state: 'visible', timeout: 20000 });
+    await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0);
+    await page.locator('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]').waitFor({ state: 'visible' });
+    if (screenshot) await screenshot('S02_' + device + '_3d');
+    await toggle.click();
+    await stage.waitFor({state:'detached',timeout:15000});
+    await page.getByTestId('simulation-canvas').waitFor({state:'visible'});
+    if (screenshot) await screenshot('S02_' + device + '_flat');
+    report.push({device,spatial:true,flat:true});
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+  }
+  return report;
+}
+
 async function auditV3StoryAndFormula(page, origin, screenshot) {
   const url = new URL(origin);
   url.searchParams.set('model', 'em-induction-double-rod');
@@ -823,7 +850,8 @@ async function main() {
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
     const v3StoryFormulaReport = await auditV3StoryAndFormula(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
-    const summary = { report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const v3DeviceReport = await auditV3DeviceGeometry(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
+    const summary = { report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
