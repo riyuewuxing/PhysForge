@@ -8,7 +8,7 @@ export interface ByokConfig {
   readonly model: string;
 }
 
-export type ByokErrorCode = 'TIMEOUT' | 'CORS_OR_NETWORK' | 'HTTP_ERROR' | 'INVALID_JSON';
+export type ByokErrorCode = 'TIMEOUT' | 'CORS_OR_NETWORK' | 'HTTP_ERROR' | 'INVALID_JSON' | 'CONFIG' | 'CANCELLED';
 
 export class ByokClientError extends Error {
   constructor(
@@ -19,6 +19,38 @@ export class ByokClientError extends Error {
     super(message);
     this.name = 'ByokClientError';
   }
+}
+
+/** Do not send credentials in plaintext or to a URL with embedded credentials/query/fragment. */
+export function validateByokConfig(config: ByokConfig): URL {
+  let url: URL;
+  try { url = new URL(config.baseUrl.trim()); }
+  catch { throw new ByokClientError('CONFIG', '请填写有效的 API Base URL。'); }
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
+      || url.username || url.password || url.search || url.hash
+      || /\/(?:chat\/completions|models)\/?$/i.test(url.pathname)) {
+    throw new ByokClientError('CONFIG', '请使用 HTTPS Base URL（仅本机代理允许 HTTP），不得包含凭据、查询参数、片段或完整 API 路径。');
+  }
+  if (!config.apiKey.trim() || !config.model.trim()) {
+    throw new ByokClientError('CONFIG', '请填写 API Key 和模型名称。');
+  }
+  return url;
+}
+
+function byokEndpoint(config: ByokConfig, suffix: string): string {
+  return validateByokConfig(config).href.replace(/\/+$/, '') + suffix;
+}
+
+export function describeByokError(error: unknown): string {
+  if (!(error instanceof ByokClientError)) return '操作失败，请检查配置与网络后重试。';
+  if (error.code !== 'HTTP_ERROR') return error.message;
+  const hint: Record<number, string> = {
+    400: '请求参数或模型不兼容', 401: '密钥无效或已失效', 402: '余额不足',
+    403: '没有访问权限', 404: '端点或模型不存在', 422: '请求格式不兼容',
+    429: '达到速率或额度限制', 500: '服务商内部错误', 502: '上游服务异常', 503: '服务商暂不可用'
+  };
+  return `HTTP ${error.status ?? '未知'}：${hint[error.status ?? 0] ?? '服务商拒绝请求，请检查配置'}。`;
 }
 
 export function extractJsonFromLlmOutput(raw: string): unknown {
@@ -49,7 +81,6 @@ export function extractJsonFromLlmOutput(raw: string): unknown {
 
   let sawObjectStart = false;
   let sawBalancedObject = false;
-  let lastParseError = '';
   for (let start = 0; start < trimmed.length; start++) {
     if (trimmed[start] !== '{') continue;
     sawObjectStart = true;
@@ -73,8 +104,7 @@ export function extractJsonFromLlmOutput(raw: string): unknown {
           sawBalancedObject = true;
           try {
             return JSON.parse(trimmed.slice(start, index + 1)) as unknown;
-          } catch (error) {
-            lastParseError = error instanceof Error ? error.message : String(error);
+          } catch {
             break;
           }
         }
@@ -86,7 +116,7 @@ export function extractJsonFromLlmOutput(raw: string): unknown {
     throw new ByokClientError('INVALID_JSON', '未在模型回复中找到 JSON 起始符 “{”');
   }
   if (sawBalancedObject) {
-    throw new ByokClientError('INVALID_JSON', `提取到的 JSON 语法不合法：${lastParseError}`);
+    throw new ByokClientError('INVALID_JSON', '提取到的 JSON 语法不合法');
   }
   throw new ByokClientError('INVALID_JSON', 'JSON 大括号未闭合（模型输出可能被截断）');
 }
@@ -112,12 +142,9 @@ async function withByokResponse<T>(
   try {
     const response = await fetchImpl(url, { ...init, signal: controller.signal });
     if (!response.ok) {
-      const responseText = await response.text().catch(() => '');
-      throw new ByokClientError(
-        'HTTP_ERROR',
-        `API 返回 HTTP ${response.status}：${responseText.slice(0, 200) || response.statusText}`,
-        response.status
-      );
+      // Upstream error bodies can echo credentials or other sensitive data.
+      void response.body?.cancel().catch(() => {});
+      throw new ByokClientError('HTTP_ERROR', `API 返回 HTTP ${response.status}`, response.status);
     }
     return await consume(response);
   } catch (error) {
@@ -127,10 +154,11 @@ async function withByokResponse<T>(
         `模型请求超时（超过 ${timeoutMs} ms），请检查网络或切换更快的模型端点`
       );
     }
+    if (callerSignal?.aborted) throw new ByokClientError('CANCELLED', '请求已取消。');
     if (error instanceof ByokClientError) throw error;
     throw new ByokClientError(
       'CORS_OR_NETWORK',
-      '网络请求失败，可能被浏览器 CORS 跨域策略拦截。请改用允许浏览器直连的 API 中转地址，或配置本地代理后重试。'
+      '网络请求失败，可能被浏览器 CORS 跨域策略拦截。请检查网络和服务商的跨域许可；如需代理，仅使用自己信任的 HTTPS 或本机端点。'
     );
   } finally {
     clearTimeout(timeout);
@@ -183,22 +211,36 @@ export function formatModelSchemaHint(modelId: string, schema: readonly AnyParam
   return `Schema ${modelId}: ${fields.join('; ')}`;
 }
 
-/** Test the provider's models endpoint, not the selected model's generation ability. */
+/** List models without generating billable text. No claim about generation availability. */
+export async function listByokModels(
+  config: ByokConfig,
+  timeoutMs = 10_000,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const data = await fetchByokJson(byokEndpoint(config, '/models'), {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${config.apiKey.trim()}` },
+    cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
+    redirect: 'error',
+    ...(signal ? { signal } : {})
+  }, '模型目录响应不是合法 JSON', timeoutMs, fetchImpl);
+  if (!isRecord(data) || !Array.isArray(data['data'])) {
+    throw new ByokClientError('INVALID_JSON', '响应缺少 OpenAI 兼容模型目录 data 数组');
+  }
+  return [...new Set(data['data'].flatMap((item: unknown) =>
+    isRecord(item) && typeof item['id'] === 'string' && item['id'].trim()
+      && !item['id'].includes(config.apiKey.trim()) ? [item['id']] : []
+  ))].sort();
+}
+
+/** Preserve the existing connectivity probe contract. */
 export async function probeByokConnection(
   config: ByokConfig,
   timeoutMs = 10_000,
   fetchImpl: typeof fetch = fetch
 ): Promise<void> {
-  const endpoint = `${config.baseUrl.trim().replace(/\/+$/, '')}/models`;
-  const data = await fetchByokJson(endpoint, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${config.apiKey}` },
-    cache: 'no-store',
-    redirect: 'error'
-  }, '模型目录响应不是合法 JSON', timeoutMs, fetchImpl);
-  if (!isRecord(data) || !Array.isArray(data['data'])) {
-    throw new ByokClientError('INVALID_JSON', '响应缺少 OpenAI 兼容模型目录 data 数组');
-  }
+  await listByokModels(config, timeoutMs, fetchImpl);
 }
 
 export function buildByokSystemPrompt(schemaHint?: string): string {
@@ -217,9 +259,12 @@ export function buildByokSystemPrompt(schemaHint?: string): string {
 export async function requestByokSceneCandidate(
   config: ByokConfig,
   userPrompt: string,
-  feedback?: string
+  feedback?: string,
+  signal?: AbortSignal
 ): Promise<unknown> {
-  const endpoint = `${config.baseUrl.trim().replace(/\/+$/, '')}/chat/completions`;
+  const endpoint = byokEndpoint(config, '/chat/completions');
+  const deepseek = validateByokConfig(config).origin === 'https://api.deepseek.com';
+  if (signal?.aborted) throw new ByokClientError('CANCELLED', '请求已取消。');
   const content = feedback
     ? `${userPrompt}\n\n[上轮无头物理引擎检验未通过，请针对下列报错修正参数后重试]:\n${feedback}`
     : userPrompt;
@@ -232,24 +277,36 @@ export async function requestByokSceneCandidate(
 
   const data = await fetchByokJson(endpoint, {
     method: 'POST',
-    redirect: 'error',
+    redirect: 'error', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
+    ...(signal ? { signal } : {}),
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`
+      Authorization: `Bearer ${config.apiKey.trim()}`
     },
     body: JSON.stringify({
-      model: config.model,
-      temperature: 0.1,
+      model: config.model.trim(),
+      ...(deepseek ? {
+        thinking: { type: 'disabled' },
+        response_format: { type: 'json_object' },
+        max_tokens: 2048
+      } : {}),
+      stream: false,
       messages: [
         { role: 'system', content: buildByokSystemPrompt(schemaHint) },
         { role: 'user', content }
       ]
     })
-  }, 'BYOK API 返回的响应体不是合法 JSON');
+  }, 'BYOK API 返回的响应体不是合法 JSON', deepseek ? 60_000 : 25_000);
 
   const choices = isRecord(data) && Array.isArray(data['choices']) ? data['choices'] : [];
   const firstChoice: unknown = choices[0];
   const message = isRecord(firstChoice) ? firstChoice['message'] : undefined;
   const rawContent = isRecord(message) ? message['content'] : undefined;
+  if (isRecord(firstChoice) && firstChoice['finish_reason'] === 'length') {
+    throw new ByokClientError('INVALID_JSON', '模型输出达到长度限制，未生成完整场景。');
+  }
+  if (typeof rawContent === 'string' && rawContent.includes(config.apiKey.trim())) {
+    throw new ByokClientError('INVALID_JSON', '模型响应包含敏感内容，已拒绝显示。');
+  }
   return extractJsonFromLlmOutput(typeof rawContent === 'string' ? rawContent : '');
 }

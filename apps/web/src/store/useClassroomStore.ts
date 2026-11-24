@@ -194,13 +194,19 @@ function applyLoadedPluginState(
     : plugin.presets[0] ?? null;
   const mergedOverrides = overrideParams ?? preset?.params;
   const params = resolvePluginParams(plugin.paramSchema, mergedOverrides);
+  // A named preset describes its authored parameters, not arbitrary overrides.
+  // Preserve the existing parameter and layer initialization contract.
+  const presetParams = preset ? resolvePluginParams(plugin.paramSchema, preset.params) : null;
+  const activePresetId = preset && presetParams
+    && plugin.paramSchema.every(field => params[field.key] === presetParams[field.key])
+    ? preset.id : null;
   liveFormulaGesture = null;
   set((s) => ({
     selectedPluginId: plugin.meta.id,
     loadedPlugin: plugin,
     isLoadingPlugin: false,
     telemetry: { t: 0, observables: {}, events: [], invariants: [], formulaItems: [] },
-    activePresetId: preset?.id ?? presetId ?? null,
+    activePresetId,
     params,
     activeLayers: getDefaultLayers(plugin, preset?.visibleLayers),
     isPlaying: false,
