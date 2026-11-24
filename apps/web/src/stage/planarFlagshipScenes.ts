@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ParamRecord } from '@physforge/sim-sdk';
 import type { InductionParams, InductionState } from '../../../../simulations/em-induction-double-rod/engine.js';
-import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints } from '../../../../simulations/em-induction-double-rod/diagramGeometry.js';
+import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints, inductionLoadDimensions } from '../../../../simulations/em-induction-double-rod/diagramGeometry.js';
 import { fieldSignedDistance, type BoundedMagneticParams, type BoundedMagneticState, type ParticleTrack } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { displayLarmorCircleForTrack } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import { anodizedRailMaterial, brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
@@ -76,25 +76,37 @@ function inductionDriver(root: THREE.Group): FlagshipSceneDriver {
       const state = raw as InductionState, params = rawParams as InductionParams;
       const geometry=inductionDiagramGeometry(state,params);
       const {l1,l2,double}=geometry;
-      const next = JSON.stringify([l1, l2, params.rodMode, params.magneticB, params.circuitLoad, layers.has('railsAndField')]);
+      const next = JSON.stringify([l1, l2, params.rodMode, params.magneticB, params.circuitLoad, layers.has('railsAndField'),layers.has('rods')]);
       if (next !== signature) {
         signature = next; clear(fixed);
         if (layers.has('railsAndField')) {
           const floor = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.045, Math.max(l1, l2) + 1.2), obsidianStageFloorMaterial());
           floor.position.y = -0.11; fixed.add(floor);
-          if (params.rodMode === 'single') {
-            const load = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.15, l1), brushedCopperMaterial());
-            load.name='induction-load-lead'; fixed.add(load);
-            const label = params.circuitLoad === 'capacitor' ? 0x38bdf8 : params.circuitLoad === 'battery' ? 0x4ade80 : 0xfbbf24;
-            const body = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, 0.3), magneticFluxMaterial(label));
-            body.name='induction-load-body'; fixed.add(body);
-          }
           for(const point of inductionFieldPoints(params)){
             const z=-point.y;
             const tube=new THREE.Mesh(new THREE.CylinderGeometry(0.013,0.013,0.8,8),magneticFluxMaterial());
             tube.position.set(point.x,0.3,z);fixed.add(tube);
             fixed.add(new THREE.ArrowHelper(new THREE.Vector3(0,-Math.sign(params.magneticB),0),
               new THREE.Vector3(point.x,Math.sign(params.magneticB)*0.4+0.3,z),0.8,0x38bdf8,0.12,0.06));
+          }
+        }
+        if(!double&&layers.has('rods')){
+          const load=new THREE.Group();load.name='induction-load';fixed.add(load);
+          const {halfGap,halfPlateWidth}=inductionLoadDimensions(l1);
+          const leadLength=l1/2-halfGap;
+          for(const side of [-1,1]){
+            const lead=new THREE.Mesh(new THREE.BoxGeometry(0.055,0.055,leadLength),brushedCopperMaterial());
+            lead.name=side===-1?'load-upper-lead':'load-lower-lead';
+            lead.position.z=side*(halfGap+leadLength/2);load.add(lead);
+          }
+          if(params.circuitLoad==='resistor'){
+            const body=new THREE.Mesh(new THREE.BoxGeometry(0.17,0.12,2*halfGap),magneticFluxMaterial(0xfbbf24));
+            body.name='load-resistor';load.add(body);
+          }else for(const side of [-1,1]){
+            const plateWidth=2*halfPlateWidth*(params.circuitLoad==='battery'&&side===1?0.55:1);
+            const plate=new THREE.Mesh(new THREE.BoxGeometry(plateWidth,0.075,0.025),brushedCopperMaterial());
+            plate.name=side===-1?'load-upper-plate':'load-lower-plate';
+            plate.position.z=side*halfGap;load.add(plate);
           }
         }
       }
@@ -108,10 +120,8 @@ function inductionDriver(root: THREE.Group): FlagshipSceneDriver {
         if(!rail.visible)continue;
         rail.position.copy(a).lerp(b,0.5);rail.scale.x=length;rail.quaternion.setFromUnitVectors(axis,delta.normalize());
       }
-      for(const name of ['induction-load-lead','induction-load-body']){
-        const load=fixed.getObjectByName(name);
-        if(load)load.position.set(geometry.x2,0,0);
-      }
+      const load=fixed.getObjectByName('induction-load');
+      if(load)load.position.set(geometry.x2,0,0);
       rod1.visible = layers.has('rods');
       rod2.visible = rod1.visible && params.rodMode === 'double';
       rod1.position.copy(inductionDisplayPoint(state, state.x1)); rod1.scale.z = l1;
