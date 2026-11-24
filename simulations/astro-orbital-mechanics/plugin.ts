@@ -69,6 +69,7 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  renderMode: 'hybrid',
   defaultView: {
     scale: (params) => (0.42 / 0.24) / (params.mode === 'hohmann-transfer' ? params.r2OverR1 + 0.6 : 2.6),
     offsetRatioX: 0.05
@@ -349,6 +350,6 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     }
     return items;
   }
-}), { liveFormulas });
+}), { liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 8.5, sceneDepthRadius: 8, default3DAzimuthRad: 0.5, default3DPolarRad: 0.92 } });
 
 export default astroOrbitalMechanicsPlugin;

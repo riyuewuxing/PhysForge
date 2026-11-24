@@ -91,6 +91,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     difficulty: '高三一轮',
     version: '2.0.0'
   },
+  renderMode: 'hybrid',
   paramSchema,
   presets: emDevicesPresets,
   engine: {
@@ -292,6 +293,6 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
           : `P=${state.mhdOutputWatt.toFixed(1)}\\text{ W},\\; R_{\\text{int}}=${state.mhdInternalOhm.toFixed(2)}\\ \\Omega`
     }
   ]
-}), { liveFormulas });
+}), { liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 3.4, sceneDepthRadius: 4, default3DAzimuthRad: 0.6, default3DPolarRad: 0.9 } });
 
 export default stseEmDevicesSuitePlugin;
