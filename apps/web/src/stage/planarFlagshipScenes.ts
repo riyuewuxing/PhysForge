@@ -3,7 +3,8 @@ import type { ParamRecord } from '@physforge/sim-sdk';
 import type { InductionParams, InductionState } from '../../../../simulations/em-induction-double-rod/engine.js';
 import { getEffectiveL2 } from '../../../../simulations/em-induction-double-rod/engine.js';
 import { rodDisplayX } from '@physforge/simulations/em-induction-double-rod';
-import { computeLarmorCircleForTrack, fieldSignedDistance, type BoundedMagneticParams, type BoundedMagneticState, type ParticleTrack } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
+import { fieldSignedDistance, type BoundedMagneticParams, type BoundedMagneticState, type ParticleTrack } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
+import { displayLarmorCircleForTrack } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import { anodizedRailMaterial, brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
 
 export interface FlagshipSceneDriver {
@@ -238,7 +239,7 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
         visual.exit.visible = layers.has('trajectory') && track.hasExited && Boolean(track.exitPoint);
         if (track.entryPoint) visual.entry.position.set(track.entryPoint.x, track.entryPoint.y, 0.025);
         if (track.exitPoint) visual.exit.position.set(track.exitPoint.x, track.exitPoint.y, 0.025);
-        const orbit = layers.has('larmorCircle') && (track.inField || params.mode === 'crossed-eb') ? computeLarmorCircleForTrack(track, params) : null;
+        const orbit = layers.has('larmorCircle') ? displayLarmorCircleForTrack(track, params) : null;
         visual.circle.visible = orbit !== null;
         if (orbit) { visual.circle.position.set(orbit.center.x, orbit.center.y, 0); visual.circle.scale.setScalar(orbit.radius); }
       }
