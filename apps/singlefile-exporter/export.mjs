@@ -144,6 +144,16 @@ async function main() {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'physforge-no-three-module-leak',
+        renderChunk(_code, chunk) {
+          const leaked = Object.keys(chunk.modules).filter(id =>
+            id.replace(/\\/g, '/').includes('/node_modules/three/')
+          );
+          if (leaked.length) this.error('Singlefile bundle contains Three.js modules: ' + leaked.join(', '));
+          return null;
+        }
+      },
       viteSingleFile({ removeViteModuleLoader: false })
     ],
     resolve: {
