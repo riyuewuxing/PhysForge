@@ -1,4 +1,4 @@
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { tokamakMirrorPresets } from './presets.js';
 import {
   buildTokamakMirrorSegments,
@@ -38,6 +38,63 @@ const paramSchema: readonly ParamFieldSpec<TokamakMirrorParams>[] = [
 export function fusionDisplayPoint(point: { x: number; y: number; z: number }, mode: TokamakMirrorParams['mode']) {
   return mode === 'tokamak' ? { x: point.x, y: point.y, z: point.z } : { x: point.z, y: point.y, z: -point.x };
 }
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "mirror-ratio",
+    "title": "磁镜轴线上两喉口与中心的磁场比",
+    "latex": "R_m=1+\\left(\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=coilHalfSpanM}{z_c}}}{\\htmlClass{pf-live-var}{\\htmlData{param=mirrorLengthM}{L}}}\\right)^2,\\quad\\sin^2\\theta_c=1/R_m",
+    "bindings": [
+      {
+        "tokenKey": "coilHalfSpanM",
+        "paramKey": "coilHalfSpanM",
+        "label": "磁喉半跨距 z_c",
+        "unit": "m",
+        "min": 0.8,
+        "max": 2.5,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mirrorLengthM",
+        "paramKey": "mirrorLengthM",
+        "label": "磁镜特征长度 L",
+        "unit": "m",
+        "min": 0.6,
+        "max": 2.4,
+        "step": 0.1,
+        "precision": 2
+      }
+    ]
+  },
+  {
+    "id": "mirror-pitch",
+    "title": "磁镜中心的初始垂直速率",
+    "latex": "v_\\perp=\\htmlClass{pf-live-var}{\\htmlData{param=speed0}{v_0}}\\sin \\htmlClass{pf-live-var}{\\htmlData{param=pitchAngleDeg}{\\theta_0}}",
+    "bindings": [
+      {
+        "tokenKey": "speed0",
+        "paramKey": "speed0",
+        "label": "粒子速率 v₀",
+        "unit": "m/s",
+        "min": 0.5,
+        "max": 4,
+        "step": 0.2,
+        "precision": 2
+      },
+      {
+        "tokenKey": "pitchAngleDeg",
+        "paramKey": "pitchAngleDeg",
+        "label": "初速度投射角 θ",
+        "unit": "°",
+        "min": 10,
+        "max": 85,
+        "step": 2,
+        "precision": 0
+      }
+    ]
+  }
+];
+
 export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlugin<TokamakMirrorParams, TokamakMirrorState>({
   meta: {
     id: 'stse-tokamak-magnetic-mirror',
@@ -221,6 +278,6 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
       substitutedLatex: `|B|=${Math.hypot(state.bField.x, state.bField.y, state.bField.z).toFixed(2)}\\text{ T},\\; \\theta_c=${computeMirrorLossConeDeg(params).toFixed(1)}^\\circ,\\; \\Delta\\mu/\\mu=${(state.maxMuRelDev * 100).toFixed(2)}\\%`
     }
   ]
-}), { spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 6.5, sceneDepthRadius: 5, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
+}), { liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 6.5, sceneDepthRadius: 5, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
 
 export default stseTokamakMagneticMirrorPlugin;
