@@ -8,16 +8,20 @@ type UnscopedPresenterAction =
   | { type: 'CMD_REQUEST_SYNC' }
   | { type: 'CMD_LASER_POINTER'; active: boolean; normX: number; normY: number };
 export type PresenterAction = ScopedPresenterAction | UnscopedPresenterAction;
-export interface PresenterScope { modelId: string; deckId: string | null }
+export interface PresenterScope { modelId: string; deckId: string | null; paramContextEpoch: number }
 export type PresenterCommand = (ScopedPresenterAction & PresenterScope) | UnscopedPresenterAction;
 
 /** Attach the model/deck shown on the presenter, not whichever model happens to be on stage later. */
 export function scopePresenterAction(action: PresenterAction, scope: PresenterScope): PresenterCommand {
   if (action.type === 'CMD_REQUEST_SYNC' || action.type === 'CMD_LASER_POINTER') return action;
-  return { ...action, modelId: scope.modelId, deckId: scope.deckId };
+  return { ...action, modelId: scope.modelId, deckId: scope.deckId, paramContextEpoch: scope.paramContextEpoch };
 }
 export function commandMatchesStage(command: PresenterCommand, scope: PresenterScope): boolean {
-  return !('modelId' in command) || (command.modelId === scope.modelId && command.deckId === scope.deckId);
+  if (!('modelId' in command)) return true;
+  if (command.modelId !== scope.modelId || command.deckId !== scope.deckId) return false;
+  // Parameter changes and replay refer to one exact lesson context. Relative navigation remains repeatable.
+  return (command.type !== 'CMD_SET_PARAM' && command.type !== 'CMD_RESET_SIM') ||
+    command.paramContextEpoch === scope.paramContextEpoch;
 }
 
 export interface StageSnapshotPayload {
@@ -30,6 +34,7 @@ export interface StageSnapshotPayload {
   simTime: number;
   deckId: string | null;
   beatIndex: number;
+  paramContextEpoch: number;
   totalBeats: number;
   currentCaption: string;
   speakerNotes: string;
@@ -54,7 +59,7 @@ const norm = (v: unknown): v is number => finite(v) && v >= 0 && v <= 1;
 
 export function isPresenterCommand(value: unknown): value is PresenterCommand {
   if (!isRecord(value)) return false;
-  const scoped = typeof value.modelId === 'string' && value.modelId.length > 0 && nullableString(value.deckId);
+  const scoped = typeof value.modelId === 'string' && value.modelId.length > 0 && nullableString(value.deckId) && nonnegativeInteger(value.paramContextEpoch);
   switch (value.type) {
     case 'CMD_NEXT_BEAT': case 'CMD_PREV_BEAT': case 'CMD_TOGGLE_PLAY': case 'CMD_RESET_SIM':
     case 'CMD_TOGGLE_MORPH_2D': case 'CMD_TOGGLE_BLACKOUT': return scoped;
@@ -82,7 +87,7 @@ export function isStageSnapshotPayload(value: unknown): value is StageSnapshotPa
     typeof value.isPlaying === 'boolean' && typeof value.isBlackout === 'boolean' &&
     norm(value.morphT) && finite(value.simTime) && value.simTime >= 0 &&
     nullableString(value.deckId) && (value.beatIndex === -1 || nonnegativeInteger(value.beatIndex)) &&
-    nonnegativeInteger(value.totalBeats) && (value.beatIndex === -1 || value.beatIndex < value.totalBeats) &&
+    nonnegativeInteger(value.paramContextEpoch) && nonnegativeInteger(value.totalBeats) && (value.beatIndex === -1 || value.beatIndex < value.totalBeats) &&
     typeof value.currentCaption === 'string' && typeof value.speakerNotes === 'string' && nullableString(value.nextBeatTitle) &&
     isRecord(value.observables) && Object.values(value.observables).every(finite) &&
     isRecord(value.params) && Object.values(value.params).every(paramValue) &&
