@@ -13,6 +13,13 @@ import {
   type AstroOrbitalState
 } from './engine.js';
 
+/** Shared inertial/corotating display coordinates; dynamics stay in the inertial frame. */
+export function orbitDisplayXY(x: number, y: number, t: number, corotating: boolean) {
+  const theta = corotating ? -t : 0;
+  const c = Math.cos(theta), sin = Math.sin(theta);
+  return { x: x * c - y * sin, y: x * sin + y * c };
+}
+
 const paramSchema: readonly ParamFieldSpec<AstroOrbitalParams>[] = [
   {
     key: 'mode',
@@ -134,13 +141,13 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     computeObservables,
     checkInvariants
   },
-  getForceVectors: (state, params) => {
-    const { centralMassKg, muSI, r1SI } = buildAstroScaleContext(params);
-    const testMassKg = 1;
+  getForceVectors: (state, params, activeLayers) => {
+    const { muSI, r1SI } = buildAstroScaleContext(params);
+    const scaleSI = muSI / (r1SI * r1SI);
     const position = { x: state.xNorm, y: state.yNorm };
     if (params.mode !== 'binary-lagrange') {
-      const r2 = Math.max(1e-12, position.x * position.x + position.y * position.y);
-      const scale = (-testMassKg * muSI) / (r1SI * r1SI * r2 * Math.sqrt(r2));
+      const r2 = position.x * position.x + position.y * position.y;
+      const scale = r2 > 1e-12 ? -scaleSI / (r2 * Math.sqrt(r2)) : 0;
       return [{
         id: 'central-gravity', label: 'F_g (1 kg)', origin: position,
         force: { x: scale * position.x, y: scale * position.y }, color: '#fbbf24', category: 'gravity', unit: 'N'
@@ -148,15 +155,21 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     }
 
     const q = Math.max(0.01, Math.min(0.45, params.massRatioQ));
-    const primaries = [{ id: 'primary-1', label: 'F₁', x: -q, mass: (1 - q) * centralMassKg }, { id: 'primary-2', label: 'F₂', x: 1 - q, mass: q * centralMassKg }];
+    const c = Math.cos(state.tNorm), sin = Math.sin(state.tNorm);
+    const corotating = activeLayers?.has('corotatingView') ?? false;
+    const project = (x: number, y: number) => orbitDisplayXY(x, y, state.tNorm, corotating);
+    const primaries = [
+      { id: 'primary-1', label: 'F₁', x: -q * c, y: -q * sin, fraction: 1 - q },
+      { id: 'primary-2', label: 'F₂', x: (1 - q) * c, y: (1 - q) * sin, fraction: q }
+    ];
     return primaries.map((primary, index) => {
-      const dx = primary.x - position.x;
-      const dy = -position.y;
-      const r2 = Math.max(1e-12, dx * dx + dy * dy);
-      const scale = (6.6743e-11 * testMassKg * primary.mass) / (r1SI * r1SI * r2 * Math.sqrt(r2));
+      const dx = primary.x - position.x, dy = primary.y - position.y;
+      // Match the existing softened restricted-three-body acceleration.
+      const r2 = dx * dx + dy * dy + 1e-6;
+      const scale = scaleSI * primary.fraction / (r2 * Math.sqrt(r2));
       return {
-        id: primary.id, label: `${primary.label} (1 kg)`, origin: position,
-        force: { x: scale * dx, y: scale * dy }, color: index === 0 ? '#fbbf24' : '#fb923c', category: 'gravity' as const, unit: 'N'
+        id: primary.id, label: `${primary.label} (1 kg)`, origin: project(position.x, position.y),
+        force: project(scale * dx, scale * dy), color: index === 0 ? '#fbbf24' : '#fb923c', category: 'gravity' as const, unit: 'N'
       };
     });
   },
@@ -176,8 +189,11 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     {
       id: 'satellite',
       label: '卫星随动参考系',
-      getOrigin: (s) => ({ x: s.xNorm, y: s.yNorm }),
-      getVelocity: (s) => ({ x: s.vxNorm, y: s.vyNorm })
+      getOrigin: (s, p, layers) => orbitDisplayXY(s.xNorm, s.yNorm, s.tNorm, p.mode === 'binary-lagrange' && (layers?.has('corotatingView') ?? false)),
+      getVelocity: (s, p, layers) => {
+        const rotating = p.mode === 'binary-lagrange' && (layers?.has('corotatingView') ?? false);
+        return orbitDisplayXY(s.vxNorm + (rotating ? s.yNorm : 0), s.vyNorm - (rotating ? s.xNorm : 0), s.tNorm, rotating);
+      }
     }
   ],
   getControlHandles: (state, params) =>
@@ -258,15 +274,8 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     const useCorotating = params.mode === 'binary-lagrange' && activeLayers.has('corotatingView');
 
     const mapPoint = (x: number, y: number): { px: number; py: number } => {
-      if (useCorotating) {
-        const ct = Math.cos(-state.tNorm);
-        const st = Math.sin(-state.tNorm);
-        const rx = x * ct - y * st;
-        const ry = x * st + y * ct;
-        const point = m.toScreen(rx, ry);
-        return { px: point.x, py: point.y };
-      }
-      const point = m.toScreen(x, y);
+      const p = orbitDisplayXY(x, y, state.tNorm, useCorotating);
+      const point = m.toScreen(p.x, p.y);
       return { px: point.x, py: point.y };
     };
 

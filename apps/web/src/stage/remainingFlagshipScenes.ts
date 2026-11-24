@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
 import type { EmDevicesParams, EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
+import { orbitDisplayXY } from '@physforge/simulations/astro-orbital-mechanics';
 import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
 
@@ -39,8 +40,8 @@ export function deviceDisplayPoint(x:number,y:number) {
   return new THREE.Vector3(-0.25+0.7*x,0,-0.7*y);
 }
 export function orbitDisplayPoint(x:number,y:number,t:number,corotating:boolean) {
-  const theta=corotating?-t:0, c=Math.cos(theta),s=Math.sin(theta);
-  return new THREE.Vector3(x*c-y*s,0,-(x*s+y*c));
+  const p = orbitDisplayXY(x,y,t,corotating);
+  return new THREE.Vector3(p.x,0,-p.y);
 }
 function deeShape(side: -1|1) {
   const shape=new THREE.Shape(), r=0.85;

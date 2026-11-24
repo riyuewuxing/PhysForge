@@ -405,7 +405,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (frameId !== 'ground' && drawState !== null && v2.referenceFrames) {
       const spec = v2.referenceFrames.find((f) => f.id === frameId);
       if (spec) {
-        frameOrigin = spec.getOrigin(drawState, pm);
+        frameOrigin = spec.getOrigin(drawState, pm, new Set(latestRef.current.activeLayers));
       }
     }
     const ppm = getPixelsPerMeter(zoomedVp);
@@ -497,7 +497,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const v2 = p as SimulationPluginV2<ParamRecord, unknown>;
       // V2 Auto-FBD 受力矢量与正交分解叠绘
       if (showFbd && !masked && v2.getForceVectors) {
-        const vectors = v2.getForceVectors(drawState, pm);
+        const vectors = v2.getForceVectors(drawState, pm, layerSet);
         renderAutoFbdToCanvas(ctx, {
           vectors,
           viewport: vp,

@@ -11,6 +11,11 @@ import {
   type Magnetic3dState
 } from './engine.js';
 
+/** Proper rotation (determinant +1) preserving v × B and the existing side-view projection. */
+export function magnetic3dDisplayPoint(p: { x: number; y: number; z: number }) {
+  return { x: p.z, y: p.y, z: -p.x };
+}
+
 const paramSchema: readonly ParamFieldSpec<Magnetic3dParams>[] = [
   {
     key: 'geometryType',
@@ -149,13 +154,13 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
   layers: [
     { id: 'conductors', label: '3D 载流线圈/导线', defaultVisible: true },
     { id: 'fieldLines3d', label: '3D Biot-Savart 空间磁感线', defaultVisible: true },
-    { id: 'handednessTriad', label: '左手定则 v × B → F 正交三轴', defaultVisible: true }
+    { id: 'handednessTriad', label: '速度、磁场与洛伦兹加速度', defaultVisible: true }
   ],
   telemetryChannels: [
     { key: 'z', label: '粒子轴向位置 z', unit: 'm', color: '#38bdf8' },
     { key: 'bMagMicroT', label: '所在处磁感应强度 |B|', unit: 'μT', color: '#fbbf24' },
-    { key: 'ke', label: '粒子动能 Ek (严格守恒)', unit: 'J', color: '#4ade80' },
-    { key: 'vDotF', label: '洛伦兹功率 v·F (恒0)', unit: 'W', color: '#f472b6' }
+    { key: 'ke', label: '粒子比动能 (严格守恒)', unit: 'J/kg', color: '#4ade80' },
+    { key: 'vDotF', label: '洛伦兹比功率 v·a (恒0)', unit: 'W/kg', color: '#f472b6' }
   ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
@@ -168,9 +173,8 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
   },
   exportDiagramIR: (state, params) => {
     const primitives: DiagramPrimitive[] = [
-      { kind: 'circle', cx: 0, cy: 0, r: params.radiusR, dashed: true },
-      { kind: 'trajectory', points: state.trail.map((p) => ({ x: p.x, y: p.z })), strokeWidth: 1.5 },
-      { kind: 'circle', cx: state.position.x, cy: state.position.z, r: 0.08, fill: true },
+      { kind: 'trajectory', points: state.trail.map((p) => { const q = magnetic3dDisplayPoint(p); return { x: q.x, y: q.y }; }), strokeWidth: 1.5 },
+      { kind: 'circle', cx: state.position.z, cy: state.position.y, r: 0.08, fill: true },
       {
         kind: 'mathLabel',
         x: 1.8,
@@ -190,7 +194,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
   // Pure 2D XY projection fallback for non-WebGL headless / singlefile inspection
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
-    const project3D = (p: { x: number; y: number; z: number }) => m.toScreen(p.z, p.y);
+    const project3D = (p: { x: number; y: number; z: number }) => { const q = magnetic3dDisplayPoint(p); return m.toScreen(q.x, q.y); };
 
     ctx.save();
     if (activeLayers.has('conductors')) {
@@ -308,9 +312,9 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     return [
       {
         id: 'biot-savart-lorentz',
-        label: '3D 毕奥-萨伐尔磁场与洛伦兹力',
-        latex: 'd\\mathbf{B}=\\frac{\\mu_0 I}{4\\pi}\\frac{d\\mathbf{l}\\times\\mathbf{r}}{r^3},\\; \\mathbf{F}=q\\mathbf{v}\\times\\mathbf{B}',
-        substitutedLatex: `|B|=${(obs.bMagMicroT ?? 0).toFixed(2)}\\ \\mu\\text{T},\\; E_k=${(obs.ke ?? 0).toFixed(4)}\\text{ J},\\; \\mathbf{v}\\cdot\\mathbf{F}=${(obs.vDotF ?? 0).toFixed(6)}`
+        label: '3D 毕奥-萨伐尔磁场与洛伦兹加速度',
+        latex: 'd\\mathbf{B}=\\frac{\\mu_0 I}{4\\pi}\\frac{d\\mathbf{l}\\times\\mathbf{r}}{r^3},\\; \\mathbf{a}=\\frac{q}{m}\\mathbf{v}\\times\\mathbf{B}',
+        substitutedLatex: `|B|=${(obs.bMagMicroT ?? 0).toFixed(2)}\\ \\mu\\text{T},\\; E_k/m=${(obs.ke ?? 0).toFixed(4)}\\text{ J/kg},\\; \\mathbf{v}\\cdot\\mathbf{a}=${(obs.vDotF ?? 0).toFixed(6)}`
       }
     ];
   }
