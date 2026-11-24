@@ -8,7 +8,7 @@ import {
   voltageToColor
 } from './plugin.js';
 import { createInitialState, type CircuitParams } from './engine.js';
-import { dividerPotentialColor, dividerWiperY } from './dividerView.js';
+import { dividerPotentialColor, dividerWiperLabelAnchor, dividerWiperX, dividerWiperY } from './dividerView.js';
 
 function createMockContext(): CanvasRenderingContext2D {
   return {
@@ -82,6 +82,19 @@ describe('circuit-dc-capacitor-mna visual helpers', () => {
     expect(handle?.position.y).toBeCloseTo(0.167, 3);
     expect(handle?.onDrag({ x: 0.17, y: -1.093 }).sliderR).toBe(0);
     expect(handle?.onDrag({ x: 0.17, y: 1.427 }).sliderR).toBe(20);
+  });
+
+  it('keeps the wiper label clear of the top and bottom wires without moving the drag target', () => {
+    const top=dividerWiperY(20),bottom=dividerWiperY(0);
+    for (const r of [0,.1,1,5,10,15,19,19.9,20]) {
+      const anchor=dividerWiperLabelAnchor(r);
+      expect(anchor.y-bottom).toBeGreaterThanOrEqual(.279999);
+      expect(top-anchor.y).toBeGreaterThanOrEqual(.279999);
+      expect(dividerWiperX-anchor.x).toBeCloseTo(.35,12);
+    }
+    expect(dividerWiperLabelAnchor(10).y).toBeCloseTo(dividerWiperY(10),12);
+    expect(dividerWiperY(0)).toBeCloseTo(-1.093,12);
+    expect(dividerWiperY(20)).toBeCloseTo(1.427,12);
   });
 
   it('exports series ammeter, parallel voltmeter and grounded divider with exact endpoints', () => {

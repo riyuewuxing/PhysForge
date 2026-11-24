@@ -15,6 +15,11 @@ export function dividerRFromY(y:number):number {
   return dividerLowerResistance((y-Y_BOTTOM)/(Y_TOP-Y_BOTTOM)*DIVIDER_RESISTANCE);
 }
 export const dividerWiperX=X_WIPER;
+/** Keep the text inside the circuit, away from the top/bottom supply wires.
+ * The wiper and its hit target retain the exact physical endpoint. */
+export function dividerWiperLabelAnchor(sliderR:number):Point {
+  return pt(X_WIPER-.35,Math.max(Y_BOTTOM+.28,Math.min(Y_TOP-.28,dividerWiperY(sliderR))));
+}
 export function dividerDefaultCamera(width:number,height:number):{scale:number;offsetRatioX:number;offsetRatioY:number} {
   const base=Math.max(1,Math.min(width,height)*.24);
   const usable=width-(width>=900?300:0);
@@ -178,7 +183,7 @@ export function renderDivider(ctx:CanvasRenderingContext2D,state:CircuitState,pa
   label(pt(-.96,.73),'R下 '+dividerLowerResistance(params.sliderR).toFixed(1)+' Ω');
   label(pt(-.96,-.25),'I总 = '+state.totalCurrent.toFixed(2)+' A',mid);
   label(pt(-.96,-.48),'I下 = '+state.branchCurrent1.toFixed(2)+' A',tap);
-  label(pt(X_WIPER-.32,g.wiper.y),'滑片 '+(dividerLowerResistance(params.sliderR)*5).toFixed(0)+'%',warm,Math.max(9,f*.84));
+  label(dividerWiperLabelAnchor(params.sliderR),'滑片 '+(dividerLowerResistance(params.sliderR)*5).toFixed(0)+'%',warm,Math.max(9,f*.84));
   label(pt(X_LAMP,Y_LAMP-.29),'P灯 = '+state.outputPower.toFixed(2)+' W',warm,Math.max(10,f*.88));
   if(layers.has('potential-labels')){
     label(pt(X_SOURCE+.23,Y_TOP+.16),source.toFixed(2)+' V',high);
