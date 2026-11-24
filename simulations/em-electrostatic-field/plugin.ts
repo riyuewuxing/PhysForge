@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { electrostaticPresets } from './presets.js';
 import {
@@ -40,7 +41,35 @@ const paramSchema: readonly ParamFieldSpec<ElectrostaticParams>[] = [
   { key: 'phiC', kind: 'number', label: 'C点电势 φC', unit: 'V', min: -10, max: 20, step: 1, defaultValue: 12 }
 ];
 
-export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticParams, ElectrostaticState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "two-charge-potential",
+  "title": "两点电荷电势叠加（零势能参考在无穷远）",
+  "latex": "\\varphi=k\\left(\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q1MicroC}{q_1}}}{r_1}+\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q2MicroC}{q_2}}}{r_2}\\right)",
+  "bindings": [
+    {
+      "tokenKey": "q1MicroC",
+      "paramKey": "q1MicroC",
+      "label": "源电荷 q₁",
+      "unit": "μC",
+      "min": -5,
+      "max": 5,
+      "step": 0.5,
+      "precision": 2
+    },
+    {
+      "tokenKey": "q2MicroC",
+      "paramKey": "q2MicroC",
+      "label": "源电荷 q₂",
+      "unit": "μC",
+      "min": -5,
+      "max": 5,
+      "step": 0.5,
+      "precision": 2
+    }
+  ]
+}];
+export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<ElectrostaticParams, ElectrostaticState>({
   meta: {
     id: 'em-electrostatic-field',
     title: '多点电荷静电场、等势面与粒子偏转 (E01)',
@@ -308,6 +337,6 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
       }
     ];
   }
-});
+}), { liveFormulas });
 
 export default emElectrostaticFieldPlugin;
