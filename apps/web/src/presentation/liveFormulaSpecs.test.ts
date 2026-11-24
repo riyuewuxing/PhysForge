@@ -11,7 +11,14 @@ const modelIds = [
   "mech-block-conveyor",
   "mech-vertical-circular",
   "astro-orbital-mechanics",
-  "em-electrostatic-field"
+  "em-electrostatic-field",
+  "em-capacitor-millikan",
+  "em-ac-field-oscilloscope",
+  "em-induction-double-rod",
+  "em-wireframe-rotation",
+  "wave-vibration-coupling",
+  "optics-wave-interference",
+  "stse-em-devices-suite"
 ];
 
 describe('V3 live formula model bindings', () => {
