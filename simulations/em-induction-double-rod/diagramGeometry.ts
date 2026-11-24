@@ -33,7 +33,7 @@ function longest(segs:readonly RodDiagramSegment[]):RodDiagramSegment {
 export function inductionDiagramGeometry(state:Pick<InductionState,'x1'|'x2'>,p:InductionParams) {
   const x1=rodDisplayX(state,state.x1),double=p.rodMode==='double',l1=p.railWidth,l2=double?getEffectiveL2(p):l1;
   const x2=double?rodDisplayX(state,state.x2):Math.min(-2.05,x1-0.65);
-  const minX=Math.min(-2.05,x1-0.3,x2),maxX=Math.max(2.15,x1+0.3,x2+0.3);
+  const minX=Math.min(-2.15,x1-0.3,x2-0.12),maxX=Math.max(2.15,x1+0.3,x2+0.3);
   const leftL=x1<=x2?l1:l2,rightL=x1<=x2?l2:l1,midX=(x1+x2)/2;
   const bottom1=point(x1,-l1/2),top1=point(x1,l1/2),bottom2=point(x2,-l2/2),top2=point(x2,l2/2);
   const rails=[...route(point(minX,-leftL/2),point(maxX,-rightL/2),midX),
@@ -49,4 +49,10 @@ export function inductionFieldPoints(p:InductionParams):readonly RodDiagramPoint
   if(Math.abs(p.magneticB)<1e-9)return [];
   const halfWidth=Math.max(p.railWidth,p.rodMode==='double'?getEffectiveL2(p):p.railWidth)*0.32;
   return Array.from({length:7},(_,i)=>(i-3)*0.6).flatMap(x=>[-halfWidth,0,halfWidth].map(y=>point(x,y)));
+}
+
+/** Symbol scale stays proportional even at a short rail gap. */
+export function inductionLoadDimensions(railWidth:number){
+  const halfGap=Math.min(0.12,railWidth*0.2);
+  return {halfGap,halfPlateWidth:0.12};
 }
