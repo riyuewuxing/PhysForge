@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { easeInOutCubic, type Spatial3DFlattenSpec, type Viewport } from '@physforge/sim-sdk';
 
+import type { StoryView3D } from '../presentation/storyCamera.js';
+
 export interface World2DAlignMetrics {
   isFlatOrtho: boolean;
   pxPerWorldUnit: number;
@@ -64,6 +66,12 @@ export class CameraMorphController {
   private fovDeg = 42;
   private morphT = 0;
   private tween: { from: number; to: number; start: number; duration: number } | null = null;
+  private framingTween: {
+    fromTarget: THREE.Vector3; toTarget: THREE.Vector3;
+    fromHeight: number; toHeight: number;
+    fromRotation: THREE.Quaternion; toRotation: THREE.Quaternion;
+    start: number; duration: number;
+  } | null = null;
 
   constructor(private readonly spec: Spatial3DFlattenSpec, width: number, height: number) {
     this.width = positive(width, 'width'); this.height = positive(height, 'height');
@@ -82,7 +90,8 @@ export class CameraMorphController {
   }
 
   getMorphT(): number { return this.morphT; }
-  get isAnimating(): boolean { return this.tween !== null; }
+  get isAnimating(): boolean { return this.tween !== null || this.framingTween !== null; }
+  getOrbitTarget(): THREE.Vector3 { return this.target.clone(); }
   getActiveCamera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
     return this.morphT >= 0.999 ? this.orthoCamera : this.perspCamera;
   }
@@ -94,7 +103,7 @@ export class CameraMorphController {
 
   /** Capture the actual OrbitControls camera at the start of a transition. */
   syncFromOrbitPosition(position: THREE.Vector3, target: THREE.Vector3, fovDeg = this.fovDeg): void {
-    if (this.morphT !== 0 || this.tween) return;
+    if (this.morphT !== 0 || this.isAnimating) return;
     const distance = position.distanceTo(target);
     if (!Number.isFinite(distance) || distance <= 1e-8 || !Number.isFinite(fovDeg) || fovDeg <= 2 || fovDeg >= 170 ||
         ![target.x, target.y, target.z].every(Number.isFinite)) return;
@@ -116,18 +125,52 @@ export class CameraMorphController {
   startMorphTo(target: number, nowMs: number, durationMs = 750): void {
     if (![target, nowMs, durationMs].every(Number.isFinite) || durationMs < 0) throw new RangeError('Invalid morph transition');
     this.update(nowMs);
+    // Manual morph owns the transition from the current interpolated pose.
+    this.framingTween = null;
     const to = clamp01(target);
     if (durationMs === 0 || to === this.morphT) {
       this.tween = null; this.morphT = to; this.applyPose(); return;
     }
     this.tween = { from: this.morphT, to, start: nowMs, duration: durationMs };
   }
+  /** Authored pan, orbit, scale and morph use a single clock; rapid navigation starts from the current pose. */
+  startKeyframe(view: StoryView3D, nowMs: number, durationMs = 750): void {
+    if (![view.azimuthRad, view.polarRad, ...view.target, view.visibleHeight, view.morphT, nowMs, durationMs].every(Number.isFinite)
+        || view.visibleHeight <= 0 || durationMs < 0 || view.morphT < 0 || view.morphT > 1) throw new RangeError('Invalid story camera');
+    this.update(nowMs);
+    const target = new THREE.Vector3(...view.target);
+    const direction = new THREE.Vector3().setFromSpherical(new THREE.Spherical(1,
+      Math.max(0.0001, Math.min(Math.PI - 0.0001, view.polarRad)), view.azimuthRad));
+    const rotation = new THREE.Quaternion().setFromRotationMatrix(this.lookMatrix.lookAt(direction, new THREE.Vector3(), new THREE.Vector3(0, 1, 0)));
+    if (durationMs === 0) {
+      this.framingTween = null; this.tween = null;
+      this.target.copy(target); this.visibleHeight = view.visibleHeight;
+      this.orbitRotation.copy(rotation); this.morphT = view.morphT;
+      this.applyPose(); return;
+    }
+    this.framingTween = { fromTarget: this.target.clone(), toTarget: target,
+      fromHeight: this.visibleHeight, toHeight: view.visibleHeight,
+      fromRotation: this.orbitRotation.clone(), toRotation: rotation,
+      start: nowMs, duration: durationMs };
+    this.tween = { from: this.morphT, to: view.morphT, start: nowMs, duration: durationMs };
+  }
   update(nowMs: number): boolean {
-    if (!this.tween || !Number.isFinite(nowMs)) return false;
-    const { from, to, start, duration } = this.tween;
-    const t = clamp01((nowMs - start) / duration);
-    this.morphT = t >= 1 ? to : from + (to - from) * easeInOutCubic(t);
-    if (t >= 1) this.tween = null;
+    if (!this.isAnimating || !Number.isFinite(nowMs)) return false;
+    if (this.framingTween) {
+      const f = this.framingTween;
+      const t = clamp01((nowMs - f.start) / f.duration);
+      const u = easeInOutCubic(t);
+      this.target.copy(f.fromTarget).lerp(f.toTarget, u);
+      this.visibleHeight = t >= 1 ? f.toHeight : Math.exp(Math.log(f.fromHeight) * (1 - u) + Math.log(f.toHeight) * u);
+      this.orbitRotation.copy(f.fromRotation).slerp(f.toRotation, u);
+      if (t >= 1) this.framingTween = null;
+    }
+    if (this.tween) {
+      const { from, to, start, duration } = this.tween;
+      const t = clamp01((nowMs - start) / duration);
+      this.morphT = t >= 1 ? to : from + (to - from) * easeInOutCubic(t);
+      if (t >= 1) this.tween = null;
+    }
     this.applyPose();
     return true;
   }

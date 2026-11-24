@@ -7,6 +7,7 @@ interface Props {
   specs: readonly LiveFormulaSpec[];
   params: ParamRecord;
   schema: readonly AnyParamFieldSpec[];
+  highlightedId?: string;
   onChange: (key: string, value: number) => void;
   onBegin: (key: string) => void;
   onEnd: (key: string) => void;
@@ -60,7 +61,8 @@ const FormulaTile: React.FC<Omit<Props, 'specs'> & { spec: LiveFormulaSpec }> = 
     });
   }, [spec]);
 
-  return <div className="pf-live-formula-tile">
+  return <div data-formula-id={spec.id} data-highlighted={props.highlightedId === spec.id ? "true" : undefined}
+    className={`pf-live-formula-tile ${props.highlightedId === spec.id ? 'rounded-lg ring-2 ring-amber-300 bg-amber-400/10' : ''}`}>
     {spec.title && <div className="mb-1 text-xs text-slate-400">{spec.title}</div>}
     <div ref={markup} data-testid={`live-formula-${spec.id}`} className="pf-live-formula-markup" />
     {createPortal(<div ref={hud} hidden className="pf-live-formula-hud" data-testid="live-formula-hud" aria-hidden="true">

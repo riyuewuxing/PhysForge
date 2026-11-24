@@ -5,6 +5,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
 import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
+import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
@@ -28,6 +29,8 @@ interface ThreeStageProps {
   readonly simState: unknown;
   readonly simStateRef?: React.RefObject<unknown>;
   readonly params: ParamRecord;
+  readonly getFrameParams?: () => ParamRecord;
+  readonly storyCameraCommandRef?: React.RefObject<StorySpatialCommand | null>;
   readonly activeLayers: ReadonlySet<string>;
   readonly presentationMode?: boolean;
   readonly morphTarget?: 0 | 1;
@@ -172,7 +175,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   params,
   activeLayers,
   presentationMode = false,
-  morphTarget = 0, initialFlatViewport, onMorphProgress, onMorphFlat, onWebGLFallback
+  morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ThreeSceneBridge<ParamRecord, unknown> | null>(null);
@@ -627,13 +630,29 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     });
     resizeObserver.observe(container);
 
-    syncState(simStateRef?.current ?? latestStateRef.current, latestParamsRef.current, latestLayersRef.current);
+    let lastSyncedParams = getFrameParams?.() ?? latestParamsRef.current;
+    let lastSyncedLayers = latestLayersRef.current;
+    syncState(simStateRef?.current ?? latestStateRef.current, lastSyncedParams, lastSyncedLayers);
 
     const renderLoop = (now: number) => {
       rafId = requestAnimationFrame(renderLoop);
       if (morph) {
         const target = morphPropsRef.current.morphTarget;
-        if (target !== lastMorphTarget) {
+        const command = storyCameraCommandRef?.current;
+        const wasEnabled = controls.enabled;
+        let authored = false;
+        if (command && command.modelId === plugin.meta.id &&
+            target === (command.view.morphT === 1 ? 1 : 0)) {
+          if (morph.getMorphT() === 0 && !morph.isAnimating) {
+            morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
+          }
+          morph.startKeyframe(command.view, now, command.durationMs);
+          if (storyCameraCommandRef) storyCameraCommandRef.current = null;
+          lastMorphTarget = target;
+          flatNotified = false;
+          authored = true;
+          dirty = true;
+        } else if (target !== lastMorphTarget) {
           if (target === 1 && morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
@@ -644,7 +663,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         }
         if (morph.update(now)) dirty = true;
         controls.enabled = morph.getMorphT() === 0 && !morph.isAnimating;
-        if (controls.enabled) controls.update();
+        if (controls.enabled) {
+          if (!wasEnabled || authored) controls.target.copy(morph.getOrbitTarget());
+          controls.update();
+        }
         const progress = morph.getMorphT();
         container.dataset.morphT = String(progress);
         morphPropsRef.current.onMorphProgress?.(progress);
@@ -653,9 +675,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       }
 
       const latestState = simStateRef?.current ?? latestStateRef.current;
-      if (latestState && latestState !== lastSyncedState) {
-        syncState(latestState, latestParamsRef.current, latestLayersRef.current);
+      const frameParams = getFrameParams?.() ?? latestParamsRef.current;
+      const frameLayers = latestLayersRef.current;
+      if (latestState && (latestState !== lastSyncedState || frameParams !== lastSyncedParams || frameLayers !== lastSyncedLayers)) {
+        syncState(latestState, frameParams, frameLayers);
         lastSyncedState = latestState;
+        lastSyncedParams = frameParams;
+        lastSyncedLayers = frameLayers;
       }
 
       if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) {
@@ -689,8 +715,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   }, [plugin]);
 
   useEffect(() => {
-    bridgeRef.current?.sync(simState, params, activeLayers);
-  }, [simState, params, activeLayers]);
+    if (plugin.mountThreeScene) bridgeRef.current?.sync(simState, params, activeLayers);
+  }, [plugin, simState, params, activeLayers]);
 
   const magnetic3dState = plugin.meta.id === 'em-3d-magnetic-fields'
     && simState !== null

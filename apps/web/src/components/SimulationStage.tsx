@@ -27,6 +27,8 @@ import {
 } from '../stage/ViewportController.js';
 import { RulerToolboxOverlay, type MeasureToolKind } from '../stage/RulerToolboxOverlay.js';
 import { AutoFbdBadge, renderAutoFbdToCanvas } from '../stage/AutoFbdOverlay.js';
+import { cameraToStoryView, flatStoryView, interpolateStoryView, spatialStoryView, storyCameraDuration,
+  storyViewToCamera, validStoryView2D, validStoryView3D, type StorySpatialCommand, type StoryView2D } from '../presentation/storyCamera.js';
 
 const LazyThreeStage = React.lazy(() =>
   import('../stage/ThreeStage.js').then((m) => ({ default: m.ThreeStage }))
@@ -102,6 +104,7 @@ interface SimulationStageProps {
   onStoryPlaying?: (playing: boolean) => void;
   onStoryFbd?: (enabled: boolean) => void;
   onStoryFrame?: (frame: string) => void;
+  onStoryView3d?: (enabled: boolean) => void;
   onMorphProgress?: (progress: number) => void;
   onWebGLFallback?: () => void;
 }
@@ -185,7 +188,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   onTogglePoeMask,
   onTelemetryUpdate,
   storyDeck, storyNavigationRef, onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame,
-  onMorphProgress, onWebGLFallback
+  onStoryView3d, onMorphProgress, onWebGLFallback
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = canvasRefExternal ?? internalCanvasRef;
@@ -193,6 +196,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
   const [heldThreeId, setHeldThreeId] = useState<string | null>(() => view3dEnabled ? plugin.meta.id : null);
   const showThree = view3dEnabled || Boolean(presentationMode && spatial && heldThreeId === plugin.meta.id);
+  const showThreeRef = useRef(showThree);
+  showThreeRef.current = showThree;
+  const storySpatialCommandRef = useRef<StorySpatialCommand | null>(null);
+  const storyCameraTweenRef = useRef<{ from: StoryView2D; to: StoryView2D; start: number; duration: number } | null>(null);
+  const storyCameraUiAtRef = useRef(-Infinity);
+  const threeLayers = useMemo(() => new Set(activeLayers), [activeLayers]);
   const previouslyShowThreeRef = useRef(showThree);
   const initialFlatViewportRef = useRef<Viewport | undefined>(undefined);
   const enterFromCanvas = showThree && !previouslyShowThreeRef.current && Boolean(presentationMode && spatial);
@@ -269,6 +278,26 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     setZoomPercent(100);
     setOverlayViewport(viewportRef.current);
   };
+  const applyStoryCamera2D = (view: StoryView2D, now: number, forceUi = false) => {
+    const next = storyViewToCamera(view, viewportRef.current, baseScaleRef.current);
+    cameraRef.current = next;
+    viewportRef.current = { ...viewportRef.current, ...next };
+    userTransformedViewRef.current = true;
+    if (forceUi || now - storyCameraUiAtRef.current >= 1000 / 15) {
+      storyCameraUiAtRef.current = now;
+      setZoomPercent(Math.round(100 * next.scale / Math.max(1e-6, baseScaleRef.current)));
+      setOverlayViewport(viewportRef.current);
+    }
+  };
+  const advanceStoryCamera2D = (now: number): boolean => {
+    const tween = storyCameraTweenRef.current;
+    if (!tween) return false;
+    const progress = tween.duration === 0 ? 1 : (now - tween.start) / tween.duration;
+    const finished = progress >= 1;
+    applyStoryCamera2D(finished ? tween.to : interpolateStoryView(tween.from, tween.to, progress), now, finished);
+    if (finished) storyCameraTweenRef.current = null;
+    return true;
+  };
   const completeFlatMorph = (aligned: Viewport) => {
     const transform = { scale: aligned.scale, offsetX: aligned.offsetX, offsetY: aligned.offsetY };
     cameraRef.current = transform;
@@ -296,8 +325,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const publishedStoryParamsRef = useRef<ParamRecord | null>(null);
   const storyDirtyRef = useRef(false);
   const storyLastSyncRef = useRef(-Infinity);
-  const storyCallbacksRef = useRef({ onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame });
-  storyCallbacksRef.current = { onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame };
+  const storyCallbacksRef = useRef({ onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame, onStoryView3d });
+  storyCallbacksRef.current = { onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame, onStoryView3d };
   if (params !== lastPropsParamsRef.current) {
     lastPropsParamsRef.current = params;
     if (storyParamsRef.current && params !== publishedStoryParamsRef.current) {
@@ -692,17 +721,36 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           if (action === 'reset-play' || action === 'reset-pause') resetEngine();
         },
         applyCameraKeyframe: (camera) => {
-          const view = camera.view2D;
-          if (!view || !Number.isFinite(view.centerX) || !Number.isFinite(view.centerY) || !Number.isFinite(view.zoom)) return;
-          const vp = viewportRef.current;
-          const scale = clampZoomScale(baseScaleRef.current * view.zoom);
-          const ppm = getPixelsPerMeter({ ...vp, scale });
-          const next = { scale, offsetX: vp.width * 0.05 - view.centerX * ppm, offsetY: view.centerY * ppm };
-          cameraRef.current = next;
-          viewportRef.current = { ...vp, ...next };
-          userTransformedViewRef.current = true;
-          setZoomPercent(Math.round(100 * scale / baseScaleRef.current));
-          setOverlayViewport(viewportRef.current);
+          const now = performance.now();
+          advanceStoryCamera2D(now);
+          storyCameraTweenRef.current = null;
+          storySpatialCommandRef.current = null;
+          const currentPlugin = latestRef.current.plugin;
+          const spec = isSimulationPluginV3(currentPlugin) ? currentPlugin.spatial3D : undefined;
+          const duration = storyCameraDuration(camera.durationMs);
+          let view = camera.view2D && validStoryView2D(camera.view2D) ? camera.view2D : undefined;
+          const spatialView = camera.view3D && validStoryView3D(camera.view3D) ? camera.view3D : undefined;
+          if (spec && spatialView) {
+            if (spatialView.morphT < 1 || showThreeRef.current) {
+              storySpatialCommandRef.current = { modelId: currentPlugin.meta.id, view: spatialView, durationMs: duration };
+              storyCallbacksRef.current.onStoryView3d?.(spatialView.morphT < 1);
+              return;
+            }
+            view = flatStoryView(spatialView, spec, viewportRef.current, baseScaleRef.current);
+          }
+          if (!view) return;
+          if (spec && showThreeRef.current) {
+            const box = stageBoxRef.current?.getBoundingClientRect();
+            const vp = box ? { ...viewportRef.current, width: Math.max(320, box.width), height: Math.max(240, box.height) } : viewportRef.current;
+            storySpatialCommandRef.current = { modelId: currentPlugin.meta.id,
+              view: spatialStoryView(view, spec, vp, baseScaleRef.current), durationMs: duration };
+            storyCallbacksRef.current.onStoryView3d?.(false);
+            return;
+          }
+          storyCallbacksRef.current.onStoryView3d?.(false);
+          storyCameraTweenRef.current = { from: cameraToStoryView(cameraRef.current, viewportRef.current, baseScaleRef.current),
+            to: view, start: now, duration };
+          advanceStoryCamera2D(now);
         },
         applyLayerOverrides: (overrides) => {
           if (overrides.showFbd !== undefined) {
@@ -731,6 +779,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       disposed = true;
       if (latestRef.current.plugin.meta.id === storyDeck.modelId) flushStoryParams(storyDeck.modelId, performance.now(), true);
       storyRunnerRef.current = null;
+      storyCameraTweenRef.current = null;
+      storySpatialCommandRef.current = null;
       storyOwnerRef.current = undefined;
       storyParamsRef.current = null;
       storyDirtyRef.current = false;
@@ -782,6 +832,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
+    storyCameraTweenRef.current = null;
+    storySpatialCommandRef.current = null;
     applyDefaultCameraView(viewportRef.current.width, viewportRef.current.height);
     renderFrameToCanvas();
   }, [plugin.meta.id, resetViewNonce]);
@@ -792,6 +844,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (!box) return;
     const handleWheel = (e: WheelEvent) => {
       if (!canvasRef.current) return; // OrbitControls owns the wheel in 3D.
+      storyCameraTweenRef.current = null;
       e.preventDefault();
       const rect = box.getBoundingClientRect();
       const cx = e.clientX - rect.left;
@@ -866,6 +919,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     const loop = (nowMs: number) => {
       rafId = requestAnimationFrame(loop);
+      if (advanceStoryCamera2D(nowMs)) renderFrameToCanvas();
       const runner = storyRunnerRef.current;
       if (runner && requestedStoryDeckRef.current === storyOwnerRef.current && storyOwnerRef.current?.modelId === latestRef.current.plugin.meta.id) {
         const current = latestRef.current;
@@ -1062,7 +1116,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               simState={simStateRef.current}
               simStateRef={simStateRef}
               params={params}
-              activeLayers={new Set(activeLayers)}
+              getFrameParams={() => latestRef.current.params}
+              storyCameraCommandRef={storySpatialCommandRef}
+              activeLayers={threeLayers}
               presentationMode={presentationMode}
               morphTarget={view3dEnabled ? 0 : 1}
               initialFlatViewport={initialFlatViewportRef.current}
@@ -1080,6 +1136,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             onPointerDown={(e) => {
               const canvas = canvasRef.current;
               if (!canvas) return;
+              storyCameraTweenRef.current = null;
               const rect = canvas.getBoundingClientRect();
               const sx = e.clientX - rect.left;
               const sy = e.clientY - rect.top;

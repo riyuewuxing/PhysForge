@@ -6,6 +6,7 @@ interface KatexFormulaCardProps {
   items: readonly FormulaDisplayItem[];
   compact?: boolean;
   showSubstituted?: boolean;
+  highlightedId?: string;
 }
 
 function renderLatex(latex: string): string {
@@ -18,7 +19,8 @@ function renderLatex(latex: string): string {
 export const KatexFormulaCard: React.FC<KatexFormulaCardProps> = ({
   items,
   compact = false,
-  showSubstituted = true
+  showSubstituted = true,
+  highlightedId
 }) => {
   const rendered = useMemo(
     () =>
@@ -43,7 +45,8 @@ export const KatexFormulaCard: React.FC<KatexFormulaCardProps> = ({
       }}
     >
       {rendered.map((item) => (
-        <div key={item.id} className="space-y-1">
+        <div key={item.id} data-formula-id={item.id} data-highlighted={highlightedId === item.id ? "true" : undefined}
+          className={`space-y-1 ${highlightedId === item.id ? 'rounded-lg ring-2 ring-amber-300 bg-amber-400/10' : ''}`}>
           {!compact && <div className="text-xs" style={{ color: 'var(--pf-text-muted)' }}>{item.label}</div>}
           <div
             className={`overflow-x-auto py-0.5 ${compact ? 'pf-right-formula text-slate-100' : 'text-sm'}`}
