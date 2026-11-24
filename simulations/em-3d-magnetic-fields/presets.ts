@@ -44,7 +44,7 @@ export const magnetic3dPresets: readonly PresetSpec<Magnetic3dParams>[] = [
       currentI: 2.0,
       radiusR: 0.7,
       solenoidTurns: 10,
-      qOverM: 1.0,
+      qOverM: 1.5,
       vPerp: 0.8,
       vParallel: 0.9,
       uniformBz: 2.0

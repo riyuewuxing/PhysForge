@@ -1,4 +1,5 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { chaosNormalCoriolisPresets } from './presets.js';
 import {
   checkInvariants,
@@ -78,6 +79,34 @@ export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
     { key: 'x1Nm', label: '振子 1 位移', unit: 'm', color: '#38bdf8' },
     { key: 'x2Nm', label: '振子 2 位移', unit: 'm', color: '#fbbf24' }
   ],
+  getForceVectors: (state, params) => {
+    if (params.mode === 'double-pendulum') {
+      const [theta1, theta2] = state.dpState;
+      const bob1 = { x: params.l1M * Math.sin(theta1), y: -params.l1M * Math.cos(theta1) };
+      const bob2 = { x: bob1.x + params.l2M * Math.sin(theta2), y: bob1.y - params.l2M * Math.cos(theta2) };
+      return [
+        { id: 'weight-1', label: 'm₁g', origin: bob1, force: { x: 0, y: -params.m1Kg * CLASSROOM_GRAVITY }, color: '#fbbf24', category: 'gravity', unit: 'N' },
+        { id: 'weight-2', label: 'm₂g', origin: bob2, force: { x: 0, y: -params.m2Kg * CLASSROOM_GRAVITY }, color: '#fb923c', category: 'gravity', unit: 'N' }
+      ];
+    }
+    if (params.mode === 'normal-modes') {
+      const [x1, x2] = state.nmVerlet.positions;
+      const safeX1 = x1 ?? 0;
+      const safeX2 = x2 ?? 0;
+      const origin1 = { x: safeX1, y: 0 };
+      const origin2 = { x: safeX2, y: 0 };
+      return [
+        { id: 'normal-restoring-1', label: 'F₁', origin: origin1, force: { x: -params.springKw * safeX1 - params.springKc * (safeX1 - safeX2), y: 0 }, color: '#38bdf8', category: 'other', unit: 'N' },
+        { id: 'normal-restoring-2', label: 'F₂', origin: origin2, force: { x: -params.springKw * safeX2 - params.springKc * (safeX2 - safeX1), y: 0 }, color: '#fbbf24', category: 'other', unit: 'N' }
+      ];
+    }
+    const [x, y, vx, vy] = state.rotDirectState;
+    const omega = params.diskOmegaRadps;
+    return [
+      { id: 'coriolis-specific', label: 'a_C (F/m)', origin: { x, y }, force: { x: 2 * omega * vy, y: -2 * omega * vx }, color: '#38bdf8', category: 'other', unit: 'N/kg' },
+      { id: 'centrifugal-specific', label: 'a_cf (F/m)', origin: { x, y }, force: { x: omega * omega * x, y: omega * omega * y }, color: '#f472b6', category: 'other', unit: 'N/kg' }
+    ];
+  },
   getControlHandles: (state, params) => {
     if (params.mode !== 'double-pendulum') return [];
     const theta1 = state.dpState[0]!;
@@ -150,31 +179,29 @@ export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
     if (!activeLayers.has('main')) return;
     ctx.save();
 
     if (params.mode === 'double-pendulum') {
-      const cx = w * 0.45 + viewport.offsetX;
-      const cy = h * 0.5 + viewport.offsetY;
-      const sc = Math.min(w, h) * 0.24 * viewport.scale;
+      const pivot = m.toScreen(0, 0);
       const drawDp = (s: readonly [number, number, number, number], col: string) => {
-        const x1 = cx + params.l1M * sc * Math.sin(s[0]);
-        const y1 = cy + params.l1M * sc * Math.cos(s[0]);
-        const x2 = x1 + params.l2M * sc * Math.sin(s[1]);
-        const y2 = y1 + params.l2M * sc * Math.cos(s[1]);
+        const bob1 = m.toScreen(params.l1M * Math.sin(s[0]), -params.l1M * Math.cos(s[0]));
+        const bob2 = m.toScreen(
+          params.l1M * Math.sin(s[0]) + params.l2M * Math.sin(s[1]),
+          -params.l1M * Math.cos(s[0]) - params.l2M * Math.cos(s[1])
+        );
         ctx.strokeStyle = col;
         ctx.lineWidth = 2.6;
         ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(x1, y1);
-        ctx.lineTo(x2, y2);
+        ctx.moveTo(pivot.x, pivot.y);
+        ctx.lineTo(bob1.x, bob1.y);
+        ctx.lineTo(bob2.x, bob2.y);
         ctx.stroke();
         ctx.fillStyle = col;
         ctx.beginPath();
-        ctx.arc(x1, y1, 6, 0, Math.PI * 2);
-        ctx.arc(x2, y2, 6, 0, Math.PI * 2);
+        ctx.arc(bob1.x, bob1.y, m.len(0.035), 0, Math.PI * 2);
+        ctx.arc(bob2.x, bob2.y, m.len(0.035), 0, Math.PI * 2);
         ctx.fill();
       };
       drawDp(state.dpShadow, 'rgba(244, 63, 94, 0.55)');
@@ -187,83 +214,135 @@ export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
     }
 
     if (params.mode === 'normal-modes') {
-      const cy = h * 0.3;
-      const x1Px = w * 0.35 + state.nmVerlet.positions[0]! * 70;
-      const x2Px = w * 0.65 + state.nmVerlet.positions[1]! * 70;
+      const labels: CanvasLabel[] = [];
+      const yMass = 0.5;
+      const x1 = -0.9 + state.nmVerlet.positions[0]!;
+      const x2 = 0.9 + state.nmVerlet.positions[1]!;
+      const drawSpring = (startX: number, endX: number, y: number, color: string) => {
+        const start = m.toScreen(startX, y);
+        const end = m.toScreen(endX, y);
+        const dx = end.x - start.x;
+        const segments = 12;
+        const amplitude = m.len(0.085);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.7;
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        for (let i = 1; i < segments; i++) {
+          const t = i / segments;
+          ctx.lineTo(start.x + dx * t, start.y + (i % 2 === 0 ? -amplitude : amplitude));
+        }
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+      };
+      const wallLeft = m.toScreen(-2, 0.5);
+      const wallRight = m.toScreen(2, 0.5);
+      const mass1 = m.toScreen(x1, yMass);
+      const mass2 = m.toScreen(x2, yMass);
+      const halfMass = m.len(0.16);
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(w * 0.15, cy);
-      ctx.lineTo(x1Px, cy);
-      ctx.lineTo(x2Px, cy);
-      ctx.lineTo(w * 0.85, cy);
+      ctx.moveTo(wallLeft.x, wallLeft.y - m.len(0.35));
+      ctx.lineTo(wallLeft.x, wallLeft.y + m.len(0.35));
+      ctx.moveTo(wallRight.x, wallRight.y - m.len(0.35));
+      ctx.lineTo(wallRight.x, wallRight.y + m.len(0.35));
       ctx.stroke();
+      drawSpring(-2, x1 - 0.16, yMass, '#94a3b8');
+      drawSpring(x1 + 0.16, x2 - 0.16, yMass, '#a78bfa');
+      drawSpring(x2 + 0.16, 2, yMass, '#94a3b8');
       ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(x1Px - 14, cy - 14, 28, 28);
+      ctx.fillRect(mass1.x - halfMass, mass1.y - halfMass, halfMass * 2, halfMass * 2);
       ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(x2Px - 14, cy - 14, 28, 28);
+      ctx.fillRect(mass2.x - halfMass, mass2.y - halfMass, halfMass * 2, halfMass * 2);
 
-      const py0 = h * 0.72;
-      state.nmTrail.forEach((pt, idx) => {
-        const px = w * 0.1 + (idx / 160) * w * 0.8;
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(px, py0 - pt.x1 * 60, 2.5, 2.5);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(px, py0 - pt.x2 * 60, 2.5, 2.5);
-      });
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 13px ui-sans-serif, system-ui';
-      ctx.fillText(`耦合振子 (${params.normalExcite}) | x₁=${state.nmVerlet.positions[0]!.toFixed(3)}, x₂=${state.nmVerlet.positions[1]!.toFixed(3)}`, 20, 28);
+      const graphLeft = -1.8;
+      const graphRight = 1.8;
+      const graphBottom = -1.45;
+      const graphCenterY = -1.0;
+      const graphTop = -0.55;
+      const graphA = m.toScreen(graphLeft, graphBottom);
+      const graphB = m.toScreen(graphLeft, graphTop);
+      const graphC = m.toScreen(graphRight, graphBottom);
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(graphA.x, graphA.y);
+      ctx.lineTo(graphB.x, graphB.y);
+      ctx.lineTo(graphB.x + m.len(graphRight - graphLeft), graphB.y);
+      ctx.moveTo(graphA.x, graphA.y);
+      ctx.lineTo(graphC.x, graphC.y);
+      ctx.stroke();
+      const drawTrail = (key: 'x1' | 'x2', color: string) => {
+        if (state.nmTrail.length < 2) return;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        state.nmTrail.forEach((pt, idx) => {
+          const wx = graphLeft + (idx / (state.nmTrail.length - 1)) * (graphRight - graphLeft);
+          const wy = graphCenterY + clamp(pt[key] * 0.35, -0.42, 0.42);
+          const point = m.toScreen(wx, wy);
+          if (idx === 0) ctx.moveTo(point.x, point.y);
+          else ctx.lineTo(point.x, point.y);
+        });
+        ctx.stroke();
+      };
+      drawTrail('x1', '#38bdf8');
+      drawTrail('x2', '#fbbf24');
+      labels.push(
+        { id: 'normal-mode-summary', x: viewport.width * 0.5, y: 28, text: `耦合振子 (${params.normalExcite}) | x₁=${state.nmVerlet.positions[0]!.toFixed(3)}, x₂=${state.nmVerlet.positions[1]!.toFixed(3)}`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' },
+        { id: 'normal-mode-mass-1', x: mass1.x, y: mass1.y, text: 'm₁', color: '#0f172a', font: 'bold 12px ui-sans-serif, system-ui' },
+        { id: 'normal-mode-mass-2', x: mass2.x, y: mass2.y, text: 'm₂', color: '#0f172a', font: 'bold 12px ui-sans-serif, system-ui' }
+      );
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
 
-    // Coriolis dual viewport: Left Lab, Right Rotating Frame
-    const rDisk = Math.min(w * 0.18, h * 0.32);
-    const drawDisk = (cx: number, cy: number, title: string, pts: readonly { x: number; y: number }[], head: { x: number; y: number }, col: string) => {
+    const labels: CanvasLabel[] = [];
+    const rDisk = m.len(1.0);
+    const drawDisk = (worldX: number, title: string, pts: readonly { x: number; y: number }[], head: { x: number; y: number }, col: string) => {
+      const center = m.toScreen(worldX, 0);
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, rDisk, 0, Math.PI * 2);
+      ctx.arc(center.x, center.y, rDisk, 0, Math.PI * 2);
       ctx.stroke();
       if (pts.length > 1) {
         ctx.strokeStyle = col;
         ctx.lineWidth = 2.4;
         ctx.beginPath();
         pts.forEach((p, idx) => {
-          const sx = cx + p.x * rDisk * 0.45;
-          const sy = cy - p.y * rDisk * 0.45;
-          if (idx === 0) ctx.moveTo(sx, sy);
-          else ctx.lineTo(sx, sy);
+          const point = m.toScreen(worldX + p.x * 0.45, p.y * 0.45);
+          if (idx === 0) ctx.moveTo(point.x, point.y);
+          else ctx.lineTo(point.x, point.y);
         });
         ctx.stroke();
       }
+      const headPoint = m.toScreen(worldX + head.x * 0.45, head.y * 0.45);
       ctx.fillStyle = col;
       ctx.beginPath();
-      ctx.arc(cx + head.x * rDisk * 0.45, cy - head.y * rDisk * 0.45, 5, 0, Math.PI * 2);
+      ctx.arc(headPoint.x, headPoint.y, m.len(0.035), 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 13px ui-sans-serif, system-ui';
-      ctx.fillText(title, cx - rDisk, cy + rDisk + 24);
+      const titlePoint = m.toScreen(worldX, -1.25);
+      labels.push({ id: `coriolis-${worldX}`, x: titlePoint.x, y: titlePoint.y, text: title, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
     };
     drawDisk(
-      w * 0.28,
-      h * 0.5,
+      -1.25,
       '地面惯性系（自由直轨）',
       state.coriolisTrail.map((p) => ({ x: p.lx, y: p.ly })),
       state.labPos,
       '#4ade80'
     );
     drawDisk(
-      w * 0.72,
-      h * 0.5,
+      1.25,
       '转动圆盘系（科里奥利偏折）',
       state.coriolisTrail.map((p) => ({ x: p.rx, y: p.ry })),
       { x: state.rotDirectState[0]!, y: state.rotDirectState[1]! },
       '#38bdf8'
     );
-    ctx.fillStyle = '#e2e8f0';
-    ctx.fillText(`双系轨迹重合偏差: ${state.coriolisDeviation.toExponential(2)}`, 20, 28);
+    labels.push({ id: 'coriolis-summary', x: viewport.width * 0.5, y: 28, text: `双系轨迹重合偏差: ${state.coriolisDeviation.toExponential(2)}`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state, params) => [

@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { preloadMathjsCompiler } from './safeAstCompiler.js';
 import { customOdePresets } from './presets.js';
 import {
@@ -53,6 +53,7 @@ export const builderCustomOdeLabPlugin = defineSimulationPlugin<CustomOdeParams,
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.75, offsetRatioX: 0.05 },
   paramSchema,
   presets: customOdePresets,
   engine: {
@@ -64,6 +65,31 @@ export const builderCustomOdeLabPlugin = defineSimulationPlugin<CustomOdeParams,
     computeObservables,
     checkInvariants
   },
+  getForceVectors: (state, params) => {
+    if (params.template === 'kepler-2d') {
+      const r2 = Math.max(0.04, state.x * state.x + state.y * state.y);
+      const scale = (-params.mass * Math.max(0.5, params.stiffness)) / (r2 * Math.sqrt(r2));
+      return [{
+        id: 'kepler-gravity', label: 'F_g', origin: { x: state.x, y: state.y },
+        force: { x: scale * state.x, y: scale * state.y }, color: '#fbbf24', category: 'gravity', unit: 'N'
+      }];
+    }
+    if (params.template !== 'harmonic-custom') return [];
+    const origin = { x: state.x, y: 0 };
+    return [
+      { id: 'spring-restoring', label: 'F_s', origin, force: { x: -params.stiffness * state.x, y: 0 }, color: '#38bdf8', category: 'other', unit: 'N' },
+      ...(params.damping > 0 ? [{ id: 'damping', label: 'F_d', origin, force: { x: -params.damping * state.vx, y: 0 }, color: '#f472b6', category: 'friction' as const, unit: 'N' }] : []),
+      ...(params.driveAmp !== 0 ? [{ id: 'drive', label: 'F_drive', origin, force: { x: params.driveAmp * Math.cos(params.driveOmega * state.t), y: 0 }, color: '#4ade80', category: 'other' as const, unit: 'N' }] : [])
+    ];
+  },
+  referenceFrames: [
+    {
+      id: 'mass-particle',
+      label: '质点随动参考系',
+      getOrigin: (s, p) => p.template === 'kepler-2d' ? { x: s.x, y: s.y } : { x: s.x, y: 0 },
+      getVelocity: (s, p) => p.template === 'kepler-2d' ? { x: s.vx, y: s.vy } : { x: s.vx, y: 0 }
+    }
+  ],
   layers: [
     { id: 'trajectory', label: '相空间 / 轨道轨迹', defaultVisible: true },
     { id: 'axes', label: '参考坐标与中心质点', defaultVisible: true }
@@ -122,20 +148,25 @@ export const builderCustomOdeLabPlugin = defineSimulationPlugin<CustomOdeParams,
     }
   ],
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.18 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
-    const toScr = (wx: number, wy: number) => ({ sx: cx + wx * ppm, sy: cy - wy * ppm });
+    const m = createWorldMapper(viewport);
+    const toScr = (wx: number, wy: number) => {
+      const point = m.toScreen(wx, wy);
+      return { sx: point.x, sy: point.y };
+    };
 
     if (activeLayers.has('axes')) {
       ctx.save();
       ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
       ctx.setLineDash([5, 4]);
       ctx.beginPath();
-      ctx.moveTo(0, cy);
-      ctx.lineTo(viewport.width, cy);
-      ctx.moveTo(cx, 0);
-      ctx.lineTo(cx, viewport.height);
+      const left = toScr(-6, 0);
+      const right = toScr(6, 0);
+      const bottom = toScr(0, -4);
+      const top = toScr(0, 4);
+      ctx.moveTo(left.sx, left.sy);
+      ctx.lineTo(right.sx, right.sy);
+      ctx.moveTo(bottom.sx, bottom.sy);
+      ctx.lineTo(top.sx, top.sy);
       ctx.stroke();
       ctx.restore();
     }
@@ -160,7 +191,8 @@ export const builderCustomOdeLabPlugin = defineSimulationPlugin<CustomOdeParams,
     if (params.template === 'kepler-2d') {
       ctx.fillStyle = '#fbbf24';
       ctx.beginPath();
-      ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+      const origin = m.toScreen(0, 0);
+      ctx.arc(origin.x, origin.y, m.len(0.045), 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.fillStyle = '#f472b6';

@@ -1,5 +1,5 @@
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { projectileCouplingPresets } from './presets.js';
 import {
   checkInvariants,
@@ -42,6 +42,7 @@ export const mechProjectileCouplingPlugin = defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.42, offsetRatioX: -0.25, offsetRatioY: -0.05 },
   paramSchema,
   presets: projectileCouplingPresets,
   engine: {
@@ -86,6 +87,14 @@ export const mechProjectileCouplingPlugin = defineSimulationPlugin<
         : [])
     ];
   },
+  referenceFrames: [
+    {
+      id: 'projectile-comoving',
+      label: '抛体随动参考系',
+      getOrigin: (s) => ({ x: s.x, y: s.y }),
+      getVelocity: (s) => ({ x: s.vx, y: s.vy })
+    }
+  ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -116,10 +125,11 @@ export const mechProjectileCouplingPlugin = defineSimulationPlugin<
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.1 * viewport.scale;
-    const ox = viewport.width * 0.2 + viewport.offsetX;
-    const oy = viewport.height * 0.45 + viewport.offsetY;
-    const toScr = (wx: number, wy: number) => ({ sx: ox + wx * ppm, sy: oy - wy * ppm });
+    const m = createWorldMapper(viewport);
+    const toScr = (wx: number, wy: number) => {
+      const point = m.toScreen(wx, wy);
+      return { sx: point.x, sy: point.y };
+    };
 
     ctx.save();
     if (activeLayers.has('surface')) {
@@ -136,7 +146,7 @@ export const mechProjectileCouplingPlugin = defineSimulationPlugin<
       } else if (params.mode === 'semicircle-trough') {
         const center = toScr(params.troughRadius, 0);
         ctx.beginPath();
-        ctx.arc(center.sx, center.sy, params.troughRadius * ppm, 0, Math.PI, false);
+        ctx.arc(center.sx, center.sy, params.troughRadius * m.ppm, 0, Math.PI, false);
         ctx.stroke();
       } else {
         // Safety envelope parabola y = v0^2/(2g) - g/(2 v0^2) x^2

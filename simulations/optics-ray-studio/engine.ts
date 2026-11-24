@@ -412,8 +412,7 @@ function solveRayTrace(
 }
 
 export function createInitialState(params: OpticsParams): OpticsState {
-  const angle = params.animateSweep ? 15 : params.incidentAngleDeg;
-  const solved = solveRayTrace(angle, params);
+  const solved = solveRayTrace(params.incidentAngleDeg, params);
   return {
     t: 0,
     ...solved,
@@ -434,8 +433,9 @@ export function stepOptics(
   }
 
   const nextT = state.t + dt;
+  const phase0 = Math.asin(Math.max(-1, Math.min(1, (params.incidentAngleDeg - 42.5) / 37.5)));
   const angle = params.animateSweep
-    ? 42.5 + 37.5 * Math.sin(nextT * 0.65 - 0.8)
+    ? 42.5 + 37.5 * Math.sin(phase0 + nextT * 0.65)
     : params.incidentAngleDeg;
 
   const solved = solveRayTrace(angle, params);

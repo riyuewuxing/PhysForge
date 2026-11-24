@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { electricalErrorPresets } from './presets.js';
 import {
   checkInvariants,
@@ -166,23 +166,24 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
     if (!activeLayers.has('main')) return;
     ctx.save();
 
     if (params.mode === 'caliper-micrometer') {
-      const ppm = Math.min(w, h) * 0.24 * viewport.scale;
-      const anchorX = w * 0.45 + viewport.offsetX;
-      const anchorY = h * 0.5 + viewport.offsetY;
-      const toScreen = (x: number, y: number) => ({ x: anchorX + x * ppm, y: anchorY - y * ppm });
+      const toScreen = m.toScreen;
+      const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+        const a = toScreen(x, y + height);
+        const b = toScreen(x + width, y);
+        ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+      };
       const jawX = CALIPER_ZERO_X + state.instrument.vernierReadoutMm * CALIPER_MM_WORLD;
       const thimbleX = MICROMETER_ZERO_X + state.instrument.microReadoutMm * CALIPER_MM_WORLD;
 
       // Main scale and sliding vernier jaw.
       ctx.fillStyle = '#e2e8f0';
-      const mainStart = toScreen(CALIPER_ZERO_X - 0.15, CALIPER_RULER_Y + 0.12);
-      const mainEnd = toScreen(CALIPER_ZERO_X + 2.15, CALIPER_RULER_Y - 0.16);
-      ctx.fillRect(mainStart.x, mainStart.y, mainEnd.x - mainStart.x, mainEnd.y - mainStart.y);
+      fillWorldRect(CALIPER_ZERO_X - 0.15, CALIPER_RULER_Y - 0.16, 2.3, 0.28);
       ctx.fillStyle = '#0f172a';
       ctx.font = 'bold 12px ui-sans-serif, system-ui';
       const jawTop = toScreen(jawX, CALIPER_RULER_Y + 0.12);
@@ -193,7 +194,8 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
       ctx.moveTo(jawTop.x, jawTop.y);
       ctx.lineTo(jawBottom.x, jawBottom.y);
       ctx.stroke();
-      ctx.fillText(`主尺整毫米 = ${state.instrument.vernierMainMm} mm | 第 ${state.instrument.vernierCoincidentIndex} 格对齐`, mainStart.x, mainStart.y - 8);
+      const mainLabel = toScreen(CALIPER_ZERO_X - 0.12, CALIPER_RULER_Y + 0.27);
+      labels.push({ id: 'caliper-main-reading', x: mainLabel.x, y: mainLabel.y, text: `主尺整毫米 = ${state.instrument.vernierMainMm} mm | 第 ${state.instrument.vernierCoincidentIndex} 格对齐`, color: '#0f172a', font: 'bold 12px ui-sans-serif, system-ui' });
       for (let mm = 0; mm <= 50; mm++) {
         const tick = toScreen(CALIPER_ZERO_X + mm * CALIPER_MM_WORLD, CALIPER_RULER_Y);
         const tickEnd = toScreen(CALIPER_ZERO_X + mm * CALIPER_MM_WORLD, CALIPER_RULER_Y - (mm % 10 === 0 ? 0.16 : 0.08));
@@ -203,46 +205,41 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
         ctx.moveTo(tick.x, tick.y);
         ctx.lineTo(tickEnd.x, tickEnd.y);
         ctx.stroke();
-        if (mm % 10 === 0) ctx.fillText(String(mm), tick.x - 4, tick.y + 17);
+        if (mm % 10 === 0) labels.push({ id: `caliper-tick-${mm}`, x: tick.x, y: tick.y + 17, text: String(mm), color: '#0f172a', font: '10px ui-sans-serif, system-ui' });
       }
 
       // Micrometer sleeve and thimble use the same millimeter scale.
       ctx.fillStyle = '#cbd5e1';
-      const sleeveStart = toScreen(MICROMETER_ZERO_X - 0.1, MICROMETER_RULER_Y + 0.16);
-      const sleeveEnd = toScreen(MICROMETER_ZERO_X + 1.05, MICROMETER_RULER_Y - 0.16);
-      ctx.fillRect(sleeveStart.x, sleeveStart.y, sleeveEnd.x - sleeveStart.x, sleeveEnd.y - sleeveStart.y);
+      fillWorldRect(MICROMETER_ZERO_X - 0.1, MICROMETER_RULER_Y - 0.16, 1.15, 0.32);
       ctx.fillStyle = '#94a3b8';
-      const thimbleTop = toScreen(thimbleX - 0.08, MICROMETER_RULER_Y + 0.28);
-      const thimbleBottom = toScreen(thimbleX + 0.12, MICROMETER_RULER_Y - 0.28);
-      ctx.fillRect(thimbleTop.x, thimbleTop.y, thimbleBottom.x - thimbleTop.x, thimbleBottom.y - thimbleTop.y);
-      ctx.fillStyle = '#0f172a';
-      ctx.fillText(
-        `固定刻度 ${state.instrument.microFixedHalfMmCount * 0.5} mm + 可动 ${state.instrument.microThimbleDiv}×0.01 = ${state.instrument.microReadoutMm.toFixed(2)} mm`,
-        sleeveStart.x,
-        sleeveStart.y - 8
+      fillWorldRect(thimbleX - 0.08, MICROMETER_RULER_Y - 0.28, 0.2, 0.56);
+      const micrometerLabel = toScreen(MICROMETER_ZERO_X - 0.08, MICROMETER_RULER_Y + 0.38);
+      labels.push(
+        { id: 'micrometer-reading', x: micrometerLabel.x, y: micrometerLabel.y, text: `固定刻度 ${state.instrument.microFixedHalfMmCount * 0.5} mm + 可动 ${state.instrument.microThimbleDiv}×0.01 = ${state.instrument.microReadoutMm.toFixed(2)} mm`, color: '#0f172a', font: 'bold 12px ui-sans-serif, system-ui' },
+        { id: 'electrical-measurement-summary', x: w * 0.5, y: 28, text: `${params.vernierDivisions} 分度游标卡尺 = ${state.instrument.vernierReadoutMm.toFixed(2)} mm | 千分尺 = ${state.instrument.microReadoutMm.toFixed(2)} mm`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' }
       );
-
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 14px ui-sans-serif, system-ui';
-      ctx.fillText(
-        `${params.vernierDivisions} 分度游标卡尺 = ${state.instrument.vernierReadoutMm.toFixed(2)} mm | 千分尺 = ${state.instrument.microReadoutMm.toFixed(2)} mm`,
-        20,
-        30
-      );
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
 
-    const gx = w * 0.15;
-    const gy = h * 0.82;
-    const gw = w * 0.75;
-    const gh = h * 0.58;
+    const graphLeft = -1.8;
+    const graphRight = 1.8;
+    const graphBottom = -1.1;
+    const graphTop = 1.1;
+    const graphPoint = (xFraction: number, yFraction: number) =>
+      m.toScreen(graphLeft + 0.2 + xFraction * 3.2, graphBottom + 0.15 + yFraction * 1.8);
+    const origin = m.toScreen(graphLeft, graphBottom);
+    const top = m.toScreen(graphLeft, graphTop);
+    const right = m.toScreen(graphRight, graphBottom);
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(gx, gy - gh);
-    ctx.lineTo(gx, gy);
-    ctx.lineTo(gx + gw, gy);
+    ctx.moveTo(origin.x, origin.y);
+    ctx.lineTo(top.x, top.y);
+    ctx.lineTo(m.toScreen(graphRight, graphTop).x, top.y);
+    ctx.moveTo(origin.x, origin.y);
+    ctx.lineTo(right.x, right.y);
     ctx.stroke();
 
     if (params.mode === 'bulb-iv-curve') {
@@ -253,21 +250,13 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
       ctx.lineWidth = 2.8;
       ctx.beginPath();
       pts.forEach((p, idx) => {
-        const sx = gx + (p.voltageV / maxU) * gw;
-        const sy = gy - (p.currentA / maxI) * gh;
-        if (idx === 0) ctx.moveTo(sx, sy);
-        else ctx.lineTo(sx, sy);
+        const point = graphPoint(p.voltageV / maxU, p.currentA / maxI);
+        if (idx === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
       });
       ctx.stroke();
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 13px ui-sans-serif, system-ui';
-      ctx.fillText(`小灯泡 I-U 曲线（${params.bulbWiring === 'voltage-divider' ? '分压从 0V 起调' : '限流起始压降 ' + pts[0]!.voltageV.toFixed(2) + 'V'}）`, 20, 30);
-      ctx.restore();
-      return;
-    }
-
-    // U-I line for Emf or Half-bias bar comparison
-    if (params.mode === 'emf-inner-outer') {
+      labels.push({ id: 'bulb-curve-summary', x: w * 0.5, y: 28, text: `小灯泡 I-U 曲线（${params.bulbWiring === 'voltage-divider' ? '分压从 0V 起调' : '限流起始压降 ' + pts[0]!.voltageV.toFixed(2) + 'V'}）`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
+    } else if (params.mode === 'emf-inner-outer') {
       const pts = state.emfSummary.uiCurve;
       const maxI = Math.max(0.5, ...pts.map((p) => p.currentA)) * 1.15;
       const maxU = Math.max(1, params.emfVolts) * 1.1;
@@ -275,35 +264,32 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
       ctx.lineWidth = 2.6;
       ctx.beginPath();
       pts.forEach((p, idx) => {
-        const sx = gx + (p.currentA / maxI) * gw;
-        const sy = gy - (p.voltageV / maxU) * gh;
-        if (idx === 0) ctx.moveTo(sx, sy);
-        else ctx.lineTo(sx, sy);
+        const point = graphPoint(p.currentA / maxI, p.voltageV / maxU);
+        if (idx === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
       });
       ctx.stroke();
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 13px ui-sans-serif, system-ui';
-      ctx.fillText(
-        `真值 E=${params.emfVolts.toFixed(2)}V, r=${params.rInternalOhm.toFixed(2)}Ω | MNA 拟合 E测=${state.emfSummary.eFittedV.toFixed(4)}V, r测=${state.emfSummary.rFittedOhm.toFixed(4)}Ω`,
-        20,
-        30
+      labels.push({ id: 'emf-curve-summary', x: w * 0.5, y: 28, text: `真值 E=${params.emfVolts.toFixed(2)}V, r=${params.rInternalOhm.toFixed(2)}Ω | MNA 拟合 E测=${state.emfSummary.eFittedV.toFixed(4)}V, r测=${state.emfSummary.rFittedOhm.toFixed(4)}Ω`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
+    } else {
+      const measuredRatio = state.halfBias.rgMeasuredOhm / state.halfBias.rgTrueOhm;
+      const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+        const a = m.toScreen(x, y + height);
+        const b = m.toScreen(x + width, y);
+        ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+      };
+      ctx.fillStyle = '#38bdf8';
+      fillWorldRect(-0.85, -0.95, 0.52, 0.85);
+      ctx.fillStyle = '#4ade80';
+      fillWorldRect(0.3, -0.95, 0.52, 0.85 * measuredRatio);
+      labels.push({ id: 'half-bias-summary', x: w * 0.5, y: 28, text: `半偏法 R_g真=${state.halfBias.rgTrueOhm.toFixed(1)}Ω vs MNA 测得 R₂=${state.halfBias.rgMeasuredOhm.toFixed(3)}Ω (偏小 ${(state.halfBias.biasRelativeErr * 100).toFixed(2)}%)`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
+      const trueBar = m.toScreen(-0.59, 0.05);
+      const measuredBar = m.toScreen(0.56, 0.05);
+      labels.push(
+        { id: 'half-bias-true', x: trueBar.x, y: trueBar.y, text: 'R_g 真值', color: '#38bdf8' },
+        { id: 'half-bias-measured', x: measuredBar.x, y: measuredBar.y, text: 'R_g 测量值', color: '#4ade80' }
       );
-      ctx.restore();
-      return;
     }
-
-    // Half-bias comparison bars
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(gx + 60, gy - 160, 80, 160);
-    ctx.fillStyle = '#4ade80';
-    ctx.fillRect(gx + 220, gy - 160 * (state.halfBias.rgMeasuredOhm / state.halfBias.rgTrueOhm), 80, 160 * (state.halfBias.rgMeasuredOhm / state.halfBias.rgTrueOhm));
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 13px ui-sans-serif, system-ui';
-    ctx.fillText(
-      `半偏法 R_g真=${state.halfBias.rgTrueOhm.toFixed(1)}Ω vs MNA 测得 R₂=${state.halfBias.rgMeasuredOhm.toFixed(3)}Ω (偏小 ${(state.halfBias.biasRelativeErr * 100).toFixed(2)}%)`,
-      20,
-      30
-    );
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state, params) => [

@@ -1,5 +1,5 @@
 import { wavelengthToRgb } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, drawGlowVectorArrow, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { photoelectricComptonPresets } from './presets.js';
 import {
   checkInvariants,
@@ -61,6 +61,7 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
   },
   paramSchema,
   presets: photoelectricComptonPresets,
+  defaultView: { offsetRatioX: -0.05 },
   engine: {
     createInitialState,
     step: stepPhotoelectricCompton,
@@ -117,112 +118,121 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const width = viewport.width;
-    const height = viewport.height;
+    const m = createWorldMapper(viewport);
     ctx.save();
+    const labels: CanvasLabel[] = [];
 
     if (params.mode === 'compton') {
-      const cx = width * 0.38;
-      const cy = height * 0.52;
-      const scale = Math.min(width, height) * 0.25;
+      const origin = m.toScreen(-0.8, 0);
+      const incoming = m.toScreen(-1.85, 0);
       const th = (params.scatterAngleDeg * Math.PI) / 180;
       const ph = (state.compton.recoilAngleDeg * Math.PI) / 180;
 
       ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(cx - scale * 1.1, cy);
-      ctx.lineTo(cx, cy);
-      ctx.stroke();
+      ctx.lineWidth = m.len(0.015);
+      drawGlowVectorArrow(ctx, incoming.x, incoming.y, origin.x, origin.y, '#38bdf8', m.len(0.015), m.len(0.06));
 
-      ctx.strokeStyle = '#a855f7';
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + scale * (state.compton.pScattered / state.compton.pIncident) * Math.cos(th), cy - scale * (state.compton.pScattered / state.compton.pIncident) * Math.sin(th));
-      ctx.stroke();
+      const scattered = m.toScreen(-0.8 + 0.95 * (state.compton.pScattered / state.compton.pIncident) * Math.cos(th), 0.95 * (state.compton.pScattered / state.compton.pIncident) * Math.sin(th));
+      drawGlowVectorArrow(ctx, origin.x, origin.y, scattered.x, scattered.y, '#a855f7', m.len(0.015), m.len(0.06));
 
-      ctx.strokeStyle = '#f59e0b';
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + scale * (state.compton.pElectron / state.compton.pIncident) * Math.cos(ph), cy - scale * (state.compton.pElectron / state.compton.pIncident) * Math.sin(ph));
-      ctx.stroke();
-      ctx.setLineDash([]);
+      const recoil = m.toScreen(-0.8 + 0.95 * (state.compton.pElectron / state.compton.pIncident) * Math.cos(ph), -0.95 * (state.compton.pElectron / state.compton.pIncident) * Math.sin(ph));
+      drawGlowVectorArrow(ctx, origin.x, origin.y, recoil.x, recoil.y, '#f59e0b', m.len(0.015), m.len(0.06));
+      labels.push(
+        { id: 'compton-incident-label', ...m.toScreen(-1.4, 0.1), text: 'pγ', color: '#38bdf8' },
+        { id: 'compton-scattered-label', ...m.toScreen(-0.3, 0.45), text: "p′γ", color: '#a855f7' },
+        { id: 'compton-recoil-label', ...m.toScreen(-0.3, -0.42), text: 'pe', color: '#f59e0b' },
+        { id: 'compton-shift-summary', ...m.toScreen(0.65, 1.38), text: `Δλ = ${(state.compton.deltaLambdaNm * 1000).toFixed(3)} pm | λ′ = ${state.compton.scatteredWavelengthNm.toFixed(5)} nm`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' },
+        { id: 'compton-recoil-summary', ...m.toScreen(0.65, 1.16), text: `反冲电子角 φ = ${state.compton.recoilAngleDeg.toFixed(2)}° | Eke = ${state.compton.electronKineticKev.toFixed(3)} keV`, color: '#e2e8f0', font: '13px ui-sans-serif, system-ui' }
+      );
 
       ctx.fillStyle = '#e2e8f0';
       ctx.beginPath();
-      ctx.arc(cx, cy, 7, 0, 2 * Math.PI);
+      ctx.arc(origin.x, origin.y, m.len(0.035), 0, 2 * Math.PI);
       ctx.fill();
 
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 14px ui-sans-serif, system-ui';
-      ctx.fillText(`Δλ = ${(state.compton.deltaLambdaNm * 1000).toFixed(3)} pm  |  λ' = ${state.compton.scatteredWavelengthNm.toFixed(5)} nm`, 20, 32);
-      ctx.fillText(`反冲电子角 φ = ${state.compton.recoilAngleDeg.toFixed(2)}°  |  E_ke = ${state.compton.electronKineticKev.toFixed(3)} keV`, 20, 56);
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
 
     if (activeLayers.has('apparatus')) {
-      const tubeCx = width * 0.24;
-      const tubeCy = height * 0.5;
+      const tube = m.toScreen(-1.2, 0);
+      const tubeCx = tube.x;
+      const tubeCy = tube.y;
       ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = m.len(0.012);
       ctx.beginPath();
-      ctx.arc(tubeCx, tubeCy, Math.min(width * 0.16, height * 0.26), 0, 2 * Math.PI);
+      ctx.arc(tubeCx, tubeCy, m.len(0.68), 0, 2 * Math.PI);
       ctx.stroke();
 
       const beamColor = wavelengthToRgb(Math.max(380, Math.min(780, params.wavelengthNm))).hex;
       ctx.strokeStyle = params.wavelengthNm < 380 ? '#c084fc' : beamColor;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = m.len(0.015);
       for (let k = -1; k <= 1; k++) {
+        const beamStart = m.toScreen(-1.95, 0.25 + k * 0.065);
+        const beamEnd = m.toScreen(-1.48, k * 0.065);
         ctx.beginPath();
-        ctx.moveTo(tubeCx - 110, tubeCy - 70 + k * 14);
-        ctx.lineTo(tubeCx - 35, tubeCy + k * 14);
+        ctx.moveTo(beamStart.x, beamStart.y);
+        ctx.lineTo(beamEnd.x, beamEnd.y);
         ctx.stroke();
       }
 
-      ctx.strokeStyle = '#60a5fa';
-      ctx.lineWidth = 5;
+      ctx.strokeStyle = 'rgba(148,163,184,0.4)';
+      ctx.lineWidth = 1;
+      const wavelengthRailTop = m.toScreen(-2.02, -0.2);
+      const wavelengthRailBottom = m.toScreen(-2.02, -0.72);
       ctx.beginPath();
-      ctx.moveTo(tubeCx - 35, tubeCy - 38);
-      ctx.lineTo(tubeCx - 35, tubeCy + 38);
+      ctx.moveTo(wavelengthRailTop.x, wavelengthRailTop.y);
+      ctx.lineTo(wavelengthRailBottom.x, wavelengthRailBottom.y);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#60a5fa';
+      ctx.lineWidth = m.len(0.025);
+      const cathodeTop = m.toScreen(-1.48, 0.19);
+      const cathodeBottom = m.toScreen(-1.48, -0.19);
+      ctx.beginPath();
+      ctx.moveTo(cathodeTop.x, cathodeTop.y);
+      ctx.lineTo(cathodeBottom.x, cathodeBottom.y);
       ctx.stroke();
       ctx.strokeStyle = '#f87171';
+      const anodeTop = m.toScreen(-0.73, 0.14);
+      const anodeBottom = m.toScreen(-0.73, -0.14);
       ctx.beginPath();
-      ctx.moveTo(tubeCx + 42, tubeCy - 28);
-      ctx.lineTo(tubeCx + 42, tubeCy + 28);
+      ctx.moveTo(anodeTop.x, anodeTop.y);
+      ctx.lineTo(anodeBottom.x, anodeBottom.y);
       ctx.stroke();
 
       if (state.photoelectric.thresholdPassed) {
         ctx.fillStyle = '#38bdf8';
-        const travel = state.photoelectric.currentMa > 0 ? 70 : 28;
+        const travel = state.photoelectric.currentMa > 0 ? 0.44 : 0.18;
         for (let eIdx = 0; eIdx < 5; eIdx++) {
           const frac = (state.phaseWave / (2 * Math.PI) + eIdx * 0.2) % 1;
+          const electron = m.toScreen(-1.47 + frac * travel, 0.12 - eIdx * 0.075);
           ctx.beginPath();
-          ctx.arc(tubeCx - 32 + frac * travel, tubeCy - 20 + eIdx * 10, 3.5, 0, 2 * Math.PI);
+          ctx.arc(electron.x, electron.y, m.len(0.018), 0, 2 * Math.PI);
           ctx.fill();
         }
       }
     }
 
     if (activeLayers.has('characteristic')) {
-      const gx0 = width * 0.48;
-      const gy0 = height * 0.78;
-      const gw = width * 0.46;
-      const gh = height * 0.56;
+      const gx0 = 0.05;
+      const gy0 = -0.9;
+      const gw = 2.05;
+      const gh = 1.8;
       const uMin = -5;
       const uMax = 6;
       const iMax = 7.5;
-      const toPx = (u: number) => gx0 + ((u - uMin) / (uMax - uMin)) * gw;
-      const toPy = (curr: number) => gy0 - (curr / iMax) * gh;
+      const toPx = (u: number) => m.toX(gx0 + ((u - uMin) / (uMax - uMin)) * gw);
+      const toPy = (curr: number) => m.toY(gy0 + (curr / iMax) * gh);
 
       ctx.strokeStyle = 'rgba(148,163,184,0.28)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(gx0, gy0);
-      ctx.lineTo(gx0 + gw, gy0);
-      ctx.moveTo(toPx(0), gy0 - gh);
-      ctx.lineTo(toPx(0), gy0 + 15);
+      ctx.moveTo(m.toX(gx0), m.toY(gy0));
+      ctx.lineTo(m.toX(gx0 + gw), m.toY(gy0));
+      ctx.moveTo(toPx(0), m.toY(gy0));
+      ctx.lineTo(toPx(0), m.toY(gy0 + gh));
       ctx.stroke();
 
       if (params.freezeRefEnabled) {
@@ -264,14 +274,56 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
       ctx.fill();
     }
 
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 14px ui-sans-serif, system-ui';
-    ctx.fillText(
-      `hν = ${state.photoelectric.photonEnergyEv.toFixed(3)} eV | W₀ = ${state.photoelectric.workFunctionEv.toFixed(2)} eV | U_c = ${state.photoelectric.stoppingVoltageV.toFixed(3)} V`,
-      20,
-      30
-    );
+    if (params.mode === 'photoelectric') {
+      labels.push({ id: 'photoelectric-summary', ...m.toScreen(0.9, 1.12), text: `hν = ${state.photoelectric.photonEnergyEv.toFixed(3)} eV | W₀ = ${state.photoelectric.workFunctionEv.toFixed(2)} eV | Uc = ${state.photoelectric.stoppingVoltageV.toFixed(3)} V`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
+    }
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
+  },
+  getControlHandles: (state, params) => {
+    if (params.mode === 'compton') {
+      const theta = (params.scatterAngleDeg * Math.PI) / 180;
+      const length = 0.95 * (state.compton.pScattered / Math.max(1e-9, state.compton.pIncident));
+      return [
+        {
+          id: 'compton-scatter-angle',
+          label: `θ=${params.scatterAngleDeg.toFixed(0)}°`,
+          position: { x: -0.8 + length * Math.cos(theta), y: length * Math.sin(theta) },
+          origin: { x: -0.8, y: 0 },
+          handleKind: 'angle',
+          color: '#a855f7',
+          onDrag: (world) => {
+            const degrees = (Math.atan2(world.y, world.x + 0.8) * 180) / Math.PI;
+            return { scatterAngleDeg: Math.max(10, Math.min(180, Math.round(degrees / 5) * 5)) };
+          }
+        }
+      ];
+    }
+
+    const voltageX = 0.05 + ((params.anodeVoltageV + 5) / 11) * 2.05;
+    const currentY = -0.9 + (state.photoelectric.currentMa / 7.5) * 1.8;
+    return [
+      {
+        id: 'anode-voltage-point',
+        label: `U=${params.anodeVoltageV.toFixed(1)} V`,
+        position: { x: voltageX, y: currentY },
+        handleKind: 'point',
+        color: '#fbbf24',
+        onDrag: (world) => ({
+          anodeVoltageV: Number(Math.max(-5, Math.min(6, Math.round((-5 + ((world.x - 0.05) / 2.05) * 11) * 10) / 10)).toFixed(1))
+        })
+      },
+      {
+        id: 'incident-wavelength',
+        label: `λ=${params.wavelengthNm.toFixed(0)} nm`,
+        position: { x: -2.02, y: -0.72 + ((750 - params.wavelengthNm) / 550) * 0.52 },
+        handleKind: 'point',
+        color: state.beamHex,
+        onDrag: (world) => ({
+          wavelengthNm: Math.max(200, Math.min(750, Math.round((750 - ((world.y + 0.72) / 0.52) * 550) / 5) * 5))
+        })
+      }
+    ];
   },
   formatFormulas: (state, params) => [
     {

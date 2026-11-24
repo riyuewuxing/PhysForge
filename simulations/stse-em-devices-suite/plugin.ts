@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { emDevicesPresets } from './presets.js';
 import {
   checkInvariants,
@@ -104,28 +104,40 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
     if (!activeLayers.has('main')) return;
     ctx.save();
-    const cx = w * 0.45;
-    const cy = h * 0.52;
-    const scale = Math.min(w, h) * 0.28;
+    const m = createWorldMapper(viewport);
+    const center = m.toScreen(-0.25, 0);
+    const scale = m.len(0.85);
+
+    ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+    ctx.lineWidth = 1;
+    const bRailTop = m.toScreen(1.28, 0.6);
+    const bRailBottom = m.toScreen(1.28, -0.6);
+    const eRailTop = m.toScreen(-1.65, 0.6);
+    const eRailBottom = m.toScreen(-1.65, -0.6);
+    ctx.beginPath();
+    ctx.moveTo(bRailTop.x, bRailTop.y);
+    ctx.lineTo(bRailBottom.x, bRailBottom.y);
+    ctx.moveTo(eRailTop.x, eRailTop.y);
+    ctx.lineTo(eRailBottom.x, eRailBottom.y);
+    ctx.stroke();
 
     // Draw device schematic box
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 2.5;
     if (params.device === 'cyclotron') {
       ctx.beginPath();
-      ctx.arc(cx - 8, cy, scale, Math.PI / 2, (3 * Math.PI) / 2);
+      ctx.arc(center.x - m.len(0.04), center.y, scale, Math.PI / 2, (3 * Math.PI) / 2);
       ctx.closePath();
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(cx + 8, cy, scale, -Math.PI / 2, Math.PI / 2);
+      ctx.arc(center.x + m.len(0.04), center.y, scale, -Math.PI / 2, Math.PI / 2);
       ctx.closePath();
       ctx.stroke();
     } else {
-      ctx.strokeRect(cx - scale * 1.4, cy - scale * 0.7, scale * 2.8, scale * 1.4);
+      const topLeft = m.toScreen(-1.45, 0.6);
+      ctx.strokeRect(topLeft.x, topLeft.y, m.len(2.4), m.len(1.2));
     }
 
     // Draw particle trail & head
@@ -134,8 +146,9 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
       ctx.lineWidth = 2.4;
       ctx.beginPath();
       state.trail.forEach((p, idx) => {
-        const sx = cx + p.x * scale * 0.7;
-        const sy = cy - p.y * scale * 0.7;
+        const point = m.toScreen(-0.25 + p.x * 0.7, p.y * 0.7);
+        const sx = point.x;
+        const sy = point.y;
         if (idx === 0) ctx.moveTo(sx, sy);
         else ctx.lineTo(sx, sy);
       });
@@ -143,7 +156,8 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
     }
     ctx.fillStyle = params.carrierType === 'hole' ? '#f43f5e' : '#4ade80';
     ctx.beginPath();
-    ctx.arc(cx + state.particlePos.x * scale * 0.7, cy - state.particlePos.y * scale * 0.7, 6, 0, Math.PI * 2);
+    const particle = m.toScreen(-0.25 + state.particlePos.x * 0.7, state.particlePos.y * 0.7);
+    ctx.arc(particle.x, particle.y, m.len(0.03), 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = '#e2e8f0';
@@ -159,6 +173,80 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
     ctx.fillText(summaryMap[params.device], 20, 30);
     ctx.restore();
   },
+  getControlHandles: (_state, params) => {
+    const controlsDeflectionField = params.device === 'mass-spectrometer';
+    const magneticMin = 0.2;
+    const magneticMax = controlsDeflectionField ? 2 : 4;
+    const magneticField = controlsDeflectionField ? params.bDeflectT : params.bFieldT;
+    return [
+      {
+        id: 'device-b-field',
+        label: `B=${magneticField.toFixed(1)} T`,
+        position: { x: 1.28, y: -0.6 + ((magneticField - magneticMin) / (magneticMax - magneticMin)) * 1.2 },
+        handleKind: 'point' as const,
+        color: '#38bdf8',
+        onDrag: (world: { x: number; y: number }): Record<string, number> => {
+          const value = Number(Math.max(magneticMin, Math.min(magneticMax, Math.round((magneticMin + ((world.y + 0.6) / 1.2) * (magneticMax - magneticMin)) * 10) / 10)).toFixed(1));
+          return controlsDeflectionField ? { bDeflectT: value } : { bFieldT: value };
+        }
+      },
+      ...(params.device === 'velocity-selector' ? [{
+        id: 'device-e-field',
+        label: `E=${(params.eFieldVPerM / 1e5).toFixed(1)}×10⁵ V/m`,
+        position: { x: -1.65, y: -0.6 + ((params.eFieldVPerM - 1e4) / 4.9e5) * 1.2 },
+        handleKind: 'point' as const,
+        color: '#fbbf24',
+        onDrag: (world: { x: number; y: number }) => ({
+          eFieldVPerM: Math.max(1e4, Math.min(5e5, Math.round((1e4 + ((world.y + 0.6) / 1.2) * 4.9e5) / 1e4) * 1e4))
+        })
+      }] : [])
+    ];
+  },
+  getForceVectors: (state, params) => {
+    if (params.device !== 'velocity-selector' && params.device !== 'mass-spectrometer') return [];
+    const chargeSign = params.carrierType === 'hole' ? 1 : -1;
+    const charge = chargeSign * Math.abs(params.chargeC);
+    const field = params.device === 'mass-spectrometer' ? params.bDeflectT : params.bFieldT;
+    const origin = { x: -0.25 + state.particlePos.x * 0.7, y: state.particlePos.y * 0.7 };
+    const magneticForce = charge * params.particleSpeedMps * field;
+    if (params.device === 'velocity-selector') {
+      return [
+        {
+          id: 'selector-electric-force',
+          label: 'F电=qE',
+          origin,
+          force: { x: 0, y: charge * params.eFieldVPerM },
+          color: '#fbbf24',
+          category: 'electric',
+          unit: 'N'
+        },
+        {
+          id: 'selector-magnetic-force',
+          label: 'F洛=qv×B',
+          origin,
+          force: { x: 0, y: -magneticForce },
+          color: '#38bdf8',
+          category: 'magnetic',
+          unit: 'N'
+        }
+      ];
+    }
+    return [{
+      id: 'spectrometer-magnetic-force',
+      label: 'F洛=qv×B',
+      origin,
+      force: { x: 0, y: -magneticForce },
+      color: '#38bdf8',
+      category: 'magnetic',
+      unit: 'N'
+    }];
+  },
+  referenceFrames: [{
+    id: 'carrier-particle',
+    label: '粒子/载流子随动参考系',
+    getOrigin: (state) => ({ x: -0.25 + state.particlePos.x * 0.7, y: state.particlePos.y * 0.7 }),
+    getVelocity: (state) => ({ x: state.particleVel.x * 0.7, y: state.particleVel.y * 0.7 })
+  }],
   formatFormulas: (state, params) => [
     {
       id: 'em-devices-law',

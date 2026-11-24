@@ -65,6 +65,15 @@ describe('optics-ray-studio engine', () => {
     expect(s.fringeSpacingMm).toBeCloseTo(1.8, 10);
   });
 
+  it('starts the sweep at the configured incident angle without a discontinuity', () => {
+    const sweepingParams = { ...baseParams, incidentAngleDeg: 35, animateSweep: true };
+    const initial = createInitialState(sweepingParams);
+    expect(initial.activeAngleDeg).toBe(35);
+
+    const firstStep = stepOptics(initial, sweepingParams, 1 / 240).nextState;
+    expect(Math.abs(firstStep.activeAngleDeg - initial.activeAngleDeg)).toBeLessThan(0.2);
+  });
+
   it('handles optical fiber TIR guidance and dt=0 without NaN', () => {
     const fiber = createInitialState({
       ...baseParams,

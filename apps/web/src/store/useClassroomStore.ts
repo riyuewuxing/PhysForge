@@ -12,7 +12,7 @@ import {
   resolveCanonicalModelId,
   type AnySimulationPlugin
 } from '@physforge/simulations/catalog';
-import { emBoundedMagneticFieldPlugin } from '@physforge/simulations/em-bounded-magnetic-field';
+import { emInductionDoubleRodPlugin } from '@physforge/simulations/em-induction-double-rod';
 import { CommandStack } from '../stage/CommandStack.js';
 import type { MeasureToolKind } from '../stage/RulerToolboxOverlay.js';
 
@@ -41,8 +41,10 @@ interface ClassroomStore {
   poeMasked: boolean;
   theme: ClassroomTheme;
   bigScreenMode: boolean;
+  fullscreenPresentation: boolean;
   leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
+  oscilloscopeCollapsed: boolean;
   annotationOpen: boolean;
   measureTool: MeasureToolKind;
   autoFbdEnabled: boolean;
@@ -77,8 +79,10 @@ interface ClassroomStore {
   setTheme: (theme: ClassroomTheme) => void;
   toggleTheme: () => void;
   toggleBigScreenMode: () => void;
+  toggleFullscreenPresentation: () => void;
   setLeftSidebarOpen: (open: boolean) => void;
   setRightSidebarOpen: (open: boolean) => void;
+  setOscilloscopeCollapsed: (collapsed: boolean) => void;
   toggleAnnotation: () => void;
   setMeasureTool: (tool: MeasureToolKind) => void;
   toggleAutoFbd: () => void;
@@ -99,8 +103,27 @@ function getDefaultLayers(plugin: AnySimulationPlugin, visibleLayers?: string[])
   return plugin.layers.filter((l) => l.defaultVisible).map((l) => l.id);
 }
 
-const initialPlugin = emBoundedMagneticFieldPlugin as unknown as AnySimulationPlugin;
-const initialPreset = initialPlugin.presets[0] ?? null;
+const NON_TIME_SERIES_MODEL_IDS = new Set([
+  'builder-optics-ray',
+  'optics-wave-interference',
+  'mech-dynamic-equilibrium',
+  'mech-constrained-velocity',
+  'exp-electrical-error-lab'
+]);
+
+export function isNonTimeSeriesModel(modelId: string, params: ParamRecord): boolean {
+  if (NON_TIME_SERIES_MODEL_IDS.has(modelId)) return true;
+  if (modelId === 'circuit-dc-capacitor-mna' || modelId === 'builder-circuit-mna') {
+    const dynamicTopologies = new Set(['rc-transient', 'rc-bridge-charge', 'series-parallel-dynamic']);
+    return !dynamicTopologies.has(String(params.topology ?? ''));
+  }
+  return false;
+}
+
+const initialPlugin = emInductionDoubleRodPlugin as unknown as AnySimulationPlugin;
+const initialPreset = initialPlugin.presets.find((preset) => preset.id === 'single-rod-battery-drive')
+  ?? initialPlugin.presets[0]
+  ?? null;
 const initialParams = resolvePluginParams(initialPlugin.paramSchema, initialPreset?.params);
 const pluginCache = new Map<string, AnySimulationPlugin>([[initialPlugin.meta.id, initialPlugin]]);
 let pluginSelectionSeq = 0;
@@ -124,6 +147,8 @@ function applyLoadedPluginState(
     params,
     activeLayers: getDefaultLayers(plugin, preset?.visibleLayers),
     isPlaying: false,
+    leftSidebarOpen: false,
+    oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, params),
     scrubTime: null,
     activeFrameId: 'ground',
     view3dEnabled: (plugin as { renderMode?: string }).renderMode === 'three3d',
@@ -147,8 +172,10 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
   poeMasked: false,
   theme: 'chalkboard',
   bigScreenMode: false,
-  leftSidebarOpen: true,
+  fullscreenPresentation: false,
+  leftSidebarOpen: false,
   rightSidebarOpen: true,
+  oscilloscopeCollapsed: false,
   annotationOpen: false,
   measureTool: 'none',
   autoFbdEnabled: false,
@@ -205,10 +232,12 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
       params,
       activeLayers: getDefaultLayers(plugin, preset.visibleLayers),
       isPlaying: false,
+      oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, params),
       scrubTime: null,
       canUndo: paramCommandStack.canUndo(plugin.meta.id),
       canRedo: paramCommandStack.canRedo(plugin.meta.id),
-      resetNonce: s.resetNonce + 1
+      resetNonce: s.resetNonce + 1,
+      resetViewNonce: s.resetViewNonce + 1
     }));
   },
 
@@ -249,6 +278,9 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
       activePresetId: null,
       params: resolved,
       scrubTime: null,
+      ...(Object.prototype.hasOwnProperty.call(patch, 'topology')
+        ? { oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, resolved) }
+        : {}),
       canUndo: paramCommandStack.canUndo(plugin.meta.id),
       canRedo: paramCommandStack.canRedo(plugin.meta.id),
       resetNonce: s.resetNonce + 1
@@ -310,8 +342,11 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
         rightSidebarOpen: true
       };
     }),
+  toggleFullscreenPresentation: () =>
+    set((s) => ({ fullscreenPresentation: !s.fullscreenPresentation })),
   setLeftSidebarOpen: (open) => set({ leftSidebarOpen: open }),
   setRightSidebarOpen: (open) => set({ rightSidebarOpen: open }),
+  setOscilloscopeCollapsed: (collapsed) => set({ oscilloscopeCollapsed: collapsed }),
   toggleAnnotation: () =>
     set((s) => ({
       annotationOpen: !s.annotationOpen,

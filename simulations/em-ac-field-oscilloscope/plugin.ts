@@ -1,5 +1,5 @@
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { acScopePresets } from './presets.js';
 import {
   checkInvariants,
@@ -45,6 +45,10 @@ export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams,
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: {
+    offsetRatioX: 0.05,
+    offsetRatioY: (p) => p.mode === 'equivalent-gravity' ? -0.16 : 0
+  },
   paramSchema,
   presets: acScopePresets,
   engine: {
@@ -73,6 +77,14 @@ export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams,
       { id: 'qe', label: 'qE', origin: { x: bx, y: by }, force: { x: params.eqFieldAccelX, y: params.eqFieldAccelY }, category: 'electric', color: '#38bdf8' }
     ];
   },
+  referenceFrames: [
+    {
+      id: 'equivalent-bob',
+      label: '等效重力摆球随动系',
+      getOrigin: (s, p) => ({ x: p.pendulumLengthL * Math.sin(s.theta), y: -p.pendulumLengthL * Math.cos(s.theta) }),
+      getVelocity: (s, p) => ({ x: p.pendulumLengthL * Math.cos(s.theta) * s.omega, y: p.pendulumLengthL * Math.sin(s.theta) * s.omega })
+    }
+  ],
   getControlHandles: (_s, params) =>
     params.mode === 'equivalent-gravity'
       ? [
@@ -118,44 +130,48 @@ export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams,
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
+    const m = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
     ctx.save();
 
     if (params.mode === 'oscilloscope-lissajous') {
       if (activeLayers.has('mainStage')) {
-        const radius = Math.min(viewport.width, viewport.height) * 0.34 * viewport.scale;
+        const center = m.toScreen(0, 0);
+        const radius = m.len(1.4);
         ctx.fillStyle = 'rgba(2, 44, 34, 0.85)';
         ctx.strokeStyle = '#34d399';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
 
         ctx.strokeStyle = 'rgba(52, 211, 153, 0.25)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(cx - radius, cy);
-        ctx.lineTo(cx + radius, cy);
-        ctx.moveTo(cx, cy - radius);
-        ctx.lineTo(cx, cy + radius);
+        ctx.moveTo(center.x - radius, center.y);
+        ctx.lineTo(center.x + radius, center.y);
+        ctx.moveTo(center.x, center.y - radius);
+        ctx.lineTo(center.x, center.y + radius);
         ctx.stroke();
 
-        const sc = radius * 0.35;
+        const trailScale = 0.49;
         if (activeLayers.has('phosphorTrail') && state.scopeTrail.length > 1) {
           ctx.strokeStyle = '#4ade80';
           ctx.lineWidth = 2.4;
           ctx.beginPath();
-          ctx.moveTo(cx + state.scopeTrail[0]!.x * sc, cy - state.scopeTrail[0]!.y * sc);
+          const first = m.toScreen(state.scopeTrail[0]!.x * trailScale, state.scopeTrail[0]!.y * trailScale);
+          ctx.moveTo(first.x, first.y);
           for (let i = 1; i < state.scopeTrail.length; i++) {
-            ctx.lineTo(cx + state.scopeTrail[i]!.x * sc, cy - state.scopeTrail[i]!.y * sc);
+            const point = m.toScreen(state.scopeTrail[i]!.x * trailScale, state.scopeTrail[i]!.y * trailScale);
+            ctx.lineTo(point.x, point.y);
           }
           ctx.stroke();
         }
+        const beamPoint = m.toScreen(state.screenX * trailScale, state.screenY * trailScale);
         ctx.fillStyle = '#fef08a';
         ctx.beginPath();
-        ctx.arc(cx + state.screenX * sc, cy - state.screenY * sc, 5, 0, Math.PI * 2);
+        ctx.arc(beamPoint.x, beamPoint.y, m.len(0.03), 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -163,9 +179,7 @@ export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams,
     }
 
     if (params.mode === 'equivalent-gravity') {
-      const ppm = Math.min(viewport.width, viewport.height) * 0.24 * viewport.scale;
-      const ox = cx;
-      const oy = viewport.height * 0.34 + viewport.offsetY;
+      const pivot = m.toScreen(0, 0);
       const L = params.pendulumLengthL;
       const gx = params.eqFieldAccelX;
       const gy = -CLASSROOM_GRAVITY + params.eqFieldAccelY;
@@ -177,24 +191,25 @@ export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams,
         // Equivalent gravity axis (top & bottom points)
         ctx.strokeStyle = 'rgba(251, 191, 36, 0.6)';
         ctx.setLineDash([5, 4]);
+        const axisA = m.toScreen(-ux * L * 1.2, -uy * L * 1.2);
+        const axisB = m.toScreen(ux * L * 1.2, uy * L * 1.2);
         ctx.beginPath();
-        ctx.moveTo(ox - ux * L * 1.2 * ppm, oy + uy * L * 1.2 * ppm);
-        ctx.lineTo(ox + ux * L * 1.2 * ppm, oy - uy * L * 1.2 * ppm);
+        ctx.moveTo(axisA.x, axisA.y);
+        ctx.lineTo(axisB.x, axisB.y);
         ctx.stroke();
         ctx.setLineDash([]);
       }
 
-      const bx = ox + L * Math.sin(state.theta) * ppm;
-      const by = oy + L * Math.cos(state.theta) * ppm;
+      const bob = m.toScreen(L * Math.sin(state.theta), -L * Math.cos(state.theta));
       ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(ox, oy);
-      ctx.lineTo(bx, by);
+      ctx.moveTo(pivot.x, pivot.y);
+      ctx.lineTo(bob.x, bob.y);
       ctx.stroke();
       ctx.fillStyle = '#38bdf8';
       ctx.beginPath();
-      ctx.arc(bx, by, 12, 0, Math.PI * 2);
+      ctx.arc(bob.x, bob.y, m.len(0.055), 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
       return;
@@ -202,27 +217,25 @@ export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams,
 
     // 4-lane phase comparison for alternating field
     const colors = ['#38bdf8', '#f472b6', '#4ade80', '#fbbf24'];
-    const labels = ['t₀=0 (一直向前)', 't₀=T/8', 't₀=T/4 (原位往复)', 't₀=3T/8'];
-    const startX = viewport.width * 0.18;
-    const pxPerM = 28 * viewport.scale;
+    const phaseCaptions = ['t₀=0 (一直向前)', 't₀=T/8', 't₀=T/4 (原位往复)', 't₀=3T/8'];
     state.particles.forEach((p, idx) => {
-      const ly = cy - 110 + idx * 72;
+      const laneY = 0.9 - idx * 0.6;
+      const left = m.toScreen(-2, laneY);
+      const right = m.toScreen(2, laneY);
       ctx.strokeStyle = 'rgba(148,163,184,0.3)';
       ctx.beginPath();
-      ctx.moveTo(startX - 40, ly);
-      ctx.lineTo(viewport.width - 40, ly);
+      ctx.moveTo(left.x, left.y);
+      ctx.lineTo(right.x, right.y);
       ctx.stroke();
 
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '12px sans-serif';
-      ctx.fillText(labels[idx]!, 24, ly + 4);
-
-      const px = startX + p.x * pxPerM;
+      const particle = m.toScreen(p.x * 0.25 - 1.5, laneY);
       ctx.fillStyle = p.active ? colors[idx]! : '#475569';
       ctx.beginPath();
-      ctx.arc(px, ly, 9, 0, Math.PI * 2);
+      ctx.arc(particle.x, particle.y, m.len(0.045), 0, Math.PI * 2);
       ctx.fill();
+      labels.push({ id: `phase-label-${idx}`, x: left.x + m.len(0.45), y: left.y - m.len(0.12), text: phaseCaptions[idx]!, color: '#cbd5e1', font: '12px sans-serif' });
     });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state, params) => {

@@ -5,10 +5,13 @@ import { Play, Pause, RotateCcw, StepForward, Eye, EyeOff, SunMoon, Sparkles, Ma
 import targetPlugin from '@physforge/target-plugin';
 import {
   resolvePluginParams,
+  resolveInitialCameraTransform,
+  worldToScreen,
   type FormulaDisplayItem,
   type InvariantReport,
   type ParamRecord,
   type PhysicsEvent,
+  type SimulationPluginV2,
   type Viewport
 } from '@physforge/sim-sdk';
 
@@ -172,9 +175,6 @@ export const SingleFileApp: React.FC = () => {
 
       if (strobe && !masked && snapshotsRef.current.length > 2) {
         const curT = frame ? frame.t : 0;
-        const pxPerM = Math.min(vp.width, vp.height) * 0.24 * vp.scale;
-        const ox = vp.width * 0.45;
-        const oy = vp.height * 0.5;
         let lastT = -1;
         for (const s of snapshotsRef.current) {
           if (s.t > curT) break;
@@ -183,7 +183,8 @@ export const SingleFileApp: React.FC = () => {
           if (typeof s.observables.x === 'number' && typeof s.observables.y === 'number') {
             ctx.fillStyle = 'rgba(251, 191, 36, 0.72)';
             ctx.beginPath();
-            ctx.arc(ox + s.observables.x * pxPerM, oy - s.observables.y * pxPerM, 3.5, 0, Math.PI * 2);
+            const point = worldToScreen(s.observables.x, s.observables.y, vp);
+            ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
             ctx.fill();
           }
         }
@@ -228,6 +229,13 @@ export const SingleFileApp: React.FC = () => {
   };
 
   useEffect(() => {
+    const camera = resolveInitialCameraTransform(
+      targetPlugin as SimulationPluginV2<ParamRecord, unknown>,
+      latestRef.current.params,
+      viewportRef.current.width,
+      viewportRef.current.height
+    );
+    viewportRef.current = { ...viewportRef.current, ...camera };
     const init = targetPlugin.engine.createInitialState(params);
     const obs0 = targetPlugin.engine.computeObservables(init, params);
     simStateRef.current = init;
@@ -289,6 +297,13 @@ export const SingleFileApp: React.FC = () => {
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
       viewportRef.current = { ...viewportRef.current, width, height, dpr };
+      const camera = resolveInitialCameraTransform(
+        targetPlugin as SimulationPluginV2<ParamRecord, unknown>,
+        latestRef.current.params,
+        width,
+        height
+      );
+      viewportRef.current = { ...viewportRef.current, ...camera };
       drawCanvas();
     };
     updateSize();

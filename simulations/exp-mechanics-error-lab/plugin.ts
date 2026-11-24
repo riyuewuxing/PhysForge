@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { mechanicsErrorPresets } from './presets.js';
 import {
   checkInvariants,
@@ -115,20 +115,17 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
-    const ppm = Math.min(w, h) * 0.24 * viewport.scale;
-    const anchorX = w * 0.45 + viewport.offsetX;
-    const anchorY = h * 0.5 + viewport.offsetY;
-    const toScreen = (x: number, y: number) => ({ x: anchorX + x * ppm, y: anchorY - y * ppm });
+    const m = createWorldMapper(viewport);
+    const toScreen = m.toScreen;
+    const labels: CanvasLabel[] = [];
     ctx.save();
 
     if (activeLayers.has('tape')) {
       const rulerZeroX = TAPE_RULER_BASE_X + (params.rulerOffsetCm ?? 0) * TAPE_RULER_OFFSET_WORLD_PER_CM;
-      const rulerLeft = toScreen(TAPE_RULER_BASE_X - 0.18, TAPE_RULER_Y + 0.12);
-      const rulerRight = toScreen(TAPE_RULER_BASE_X + 2.05, TAPE_RULER_Y - 0.12);
       ctx.fillStyle = '#e2e8f0';
-      ctx.fillRect(rulerLeft.x, rulerLeft.y, rulerRight.x - rulerLeft.x, rulerRight.y - rulerLeft.y);
+      const rulerA = toScreen(TAPE_RULER_BASE_X - 0.18, TAPE_RULER_Y + 0.12);
+      const rulerB = toScreen(TAPE_RULER_BASE_X + 2.05, TAPE_RULER_Y - 0.12);
+      ctx.fillRect(Math.min(rulerA.x, rulerB.x), Math.min(rulerA.y, rulerB.y), Math.abs(rulerB.x - rulerA.x), Math.abs(rulerB.y - rulerA.y));
       const zero = toScreen(rulerZeroX, TAPE_RULER_Y);
       ctx.strokeStyle = '#0f172a';
       ctx.lineWidth = 1.2;
@@ -140,9 +137,7 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
         ctx.lineTo(tickEnd.x, tickEnd.y);
         ctx.stroke();
         if (cm % 5 === 0) {
-          ctx.font = '10px ui-sans-serif, system-ui';
-          ctx.fillStyle = '#0f172a';
-          ctx.fillText(String(cm), tick.x - 4, tick.y + 16);
+          labels.push({ id: `tape-tick-${cm}`, x: tick.x, y: tick.y + 16, text: String(cm), color: '#0f172a', font: '10px ui-sans-serif, system-ui' });
         }
       }
       state.tapeDots.forEach((d) => {
@@ -151,8 +146,7 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
         ctx.beginPath();
         ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
         ctx.fill();
-        ctx.font = '10px ui-sans-serif, system-ui';
-        ctx.fillText(`x${d.index}:${d.posCm.toFixed(2)}`, point.x - 14, point.y + 16);
+        labels.push({ id: `tape-dot-${d.index}`, x: point.x, y: point.y + 16, text: `x${d.index}:${d.posCm.toFixed(2)}`, color: '#0f172a', font: '10px ui-sans-serif, system-ui' });
       });
       ctx.strokeStyle = '#fbbf24';
       ctx.lineWidth = 2;
@@ -163,57 +157,68 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
     }
 
     if (activeLayers.has('afCurve')) {
-      const gx = w * 0.14;
-      const gy = h * 0.86;
-      const gw = w * 0.76;
-      const gh = h * 0.5;
+      const graphLeft = -1.8;
+      const graphRight = 1.8;
+      const graphBottom = -1.1;
+      const graphTop = 1.1;
+      const graphOrigin = toScreen(graphLeft, graphBottom);
+      const graphTopLeft = toScreen(graphLeft, graphTop);
+      const graphBottomRight = toScreen(graphRight, graphBottom);
+      const graphTopRight = toScreen(graphRight, graphTop);
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(gx, gy - gh);
-      ctx.lineTo(gx, gy);
-      ctx.lineTo(gx + gw, gy);
+      ctx.moveTo(graphOrigin.x, graphOrigin.y);
+      ctx.lineTo(graphTopLeft.x, graphTopLeft.y);
+      ctx.lineTo(graphTopRight.x, graphTopRight.y);
+      ctx.moveTo(graphOrigin.x, graphOrigin.y);
+      ctx.lineTo(graphBottomRight.x, graphBottomRight.y);
       ctx.stroke();
 
       const maxF = Math.max(0.8, ...state.afCurve.map((p) => p.fAppN));
       const maxA = Math.max(2.0, ...state.afCurve.map((p) => Math.max(p.aMeasured, p.aAnalytic)));
-      const toX = (f: number) => gx + (f / maxF) * gw;
-      const toY = (a: number) => gy - Math.max(-0.2, Math.min(1.1, a / maxA)) * gh;
+      const toPoint = (f: number, a: number) => toScreen(
+        graphLeft + 0.15 + (f / maxF) * 3.3,
+        graphBottom + 0.1 + clamp((a / maxA + 0.2) / 1.3, 0, 1) * 1.85
+      );
 
       // Analytical curve
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       state.afCurve.forEach((pt, idx) => {
-        const px = toX(pt.fAppN);
-        const py = toY(pt.aAnalytic);
-        if (idx === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        const point = toPoint(pt.fAppN, pt.aAnalytic);
+        if (idx === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
       });
       ctx.stroke();
 
       // Measured points
       ctx.fillStyle = '#fbbf24';
       state.afCurve.forEach((pt) => {
+        const point = toPoint(pt.fAppN, pt.aMeasured);
         ctx.beginPath();
-        ctx.arc(toX(pt.fAppN), toY(pt.aMeasured), 4.5, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, m.len(0.025), 0, Math.PI * 2);
         ctx.fill();
       });
 
       // CSV Overlay points
       ctx.fillStyle = '#f43f5e';
       state.csvOverlayPoints.forEach((pt) => {
-        ctx.fillRect(toX(pt.fAppN) - 3, toY(pt.a) - 3, 6, 6);
+        const point = toPoint(pt.fAppN, pt.a);
+        ctx.fillRect(point.x - m.len(0.025), point.y - m.len(0.025), m.len(0.05), m.len(0.05));
       });
     }
 
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 13px ui-sans-serif, system-ui';
-    ctx.fillText(
-      `a_true=${state.aTrueMps2.toFixed(4)} | 逐差 a_diff=${state.aDiffMeasuredMps2.toFixed(4)} m/s² | F轴截距=${state.interceptFitF.toFixed(4)}N | R²=${state.rSquared.toFixed(5)}`,
-      20,
-      26
-    );
+    labels.push({
+      id: 'mechanics-error-summary',
+      x: viewport.width * 0.5,
+      y: 26,
+      text: `a_true=${state.aTrueMps2.toFixed(4)} | 逐差 a_diff=${state.aDiffMeasuredMps2.toFixed(4)} m/s² | F轴截距=${state.interceptFitF.toFixed(4)}N | R²=${state.rSquared.toFixed(5)}`,
+      color: '#e2e8f0',
+      font: 'bold 13px ui-sans-serif, system-ui'
+    });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state) => [

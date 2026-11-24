@@ -1,9 +1,10 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { astroOrbitalPresets } from './presets.js';
 import {
   checkInvariants,
   computeLagrangePoints,
   computeObservables,
+  buildAstroScaleContext,
   createInitialState,
   extractRocheIsolines,
   stepAstroOrbital,
@@ -49,6 +50,10 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: {
+    scale: (params) => (0.42 / 0.24) / (params.mode === 'hohmann-transfer' ? params.r2OverR1 + 0.6 : 2.6),
+    offsetRatioX: 0.05
+  },
   paramSchema,
   presets: astroOrbitalPresets,
   engine: {
@@ -56,6 +61,32 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     step: stepAstroOrbital,
     computeObservables,
     checkInvariants
+  },
+  getForceVectors: (state, params) => {
+    const { centralMassKg, muSI, r1SI } = buildAstroScaleContext(params);
+    const testMassKg = 1;
+    const position = { x: state.xNorm, y: state.yNorm };
+    if (params.mode !== 'binary-lagrange') {
+      const r2 = Math.max(1e-12, position.x * position.x + position.y * position.y);
+      const scale = (-testMassKg * muSI) / (r1SI * r1SI * r2 * Math.sqrt(r2));
+      return [{
+        id: 'central-gravity', label: 'F_g (1 kg)', origin: position,
+        force: { x: scale * position.x, y: scale * position.y }, color: '#fbbf24', category: 'gravity', unit: 'N'
+      }];
+    }
+
+    const q = Math.max(0.01, Math.min(0.45, params.massRatioQ));
+    const primaries = [{ id: 'primary-1', label: 'F₁', x: -q, mass: (1 - q) * centralMassKg }, { id: 'primary-2', label: 'F₂', x: 1 - q, mass: q * centralMassKg }];
+    return primaries.map((primary, index) => {
+      const dx = primary.x - position.x;
+      const dy = -position.y;
+      const r2 = Math.max(1e-12, dx * dx + dy * dy);
+      const scale = (6.6743e-11 * testMassKg * primary.mass) / (r1SI * r1SI * r2 * Math.sqrt(r2));
+      return {
+        id: primary.id, label: `${primary.label} (1 kg)`, origin: position,
+        force: { x: scale * dx, y: scale * dy }, color: index === 0 ? '#fbbf24' : '#fb923c', category: 'gravity' as const, unit: 'N'
+      };
+    });
   },
   layers: [
     { id: 'orbit', label: '轨道轨迹与天体', defaultVisible: true },
@@ -149,9 +180,9 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const baseExtent = params.mode === 'hohmann-transfer' ? params.r2OverR1 + 0.6 : 2.6;
-    const ppm = (Math.min(viewport.width, viewport.height) * 0.42 * viewport.scale) / baseExtent;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
+    const m = createWorldMapper(viewport);
+    const baseViewScale = (0.42 / 0.24) / baseExtent;
+    const markerRadius = (pixels: number) => m.len(pixels / (Math.min(viewport.width, viewport.height) * 0.24 * baseViewScale));
     const useCorotating = params.mode === 'binary-lagrange' && activeLayers.has('corotatingView');
 
     const mapPoint = (x: number, y: number): { px: number; py: number } => {
@@ -160,9 +191,11 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
         const st = Math.sin(-state.tNorm);
         const rx = x * ct - y * st;
         const ry = x * st + y * ct;
-        return { px: cx + rx * ppm, py: cy - ry * ppm };
+        const point = m.toScreen(rx, ry);
+        return { px: point.x, py: point.y };
       }
-      return { px: cx + x * ppm, py: cy - y * ppm };
+      const point = m.toScreen(x, y);
+      return { px: point.x, py: point.y };
     };
 
     ctx.save();
@@ -181,8 +214,10 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
           const ay = seg.a.x * sr + seg.a.y * cr;
           const bx = seg.b.x * cr - seg.b.y * sr;
           const by = seg.b.x * sr + seg.b.y * cr;
-          ctx.moveTo(cx + ax * ppm, cy - ay * ppm);
-          ctx.lineTo(cx + bx * ppm, cy - by * ppm);
+          const a = m.toScreen(ax, ay);
+          const b = m.toScreen(bx, by);
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
         }
         ctx.stroke();
       }
@@ -194,9 +229,10 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
         const lx = lp.x * cr - lp.y * sr;
         const ly = lp.x * sr + lp.y * cr;
         ctx.beginPath();
-        ctx.arc(cx + lx * ppm, cy - ly * ppm, 3.5, 0, Math.PI * 2);
+        const point = m.toScreen(lx, ly);
+        ctx.arc(point.x, point.y, markerRadius(3.5), 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillText(lp.id, cx + lx * ppm + 6, cy - ly * ppm - 4);
+        ctx.fillText(lp.id, point.x + 6, point.y - 4);
       }
     }
 
@@ -205,9 +241,11 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
         if (sec.vertices.length < 2) return;
         ctx.fillStyle = idx % 2 === 0 ? 'rgba(56, 189, 248, 0.2)' : 'rgba(244, 114, 182, 0.2)';
         ctx.beginPath();
-        ctx.moveTo(cx, cy);
+        const origin = m.toScreen(0, 0);
+        ctx.moveTo(origin.x, origin.y);
         for (const v of sec.vertices) {
-          ctx.lineTo(cx + v.x * ppm, cy - v.y * ppm);
+          const point = m.toScreen(v.x, v.y);
+          ctx.lineTo(point.x, point.y);
         }
         ctx.closePath();
         ctx.fill();
@@ -219,10 +257,11 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
         ctx.strokeStyle = 'rgba(148,163,184,0.3)';
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
-        ctx.arc(cx, cy, 1 * ppm, 0, Math.PI * 2);
+        const origin = m.toScreen(0, 0);
+        ctx.arc(origin.x, origin.y, m.len(1), 0, Math.PI * 2);
         ctx.stroke();
         ctx.beginPath();
-        ctx.arc(cx, cy, params.r2OverR1 * ppm, 0, Math.PI * 2);
+        ctx.arc(origin.x, origin.y, params.r2OverR1 * m.ppm, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -248,23 +287,24 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
         const c2 = mapPoint(p2.x, p2.y);
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.arc(c1.px, c1.py, 14, 0, Math.PI * 2);
+        ctx.arc(c1.px, c1.py, markerRadius(14), 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = '#60a5fa';
         ctx.beginPath();
-        ctx.arc(c2.px, c2.py, 7, 0, Math.PI * 2);
+        ctx.arc(c2.px, c2.py, markerRadius(7), 0, Math.PI * 2);
         ctx.fill();
       } else {
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.arc(cx, cy, 16, 0, Math.PI * 2);
+        const origin = m.toScreen(0, 0);
+        ctx.arc(origin.x, origin.y, markerRadius(16), 0, Math.PI * 2);
         ctx.fill();
       }
 
       const sat = mapPoint(state.xNorm, state.yNorm);
       ctx.fillStyle = '#4ade80';
       ctx.beginPath();
-      ctx.arc(sat.px, sat.py, 6, 0, Math.PI * 2);
+      ctx.arc(sat.px, sat.py, markerRadius(6), 0, Math.PI * 2);
       ctx.fill();
     }
 

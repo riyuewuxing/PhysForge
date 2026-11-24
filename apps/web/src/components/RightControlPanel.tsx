@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
 import type { ParamRecord } from '@physforge/sim-sdk';
 import type { TelemetrySummary } from '../store/useClassroomStore.js';
@@ -17,6 +17,15 @@ interface RightControlPanelProps {
   onClose: () => void;
 }
 
+const CONTEXT_CORE_KEYS: Readonly<Record<string, readonly string[]>> = {
+  'em-induction-double-rod': ['batteryEmf', 'magneticB', 'resistorR', 'externalForce'],
+  'builder-optics-ray': ['incidentAngleDeg', 'n1', 'n2', 'objectDistanceM'],
+  'optics-ray-studio': ['incidentAngleDeg', 'n1', 'n2', 'objectDistanceM'],
+  'builder-circuit-mna': ['emf', 'sliderR', 'internalR'],
+  'circuit-dc-capacitor-mna': ['emf', 'sliderR', 'internalR'],
+  'em-3d-magnetic-fields': ['currentI', 'radiusR', 'solenoidTurns']
+};
+
 export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   plugin,
   activePresetId,
@@ -25,210 +34,165 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   telemetry,
   onApplyPreset,
   onUpdateParam,
-  onToggleLayer,
-  onClose
+  onToggleLayer
 }) => {
-  const formulaItems = telemetry.formulaItems;
+  const [showLiveSubstituted, setShowLiveSubstituted] = useState(false);
+
+  const { coreFields, extraFields } = useMemo(() => {
+    const preferred = CONTEXT_CORE_KEYS[plugin.meta.id];
+    const numericFields = plugin.paramSchema.filter((field) => field.kind === 'number');
+    const core = preferred
+      ? preferred.flatMap((key) => {
+          const field = plugin.paramSchema.find((candidate) => candidate.key === key);
+          return field?.kind === 'number' ? [field] : [];
+        }).slice(0, 3)
+      : numericFields.slice(0, 3);
+    const coreKeys = new Set(core.map((field) => field.key));
+    return {
+      coreFields: core,
+      extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key))
+    };
+  }, [plugin]);
+
+  const renderField = (field: (typeof plugin.paramSchema)[number]) => {
+    const value = params[field.key] ?? field.defaultValue;
+    if (field.kind === 'number') {
+      const numberValue = typeof value === 'number' ? value : field.defaultValue;
+      const min = field.min ?? 0;
+      const max = field.max ?? 100;
+      const progress = max > min ? Math.max(0, Math.min(100, ((numberValue - min) / (max - min)) * 100)) : 0;
+      const decimals = String(field.step ?? '').split('.')[1]?.length ?? 1;
+      const shortLabel = field.label.replace(/（[^）]*）/g, '');
+      return (
+        <div key={field.key} className="space-y-0.5">
+          <div className="flex items-baseline justify-between gap-2 text-[11px] font-medium">
+            <label htmlFor={`param-${field.key}`} className="min-w-0 truncate text-slate-300">{shortLabel}</label>
+            <span data-testid={`param-value-${field.key}`} className="shrink-0 font-mono tabular-nums text-slate-100">
+              {numberValue.toFixed(Math.min(Math.max(decimals, 1), 2))} {field.unit ?? ''}
+            </span>
+          </div>
+          <input
+            id={`param-${field.key}`}
+            type="range"
+            data-testid={`param-slider-${field.key}`}
+            min={field.min}
+            max={field.max}
+            step={field.step}
+            value={numberValue}
+            onChange={(event) => onUpdateParam(field.key, Number(event.target.value))}
+            className="pf-slider pf-touch-target"
+            style={{ '--pf-progress': `${progress}%` } as React.CSSProperties}
+          />
+        </div>
+      );
+    }
+    if (field.kind === 'boolean') {
+      const checked = typeof value === 'boolean' ? value : field.defaultValue;
+      return (
+        <label key={field.key} className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-white/10 bg-slate-950/35 px-2.5 py-1.5 text-[11px] text-slate-200">
+          <span>{field.label}</span>
+          <input type="checkbox" checked={checked} onChange={(event) => onUpdateParam(field.key, event.target.checked)} className="h-4 w-4 accent-sky-400" />
+        </label>
+      );
+    }
+    const selected = typeof value === 'string' ? value : field.defaultValue;
+    return (
+      <div key={field.key} className="space-y-1">
+        <label htmlFor={`param-${field.key}`} className="block text-[10px] text-slate-400">{field.label}</label>
+        <select id={`param-${field.key}`} value={selected} onChange={(event) => onUpdateParam(field.key, event.target.value)} className="h-8 w-full rounded-lg border border-white/10 bg-slate-950/60 px-2 text-xs text-slate-100">
+          {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </div>
+    );
+  };
+
+  const isCircuit = plugin.meta.id === 'builder-circuit-mna' || plugin.meta.id === 'circuit-dc-capacitor-mna';
+  const emf = typeof params.emf === 'number' ? params.emf : 12;
+  const kineticEnergy = telemetry.observables.kineticEnergy;
+  const dissipatedOrStoredEnergy = telemetry.observables.jouleHeat ?? telemetry.observables.capacitorEnergy;
+  const hasEnergyMetrics = (typeof kineticEnergy === 'number' && Number.isFinite(kineticEnergy))
+    || (typeof dissipatedOrStoredEnergy === 'number' && Number.isFinite(dissipatedOrStoredEnergy));
+  const kineticPct = Math.max(0, Math.min(100, Math.round(((kineticEnergy ?? 0) / 10) * 100)));
+  const heatPct = Math.max(0, Math.min(100, Math.round(((dissipatedOrStoredEnergy ?? 0) / 10) * 100)));
 
   return (
     <aside
       data-testid="right-control-panel"
-      className="w-80 xl:w-96 shrink-0 border-l flex flex-col min-h-0 overflow-hidden"
-      style={{
-        borderColor: 'var(--pf-border)',
-        backgroundColor: 'var(--pf-surface)'
-      }}
+      className="pf-floating-glass absolute right-3 top-[22px] z-20 flex max-h-[calc(100%-34px)] w-[272px] max-w-[calc(100%-24px)] flex-col overflow-hidden rounded-2xl border border-white/10 text-slate-100 shadow-2xl"
+      style={{ borderColor: 'var(--pf-border)' }}
     >
-      <div
-        className="px-3 py-2.5 border-b flex items-center justify-between"
-        style={{ borderColor: 'var(--pf-border)' }}
-      >
-        <div className="font-bold text-sm">预设剧本与参数控制台</div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="收起参数控制栏"
-          className="pf-touch-target px-2.5 py-1 rounded-lg border text-xs cursor-pointer"
-          style={{ borderColor: 'var(--pf-border)' }}
-        >
-          收起
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-3 space-y-4">
-        {/* 课堂预设剧本 */}
-        <section className="space-y-2">
-          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--pf-accent)' }}>
-            课堂预设剧本（按数字键 1–{plugin.presets.length} 速切）
-          </div>
-          <div className="space-y-1.5">
-            {plugin.presets.map((preset, idx) => {
-              const active = preset.id === activePresetId;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  data-testid={`preset-btn-${preset.id}`}
-                  onClick={() => onApplyPreset(preset.id)}
-                  className="pf-touch-target w-full text-left rounded-xl border p-2.5 transition cursor-pointer"
-                  style={{
-                    borderColor: active ? 'var(--pf-accent)' : 'var(--pf-border)',
-                    backgroundColor: active
-                      ? 'rgba(56, 189, 248, 0.14)'
-                      : 'var(--pf-surface-elevated)'
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-sm">{preset.name}</span>
-                    <span className="text-[11px] font-mono px-1.5 py-0.5 rounded border border-current opacity-70">
-                      [{idx + 1}]
-                    </span>
-                  </div>
-                  <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--pf-text-muted)' }}>
-                    {preset.description}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* 动态物理公式代入 */}
-        <KatexFormulaCard items={formulaItems} />
-
-        {/* 能量柱状图与守恒校验 */}
-        <EnergyBarChart observables={telemetry.observables} invariants={telemetry.invariants} />
-
-        {/* 精准事件钉点记录 */}
-        {telemetry.events.length > 0 && (
-          <section
-            className="rounded-xl border p-3 space-y-1.5"
-            style={{
-              borderColor: 'var(--pf-border)',
-              backgroundColor: 'var(--pf-surface-elevated)'
-            }}
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3.5">
+        <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/45 px-2.5 py-1.5">
+          <label htmlFor="preset-select" className="shrink-0 text-[11px] font-medium text-slate-400">预设</label>
+          <select
+            id="preset-select"
+            data-testid="preset-select"
+            aria-label="课堂预设"
+            value={activePresetId ?? ''}
+            onChange={(event) => onApplyPreset(event.target.value)}
+            className="min-w-0 flex-1 truncate bg-transparent text-xs font-medium text-slate-100 outline-none cursor-pointer"
           >
-            <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
-              精确事件捕获日志（bisectEvent）
-            </div>
-            {telemetry.events.slice(-4).map((ev) => (
-              <div key={ev.id} className="text-xs flex justify-between gap-2">
-                <span>{ev.label}</span>
-                <span className="font-mono text-amber-300">t = {ev.time.toFixed(5)} s</span>
-              </div>
+            {!activePresetId && <option value="" className="bg-slate-900">自定义参数</option>}
+            {plugin.presets.map((preset, index) => (
+              <option key={preset.id} value={preset.id} data-testid={`preset-btn-${preset.id}`} className="bg-slate-900 text-slate-100">
+                {/^[0-9]+\s*[.、]/.test(preset.name) ? preset.name : `${index + 1}. ${preset.name}`}
+              </option>
             ))}
-          </section>
-        )}
+          </select>
+          {activePresetId && <span data-testid="active-preset-description" className="sr-only">{plugin.presets.find((preset) => preset.id === activePresetId)?.description}</span>}
+        </div>
 
-        {/* 声明式参数触控控制区 */}
-        <section className="space-y-2.5">
-          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--pf-accent)' }}>
-            物理参数实时调节
+        <section className="space-y-1.5">{coreFields.map(renderField)}</section>
+
+        <section data-testid="formula-card" className="relative rounded-xl border border-white/10 bg-slate-950/75 px-3 pb-3 pt-7 shadow-inner">
+          <button
+            type="button"
+            data-testid="btn-toggle-formula-values"
+            aria-label={showLiveSubstituted ? '隐藏代入数值' : '显示代入数值'}
+            onClick={() => setShowLiveSubstituted((shown) => !shown)}
+            title={showLiveSubstituted ? '切换纯符号公式' : '显示实时代入数值'}
+            className="absolute right-2 top-1.5 rounded px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-white/10 hover:text-sky-300 cursor-pointer"
+          >
+            {showLiveSubstituted ? '符号' : '123'}
+          </button>
+          <KatexFormulaCard items={telemetry.formulaItems} compact showSubstituted={showLiveSubstituted} />
+        </section>
+
+        {isCircuit ? (
+          <div className="space-y-1.5 pt-0.5">
+            <div className="flex justify-between font-mono text-[10px] text-slate-400"><span>0V</span><span>电势分布</span><span>{emf.toFixed(0)}V</span></div>
+            <div className="h-1.5 w-full rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400 shadow-[0_0_8px_rgba(56,189,248,0.4)]" />
           </div>
-          {plugin.paramSchema.map((field) => {
-            const val = params[field.key] ?? field.defaultValue;
-            if (field.kind === 'number') {
-              const numVal = typeof val === 'number' ? val : field.defaultValue;
-              return (
-                <div key={field.key} className="space-y-0.5">
-                  <div className="flex justify-between text-xs font-medium">
-                    <label htmlFor={`param-${field.key}`}>{field.label}</label>
-                    <span className="font-mono">
-                      {numVal} {field.unit ?? ''}
-                    </span>
-                  </div>
-                  <input
-                    id={`param-${field.key}`}
-                    type="range"
-                    min={field.min}
-                    max={field.max}
-                    step={field.step}
-                    value={numVal}
-                    onChange={(e) => onUpdateParam(field.key, Number(e.target.value))}
-                    className="pf-slider pf-touch-target"
-                  />
-                </div>
-              );
-            }
+        ) : hasEnergyMetrics ? (
+          <div className="space-y-2 pt-0.5">
+            <div>
+              <div className="mb-1 flex justify-between text-[10px] text-slate-400"><span>动能 / 场能</span><span className="font-mono">{kineticPct}%</span></div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-sky-400/80 transition-all" style={{ width: `${kineticPct}%` }} /></div>
+            </div>
+            <div>
+              <div className="mb-1 flex justify-between text-[10px] text-slate-400"><span>耗散 / 储能转化</span><span className="font-mono">{heatPct}%</span></div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-amber-400/75 transition-all" style={{ width: `${heatPct}%` }} /></div>
+            </div>
+          </div>
+        ) : null}
 
-            if (field.kind === 'boolean') {
-              const boolVal = typeof val === 'boolean' ? val : field.defaultValue;
-              return (
-                <label
-                  key={field.key}
-                  className="pf-touch-target flex items-center justify-between gap-2 rounded-xl border px-3 py-2 cursor-pointer"
-                  style={{
-                    borderColor: 'var(--pf-border)',
-                    backgroundColor: 'var(--pf-surface-elevated)'
-                  }}
-                >
-                  <span className="text-sm">{field.label}</span>
-                  <input
-                    type="checkbox"
-                    checked={boolVal}
-                    onChange={(e) => onUpdateParam(field.key, e.target.checked)}
-                    className="w-5 h-5 accent-sky-400"
-                  />
-                </label>
-              );
-            }
-
-            // select
-            const strVal = typeof val === 'string' ? val : field.defaultValue;
-            return (
-              <div key={field.key} className="space-y-1">
-                <label htmlFor={`param-${field.key}`} className="text-xs font-medium block">
-                  {field.label}
-                </label>
-                <select
-                  id={`param-${field.key}`}
-                  value={strVal}
-                  onChange={(e) => onUpdateParam(field.key, e.target.value)}
-                  className="pf-touch-target w-full rounded-xl border px-3 py-2 text-sm"
-                  style={{
-                    borderColor: 'var(--pf-border)',
-                    backgroundColor: 'var(--pf-surface-elevated)',
-                    color: 'var(--pf-text)'
-                  }}
-                >
-                  {field.options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+        {(extraFields.length > 0 || telemetry.invariants.length > 0 || plugin.layers.length > 0) && (
+          <details className="rounded-xl border border-white/10 bg-slate-950/35 px-2.5">
+            <summary className="cursor-pointer list-none py-2 text-[11px] font-medium text-slate-400 hover:text-slate-200">更多参数与图层 <span className="float-right">⌄</span></summary>
+            <div className="space-y-2.5 pb-3">
+              {extraFields.map(renderField)}
+              <EnergyBarChart observables={telemetry.observables} invariants={telemetry.invariants} />
+              <div className="space-y-1 pt-1">
+                {plugin.layers.map((layer) => (
+                  <label key={layer.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[11px] text-slate-300 hover:bg-white/5">
+                    <input type="checkbox" checked={activeLayers.includes(layer.id)} onChange={() => onToggleLayer(layer.id)} className="h-3.5 w-3.5 accent-sky-400" />
+                    <span>{layer.label}</span>
+                  </label>
+                ))}
               </div>
-            );
-          })}
-        </section>
-
-        {/* 图层显隐开关 */}
-        <section className="space-y-1.5">
-          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--pf-accent)' }}>
-            矢量与辅助图层
-          </div>
-          {plugin.layers.map((layer) => {
-            const checked = activeLayers.includes(layer.id);
-            return (
-              <label
-                key={layer.id}
-                className="pf-touch-target flex items-center gap-2.5 rounded-xl border px-3 py-2 text-sm cursor-pointer"
-                style={{
-                  borderColor: 'var(--pf-border)',
-                  backgroundColor: 'var(--pf-surface-elevated)'
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => onToggleLayer(layer.id)}
-                  className="w-5 h-5 accent-sky-400"
-                />
-                <span>{layer.label}</span>
-              </label>
-            );
-          })}
-        </section>
+            </div>
+          </details>
+        )}
       </div>
     </aside>
   );

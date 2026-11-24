@@ -96,7 +96,7 @@
     {
       "id": "q-ind-challenge",
       "tier": "压轴",
-      "stem": "导轨左端接电动势 E=6 V 恒定电源（B=1.5 T, L=1 m, m₁=1 kg, 总阻 2 Ω），杆从静止被安培力驱动至 8 s 达到稳态时，求最终稳定速度 v_lim。",
+      "stem": "导轨左端接电动势 E=6 V 恒定电源（B=1.5 T, L=1 m, m₁=4.5 kg, 总阻 2 Ω），杆从静止被安培力驱动，运行至 t=40 s 后求稳定速度 v_lim。",
       "options": ["4.0 m/s", "3.0 m/s", "6.0 m/s", "2.0 m/s"],
       "answer": "A",
       "analysis": "当反电动势 BLv_lim = E 时电流归零，安培力为零，故 v_lim = E/(BL) = 6/1.5 = 4.0 m/s。",
@@ -106,7 +106,7 @@
         "verified": true,
         "verifier": "physics-core",
         "tolerance": 1e-3,
-        "simDurationSec": 8.0,
+        "simDurationSec": 40.0,
         "expectedMetrics": {
           "v1": 4.0
         }

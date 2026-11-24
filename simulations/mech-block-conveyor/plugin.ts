@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
 import {
   checkInvariants,
@@ -124,6 +124,7 @@ export const mechBlockConveyorPlugin = defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '1.0.0'
   },
+  defaultView: { scale: 0.354, offsetRatioX: 0.05, offsetRatioY: 0.08 },
   paramSchema,
   presets: [
     {
@@ -205,19 +206,26 @@ export const mechBlockConveyorPlugin = defineSimulationPlugin<
     { key: 'frictionHeat', label: '摩擦生热 Q', unit: 'J', color: '#fb7185' },
     { key: 'kineticEnergy', label: '总动能 Ek', unit: 'J', color: '#4ade80' }
   ],
-  getControlHandles: (_state, params) => [
-    {
+  getControlHandles: (_state, params) => {
+    const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
+    const origin = { x: 0, y: -0.6 };
+    const direction = { x: Math.cos(theta), y: Math.sin(theta) };
+    return [{
       id: 'belt-velocity',
       label: `${params.systemMode === 'conveyor' ? 'v带' : 'v板'}=${params.beltVelocity.toFixed(1)}m/s`,
-      position: { x: params.beltVelocity * 0.3, y: -0.6 },
-      origin: { x: 0, y: -0.6 },
+      position: {
+        x: origin.x + params.beltVelocity * 0.3 * direction.x,
+        y: origin.y + params.beltVelocity * 0.3 * direction.y
+      },
+      origin,
       handleKind: 'vector',
       color: '#fbbf24',
-      onDrag: (wp) => ({
-        beltVelocity: Number(Math.max(-6, Math.min(6, Math.round((wp.x / 0.3) * 2) / 2)).toFixed(1))
-      })
-    }
-  ],
+      onDrag: (wp) => {
+        const projection = (wp.x - origin.x) * direction.x + (wp.y - origin.y) * direction.y;
+        return { beltVelocity: Number(Math.max(-6, Math.min(6, Math.round((projection / 0.3) * 2) / 2)).toFixed(1)) };
+      }
+    }];
+  },
   getForceVectors: (state, params) => {
     const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
     const m = params.massBlock;
@@ -227,8 +235,8 @@ export const mechBlockConveyorPlugin = defineSimulationPlugin<
     const vRel = state.vBlock - state.vCarrier;
     const fMax = params.muBlockCarrier * normalMag;
     const fAlong = state.coMovingLocked ? m * g * Math.sin(theta) : Math.abs(vRel) < 1e-9 ? 0 : vRel > 0 ? -fMax : fMax;
-    const bx = state.xBlock * 0.25;
-    const by = bx * Math.tan(theta);
+    const bx = state.xBlock * Math.cos(theta);
+    const by = state.xBlock * Math.sin(theta);
     return [
       { id: 'gravity', label: 'mg', origin: { x: bx, y: by }, force: { x: 0, y: -mg }, color: '#fbbf24', unit: 'N' },
       { id: 'normal', label: 'F_N', origin: { x: bx, y: by }, force: { x: -normalMag * Math.sin(theta), y: normalMag * Math.cos(theta) }, color: '#38bdf8', unit: 'N' },
@@ -241,7 +249,7 @@ export const mechBlockConveyorPlugin = defineSimulationPlugin<
       label: '传送带/长木板参考系',
       getOrigin: (state, params) => {
         const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
-        const s = state.xCarrier * 0.25;
+        const s = state.xCarrier;
         return { x: s * Math.cos(theta), y: s * Math.sin(theta) };
       }
     }
@@ -280,98 +288,81 @@ export const mechBlockConveyorPlugin = defineSimulationPlugin<
     }
   ],
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const theta = params.systemMode === 'conveyor' ? (params.inclineDeg * Math.PI) / 180 : 0;
-    const pxPerM = Math.min(viewport.width, viewport.height) * 0.085 * viewport.scale;
-    const camCenterS = 0.5 * (state.xBlock + state.xCarrier);
+    const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
+    const m = createWorldMapper(viewport);
+    const origin = m.toScreen(0, 0);
+    const px = (distance: number) => m.len(distance);
+    const toLocalX = (distance: number) => px(distance);
+    const labels: CanvasLabel[] = [];
 
     ctx.save();
-    // 把坐标系平移到屏幕中心偏下，并逆时针旋转 theta（Canvas y 向下，故旋转 -theta 使 +x 沿斜面向上！）
-    ctx.translate(viewport.width * 0.5 + viewport.offsetX, viewport.height * 0.58 + viewport.offsetY);
+    // The local belt axis is rotated from world +x by the incline angle.
+    ctx.translate(origin.x, origin.y);
     ctx.rotate(-theta);
 
-    const toLocalX = (s: number) => (s - camCenterS) * pxPerM;
-
-    // 1. 传送带或木板
     if (activeLayers.has('carrier')) {
       if (params.systemMode === 'conveyor') {
-        const beltLen = 9 * pxPerM;
-        const beltHalf = 0.5 * beltLen;
-        const rWheel = 22;
+        const beltHalf = px(4.5);
+        const wheelRadius = px(0.26);
         ctx.fillStyle = 'rgba(51, 65, 85, 0.75)';
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 2.5;
-        ctx.fillRect(-beltHalf, 0, beltLen, rWheel * 2);
-        ctx.strokeRect(-beltHalf, 0, beltLen, rWheel * 2);
+        ctx.fillRect(-beltHalf, 0, beltHalf * 2, px(0.52));
+        ctx.strokeRect(-beltHalf, 0, beltHalf * 2, px(0.52));
 
-        // 传送带滚轮
-        for (const wx of [-beltHalf, beltHalf]) {
+        for (const wheelX of [-beltHalf, beltHalf]) {
           ctx.fillStyle = '#475569';
           ctx.beginPath();
-          ctx.arc(wx, rWheel, rWheel, 0, Math.PI * 2);
+          ctx.arc(wheelX, wheelRadius, wheelRadius, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
         }
 
-        // 传送带表面移动刻度点，体现传送带速度
         ctx.fillStyle = '#fbbf24';
         const spacing = 0.8;
         const shift = ((state.xCarrier % spacing) + spacing) % spacing;
-        for (let m = -4.5 + shift; m <= 4.5; m += spacing) {
+        for (let s = -4.5 + shift; s <= 4.5; s += spacing) {
           ctx.beginPath();
-          ctx.arc(m * pxPerM, 5, 3, 0, Math.PI * 2);
+          ctx.arc(toLocalX(s), px(0.05), px(0.04), 0, Math.PI * 2);
           ctx.fill();
         }
       } else {
-        // 长木板
-        const plankW = 5.5 * pxPerM;
-        const plankH = 26;
-        const plankLeft = toLocalX(state.xCarrier) - 0.5 * pxPerM;
+        const plankLeft = toLocalX(state.xCarrier - 0.5);
         ctx.fillStyle = 'rgba(251, 191, 36, 0.25)';
         ctx.strokeStyle = '#fbbf24';
         ctx.lineWidth = 2.5;
-        ctx.fillRect(plankLeft, 0, plankW, plankH);
-        ctx.strokeRect(plankLeft, 0, plankW, plankH);
-        // 地面线
+        ctx.fillRect(plankLeft, 0, px(5.5), px(0.3));
+        ctx.strokeRect(plankLeft, 0, px(5.5), px(0.3));
         ctx.strokeStyle = '#64748b';
         ctx.beginPath();
-        ctx.moveTo(-viewport.width, plankH + 1);
-        ctx.lineTo(viewport.width, plankH + 1);
+        ctx.moveTo(-px(12), px(0.32));
+        ctx.lineTo(px(12), px(0.32));
         ctx.stroke();
       }
     }
 
-    // 2. 相对划痕视觉高亮带
     if (activeLayers.has('scratchTrack') && state.relativeScratch > 0.01) {
-      const xB = toLocalX(state.xBlock);
-      const xC = toLocalX(state.xCarrier);
-      const left = Math.min(xB, xC);
-      const w = Math.abs(xB - xC);
+      const blockX = toLocalX(state.xBlock);
+      const carrierX = toLocalX(state.xCarrier);
       ctx.fillStyle = 'rgba(244, 114, 182, 0.75)';
-      ctx.fillRect(left, -4, w, 4);
+      ctx.fillRect(Math.min(blockX, carrierX), -px(0.05), Math.abs(blockX - carrierX), px(0.05));
     }
 
-    // 3. 物块主体
-    const bx = toLocalX(state.xBlock);
-    const blockW = 46;
-    const blockH = 34;
+    const blockX = toLocalX(state.xBlock);
     if (activeLayers.has('block')) {
       ctx.fillStyle = '#38bdf8';
       ctx.strokeStyle = '#e0f2fe';
       ctx.lineWidth = 2;
-      ctx.fillRect(bx - blockW * 0.5, -blockH, blockW, blockH);
-      ctx.strokeRect(bx - blockW * 0.5, -blockH, blockW, blockH);
+      ctx.fillRect(blockX - px(0.275), -px(0.42), px(0.55), px(0.42));
+      ctx.strokeRect(blockX - px(0.275), -px(0.42), px(0.55), px(0.42));
     }
 
-    // 4. 速度标注
     if (activeLayers.has('forceAndVelocity')) {
-      ctx.fillStyle = '#38bdf8';
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      ctx.fillText(`v物=${state.vBlock.toFixed(2)} m/s`, bx - 36, -blockH - 12);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillText(
-        `${params.systemMode === 'conveyor' ? 'v带' : 'v板'}=${state.vCarrier.toFixed(2)} m/s`,
-        toLocalX(state.xCarrier) - 36,
-        54
+      const blockLabel = m.toScreen(state.xBlock * Math.cos(theta), state.xBlock * Math.sin(theta) + 0.62);
+      const carrierLabel = m.toScreen(state.xCarrier * Math.cos(theta), state.xCarrier * Math.sin(theta) - 0.72);
+      labels.push(
+        { id: 'block-velocity', x: blockLabel.x, y: blockLabel.y, text: `v物=${state.vBlock.toFixed(2)} m/s`, color: '#38bdf8', font: 'bold 14px system-ui, sans-serif' },
+        { id: 'carrier-velocity', x: carrierLabel.x, y: carrierLabel.y, text: `${params.systemMode === 'conveyor' ? 'v带' : 'v板'}=${state.vCarrier.toFixed(2)} m/s`, color: '#fbbf24', font: 'bold 14px system-ui, sans-serif' }
       );
     }
 
@@ -397,6 +388,7 @@ export const mechBlockConveyorPlugin = defineSimulationPlugin<
       );
       ctx.restore();
     }
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
   }
 });
 

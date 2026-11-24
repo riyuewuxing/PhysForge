@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { collisionRecoilPresets } from './presets.js';
 import {
   checkInvariants,
@@ -43,6 +43,7 @@ export const mechCollisionRecoilPlugin = defineSimulationPlugin<CollisionRecoilP
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.5, offsetRatioX: 0.05, offsetRatioY: 0.02 },
   paramSchema,
   presets: collisionRecoilPresets,
   engine: {
@@ -50,6 +51,26 @@ export const mechCollisionRecoilPlugin = defineSimulationPlugin<CollisionRecoilP
     step: stepCollisionRecoil,
     computeObservables,
     checkInvariants
+  },
+  getForceVectors: (state, params) => {
+    if (params.mode !== 'collision-1d' && params.mode !== 'bullet-block') return [];
+    const g = 9.81;
+    const m1 = Math.max(0.05, params.mass1);
+    const m2 = Math.max(0.05, params.mass2);
+    const vectors: ForceVectorItem[] = [
+      { id: 'weight-1', label: 'm₁g', origin: { x: state.x1, y: state.y1 }, force: { x: 0, y: -m1 * g }, color: '#fbbf24', category: 'gravity' as const, unit: 'N' },
+      { id: 'normal-1', label: 'N₁', origin: { x: state.x1, y: state.y1 }, force: { x: 0, y: m1 * g }, color: '#38bdf8', category: 'normal' as const, unit: 'N' },
+      { id: 'weight-2', label: 'm₂g', origin: { x: state.x2, y: state.y2 }, force: { x: 0, y: -m2 * g }, color: '#fb923c', category: 'gravity' as const, unit: 'N' },
+      { id: 'normal-2', label: 'N₂', origin: { x: state.x2, y: state.y2 }, force: { x: 0, y: m2 * g }, color: '#4ade80', category: 'normal' as const, unit: 'N' }
+    ];
+    if (params.mode === 'bullet-block' && state.bulletPhase === 'penetrating') {
+      const drag = Math.max(1, params.dragForceF);
+      vectors.push(
+        { id: 'bullet-resistance', label: 'f', origin: { x: state.x1, y: state.y1 }, force: { x: -drag, y: 0 }, color: '#f472b6', category: 'friction', unit: 'N' },
+        { id: 'block-resistance', label: 'f', origin: { x: state.x2, y: state.y2 }, force: { x: drag, y: 0 }, color: '#a78bfa', category: 'friction', unit: 'N' }
+      );
+    }
+    return vectors;
   },
   layers: [
     { id: 'bodies', label: '碰撞体与轨迹', defaultVisible: true },
@@ -131,11 +152,10 @@ export const mechCollisionRecoilPlugin = defineSimulationPlugin<CollisionRecoilP
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.12 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.52 + viewport.offsetY;
-    const toX = (wx: number) => cx + wx * ppm;
-    const toY = (wy: number) => cy - wy * ppm;
+    const m = createWorldMapper(viewport);
+    const ppm = m.ppm;
+    const toX = (wx: number) => m.toX(wx);
+    const toY = (wy: number) => m.toY(wy);
 
     ctx.save();
 

@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { kinematicsChasePresets } from './presets.js';
 import {
   checkInvariants,
@@ -41,6 +41,7 @@ export const mechKinematicsChasePlugin = defineSimulationPlugin<
     difficulty: '高三一轮',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.833, offsetRatioX: -0.2, offsetRatioY: 0.05 },
   paramSchema,
   presets: kinematicsChasePresets,
   engine: {
@@ -59,14 +60,18 @@ export const mechKinematicsChasePlugin = defineSimulationPlugin<
     { key: 'deltaX', label: '两车间距 Δx', unit: 'm', color: '#4ade80' },
     { key: 'xA', label: 'A车位移 xA', unit: 'm', color: '#fbbf24' }
   ],
+  getForceVectors: (state) => [
+    { id: 'net-force-a', label: 'F_A (m=1 kg)', origin: { x: state.xA * 0.05, y: 0 }, force: { x: state.aACurrent, y: 0 }, color: '#38bdf8', category: 'net', unit: 'N' },
+    { id: 'net-force-b', label: 'F_B (m=1 kg)', origin: { x: state.xB * 0.05, y: 0 }, force: { x: state.aBCurrent, y: 0 }, color: '#f472b6', category: 'net', unit: 'N' }
+  ],
   getControlHandles: (_state, params) => [
     {
       id: 'initial-gap',
       label: `Δx₀=${params.xB0}m`,
-      position: { x: params.xB0 * 0.05 - 1.2, y: -0.2 },
+      position: { x: params.xB0 * 0.05, y: 0.2 },
       handleKind: 'point',
       color: '#f472b6',
-      onDrag: (wp) => ({ xB0: Math.max(5, Math.min(80, Math.round((wp.x + 1.2) / 0.05))) })
+      onDrag: (wp) => ({ xB0: Math.max(5, Math.min(80, Math.round(wp.x / 0.05))) })
     }
   ],
   referenceFrames: [
@@ -113,40 +118,43 @@ export const mechKinematicsChasePlugin = defineSimulationPlugin<
     }
   ],
   renderCanvas: (ctx, state, _params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.2 * viewport.scale;
-    const ox = viewport.width * 0.25 + viewport.offsetX;
-    const oy = viewport.height * 0.55 + viewport.offsetY;
-    const toScr = (xMeters: number, laneY: number) => ({
-      sx: ox + xMeters * 0.05 * ppm,
-      sy: oy + laneY * ppm
-    });
+    const m = createWorldMapper(viewport);
+    const basePpm = Math.min(viewport.width, viewport.height) * 0.24 * 0.833;
+    const toScr = (xMeters: number, laneY: number) => {
+      const point = m.toScreen(xMeters * 0.05, -laneY);
+      return { sx: point.x, sy: point.y };
+    };
 
     ctx.save();
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(20, oy + 0.35 * ppm);
-    ctx.lineTo(viewport.width - 20, oy + 0.35 * ppm);
+    const trackStart = toScr(-20, 0.35);
+    const trackEnd = toScr(120, 0.35);
+    ctx.moveTo(trackStart.sx, trackStart.sy);
+    ctx.lineTo(trackEnd.sx, trackEnd.sy);
     ctx.stroke();
 
     if (activeLayers.has('cars')) {
       const pA = toScr(state.xA, 0);
       const pB = toScr(state.xB, 0);
       ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(pA.sx - 22, pA.sy - 14, 44, 28);
+      const carWidth = m.len(44 / basePpm);
+      const carHeight = m.len(28 / basePpm);
+      ctx.fillRect(pA.sx - carWidth * 0.5, pA.sy - carHeight * 0.5, carWidth, carHeight);
       ctx.fillStyle = '#0f172a';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('A', pA.sx - 5, pA.sy + 5);
+      ctx.fillText('A', pA.sx - m.len(5 / basePpm), pA.sy + m.len(5 / basePpm));
 
       ctx.fillStyle = '#f472b6';
-      ctx.fillRect(pB.sx - 22, pB.sy - 14, 44, 28);
+      ctx.fillRect(pB.sx - carWidth * 0.5, pB.sy - carHeight * 0.5, carWidth, carHeight);
       ctx.fillStyle = '#0f172a';
-      ctx.fillText('B', pB.sx - 5, pB.sy + 5);
+      ctx.fillText('B', pB.sx - m.len(5 / basePpm), pB.sy + m.len(5 / basePpm));
 
       ctx.fillStyle = '#e2e8f0';
       ctx.font = 'bold 12px monospace';
-      ctx.fillText(`vA=${state.vA.toFixed(1)} m/s`, pA.sx - 28, pA.sy - 22);
-      ctx.fillText(`vB=${state.vB.toFixed(1)} m/s`, pB.sx - 28, pB.sy - 22);
+      ctx.fillText(`vA=${state.vA.toFixed(1)} m/s`, pA.sx - m.len(28 / basePpm), pA.sy - m.len(22 / basePpm));
+      ctx.fillText(`vB=${state.vB.toFixed(1)} m/s`, pB.sx - m.len(28 / basePpm), pB.sy - m.len(22 / basePpm));
     }
 
     if (activeLayers.has('eventPins')) {

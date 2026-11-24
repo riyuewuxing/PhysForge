@@ -157,6 +157,27 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
     }
     return vectors;
   },
+  referenceFrames: [
+    {
+      id: 'cylinder-cm',
+      label: '刚体质心随动系',
+      getOrigin: (s, p) => {
+        const incline = p.scenario === 'incline-race' ? degToRad(p.inclineDeg) : 0;
+        const tangent = { x: Math.cos(incline), y: -Math.sin(incline) };
+        const normal = { x: Math.sin(incline), y: Math.cos(incline) };
+        const rowIndex: Record<RigidBodyShape, number> = { 'solid-sphere': 0, 'solid-cylinder': 1, 'hollow-sphere': 2, 'thin-ring': 3 };
+        const radius = Math.max(0.05, p.radiusM);
+        const maxX = Math.max(8, ...Object.values(s.inclinePositions));
+        const along = p.scenario === 'incline-race' ? -1.4 + (s.inclinePositions[p.shape]! / maxX) * 2.8 : s.x;
+        const rowY = p.scenario === 'incline-race' ? 1.5 - rowIndex[p.shape]! : 0;
+        return { x: along * tangent.x + radius * normal.x, y: rowY + along * tangent.y + radius * normal.y };
+      },
+      getVelocity: (s, p) => {
+        const incline = p.scenario === 'incline-race' ? degToRad(p.inclineDeg) : 0;
+        return { x: s.v * Math.cos(incline), y: -s.v * Math.sin(incline) };
+      }
+    }
+  ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',

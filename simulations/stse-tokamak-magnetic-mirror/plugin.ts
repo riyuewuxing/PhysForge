@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { tokamakMirrorPresets } from './presets.js';
 import {
   buildTokamakMirrorSegments,
@@ -45,6 +45,7 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
   renderMode: 'three3d',
   paramSchema,
   presets: tokamakMirrorPresets,
+  defaultView: { scale: 0.917, offsetRatioX: 0.05 },
   engine: {
     createInitialState,
     step: stepTokamakMirror,
@@ -85,13 +86,8 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.22 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
-    const proj = (p: { x: number; y: number; z: number }) => ({
-      sx: cx + (p.z * 0.85 + p.x * 0.32) * ppm,
-      sy: cy - (p.y * 0.85 + p.x * 0.2) * ppm
-    });
+    const m = createWorldMapper(viewport);
+    const proj = (p: { x: number; y: number; z: number }) => m.toScreen(p.z * 0.85 + p.x * 0.32, p.y * 0.85 + p.x * 0.2);
     ctx.save();
     if (activeLayers.has('conductors')) {
       ctx.strokeStyle = '#f59e0b';
@@ -100,8 +96,8 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
       for (const seg of buildTokamakMirrorSegments(params)) {
         const a = proj(seg.a);
         const b = proj(seg.b);
-        ctx.moveTo(a.sx, a.sy);
-        ctx.lineTo(b.sx, b.sy);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
       }
       ctx.stroke();
     }
@@ -113,8 +109,8 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
         ctx.beginPath();
         line.forEach((p, idx) => {
           const pt = proj(p);
-          if (idx === 0) ctx.moveTo(pt.sx, pt.sy);
-          else ctx.lineTo(pt.sx, pt.sy);
+          if (idx === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
         });
         ctx.stroke();
       }
@@ -125,16 +121,30 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
       ctx.beginPath();
       state.trail.forEach((p, idx) => {
         const pt = proj(p);
-        if (idx === 0) ctx.moveTo(pt.sx, pt.sy);
-        else ctx.lineTo(pt.sx, pt.sy);
+        if (idx === 0) ctx.moveTo(pt.x, pt.y);
+        else ctx.lineTo(pt.x, pt.y);
       });
       ctx.stroke();
     }
     const sp = proj(state.position);
     ctx.fillStyle = state.escaped ? '#ef4444' : '#4ade80';
     ctx.beginPath();
-    ctx.arc(sp.sx, sp.sy, 6, 0, Math.PI * 2);
+    ctx.arc(sp.x, sp.y, m.len(0.028), 0, Math.PI * 2);
     ctx.fill();
+
+    const radiusGuideEnd = params.mode === 'magnetic-mirror'
+      ? { x: params.coilHalfSpanM * 0.85, y: 0 }
+      : { x: params.majorRadiusM * 0.32, y: params.majorRadiusM * 0.2 };
+    const radiusGuideStart = m.toScreen(0, 0);
+    const radiusGuide = m.toScreen(radiusGuideEnd.x, radiusGuideEnd.y);
+    ctx.strokeStyle = 'rgba(245,158,11,0.5)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(radiusGuideStart.x, radiusGuideStart.y);
+    ctx.lineTo(radiusGuide.x, radiusGuide.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
     ctx.fillStyle = '#e2e8f0';
     ctx.font = 'bold 13px ui-sans-serif, system-ui';
@@ -148,6 +158,55 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
     );
     ctx.restore();
   },
+  getControlHandles: (_state, params) => [
+    params.mode === 'magnetic-mirror'
+      ? {
+          id: 'mirror-coil-span',
+          label: `z_c=${params.coilHalfSpanM.toFixed(1)} m`,
+          position: { x: params.coilHalfSpanM * 0.85, y: 0 },
+          origin: { x: 0, y: 0 },
+          handleKind: 'point' as const,
+          color: '#f59e0b',
+          onDrag: (world: { x: number; y: number }) => {
+            const span = Math.max(0.8, Math.min(2.5, Math.round((Math.abs(world.x) / 0.85) * 10) / 10));
+            return { coilHalfSpanM: Number(span.toFixed(1)) };
+          }
+        }
+      : {
+          id: 'tokamak-major-radius',
+          label: `R₀=${params.majorRadiusM.toFixed(1)} m`,
+          position: { x: params.majorRadiusM * 0.32, y: params.majorRadiusM * 0.2 },
+          origin: { x: 0, y: 0 },
+          handleKind: 'radius' as const,
+          color: '#f59e0b',
+          onDrag: (world: { x: number; y: number }) => {
+            const radius = Math.max(1, Math.min(2.2, Math.round((Math.hypot(world.x, world.y) / Math.hypot(0.32, 0.2)) * 10) / 10));
+            return { majorRadiusM: Number(radius.toFixed(1)) };
+          }
+        }
+  ],
+  getForceVectors: (state) => {
+    const velocity = state.velocity;
+    const magnetic = state.bField;
+    const ax = velocity.y * magnetic.z - velocity.z * magnetic.y;
+    const ay = velocity.z * magnetic.x - velocity.x * magnetic.z;
+    const az = velocity.x * magnetic.y - velocity.y * magnetic.x;
+    return [{
+      id: 'fusion-lorentz-acceleration',
+      label: 'a洛 = (q/m)v×B',
+      origin: { x: state.position.z * 0.85 + state.position.x * 0.32, y: state.position.y * 0.85 + state.position.x * 0.2 },
+      force: { x: az * 0.85 + ax * 0.32, y: ay * 0.85 + ax * 0.2 },
+      color: '#38bdf8',
+      category: 'magnetic',
+      unit: 'm/s²'
+    }];
+  },
+  referenceFrames: [{
+    id: 'confined-particle',
+    label: '约束带电粒子随动参考系',
+    getOrigin: (state) => ({ x: state.position.z * 0.85 + state.position.x * 0.32, y: state.position.y * 0.85 + state.position.x * 0.2 }),
+    getVelocity: (state) => ({ x: state.velocity.z * 0.85 + state.velocity.x * 0.32, y: state.velocity.y * 0.85 + state.velocity.x * 0.2 })
+  }],
   formatFormulas: (state, params) => [
     {
       id: 'magnetic-mirror-mu',

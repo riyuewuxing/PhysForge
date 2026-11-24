@@ -59,7 +59,7 @@ export function renderAutoFbdToCanvas(
     const m = Math.hypot(v.force.x, v.force.y);
     if (m > maxMag) maxMag = m;
   }
-  if (maxMag < 1e-12) return;
+  if (maxMag < 1e-24) return;
 
   const pxPerForceUnit = 78 / maxMag;
   const labels: PlacedLabel[] = [];
@@ -67,7 +67,7 @@ export function renderAutoFbdToCanvas(
   ctx.save();
   for (const item of vectors) {
     const mag = Math.hypot(item.force.x, item.force.y);
-    if (mag < 1e-9) continue;
+    if (mag < maxMag * 1e-6) continue;
 
     const start = worldToScreen(item.origin.x, item.origin.y, viewport, frameOrigin);
     const dxPx = item.force.x * pxPerForceUnit;
@@ -99,7 +99,7 @@ export function renderAutoFbdToCanvas(
       id: item.id,
       x: end.x + (dxPx >= 0 ? 8 : -8),
       y: end.y + (dyPx >= 0 ? 14 : -8),
-      text: `${item.label} = ${mag.toFixed(2)} ${item.unit ?? 'N'}`,
+      text: `${item.label} = ${mag >= 0.01 ? mag.toFixed(2) : mag.toExponential(2)} ${item.unit ?? 'N'}`,
       color
     });
   }

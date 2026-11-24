@@ -1,0 +1,722 @@
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright';
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = path.resolve(SCRIPT_DIR, '../apps/web/dist');
+const OUT_DIR = path.resolve(SCRIPT_DIR, '../artifacts/ui-audit');
+const VIEWPORT = { width: 1440, height: 900 };
+const MIME_TYPES = {
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ttf': 'font/ttf',
+  '.wasm': 'application/wasm',
+  '.webmanifest': 'application/manifest+json',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2'
+};
+
+function isWithinDirectory(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+function startDistServer() {
+  const realDist = fs.realpathSync(DIST_DIR);
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((request, response) => {
+      let requestPath;
+      try {
+        requestPath = decodeURIComponent(new URL(request.url ?? '/', 'http://127.0.0.1').pathname);
+      } catch {
+        response.writeHead(400).end('Bad request path');
+        return;
+      }
+
+      if (requestPath === '/favicon.ico') {
+        response.writeHead(204).end();
+        return;
+      }
+
+      const normalizedPath = requestPath.startsWith('/PhysForge/')
+        ? requestPath.slice('/PhysForge/'.length)
+        : requestPath.replace(/^\/+/, '');
+      const relativePath = normalizedPath && !normalizedPath.endsWith('/')
+        ? normalizedPath
+        : `${normalizedPath}index.html`;
+      const unresolvedPath = path.resolve(DIST_DIR, relativePath);
+      if (!isWithinDirectory(DIST_DIR, unresolvedPath) || !fs.existsSync(unresolvedPath)) {
+        response.writeHead(404).end(`Not found: ${requestPath}`);
+        return;
+      }
+
+      let filePath;
+      try {
+        filePath = fs.realpathSync(unresolvedPath);
+      } catch {
+        response.writeHead(404).end(`Not found: ${requestPath}`);
+        return;
+      }
+      if (!isWithinDirectory(realDist, filePath) || fs.statSync(filePath).isDirectory()) {
+        response.writeHead(404).end(`Not found: ${requestPath}`);
+        return;
+      }
+
+      response.writeHead(200, {
+        'Content-Type': MIME_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream',
+        'X-Content-Type-Options': 'nosniff'
+      });
+      fs.createReadStream(filePath).pipe(response);
+    });
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Could not start the UI audit preview server.'));
+        return;
+      }
+      resolve({ server, origin: `http://127.0.0.1:${address.port}` });
+    });
+  });
+}
+
+async function launchBrowser() {
+  const configuredPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim();
+  const attempts = [
+    configuredPath ? { executablePath: configuredPath } : null,
+    { channel: 'chrome' },
+    { channel: 'msedge' },
+    {}
+  ].filter(Boolean);
+  let lastError;
+  for (const options of attempts) {
+    try {
+      return await chromium.launch({ ...options, headless: true });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(`Unable to launch Chromium, Chrome, or Edge: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
+async function canvasFingerprint(page, selector = '[data-testid="simulation-canvas"]') {
+  return page.locator(selector).evaluate((canvas) => {
+    if (!(canvas instanceof HTMLCanvasElement)) return null;
+    const ctx = canvas.getContext('2d');
+    if (!ctx || canvas.width === 0 || canvas.height === 0) {
+      return { width: canvas.width, height: canvas.height, hash: '' };
+    }
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let hash = 2166136261;
+    for (let i = 0; i < pixels.length; i += 97) {
+      hash ^= pixels[i] ?? 0;
+      hash = Math.imul(hash, 16777619);
+    }
+    return { width: canvas.width, height: canvas.height, hash: (hash >>> 0).toString(16) };
+  });
+}
+
+async function screenshotFingerprint(locator) {
+  const screenshot = await locator.screenshot({ animations: 'disabled' });
+  return { hash: createHash('sha256').update(screenshot).digest('hex') };
+}
+
+async function readDisplayedTime(page) {
+  return page.locator('[data-testid="topbar"]').evaluate((header) => {
+    const match = (header.textContent ?? '').match(/t\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*s/i);
+    return match ? Number(match[1]) : null;
+  });
+}
+
+async function readLayoutMetrics(page, expectScopeHidden, expectedTitle, hideEnergyBars = false) {
+  return page.evaluate(({ hideScope, hideEnergy, title }) => {
+    const rectOf = (selector) => document.querySelector(selector)?.getBoundingClientRect() ?? null;
+    const header = rectOf('[data-testid="topbar"]');
+    const rail = rectOf('[data-testid="left-catalog-rail"]');
+    const panel = rectOf('[data-testid="right-control-panel"]');
+    const titleText = document.querySelector('[data-testid="topbar"] > div')?.textContent?.trim() ?? '';
+    const formulaNodes = [...document.querySelectorAll('[data-testid="formula-card"] .pf-right-formula')];
+    const formulaOverflows = formulaNodes.some((node) => node.scrollWidth > node.clientWidth + 2);
+    const formulaToggle = rectOf('[data-testid="btn-toggle-formula-values"]');
+    const formulaToggleOverlaps = Boolean(formulaToggle && formulaNodes.some((node) => {
+      const formula = node.getBoundingClientRect();
+      return formula.left < formulaToggle.right && formula.right > formulaToggle.left
+        && formula.top < formulaToggle.bottom && formula.bottom > formulaToggle.top;
+    }));
+    const energyBarsVisible = [...document.querySelectorAll('[data-testid="right-control-panel"] *')]
+      .some((node) => {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0
+          && ['动能 / 场能', '耗散 / 储能转化'].includes(node.textContent?.trim() ?? '');
+      });
+    const canvas = rectOf('[data-testid="simulation-canvas"]')
+      ?? rectOf('[data-testid="three-stage-container"] canvas');
+    const canvasRatio = canvas ? (canvas.width * canvas.height) / (innerWidth * innerHeight) : 0;
+    const scope = rectOf('[data-testid="floating-scope-dock"]');
+    const firstSlider = document.querySelector('[data-testid^="param-slider-"]');
+    const sliderRect = firstSlider?.getBoundingClientRect() ?? null;
+    const visibleFirstSlider = Boolean(sliderRect && sliderRect.width > 0 && sliderRect.height > 0 && sliderRect.top >= 0 && sliderRect.bottom <= innerHeight);
+    const rightActions = document.querySelectorAll('[data-testid="topbar-actions"] > button').length;
+    const issues = [];
+
+    if (!header || header.height > 52) issues.push(`Top bar height ${header?.height ?? 'missing'}px, expected <= 52px`);
+    if (rightActions > 3) issues.push(`Top bar has ${rightActions} resident actions, expected <= 3`);
+    if (!rail || rail.width > 56) issues.push(`Icon rail width ${rail?.width ?? 'missing'}px, expected <= 56px`);
+    if (!panel || panel.width < 271 || panel.width > 273) issues.push(`Inspector width ${panel?.width ?? 'missing'}px, expected 272px at 1440px viewport`);
+    if (!panel || panel.top < 65 || panel.top > 82) issues.push(`Inspector top ${panel?.top ?? 'missing'}px, expected 65–82px`);
+    if (!titleText.includes(title)) issues.push(`Top bar title "${titleText}" does not include "${title}"`);
+    if (formulaOverflows) issues.push('A formula in the inspector overflows its card at the benchmark viewport');
+    if (formulaToggleOverlaps) issues.push('A formula overlaps the formula value toggle button');
+    if (hideEnergy && energyBarsVisible) issues.push('A non-energy scene shows meaningless zero energy bars');
+    if (!visibleFirstSlider) issues.push('The first core slider is not visible without scrolling');
+    if (canvasRatio < (hideScope ? 0.85 : 0.72)) issues.push(`Canvas area ${(canvasRatio * 100).toFixed(1)}%, expected >= ${hideScope ? 85 : 72}%`);
+    if (hideScope && scope && scope.height > 20) issues.push('Static scene shows the oscilloscope dock by default');
+
+    return {
+      headerHeight: header?.height ?? null,
+      residentRightActions: rightActions,
+      railWidth: rail?.width ?? null,
+      inspectorWidth: panel?.width ?? null,
+      inspectorTop: panel?.top ?? null,
+      titleText,
+      formulaOverflows,
+      formulaToggleOverlaps,
+      energyBarsVisible,
+      firstSliderVisible: visibleFirstSlider,
+      canvasAreaPercent: Number((canvasRatio * 100).toFixed(1)),
+      scopeVisible: Boolean(scope && scope.height > 20),
+      issues
+    };
+  }, { hideScope: expectScopeHidden, hideEnergy: hideEnergyBars, title: expectedTitle });
+}
+
+async function selectPreset(page, preset, force = false) {
+  const select = page.locator('[data-testid="preset-select"]');
+  const presetOptions = select.locator('option[value]:not([value=""])');
+  const count = await presetOptions.count();
+  let value;
+  if (typeof preset === 'number') {
+    if (preset >= count) throw new Error(`Preset option index ${preset} is missing (only ${count} options).`);
+    value = await presetOptions.nth(preset).getAttribute('value');
+  } else {
+    value = preset;
+    if (await select.locator(`option[value="${preset}"]`).count() === 0) {
+      throw new Error(`Preset option ${preset} is missing.`);
+    }
+  }
+  if (!value) throw new Error(`Preset ${String(preset)} is missing a value.`);
+  await select.selectOption(value, { force });
+  await page.waitForTimeout(180);
+  return value;
+}
+
+async function runWaveBCoordinateAudit(page, origin) {
+  const cases = [
+    { id: 'em-induction-double-rod', name: 'E04 defaultView' },
+    { id: 'builder-optics-ray', name: 'B3 thin lens', select: ['#param-sceneMode', 'thin-lens-imaging'] },
+    { id: 'builder-circuit-mna', name: 'B2 closed power', select: ['#param-topology', 'closed-power'] },
+    { id: 'mech-shm-resonance', name: 'SHM' },
+    { id: 'mech-projectile-coupling', name: 'Projectile' },
+    { id: 'wave-2d-ripple-fdtd', name: 'FDTD', selectPreset: 'fdtd-double-slit-interference' }
+  ];
+  const screenshots = {
+    'mech-shm-resonance': 'WaveB_SHM.png',
+    'mech-projectile-coupling': 'WaveB_Projectile.png',
+    'wave-2d-ripple-fdtd': 'WaveB_FDTD.png'
+  };
+  const report = [];
+
+  for (const testCase of cases) {
+    const issues = [];
+    const url = new URL(origin);
+    url.searchParams.set('model', testCase.id);
+    await page.goto(url.toString(), { waitUntil: 'networkidle' });
+    await page.waitForFunction((id) => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === id, testCase.id, { timeout: 20000 });
+    const exitPresentation = page.locator('[data-testid="btn-exit-fullscreen-speech"]');
+    if (await exitPresentation.count()) await exitPresentation.click();
+    await page.waitForSelector('[data-testid="simulation-canvas"]', { timeout: 10000 });
+    const panel = page.locator('[data-testid="right-control-panel"]');
+    if (!(await panel.isVisible())) {
+      const openPanel = page.getByRole('button', { name: '参数栏' });
+      if (await openPanel.count()) await openPanel.click();
+    }
+    if (testCase.select) {
+      await page.locator(testCase.select[0]).selectOption(testCase.select[1], { force: true });
+      await page.waitForTimeout(250);
+    }
+    if (testCase.selectPreset) await selectPreset(page, testCase.selectPreset, true);
+    if (testCase.id === 'wave-2d-ripple-fdtd') {
+      const runButton = page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+      await runButton.click();
+      await page.waitForTimeout(900);
+      await runButton.click();
+      await page.waitForTimeout(120);
+    }
+    const zoomBadge = page.locator('[data-testid="viewport-zoom-badge"]');
+    const initialZoom = Number.parseFloat((await zoomBadge.innerText()).replace('%', '').trim());
+    if (initialZoom !== 100) issues.push(`Initial zoom is ${initialZoom}%, expected 100%`);
+
+    const canvas = page.locator('[data-testid="simulation-canvas"]');
+    const bounds = await canvas.boundingBox();
+    if (!bounds) throw new Error(`${testCase.name}: simulation canvas has no bounding box`);
+    await page.waitForTimeout(180);
+    const beforeZoom = await canvasFingerprint(page);
+    await page.mouse.move(bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5);
+    await page.mouse.wheel(0, -300);
+    await page.waitForTimeout(120);
+    await page.mouse.wheel(0, -300);
+    try {
+      await page.waitForFunction(() => {
+        const text = document.querySelector('[data-testid="viewport-zoom-badge"]')?.textContent ?? '';
+        return Number.parseFloat(text.replace('%', '').trim()) > 115;
+      }, undefined, { timeout: 3000 });
+    } catch {
+      issues.push('Two wheel inputs did not raise the zoom badge above 115%');
+    }
+    const zoomedPixels = await canvasFingerprint(page);
+    const zoomedValue = Number.parseFloat((await zoomBadge.innerText()).replace('%', '').trim());
+    if (!(zoomedValue > 115)) issues.push(`Zoom badge is ${zoomedValue}%, expected > 115%`);
+    if (!beforeZoom || !zoomedPixels || beforeZoom.hash === zoomedPixels.hash) issues.push('Canvas fingerprint did not change after zoom');
+
+    const panStartX = bounds.x + Math.max(90, bounds.width * 0.18);
+    const panStartY = bounds.y + Math.max(85, bounds.height * 0.16);
+    const beforePan = await canvasFingerprint(page);
+    await page.mouse.move(panStartX, panStartY);
+    await page.mouse.down();
+    await page.mouse.move(panStartX + 100, panStartY + 60, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    const afterPan = await canvasFingerprint(page);
+    if (!beforePan || !afterPan || beforePan.hash === afterPan.hash) issues.push('Canvas fingerprint did not change after +100px/+60px pan');
+    if (testCase.id in screenshots) await page.screenshot({ path: path.join(OUT_DIR, screenshots[testCase.id]) });
+
+    await page.locator('[data-testid="btn-reset-view"]').click();
+    try {
+      await page.waitForFunction(() => {
+        const text = document.querySelector('[data-testid="viewport-zoom-badge"]')?.textContent ?? '';
+        return Number.parseFloat(text.replace('%', '').trim()) === 100;
+      }, undefined, { timeout: 3000 });
+    } catch {
+      issues.push('Reset view did not restore the zoom badge to 100%');
+    }
+    const resetZoom = Number.parseFloat((await zoomBadge.innerText()).replace('%', '').trim());
+    if (resetZoom !== 100) issues.push(`Reset zoom is ${resetZoom}%, expected 100%`);
+    report.push({ model: testCase.id, initialZoom, zoomedValue, resetZoom, issues });
+  }
+  return report;
+}
+
+async function runWaveCInteractionAudit(page, origin) {
+  const report = [];
+  const openModel = async (modelId) => {
+    const url = new URL(origin);
+    url.searchParams.set('model', modelId);
+    await page.goto(url.toString(), { waitUntil: 'networkidle' });
+    await page.waitForFunction((id) => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === id, modelId, { timeout: 20000 });
+    await page.waitForSelector('[data-testid="simulation-canvas"]', { timeout: 10000 });
+    await page.waitForTimeout(180);
+  };
+
+  {
+    const model = 'modern-rutherford-bohr';
+    const issues = [];
+    await openModel(model);
+    const selectedPreset = await selectPreset(page, 'rutherford-gold-foil-scatter', true);
+    const valueNode = page.locator('[data-testid="param-value-impactParamFm"]');
+    const beforeValue = (await valueNode.innerText()).trim();
+    const beforePixels = await canvasFingerprint(page);
+    let afterValue = beforeValue;
+    let canvasChanged = false;
+    const handlePoint = await page.evaluate(() => {
+      const canvas = document.querySelector('[data-testid="simulation-canvas"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return null;
+      const rect = canvas.getBoundingClientRect();
+      const ppm = Math.min(rect.width, rect.height) * 0.24;
+      const b = Number.parseFloat(document.querySelector('[data-testid="param-value-impactParamFm"]')?.textContent ?? '25');
+      return { x: rect.left + rect.width * 0.45 - (160 / 65) * ppm, y: rect.top + rect.height * 0.5 - (b / 65) * ppm, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    });
+    if (!handlePoint || handlePoint.x < handlePoint.left || handlePoint.x > handlePoint.right || handlePoint.y < handlePoint.top || handlePoint.y > handlePoint.bottom) {
+      issues.push(`Rutherford impact handle is outside the visible canvas: ${JSON.stringify(handlePoint)}`);
+    } else {
+      await page.mouse.move(handlePoint.x, handlePoint.y);
+      await page.mouse.down();
+      await page.mouse.move(handlePoint.x, handlePoint.y - 55, { steps: 10 });
+      await page.mouse.up();
+      await page.waitForTimeout(250);
+      afterValue = (await valueNode.innerText()).trim();
+      const afterPixels = await canvasFingerprint(page);
+      canvasChanged = Boolean(beforePixels && afterPixels && beforePixels.hash !== afterPixels.hash);
+      if (beforeValue === afterValue) issues.push(`Rutherford handle did not change impactParamFm (${beforeValue})`);
+      if (!canvasChanged) issues.push('Rutherford canvas did not change after dragging the impact parameter');
+    }
+    await page.screenshot({ path: path.join(OUT_DIR, 'WaveC_Rutherford_Handle.png') });
+    report.push({ model, selectedPreset, beforeValue, afterValue, canvasChanged, issues });
+  }
+
+  {
+    const model = 'astro-orbital-mechanics';
+    const issues = [];
+    await openModel(model);
+    const beforePixels = await canvasFingerprint(page);
+    const toolsButton = page.locator('[data-testid="btn-tools-menu"]');
+    if ((await toolsButton.getAttribute('aria-expanded')) !== 'true') await toolsButton.click();
+    const fbdButton = page.locator('[data-testid="btn-auto-fbd"]');
+    await fbdButton.waitFor({ state: 'visible', timeout: 5000 });
+    await fbdButton.click();
+    await page.getByText(/Auto-FBD/).waitFor({ state: 'visible', timeout: 5000 });
+    await page.waitForTimeout(160);
+    const afterPixels = await canvasFingerprint(page);
+    const badgeVisible = await page.getByText(/Auto-FBD/).isVisible();
+    if (!badgeVisible) issues.push('Astro Auto-FBD badge did not appear');
+    if (!beforePixels || !afterPixels || beforePixels.hash === afterPixels.hash) issues.push('Astro canvas did not change after enabling Auto-FBD');
+    await page.screenshot({ path: path.join(OUT_DIR, 'WaveC_Astro_FBD.png') });
+    report.push({ model, badgeVisible, canvasChanged: Boolean(beforePixels && afterPixels && beforePixels.hash !== afterPixels.hash), issues });
+  }
+
+  {
+    const model = 'mech-projectile-coupling';
+    const issues = [];
+    await openModel(model);
+    const runButton = page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+    await runButton.click();
+    await page.waitForFunction(() => {
+      const match = document.querySelector('[data-testid="topbar"]')?.textContent?.match(/t\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*s/i);
+      return match ? Number(match[1]) >= 0.5 : false;
+    }, undefined, { timeout: 10000 });
+    await runButton.click();
+    const beforePixels = await canvasFingerprint(page);
+    const toolsButton = page.locator('[data-testid="btn-tools-menu"]');
+    if ((await toolsButton.getAttribute('aria-expanded')) !== 'true') await toolsButton.click();
+    const frameSelect = page.locator('[data-testid="select-reference-frame"]');
+    await frameSelect.waitFor({ state: 'visible', timeout: 5000 });
+    await frameSelect.selectOption('projectile-comoving');
+    await page.waitForTimeout(200);
+    const selectedFrame = await frameSelect.inputValue();
+    const afterPixels = await canvasFingerprint(page);
+    if (selectedFrame !== 'projectile-comoving') issues.push(`Projectile moving frame selection is ${selectedFrame}`);
+    if (!beforePixels || !afterPixels || beforePixels.hash === afterPixels.hash) issues.push('Projectile canvas did not change after selecting its moving frame');
+    await page.screenshot({ path: path.join(OUT_DIR, 'WaveC_Projectile_Frame.png') });
+    report.push({ model, selectedFrame, canvasChanged: Boolean(beforePixels && afterPixels && beforePixels.hash !== afterPixels.hash), issues });
+  }
+
+  return report;
+}
+
+async function dragRangeTo(page, slider, target) {
+  const bounds = await slider.boundingBox();
+  if (!bounds || bounds.width < 20) throw new Error('Parameter slider has no usable bounding box.');
+  const { min, max } = await slider.evaluate((el) => ({
+    min: Number((el).min),
+    max: Number((el).max)
+  }));
+  if (!(max > min)) throw new Error('Parameter slider has an invalid range.');
+  const ratio = Math.max(0, Math.min(1, (target - min) / (max - min)));
+  const thumbRadius = 14;
+  const x = bounds.x + thumbRadius + ratio * Math.max(1, bounds.width - thumbRadius * 2);
+  const y = bounds.y + bounds.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 1, y, { steps: 2 });
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+}
+
+async function main() {
+  if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
+    throw new Error('apps/web/dist/index.html is missing. Run `pnpm build` before the visual audit.');
+  }
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+
+  const { server, origin } = await startDistServer();
+  let browser;
+  const consoleErrors = [];
+  const pageErrors = [];
+  const failedResponses = [];
+  const externalRequests = [];
+  const report = [];
+
+  try {
+    browser = await launchBrowser();
+    // The audit serves a built bundle from a minimal local HTTP server; offline-cache lifecycle is outside this visual interaction pass.
+    const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1, serviceWorkers: 'block' });
+    const page = await context.newPage();
+    page.on('console', (message) => {
+      if (message.type() === 'error') consoleErrors.push(message.text());
+    });
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('response', (response) => {
+      if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`);
+    });
+    page.on('request', (request) => {
+      const requestUrl = request.url();
+      if (/^https?:/i.test(requestUrl) && !requestUrl.startsWith(origin)) externalRequests.push(requestUrl);
+    });
+
+    await page.goto(origin, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === 'em-induction-double-rod', undefined, { timeout: 20000 });
+    const defaultPreset = await page.locator('[data-testid="preset-select"]').inputValue();
+    if (defaultPreset !== 'single-rod-battery-drive') {
+      throw new Error(`Default E04 preset is ${defaultPreset}; expected single-rod-battery-drive.`);
+    }
+    await page.screenshot({ path: path.join(OUT_DIR, 'E04_00_default.png') });
+
+    const cases = [
+      { id: 'em-induction-double-rod', tag: 'E04', title: '电磁感应·单杆切割', presetId: 'single-rod-battery-drive', scopeHidden: false, run: true, runUntil: 1.42 },
+      { id: 'builder-optics-ray', tag: 'B3', title: '几何光学·全反射与折射', presetIndex: 0, scopeHidden: true, hideEnergyBars: true, run: true },
+      { id: 'builder-circuit-mna', tag: 'B2', title: '自由拓扑电路·非线性 MNA', presetId: 'divider-lamp-measurement', scopeHidden: false, run: true },
+      { id: 'em-3d-magnetic-fields', tag: 'E10', title: '3D空间电磁场·螺旋轨迹', presetId: 'finite-solenoid-3d', scopeHidden: false, run: true, verifySlider: false }
+    ];
+
+    for (const testCase of cases) {
+      const url = new URL(origin);
+      url.searchParams.set('model', testCase.id);
+      await page.goto(url.toString(), { waitUntil: 'networkidle' });
+      await page.bringToFront();
+      await page.waitForFunction((id) => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === id, testCase.id, { timeout: 20000 });
+      await page.waitForSelector('[data-testid="right-control-panel"]', { timeout: 10000 });
+      if (testCase.id === 'em-3d-magnetic-fields') {
+        await page.waitForSelector('[data-testid="three-stage-container"] canvas', { timeout: 15000 });
+      }
+      await page.waitForTimeout(250);
+      if (testCase.presetId) await selectPreset(page, testCase.presetId);
+      else await selectPreset(page, testCase.presetIndex);
+
+      const layout = await readLayoutMetrics(page, testCase.scopeHidden, testCase.title, testCase.hideEnergyBars ?? false);
+      if (testCase.id === 'em-induction-double-rod') {
+        const initialChannel = (await page.getByTestId('scope-channel-a').textContent())?.trim();
+        if (initialChannel !== 'I-t') layout.issues.push(`Single-rod E04 default channel is ${initialChannel ?? 'missing'}, expected I-t`);
+      }
+      await page.screenshot({ path: path.join(OUT_DIR, `${testCase.tag}_01_init.png`) });
+      if (testCase.id === 'builder-circuit-mna') {
+        const handlePoint = await page.evaluate(() => {
+          const canvas = document.querySelector('[data-testid="simulation-canvas"]');
+          const slider = document.querySelector('[data-testid="param-slider-sliderR"]');
+          if (!(canvas instanceof HTMLCanvasElement) || !(slider instanceof HTMLInputElement)) return null;
+          const rect = canvas.getBoundingClientRect();
+          const ppm = Math.min(rect.width, rect.height) * 0.24;
+          const ratio = Math.max(0.05, Math.min(0.95, Number(slider.value) / 20));
+          const worldY = -1.093 + ratio * 2.52;
+          return {
+            x: rect.left + rect.width * 0.45 + 0.17 * ppm,
+            y: rect.top + rect.height * 0.5 - worldY * ppm
+          };
+        });
+        if (handlePoint) {
+          await page.mouse.move(handlePoint.x, handlePoint.y);
+          await page.waitForTimeout(120);
+          await page.screenshot({ path: path.join(OUT_DIR, 'B2_00_slider_hover.png') });
+          await page.mouse.move(24, 24);
+        } else {
+          layout.issues.push('Could not locate the divider-lamp Rp handle for hover audit');
+        }
+      }
+      let runVerified = 'skipped';
+      let sliderVerified = 'skipped';
+
+      if (testCase.run) {
+        const isThreeDimensional = testCase.id === 'em-3d-magnetic-fields';
+        const beforePixels = isThreeDimensional
+          ? await screenshotFingerprint(page.locator('[data-testid="three-stage-container"] canvas'))
+          : await canvasFingerprint(page);
+        const beforeTime = await readDisplayedTime(page);
+        await page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]').click();
+        if (isThreeDimensional) {
+          await page.waitForFunction(() => {
+            const stage = document.querySelector('[data-testid="three-stage-container"]');
+            return Number(stage?.getAttribute('data-sim-time')) >= 0.8
+              && Number(stage?.getAttribute('data-trail-points')) >= 10
+              && stage?.getAttribute('data-velocity-arrow-visible') === 'true'
+              && stage?.getAttribute('data-force-arrow-visible') === 'true';
+          }, undefined, { timeout: 10000 });
+        } else if (testCase.runUntil) {
+          await page.waitForFunction((target) => {
+            const match = document.querySelector('[data-testid="topbar"]')?.textContent?.match(/t\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*s/i);
+            return match ? Number(match[1]) >= target : false;
+          }, testCase.runUntil, { timeout: 10000 });
+        } else {
+          await page.waitForTimeout(850);
+        }
+        await page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]').click();
+        const afterPixels = isThreeDimensional
+          ? await screenshotFingerprint(page.locator('[data-testid="three-stage-container"] canvas'))
+          : await canvasFingerprint(page);
+        const afterTime = await readDisplayedTime(page);
+        const threeDimensionalMetrics = isThreeDimensional
+          ? await page.locator('[data-testid="three-stage-container"]').evaluate((stage) => ({
+              trailPoints: Number(stage.getAttribute('data-trail-points')),
+              speed: Number(stage.getAttribute('data-speed')),
+              lorentzForce: Number(stage.getAttribute('data-lorentz-force-magnitude')),
+              velocityArrowVisible: stage.getAttribute('data-velocity-arrow-visible') === 'true',
+              forceArrowVisible: stage.getAttribute('data-force-arrow-visible') === 'true'
+            }))
+          : null;
+        await page.screenshot({ path: path.join(OUT_DIR, `${testCase.tag}_02_running.png`) });
+
+        const timeAdvanced = beforeTime !== null && afterTime !== null && afterTime - beforeTime > 0.2;
+        const canvasChanged = Boolean(beforePixels && afterPixels && beforePixels.hash !== afterPixels.hash);
+        const threeDimensionalRunValid = !isThreeDimensional || Boolean(
+          threeDimensionalMetrics
+          && threeDimensionalMetrics.trailPoints >= 10
+          && threeDimensionalMetrics.speed > 0
+          && threeDimensionalMetrics.lorentzForce > 1e-10
+          && threeDimensionalMetrics.velocityArrowVisible
+          && threeDimensionalMetrics.forceArrowVisible
+        );
+        if (!timeAdvanced || !canvasChanged || !threeDimensionalRunValid) {
+          layout.issues.push(`Run interaction failed: t ${beforeTime} -> ${afterTime}; canvas changed=${canvasChanged}; 3D=${JSON.stringify(threeDimensionalMetrics)}`);
+          runVerified = 'FAIL';
+        } else {
+          runVerified = `PASS (t ${beforeTime} -> ${afterTime}s; canvas changed${threeDimensionalMetrics ? `; trail=${threeDimensionalMetrics.trailPoints}; v/F arrows visible` : ''})`;
+        }
+
+        if (testCase.verifySlider === false) {
+          sliderVerified = 'not required (3D trail and vector audit)';
+        } else {
+          const sliderId = testCase.id === 'builder-optics-ray'
+            ? 'incidentAngleDeg'
+            : await page.locator('[data-testid^="param-slider-"]').first().getAttribute('data-testid').then((id) => id?.replace('param-slider-', '') ?? '');
+          const slider = page.locator(`[data-testid="param-slider-${sliderId}"]`);
+          const valueNode = page.locator(`[data-testid="param-value-${sliderId}"]`);
+          const beforeValue = await valueNode.innerText();
+          const formulaBefore = await page.locator('[data-testid="formula-card"]').innerText();
+          const pixelsBefore = await canvasFingerprint(page);
+          const sliderLimits = await slider.evaluate((el) => ({ min: Number(el.min), max: Number(el.max) }));
+          const target = testCase.id === 'builder-optics-ray'
+            ? 50
+            : sliderLimits.min + (sliderLimits.max - sliderLimits.min) * 0.78;
+          await dragRangeTo(page, slider, target);
+          const afterValue = await valueNode.innerText();
+          const pixelsAfter = await canvasFingerprint(page);
+          const formulaAfter = await page.locator('[data-testid="formula-card"]').innerText();
+          const valueChanged = beforeValue !== afterValue;
+          const canvasChangedAfterSlider = Boolean(pixelsBefore && pixelsAfter && pixelsBefore.hash !== pixelsAfter.hash);
+          const formulaChangedAfterSlider = formulaBefore !== formulaAfter;
+          if (!valueChanged || (!canvasChangedAfterSlider && !formulaChangedAfterSlider)) {
+            layout.issues.push(`Slider ${sliderId} did not update its value and rendered scene.`);
+            sliderVerified = 'FAIL';
+          } else if (testCase.id === 'builder-optics-ray' && Number.parseFloat(afterValue) !== 50) {
+            layout.issues.push(`B3 incident angle slider did not reach 50 degrees (displayed ${afterValue}).`);
+            sliderVerified = 'FAIL';
+          } else {
+            sliderVerified = `PASS (${sliderId}: ${beforeValue.trim()} -> ${afterValue.trim()}; canvas changed=${canvasChangedAfterSlider}; formula changed=${formulaChangedAfterSlider})`;
+          }
+          await page.screenshot({ path: path.join(OUT_DIR, `${testCase.tag}_03_slider_synced.png`) });
+        }
+      }
+
+      if (testCase.id === 'em-3d-magnetic-fields') {
+        await page.locator('[data-testid="btn-fullscreen-speech"]').click();
+        await page.waitForSelector('[data-testid="fullscreen-controls"]', { timeout: 5000 });
+        await page.waitForTimeout(500);
+        const presentation = await page.evaluate(() => {
+          const visible = (selector) => {
+            const node = document.querySelector(selector);
+            if (!node) return false;
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== 'hidden';
+          };
+          const threeCanvas = document.querySelector('[data-testid="three-stage-container"] canvas');
+          const rect = threeCanvas?.getBoundingClientRect();
+          const presentationFormulas = [...document.querySelectorAll('[data-testid="fullscreen-formula"] .pf-right-formula')];
+          const formulaOverflows = presentationFormulas.some((node) => node.scrollWidth > node.clientWidth + 2);
+          const worldVectorLabels = [...document.querySelectorAll('.pf-3d-label')].map((label) => {
+            const labelRect = label.getBoundingClientRect();
+            return {
+              text: label.textContent?.trim() ?? '',
+              left: labelRect.left,
+              right: labelRect.right,
+              top: labelRect.top,
+              bottom: labelRect.bottom,
+              visible: labelRect.width > 0 && labelRect.height > 0 && labelRect.left >= 0
+                && labelRect.right <= innerWidth && labelRect.top >= 0 && labelRect.bottom <= innerHeight
+            };
+          });
+          const visibleLabels = worldVectorLabels.filter((label) => label.visible);
+          let labelsDisjoint = true;
+          for (let i = 0; i < visibleLabels.length; i++) {
+            for (let j = i + 1; j < visibleLabels.length; j++) {
+              const a = visibleLabels[i];
+              const b = visibleLabels[j];
+              if (a.right + 4 > b.left && b.right + 4 > a.left && a.bottom + 2 > b.top && b.bottom + 2 > a.top) {
+                labelsDisjoint = false;
+              }
+            }
+          }
+          return {
+            topbarVisible: visible('[data-testid="topbar"]'),
+            railVisible: visible('[data-testid="left-catalog-rail"]'),
+            panelVisible: visible('[data-testid="right-control-panel"]'),
+            scopeVisible: visible('[data-testid="floating-scope-dock"]'),
+            threeCanvas: Boolean(threeCanvas && rect && rect.width > 0 && rect.height > 0),
+            axisWidgetVisible: visible('[data-testid="three-axis-widget"]'),
+            vectorLegendVisible: visible('[data-testid="three-vector-legend"]'),
+            formulaOverflows,
+            worldVectorLabels,
+            labelsDisjoint,
+            velocityArrowVisible: threeCanvas?.parentElement?.getAttribute('data-velocity-arrow-visible') === 'true',
+            forceArrowVisible: threeCanvas?.parentElement?.getAttribute('data-force-arrow-visible') === 'true',
+            particleRadius: Number(threeCanvas?.parentElement?.getAttribute('data-particle-radius')),
+            trailPoints: Number(threeCanvas?.parentElement?.getAttribute('data-trail-points') ?? 0)
+          };
+        });
+        const readableVectorLabels = ['v', 'F洛', 'B'].every((text) =>
+          presentation.worldVectorLabels.some((label) => label.text === text && label.visible)
+        );
+        if (presentation.topbarVisible || presentation.railVisible || presentation.panelVisible || presentation.scopeVisible || !presentation.threeCanvas || !presentation.axisWidgetVisible || !presentation.vectorLegendVisible || !presentation.velocityArrowVisible || !presentation.forceArrowVisible || presentation.formulaOverflows || !readableVectorLabels || !presentation.labelsDisjoint || presentation.trailPoints < 10 || Math.abs(presentation.particleRadius - 0.055 * 0.7) > 1e-6) {
+          layout.issues.push(`Fullscreen E10 layout failed: ${JSON.stringify(presentation)}`);
+        }
+        await page.screenshot({ path: path.join(OUT_DIR, 'E10_04_fullscreen_3d.png') });
+      }
+
+      if (testCase.id === 'builder-circuit-mna') {
+        const selectedPreset = await selectPreset(page, 'rc-charging-curve');
+        await page.waitForTimeout(250);
+        const rcCheck = await page.evaluate(() => {
+          const presetSelect = document.querySelector('[data-testid="preset-select"]');
+          const topologySelect = document.querySelector('#param-topology');
+          const formulaText = document.querySelector('[data-testid="formula-card"]')?.textContent ?? '';
+          return {
+            presetValue: presetSelect instanceof HTMLSelectElement ? presetSelect.value : null,
+            topologyValue: topologySelect instanceof HTMLSelectElement ? topologySelect.value : null,
+            hasCapFormula: formulaText.includes('U_C') || formulaText.includes('C')
+          };
+        });
+        if (rcCheck.presetValue !== selectedPreset || rcCheck.topologyValue !== 'rc-transient' || !rcCheck.hasCapFormula) {
+          layout.issues.push(`B2 failed to switch to RC transient mode: ${JSON.stringify(rcCheck)}`);
+        }
+        await page.screenshot({ path: path.join(OUT_DIR, 'B2_04_rc_no_handle.png') });
+      }
+
+      report.push({ model: testCase.id, layout, runVerified, sliderVerified });
+    }
+
+    const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
+    const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
+    const summary = { report, waveBCoordinateReport, waveCInteractionReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    console.log(JSON.stringify(summary, null, 2));
+    const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
+    const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
+    const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
+    const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
+    if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
+    console.log('VISUAL_AUDIT: PASS');
+  } finally {
+    if (browser) await browser.close();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

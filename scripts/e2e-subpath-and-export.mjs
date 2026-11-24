@@ -74,12 +74,23 @@ function startSubpathServer() {
   });
 }
 
-async function readDownloadText(download) {
-  const stream = await download.createReadStream();
-  if (!stream) throw new Error(`Unable to read download ${download.suggestedFilename()}`);
-  const chunks = [];
-  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8');
+async function launchBrowser() {
+  const configuredPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim();
+  const attempts = [
+    configuredPath ? { executablePath: configuredPath } : null,
+    { channel: 'chrome' },
+    { channel: 'msedge' },
+    {}
+  ].filter(Boolean);
+  let lastError;
+  for (const options of attempts) {
+    try {
+      return await chromium.launch({ ...options, headless: true });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(`Unable to launch Chromium, Chrome, or Edge: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 async function main() {
@@ -100,11 +111,9 @@ async function main() {
       throw new Error(`Root path must be rejected with 404, received ${rootLeakResponse.status}`);
     }
 
-    const launchOptions = { headless: true };
-    const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim();
-    if (executablePath) launchOptions.executablePath = executablePath;
-    browser = await chromium.launch(launchOptions);
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    browser = await launchBrowser();
+    // This pass validates subpath routing and exports; service-worker lifecycle is exercised separately from the static preview server.
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true, serviceWorkers: 'block' });
     const page = await context.newPage();
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -241,21 +250,33 @@ async function main() {
     const svgDownloadPromise = page.waitForEvent('download');
     await page.getByTestId('btn-download-svg').click();
     const svgDownload = await svgDownloadPromise;
-    const svgText = await readDownloadText(svgDownload);
-    if (!svgText.includes('<svg') || !svgText.includes('</svg>')) throw new Error('SVG 导出内容无效');
+    const svgText = await page.evaluate(async () => {
+      const blob = [...window.__CAPTURED_BLOBS].reverse().find((entry) => entry.type.startsWith('image/svg+xml'));
+      return blob ? blob.text() : null;
+    });
+    if (!svgDownload.suggestedFilename().endsWith('.svg')) throw new Error(`SVG export filename is ${svgDownload.suggestedFilename()}`);
+    if (typeof svgText !== 'string' || !svgText.includes('<svg') || !svgText.includes('</svg>')) {
+      throw new Error('SVG 导出内容缺失或无效');
+    }
 
     await page.getByTestId('tab-export-tikz').click();
     const tikzDownloadPromise = page.waitForEvent('download');
     await page.getByTestId('btn-download-tikz').click();
     const tikzDownload = await tikzDownloadPromise;
-    const tikzText = await readDownloadText(tikzDownload);
-    if (!tikzText.includes('\\begin{tikzpicture}') || !tikzText.includes('\\end{tikzpicture}')) {
-      throw new Error('TikZ 导出内容无效');
+    const tikzText = await page.evaluate(async () => {
+      const blob = [...window.__CAPTURED_BLOBS].reverse().find((entry) => entry.type.startsWith('text/plain'));
+      return blob ? blob.text() : null;
+    });
+    if (!tikzDownload.suggestedFilename().endsWith('.tex')) throw new Error(`TikZ export filename is ${tikzDownload.suggestedFilename()}`);
+    if (typeof tikzText !== 'string' || !tikzText.includes('\\begin{tikzpicture}') || !tikzText.includes('\\end{tikzpicture}')) {
+      throw new Error('TikZ 导出内容缺失或无效');
     }
 
     await page.getByTestId('btn-close-export-studio').click();
+    await page.getByTestId('rail-btn-catalog').click();
     await page.getByTestId('model-card-stse-tokamak-magnetic-mirror').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { timeout: 15000 });
+    await page.getByTestId('rail-btn-catalog').click();
     await page.getByTestId('model-card-stse-em-devices-suite').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { state: 'detached', timeout: 15000 });
 

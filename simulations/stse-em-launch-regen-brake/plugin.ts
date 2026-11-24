@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, drawMetallicRail, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { emLaunchRegenPresets } from './presets.js';
 import {
   checkInvariants,
@@ -94,31 +94,30 @@ export const stseEmLaunchRegenBrakePlugin = defineSimulationPlugin<EmLaunchRegen
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
     if (!activeLayers.has('track')) return;
+    const m = createWorldMapper(viewport);
     ctx.save();
+    const labels: CanvasLabel[] = [];
 
     // Top track & sliding armature/vehicle
-    const trackY = h * 0.35;
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(w * 0.08, trackY);
-    ctx.lineTo(w * 0.92, trackY);
-    ctx.stroke();
+    const trackLeft = m.toScreen(-2.2, 0.45);
+    const trackRight = m.toScreen(2.2, 0.45);
+    const trackY = trackLeft.y;
+    drawMetallicRail(ctx, trackLeft.x, trackY, trackRight.x, m.len(0.08));
 
     const maxVisualX = params.mode === 'railgun' ? 25 : Math.max(10, computeAnalyticPureEmStopDistance(params) * 1.15);
     const fracX = Math.min(1, state.x / maxVisualX);
-    const carX = w * 0.1 + fracX * (w * 0.78);
+    const car = m.toScreen(-2.0 + fracX * 4.0, 0.58);
     ctx.fillStyle = params.mode === 'railgun' ? '#38bdf8' : '#4ade80';
-    ctx.fillRect(carX - 24, trackY - 28, 48, 26);
+    ctx.fillRect(car.x - m.len(0.18), car.y - m.len(0.13), m.len(0.36), m.len(0.22));
 
     // Stacked energy ledger bar
     const total = Math.max(1e-6, state.energyInitialJ + state.energyInputWorkJ);
-    const barX = w * 0.1;
-    const barY = h * 0.65;
-    const barW = w * 0.8;
+    const barLeft = m.toScreen(-2.0, -0.65);
+    const barRight = m.toScreen(2.0, -0.65);
+    const barX = barLeft.x;
+    const barY = barLeft.y;
+    const barW = barRight.x - barLeft.x;
     const slices = [
       { val: state.energyKineticJ, col: '#38bdf8', name: '动能' },
       { val: state.energyCapJ, col: '#fbbf24', name: '电容余能' },
@@ -131,21 +130,69 @@ export const stseEmLaunchRegenBrakePlugin = defineSimulationPlugin<EmLaunchRegen
       const segW = Math.max(0, (sl.val / total) * barW);
       if (segW > 0.5) {
         ctx.fillStyle = sl.col;
-        ctx.fillRect(curX, barY, segW, 30);
+        ctx.fillRect(curX, barY, segW, m.len(0.15));
         curX += segW;
       }
     });
 
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 13px ui-sans-serif, system-ui';
-    ctx.fillText(
-      `t=${state.t.toFixed(2)}s | x=${state.x.toFixed(2)}m | v=${state.v.toFixed(2)}m/s | 账本残差=${state.ledgerResidualJ.toExponential(2)} J`,
-      20,
-      30
+    labels.push(
+      { id: 'launch-state-summary', ...m.toScreen(0, 0.95), text: `t=${state.t.toFixed(2)}s | x=${state.x.toFixed(2)}m | v=${state.v.toFixed(2)}m/s | 账本残差=${state.ledgerResidualJ.toExponential(2)} J`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' },
+      { id: 'launch-energy-summary', ...m.toScreen(-1.95, -0.45), text: `能量流账本占比（总投入 ${(total / 1000).toFixed(2)} kJ）`, color: '#e2e8f0', font: '12px ui-sans-serif, system-ui' }
     );
-    ctx.fillText(`能量流账本占比（总投入 ${(total / 1000).toFixed(2)} kJ）`, barX, barY - 10);
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
+  getControlHandles: (state, params) => {
+    const maxVisualX = params.mode === 'railgun' ? 25 : Math.max(10, computeAnalyticPureEmStopDistance(params) * 1.15);
+    const carX = -2 + Math.min(1, state.x / maxVisualX) * 4;
+    return [
+      params.mode === 'railgun'
+        ? {
+            id: 'railgun-drive-current',
+            label: `I=${params.driveCurrentA} A`,
+            position: { x: carX + (params.driveCurrentA / 1000) * 1.1, y: 0.58 },
+            origin: { x: carX, y: 0.58 },
+            handleKind: 'vector' as const,
+            color: '#38bdf8',
+            onDrag: (world: { x: number; y: number }) => ({ driveCurrentA: Math.max(50, Math.min(1000, Math.round(((world.x - carX) / 1.1) * 1000 / 50) * 50)) })
+          }
+        : {
+            id: 'regen-v0',
+            label: `v₀=${params.v0Mps} m/s`,
+            position: { x: carX + (params.v0Mps / 50) * 1.2, y: 0.58 },
+            origin: { x: carX, y: 0.58 },
+            handleKind: 'vector' as const,
+            color: '#4ade80',
+            onDrag: (world: { x: number; y: number }) => ({ v0Mps: Math.max(0, Math.min(50, Math.round(((world.x - carX) / 1.2) * 50))) })
+          }
+    ];
+  },
+  getForceVectors: (state, params) => {
+    const maxVisualX = params.mode === 'railgun' ? 25 : Math.max(10, computeAnalyticPureEmStopDistance(params) * 1.15);
+    const origin = { x: -2 + Math.min(1, state.x / maxVisualX) * 4, y: 0.58 };
+    const forceEm = params.mode === 'railgun'
+      ? params.bFieldT * params.trackSpanM * state.currentA
+      : -params.bFieldT * params.trackSpanM * Math.abs(state.currentA);
+    const forceDrag = -params.aeroDragCoeff * state.v * Math.abs(state.v) - (state.v > 0 ? params.mechBrakeN : 0);
+    return [
+      { id: 'em-ampere', label: params.mode === 'railgun' ? 'F安 (发射)' : 'F安 (制动)', origin, force: { x: forceEm, y: 0 }, color: '#38bdf8', category: 'magnetic', unit: 'N' },
+      ...(Math.abs(forceDrag) > 1e-3 ? [{ id: 'drag-mechanical', label: 'F阻', origin, force: { x: forceDrag, y: 0 }, color: '#f43f5e', category: 'friction' as const, unit: 'N' }] : [])
+    ];
+  },
+  referenceFrames: [
+    {
+      id: 'armature-frame',
+      label: '电枢/列车随动参考系',
+      getOrigin: (state, params) => {
+        const maxVisualX = params.mode === 'railgun' ? 25 : Math.max(10, computeAnalyticPureEmStopDistance(params) * 1.15);
+        return { x: -2 + Math.min(1, state.x / maxVisualX) * 4, y: 0.58 };
+      },
+      getVelocity: (state, params) => {
+        const maxVisualX = params.mode === 'railgun' ? 25 : Math.max(10, computeAnalyticPureEmStopDistance(params) * 1.15);
+        return { x: (state.v / maxVisualX) * 4, y: 0 };
+      }
+    }
+  ],
   formatFormulas: (state, params) => [
     {
       id: 'em-launch-regen-ledger',

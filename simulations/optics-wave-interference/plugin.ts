@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { waveOpticsPresets } from './presets.js';
 import {
   checkInvariants,
@@ -122,15 +122,19 @@ export const opticsWaveInterferencePlugin = defineSimulationPlugin<WaveOpticsPar
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
     const rgbHex = state.rgbHex;
+    const labels: CanvasLabel[] = [];
+    const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = m.toScreen(x, y + height);
+      const b = m.toScreen(x + width, y);
+      ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    };
     ctx.save();
 
     if (params.mode === 'newtons-rings') {
-      const cx = w * 0.5;
-      const cy = h * 0.45;
-      const maxPx = Math.min(w, h) * 0.36 * viewport.scale;
+      const center = m.toScreen(0, 0);
+      const maxPx = m.len(1.5);
       const maxRMm = 5.0;
 
       if (activeLayers.has('fringes')) {
@@ -141,84 +145,102 @@ export const opticsWaveInterferencePlugin = defineSimulationPlugin<WaveOpticsPar
           ctx.fillStyle = rgbHex;
           ctx.globalAlpha = 0.08 + 0.88 * intensity;
           ctx.beginPath();
-          ctx.arc(cx, cy, (k / rings) * maxPx, 0, Math.PI * 2);
+          ctx.arc(center.x, center.y, (k / rings) * maxPx, 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.globalAlpha = 1;
       }
 
       if (activeLayers.has('intensityCurve')) {
-        const gx = w * 0.14;
-        const gw = w * 0.72;
-        const gy = h * 0.9;
+        const graphLeft = -1.8;
+        const graphRight = 1.8;
+        const graphBase = -0.55;
         ctx.strokeStyle = '#fbbf24';
         ctx.lineWidth = 2;
         ctx.beginPath();
         for (let i = 0; i <= 140; i++) {
           const rMm = ((i / 140) * 2 - 1) * maxRMm;
           const val = evalNewtonRingIntensity(rMm, params);
-          const px = gx + (i / 140) * gw;
-          const py = gy - val * 58;
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
+          const point = m.toScreen(graphLeft + (i / 140) * (graphRight - graphLeft), graphBase + val * 0.65);
+          if (i === 0) ctx.moveTo(point.x, point.y);
+          else ctx.lineTo(point.x, point.y);
         }
         ctx.stroke();
+        const summary = m.toScreen(0, -0.72);
+        labels.push({ id: 'newton-ring-summary', x: summary.x, y: summary.y, text: `牛顿环 · R=${params.lensRadiusR.toFixed(2)}m · r₁=${state.newtonFirstDarkMm.toFixed(3)}mm`, color: '#fbbf24', font: '12px sans-serif' });
       }
-      ctx.restore();
-      return;
-    }
+    } else {
+      const bandLeft = -2;
+      const bandWidth = 4;
+      const bandBottom = 0.05;
+      const bandHeight = 1.4;
+      const cols = 160;
 
-    const bx = w * 0.1;
-    const bw = w * 0.8;
-    const bandTop = h * 0.16;
-    const bandH = h * 0.34;
-    const cols = 160;
-
-    if (activeLayers.has('fringes')) {
-      for (let i = 0; i < cols; i++) {
-        const frac = i / cols;
-        const intensity =
-          params.mode === 'thin-film-wedge'
+      if (activeLayers.has('fringes')) {
+        for (let i = 0; i < cols; i++) {
+          const frac = i / cols;
+          const intensity = params.mode === 'thin-film-wedge'
             ? evalThinFilmIntensity(frac * 20, params)
             : evalFraunhoferGratingIntensity((frac - 0.5) * 0.42, params);
-        ctx.fillStyle = rgbHex;
-        ctx.globalAlpha = 0.05 + 0.92 * intensity;
-        ctx.fillRect(bx + frac * bw, bandTop, bw / cols + 1, bandH);
+          ctx.fillStyle = rgbHex;
+          ctx.globalAlpha = 0.05 + 0.92 * intensity;
+          fillWorldRect(bandLeft + frac * bandWidth, bandBottom, bandWidth / cols + 0.005, bandHeight);
+        }
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = 'rgba(148,163,184,0.4)';
+        const a = m.toScreen(bandLeft, bandBottom + bandHeight);
+        const b = m.toScreen(bandLeft + bandWidth, bandBottom);
+        ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
       }
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = 'rgba(148,163,184,0.4)';
-      ctx.strokeRect(bx, bandTop, bw, bandH);
-    }
 
-    if (activeLayers.has('intensityCurve')) {
-      const gy = h * 0.85;
-      const gh = h * 0.28;
-      ctx.strokeStyle = rgbHex;
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      for (let i = 0; i <= cols; i++) {
-        const frac = i / cols;
-        const intensity =
-          params.mode === 'thin-film-wedge'
+      if (activeLayers.has('intensityCurve')) {
+        const graphLeft = -1.8;
+        const graphWidth = 3.6;
+        const graphBase = -0.55;
+        ctx.strokeStyle = rgbHex;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        for (let i = 0; i <= cols; i++) {
+          const frac = i / cols;
+          const intensity = params.mode === 'thin-film-wedge'
             ? evalThinFilmIntensity(frac * 20, params)
             : evalFraunhoferGratingIntensity((frac - 0.5) * 0.42, params);
-        const px = bx + frac * bw;
-        const py = gy - intensity * gh;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+          const point = m.toScreen(graphLeft + frac * graphWidth, graphBase + intensity * 0.75);
+          if (i === 0) ctx.moveTo(point.x, point.y);
+          else ctx.lineTo(point.x, point.y);
+        }
+        ctx.stroke();
+        const summary = m.toScreen(0, -0.82);
+        labels.push({
+          id: 'wave-optics-summary',
+          x: summary.x,
+          y: summary.y,
+          text: params.mode === 'thin-film-wedge'
+            ? `劈尖条纹间距 Δx = ${state.wedgeFringeSpacingMm.toFixed(3)} mm`
+            : `光栅 d/a = ${state.missingOrderRatio.toFixed(2)}（整数倍发生缺级）`,
+          color: '#cbd5e1',
+          font: '12px sans-serif'
+        });
       }
-      ctx.stroke();
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '12px sans-serif';
-      ctx.fillText(
-        params.mode === 'thin-film-wedge'
-          ? `劈尖条纹间距 Δx = ${state.wedgeFringeSpacingMm.toFixed(3)} mm`
-          : `光栅 d/a = ${state.missingOrderRatio.toFixed(2)}（整数倍发生缺级）`,
-        bx,
-        gy + 22
-      );
     }
 
+    const railLeft = m.toScreen(-1.6, -0.9);
+    const railRight = m.toScreen(1.6, -0.9);
+    ctx.strokeStyle = 'rgba(251,191,36,0.35)';
+    ctx.lineWidth = m.len(0.08);
+    ctx.beginPath();
+    ctx.moveTo(railLeft.x, railLeft.y);
+    ctx.lineTo(railRight.x, railRight.y);
+    ctx.stroke();
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(railLeft.x, railLeft.y);
+    ctx.lineTo(railRight.x, railRight.y);
+    ctx.stroke();
+    const wavelengthLabel = m.toScreen(0, -1.12);
+    labels.push({ id: 'wavelength-control-rail', x: wavelengthLabel.x, y: wavelengthLabel.y, text: `波长 λ=${params.wavelengthNm} nm`, color: '#fbbf24', font: 'bold 12px sans-serif' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state, params) => [

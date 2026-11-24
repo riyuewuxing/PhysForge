@@ -1,5 +1,5 @@
 import { degToRad } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { equilibriumPresets } from './presets.js';
 import {
   checkInvariants,
@@ -37,6 +37,7 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
     difficulty: '高三一轮',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.92, offsetRatioX: -0.1 },
   paramSchema,
   presets: equilibriumPresets,
   engine: {
@@ -111,53 +112,55 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
     }
   ],
   renderCanvas: (ctx, state, _params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.22 * viewport.scale;
-    const cx = viewport.width * 0.35 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
+    const m = createWorldMapper(viewport);
+    const knot = m.toScreen(0, 0);
     const scale = 1.4 / Math.max(state.gravity.mag, 1);
+    const labels: Array<{ id: string; x: number; y: number; text: string; color: string; font: string }> = [];
 
     const drawArrow = (x1: number, y1: number, x2: number, y2: number, color: string, label: string) => {
-      const ang = Math.atan2(y2 - y1, x2 - x1);
+      const start = m.toScreen(x1, y1);
+      const end = m.toScreen(x2, y2);
+      const ang = Math.atan2(end.y - start.y, end.x - start.x);
       ctx.save();
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
       ctx.lineWidth = 2.6;
       ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(x2, y2);
-      ctx.lineTo(x2 - 9 * Math.cos(ang - 0.4), y2 - 9 * Math.sin(ang - 0.4));
-      ctx.lineTo(x2 - 9 * Math.cos(ang + 0.4), y2 - 9 * Math.sin(ang + 0.4));
+      ctx.moveTo(end.x, end.y);
+      ctx.lineTo(end.x - 9 * Math.cos(ang - 0.4), end.y - 9 * Math.sin(ang - 0.4));
+      ctx.lineTo(end.x - 9 * Math.cos(ang + 0.4), end.y - 9 * Math.sin(ang + 0.4));
       ctx.closePath();
       ctx.fill();
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(label, x2 + 6, y2 - 6);
       ctx.restore();
+      labels.push({ id: label, x: end.x + 10, y: end.y - 8, text: label, color, font: 'bold 13px sans-serif' });
     };
 
     if (activeLayers.has('ropes')) {
       ctx.fillStyle = '#e2e8f0';
       ctx.beginPath();
-      ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+      ctx.arc(knot.x, knot.y, m.len(0.04), 0, Math.PI * 2);
       ctx.fill();
-      drawArrow(cx, cy, cx + state.force1.x * scale * ppm, cy - state.force1.y * scale * ppm, '#38bdf8', `F1=${state.force1.mag.toFixed(1)}N`);
-      drawArrow(cx, cy, cx + state.force2.x * scale * ppm, cy - state.force2.y * scale * ppm, '#f472b6', `F2=${state.force2.mag.toFixed(1)}N`);
-      drawArrow(cx, cy, cx, cy - state.gravity.y * scale * ppm, '#fbbf24', `mg=${state.gravity.mag.toFixed(1)}N`);
+      drawArrow(0, 0, state.force1.x * scale, state.force1.y * scale, '#38bdf8', `F1=${state.force1.mag.toFixed(1)}N`);
+      drawArrow(0, 0, state.force2.x * scale, state.force2.y * scale, '#f472b6', `F2=${state.force2.mag.toFixed(1)}N`);
+      drawArrow(0, 0, state.gravity.x * scale, state.gravity.y * scale, '#fbbf24', `mg=${state.gravity.mag.toFixed(1)}N`);
     }
 
     if (activeLayers.has('triangle')) {
-      const tx = viewport.width * 0.72 + viewport.offsetX;
-      const ty = viewport.height * 0.35 + viewport.offsetY;
-      const gx = tx;
-      const gy = ty - state.gravity.y * scale * ppm;
-      const fx1 = gx + state.force1.x * scale * ppm;
-      const fy1 = gy - state.force1.y * scale * ppm;
+      const tx = 2.4;
+      const ty = 0.6;
+      const gx = tx + state.gravity.x * scale;
+      const gy = ty + state.gravity.y * scale;
+      const fx1 = gx + state.force1.x * scale;
+      const fy1 = gy + state.force1.y * scale;
       drawArrow(tx, ty, gx, gy, '#fbbf24', 'mg');
       drawArrow(gx, gy, fx1, fy1, '#38bdf8', 'F1');
       drawArrow(fx1, fy1, tx, ty, '#f472b6', 'F2');
     }
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
   }
 });
 

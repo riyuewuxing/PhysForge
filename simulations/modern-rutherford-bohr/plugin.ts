@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { rutherfordBohrPresets } from './presets.js';
 import {
   bohrEnergyEv,
@@ -109,34 +109,32 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const width = viewport.width;
-    const height = viewport.height;
+    const m = createWorldMapper(viewport);
     if (!activeLayers.has('main')) return;
     ctx.save();
+    const labels: CanvasLabel[] = [];
 
     if (params.mode === 'rutherford') {
-      const cx = width * 0.52;
-      const cy = height * 0.52;
-      const scale = Math.min(width, height) / 280;
-
       for (const guideB of [-65, -40, 40, 65]) {
         ctx.strokeStyle = 'rgba(56,189,248,0.2)';
         ctx.lineWidth = 1.2;
         ctx.setLineDash([4, 4]);
+        const start = m.toScreen(-160 / 65, guideB / 65);
+        const end = m.toScreen(0, guideB / 65);
         ctx.beginPath();
-        ctx.moveTo(cx - 160 * scale, cy - guideB * scale);
-        ctx.lineTo(cx, cy - guideB * scale);
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
         ctx.stroke();
       }
       ctx.setLineDash([]);
 
       ctx.fillStyle = '#f59e0b';
       ctx.beginPath();
-      ctx.arc(cx, cy, 9, 0, 2 * Math.PI);
+      const target = m.toScreen(0, 0);
+      ctx.arc(target.x, target.y, m.len(0.045), 0, 2 * Math.PI);
       ctx.fill();
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 12px ui-sans-serif, system-ui';
-      ctx.fillText(`Z=${params.targetZ}`, cx + 12, cy + 4);
+      const targetLabel = m.toScreen(0.07, -0.02);
+      labels.push({ id: 'rutherford-target-label', ...targetLabel, text: `Z=${params.targetZ}`, color: '#e2e8f0', font: 'bold 12px ui-sans-serif, system-ui' });
 
       const pts = state.rutherford.trajectoryFm;
       if (pts.length > 1) {
@@ -144,8 +142,9 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
         ctx.lineWidth = 3;
         ctx.beginPath();
         for (let i = 0; i < pts.length; i++) {
-          const px = cx + pts[i]!.x * scale;
-          const py = cy - pts[i]!.y * scale;
+          const point = m.toScreen(pts[i]!.x / 65, pts[i]!.y / 65);
+          const px = point.x;
+          const py = point.y;
           if (i === 0) ctx.moveTo(px, py);
           else ctx.lineTo(px, py);
         }
@@ -155,82 +154,121 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
         const curPt = pts[idx]!;
         ctx.fillStyle = '#f43f5e';
         ctx.beginPath();
-        ctx.arc(cx + curPt.x * scale, cy - curPt.y * scale, 5.5, 0, 2 * Math.PI);
+        const point = m.toScreen(curPt.x / 65, curPt.y / 65);
+        ctx.arc(point.x, point.y, m.len(0.028), 0, 2 * Math.PI);
         ctx.fill();
       }
 
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 14px ui-sans-serif, system-ui';
-      ctx.fillText(
-        `RK45 偏转角 θ = ${state.rutherford.simulatedAngleDeg.toFixed(3)}° (解析 ${state.rutherford.analyticalAngleDeg.toFixed(3)}°) | 最近距离 ${state.rutherford.minDistanceFm.toFixed(2)} fm`,
-        20,
-        30
-      );
+      labels.push({ id: 'rutherford-summary', ...m.toScreen(0.3, 1.55), text: `RK45 偏转角 θ = ${state.rutherford.simulatedAngleDeg.toFixed(3)}° (解析 ${state.rutherford.analyticalAngleDeg.toFixed(3)}°) | 最近距离 ${state.rutherford.minDistanceFm.toFixed(2)} fm`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
 
-    const leftX = width * 0.08;
-    const rightX = width * 0.46;
-    const topY = height * 0.14;
-    const botY = height * 0.88;
-    const yOfEv = (e: number) => botY - ((e + 13.6) / 13.6) * (botY - topY);
+    const leftX = -1.8;
+    const rightX = -0.1;
+    const topY = 1.15;
+    const botY = -1.15;
+    const yOfEv = (e: number) => botY + ((e + 13.6) / 13.6) * (topY - botY);
 
     ctx.lineWidth = 2;
     ctx.font = 'bold 12px ui-sans-serif, system-ui';
     for (let n = 1; n <= 6; n++) {
       const e = bohrEnergyEv(n);
-      const y = yOfEv(e);
+      const y = m.toY(yOfEv(e));
       ctx.strokeStyle = n <= params.excitedLevelN ? '#38bdf8' : 'rgba(148,163,184,0.35)';
       ctx.beginPath();
-      ctx.moveTo(leftX, y);
-      ctx.lineTo(rightX, y);
+      ctx.moveTo(m.toX(leftX), y);
+      ctx.lineTo(m.toX(rightX), y);
       ctx.stroke();
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillText(`n=${n} (${e.toFixed(2)} eV)`, rightX + 8, y + 4);
+      labels.push({ id: `bohr-level-${n}`, x: m.toX(rightX + 0.05), y: y + 4, text: `n=${n} (${e.toFixed(2)} eV)`, color: '#e2e8f0', font: 'bold 12px ui-sans-serif, system-ui' });
     }
 
     const visibleLines = state.bohr.spectralLines.filter((l) => l.lowerN === 2);
     visibleLines.forEach((line, i) => {
-      const x = leftX + 45 + i * 42;
+      const x = leftX + 0.22 + i * 0.2;
       const y1 = yOfEv(bohrEnergyEv(line.upperN));
       const y2 = yOfEv(bohrEnergyEv(line.lowerN));
       ctx.strokeStyle = line.hex;
       ctx.lineWidth = 2.6;
       ctx.beginPath();
-      ctx.moveTo(x, y1);
-      ctx.lineTo(x, y2);
+      ctx.moveTo(m.toX(x), m.toY(yOfEv(bohrEnergyEv(line.upperN))));
+      ctx.lineTo(m.toX(x), m.toY(yOfEv(bohrEnergyEv(line.lowerN))));
       ctx.stroke();
-      ctx.fillStyle = line.hex;
-      ctx.fillText(`${line.wavelengthNm.toFixed(1)}nm`, x - 20, (y1 + y2) / 2);
+      labels.push({ id: `bohr-wavelength-${i}`, x: m.toX(x - 0.12), y: m.toY((yOfEv(bohrEnergyEv(line.upperN)) + yOfEv(bohrEnergyEv(line.lowerN))) / 2), text: `${line.wavelengthNm.toFixed(1)}nm`, color: line.hex, font: '11px ui-sans-serif, system-ui' });
     });
 
-    const specX = width * 0.58;
-    const specW = width * 0.36;
+    const specX = 0.35;
+    const specW = 1.7;
+    const specTop = m.toScreen(specX, 0.95);
+    const specBottom = m.toScreen(specX + specW, 0.5);
     ctx.fillStyle = '#020617';
-    ctx.fillRect(specX, height * 0.25, specW, 56);
+    ctx.fillRect(specTop.x, specTop.y, specBottom.x - specTop.x, specBottom.y - specTop.y);
     visibleLines.forEach((l) => {
       const frac = Math.max(0, Math.min(1, (l.wavelengthNm - 380) / 320));
       ctx.fillStyle = l.hex;
-      ctx.fillRect(specX + frac * (specW - 6), height * 0.25, 4, 56);
+      const x = m.toX(specX + frac * specW);
+      ctx.fillRect(x, specTop.y, m.len(0.018), specBottom.y - specTop.y);
     });
 
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 14px ui-sans-serif, system-ui';
-    ctx.fillText(
-      `激发态 n=${params.excitedLevelN} (${params.populationMode === 'ensemble' ? `一群原子 C_n^2=${state.bohr.totalCombinationLines} 条` : `单原子至多 ${state.bohr.maxSingleAtomLines} 条`})`,
-      20,
-      28
-    );
-    ctx.fillText(
-      state.bohr.excitationAccepted
+    labels.push({ id: 'bohr-excitation-summary', ...m.toScreen(1.15, 0.28), text:
+      `激发态 n=${params.excitedLevelN} (${params.populationMode === 'ensemble' ? `一群原子 C_n^2=${state.bohr.totalCombinationLines} 条` : `单原子至多 ${state.bohr.maxSingleAtomLines} 条`}) · ${state.bohr.excitationAccepted
         ? `探针激发成功：跃迁至 ${state.bohr.ionized ? '电离连续态' : `n=${state.bohr.reachedLevel}`}，剩余动能 ${state.bohr.residualElectronEv.toFixed(2)} eV`
-        : `光子能量 ${params.probeEnergyEv.toFixed(2)} eV 不匹配任何能级差 ΔE`,
-      specX,
-      height * 0.56
-    );
+        : `光子能量 ${params.probeEnergyEv.toFixed(2)} eV 不匹配任何能级差 ΔE`}`,
+      color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
+  getControlHandles: (_state, params) => {
+    if (params.mode === 'rutherford') {
+      return [{
+        id: 'impact-param-b',
+        label: `b=${params.impactParamFm.toFixed(0)} fm`,
+        position: { x: -160 / 65, y: params.impactParamFm / 65 },
+        origin: { x: -160 / 65, y: 0 },
+        handleKind: 'point',
+        color: '#38bdf8',
+        onDrag: (world) => ({ impactParamFm: Math.max(-80, Math.min(80, Math.round((world.y * 65) / 5) * 5)) })
+      }];
+    }
+    return [{
+      id: 'probe-energy',
+      label: `E=${params.probeEnergyEv.toFixed(2)} eV`,
+      position: { x: 0.35 + ((params.probeEnergyEv - 5) / 10) * 1.7, y: 0.72 },
+      handleKind: 'point',
+      color: '#fbbf24',
+      onDrag: (world) => ({ probeEnergyEv: Number(Math.max(5, Math.min(15, Math.round((5 + ((world.x - 0.35) / 1.7) * 10) * 20) / 20)).toFixed(2)) })
+    }];
+  },
+  getForceVectors: (state, params) => {
+    if (params.mode !== 'rutherford') return [];
+    const points = state.rutherford.trajectoryFm;
+    const index = Math.min(points.length - 1, Math.floor(state.animCursor * points.length));
+    const point = points[index] ?? points[Math.floor(points.length / 2)] ?? { x: -40, y: params.impactParamFm };
+    const radius = Math.hypot(point.x, point.y);
+    if (radius < 1e-6) return [];
+    const magnitude = Math.min(40, (params.targetZ * 2) / Math.max(25, radius * radius));
+    return [{
+      id: 'coulomb-repulsion',
+      label: 'F库仑',
+      origin: { x: point.x / 65, y: point.y / 65 },
+      force: { x: (point.x / radius) * magnitude, y: (point.y / radius) * magnitude },
+      color: '#fb7185',
+      category: 'electric',
+      unit: '相对量 (∝1/r²)'
+    }];
+  },
+  referenceFrames: [{
+    id: 'alpha-particle',
+    label: 'α 入射粒子随动参考系',
+    getOrigin: (state, params) => {
+      if (params.mode !== 'rutherford') return { x: 0, y: 0 };
+      const points = state.rutherford.trajectoryFm;
+      const index = Math.min(points.length - 1, Math.floor(state.animCursor * points.length));
+      const point = points[index];
+      return point ? { x: point.x / 65, y: point.y / 65 } : { x: 0, y: 0 };
+    }
+  }],
   formatFormulas: (state, params) => [
     {
       id: 'rutherford-bohr',

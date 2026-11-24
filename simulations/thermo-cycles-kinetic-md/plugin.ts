@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { thermoCycleMdPresets } from './presets.js';
 import {
   checkInvariants,
@@ -43,6 +43,7 @@ export const thermoCyclesKineticMdPlugin = defineSimulationPlugin<ThermoCycleMdP
   },
   paramSchema,
   presets: thermoCycleMdPresets,
+  defaultView: { offsetRatioX: -0.05 },
   engine: {
     createInitialState,
     step: stepThermoCycleMd,
@@ -91,27 +92,37 @@ export const thermoCyclesKineticMdPlugin = defineSimulationPlugin<ThermoCycleMdP
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
     ctx.save();
+    const labels: CanvasLabel[] = [];
 
     if (params.mode === 'kinetic-md-box') {
-      const boxPx = Math.min(w * 0.52, h * 0.82);
-      const bx0 = w * 0.06;
-      const by0 = 0.5 * (h - boxPx);
-      const scale = boxPx / state.boxSize;
+      const boxLeft = -1.9;
+      const boxBottom = -1;
+      const boxSizeWorld = 2;
+
+      ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+      ctx.lineWidth = 1;
+      const speedRailTop = m.toScreen(0.22, 0.5);
+      const speedRailBottom = m.toScreen(0.22, -0.9);
+      ctx.beginPath();
+      ctx.moveTo(speedRailTop.x, speedRailTop.y);
+      ctx.lineTo(speedRailBottom.x, speedRailBottom.y);
+      ctx.stroke();
 
       if (activeLayers.has('mainView')) {
         ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-        ctx.fillRect(bx0, by0, boxPx, boxPx);
+        const topLeft = m.toScreen(boxLeft, boxBottom + boxSizeWorld);
+        ctx.fillRect(topLeft.x, topLeft.y, m.len(boxSizeWorld), m.len(boxSizeWorld));
         ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(bx0, by0, boxPx, boxPx);
+        ctx.lineWidth = m.len(0.014);
+        ctx.strokeRect(topLeft.x, topLeft.y, m.len(boxSizeWorld), m.len(boxSizeWorld));
 
         for (const p of state.particles) {
           ctx.fillStyle = p.mass > 2 ? '#fbbf24' : '#38bdf8';
           ctx.beginPath();
-          ctx.arc(bx0 + p.x * scale, by0 + boxPx - p.y * scale, Math.max(2, p.radius * scale), 0, Math.PI * 2);
+          const point = m.toScreen(boxLeft + (p.x / state.boxSize) * boxSizeWorld, boxBottom + (p.y / state.boxSize) * boxSizeWorld);
+          ctx.arc(point.x, point.y, m.len(Math.max(0.012, (p.radius / state.boxSize) * boxSizeWorld)), 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -121,18 +132,22 @@ export const thermoCyclesKineticMdPlugin = defineSimulationPlugin<ThermoCycleMdP
           ctx.strokeStyle = 'rgba(251, 191, 36, 0.75)';
           ctx.lineWidth = 1.6;
           ctx.beginPath();
-          ctx.moveTo(bx0 + state.brownianTrail[0]!.x * scale, by0 + boxPx - state.brownianTrail[0]!.y * scale);
+          const first = m.toScreen(boxLeft + (state.brownianTrail[0]!.x / 10) * boxSizeWorld, boxBottom + (state.brownianTrail[0]!.y / 10) * boxSizeWorld);
+          ctx.moveTo(first.x, first.y);
           for (let i = 1; i < state.brownianTrail.length; i++) {
-            ctx.lineTo(bx0 + state.brownianTrail[i]!.x * scale, by0 + boxPx - state.brownianTrail[i]!.y * scale);
+            const point = m.toScreen(boxLeft + (state.brownianTrail[i]!.x / 10) * boxSizeWorld, boxBottom + (state.brownianTrail[i]!.y / 10) * boxSizeWorld);
+            ctx.lineTo(point.x, point.y);
           }
           ctx.stroke();
         }
 
         // Maxwell speed histogram on right
-        const hx = bx0 + boxPx + 24;
-        const hw = w - hx - 20;
-        const hy = by0 + boxPx;
-        const hh = boxPx * 0.65;
+        const histTopLeft = m.toScreen(0.3, 0.2);
+        const histBottomRight = m.toScreen(2.1, -1);
+        const hx = histTopLeft.x;
+        const hy = histBottomRight.y;
+        const hw = histBottomRight.x - hx;
+        const hh = hy - histTopLeft.y;
         ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
         ctx.fillRect(hx, hy - hh, hw, hh);
         const bins = new Array<number>(12).fill(0);
@@ -144,17 +159,15 @@ export const thermoCyclesKineticMdPlugin = defineSimulationPlugin<ThermoCycleMdP
           bins[idx]!++;
         }
         const maxCnt = Math.max(1, ...bins);
-        const bw = (hw - 16) / 12;
         ctx.fillStyle = '#4ade80';
         bins.forEach((c, i) => {
-          const barH = (c / maxCnt) * (hh - 28);
-          ctx.fillRect(hx + 8 + i * bw, hy - 8 - barH, bw - 3, barH);
+          const barTop = m.toScreen(0.3 + i * 0.15, -1 + (c / maxCnt) * 1.0);
+          ctx.fillRect(barTop.x, barTop.y, m.len(0.12), m.len((c / maxCnt) * 1.0));
         });
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = '12px sans-serif';
-        ctx.fillText(`分子速率分布 (${state.particles.length} 粒子)`, hx + 8, hy - hh + 18);
+        labels.push({ id: 'maxwell-histogram-title', x: hx + m.len(0.5), y: histTopLeft.y + m.len(0.08), text: `分子速率分布 (${state.particles.length} 粒子)`, color: '#cbd5e1', font: '12px sans-serif' });
       }
 
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
@@ -163,19 +176,27 @@ export const thermoCyclesKineticMdPlugin = defineSimulationPlugin<ThermoCycleMdP
     const allPts = state.cycle.segments.flatMap((s) => s.points);
     const maxV = Math.max(10, ...allPts.map((p) => p.vL));
     const maxP = Math.max(200, ...allPts.map((p) => p.pKPa));
-    const gx = w * 0.14;
-    const gy = h * 0.8;
-    const gw = w * 0.72;
-    const gh = h * 0.62;
-    const toPx = (vL: number) => gx + (vL / (maxV * 1.1)) * gw;
-    const toPy = (pKPa: number) => gy - (pKPa / (maxP * 1.15)) * gh;
+    const gx = -1.8;
+    const gy = -0.9;
+    const gw = 3.6;
+    const gh = 1.8;
+    ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+    ctx.lineWidth = 1;
+    const temperatureRailTop = m.toScreen(1.75, 0.9);
+    const temperatureRailBottom = m.toScreen(1.75, -0.9);
+    ctx.beginPath();
+    ctx.moveTo(temperatureRailTop.x, temperatureRailTop.y);
+    ctx.lineTo(temperatureRailBottom.x, temperatureRailBottom.y);
+    ctx.stroke();
+    const toPx = (vL: number) => m.toX(gx + (vL / (maxV * 1.1)) * gw);
+    const toPy = (pKPa: number) => m.toY(gy + (pKPa / (maxP * 1.15)) * gh);
 
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(gx, gy - gh);
-    ctx.lineTo(gx, gy);
-    ctx.lineTo(gx + gw, gy);
+    ctx.moveTo(m.toX(gx), m.toY(gy + gh));
+    ctx.lineTo(m.toX(gx), m.toY(gy));
+    ctx.lineTo(m.toX(gx + gw), m.toY(gy));
     ctx.stroke();
 
     const cols = ['#f43f5e', '#fbbf24', '#38bdf8', '#4ade80'];
@@ -191,16 +212,34 @@ export const thermoCyclesKineticMdPlugin = defineSimulationPlugin<ThermoCycleMdP
       ctx.stroke();
     });
 
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = '13px sans-serif';
-    ctx.fillText(
-      `循环净功 W=${state.cycle.sumWJ.toFixed(1)} J | 热效率 η=${(state.cycle.efficiency * 100).toFixed(2)}% (卡诺上限 ${(state.cycle.carnotEfficiency * 100).toFixed(2)}%)`,
-      gx,
-      gy - gh - 14
-    );
+    labels.push({ id: 'thermo-cycle-summary', ...m.toScreen(0, 1.08), text: `循环净功 W=${state.cycle.sumWJ.toFixed(1)} J | 热效率 η=${(state.cycle.efficiency * 100).toFixed(2)}% (卡诺上限 ${(state.cycle.carnotEfficiency * 100).toFixed(2)}%)`, color: '#e2e8f0', font: '13px sans-serif' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
 
     ctx.restore();
   },
+  getControlHandles: (_state, params) => params.mode === 'kinetic-md-box'
+    ? [{
+        id: 'md-speed-scale',
+        label: `速率倍率=${params.mdSpeedScale.toFixed(2)}×`,
+        position: { x: 0.22, y: -0.9 + ((params.mdSpeedScale - 0.5) / 1.5) * 1.4 },
+        handleKind: 'point',
+        color: '#fbbf24',
+        onDrag: (world) => {
+          const scale = Math.max(0.5, Math.min(2, Math.round((0.5 + ((world.y + 0.9) / 1.4) * 1.5) * 4) / 4));
+          return { mdSpeedScale: Number(scale.toFixed(2)) };
+        }
+      }]
+    : [{
+        id: 'carnot-t-hot',
+        label: `T_H=${params.tHotK.toFixed(0)} K`,
+        position: { x: 1.75, y: -0.9 + ((params.tHotK - 400) / 500) * 1.8 },
+        handleKind: 'point',
+        color: '#f43f5e',
+        onDrag: (world) => {
+          const temperature = Math.max(400, Math.min(900, Math.round((400 + ((world.y + 0.9) / 1.8) * 500) / 50) * 50));
+          return { tHotK: temperature };
+        }
+      }],
   formatFormulas: (state, params) => [
     {
       id: 'thermo-first-law',

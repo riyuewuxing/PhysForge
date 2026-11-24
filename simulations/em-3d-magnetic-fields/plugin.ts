@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { magnetic3dPresets } from './presets.js';
 import {
   buildConductorSegments,
@@ -96,13 +96,8 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
   },
   // Pure 2D XY projection fallback for non-WebGL headless / singlefile inspection
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.22 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
-    const project3D = (p: { x: number; y: number; z: number }) => ({
-      sx: cx + (p.x + p.z * 0.45) * ppm,
-      sy: cy - (p.y + p.z * 0.25) * ppm
-    });
+    const m = createWorldMapper(viewport);
+    const project3D = (p: { x: number; y: number; z: number }) => m.toScreen(p.x + p.z * 0.45, p.y + p.z * 0.25);
 
     ctx.save();
     if (activeLayers.has('conductors')) {
@@ -113,8 +108,8 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
       for (const s of segs) {
         const a = project3D(s.a);
         const b = project3D(s.b);
-        ctx.moveTo(a.sx, a.sy);
-        ctx.lineTo(b.sx, b.sy);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
       }
       ctx.stroke();
     }
@@ -127,10 +122,10 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
         if (pts.length < 2) continue;
         ctx.beginPath();
         const p0 = project3D(pts[0]!);
-        ctx.moveTo(p0.sx, p0.sy);
+        ctx.moveTo(p0.x, p0.y);
         for (let i = 1; i < pts.length; i++) {
           const pi = project3D(pts[i]!);
-          ctx.lineTo(pi.sx, pi.sy);
+          ctx.lineTo(pi.x, pi.y);
         }
         ctx.stroke();
       }
@@ -141,22 +136,82 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
       ctx.lineWidth = 2.2;
       ctx.beginPath();
       const t0 = project3D(state.trail[0]!);
-      ctx.moveTo(t0.sx, t0.sy);
+      ctx.moveTo(t0.x, t0.y);
       for (let i = 1; i < state.trail.length; i++) {
         const ti = project3D(state.trail[i]!);
-        ctx.lineTo(ti.sx, ti.sy);
+        ctx.lineTo(ti.x, ti.y);
       }
       ctx.stroke();
     }
     const sp = project3D(state.position);
     ctx.fillStyle = '#4ade80';
     ctx.beginPath();
-    ctx.arc(sp.sx, sp.sy, 6.5, 0, Math.PI * 2);
+    ctx.arc(sp.x, sp.y, m.len(0.03), 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   },
-  formatFormulas: (state) => {
+  getControlHandles: (state, params) => {
+    const origin = {
+      x: state.position.x + state.position.z * 0.45,
+      y: state.position.y + state.position.z * 0.25
+    };
+    return [
+      {
+        id: 'particle-vperp',
+        label: `v⊥=${params.vPerp.toFixed(1)} m/s`,
+        position: { x: origin.x + Math.max(0.15, params.vPerp * 0.35), y: origin.y },
+        origin,
+        handleKind: 'vector',
+        color: '#38bdf8',
+        onDrag: (world) => ({
+          vPerp: Number(Math.max(0, Math.min(3, Math.round((Math.hypot(world.x - origin.x, world.y - origin.y) / 0.35) * 5) / 5)).toFixed(1))
+        })
+      }
+    ];
+  },
+  getForceVectors: (state) => {
+    const origin = {
+      x: state.position.x + state.position.z * 0.45,
+      y: state.position.y + state.position.z * 0.25
+    };
+    const acceleration = state.lorentzForce;
+    return [
+      {
+        id: 'lorentz-acceleration',
+        label: 'a洛 = (q/m)v×B',
+        origin,
+        force: { x: acceleration.x + acceleration.z * 0.45, y: acceleration.y + acceleration.z * 0.25 },
+        color: '#fb7185',
+        category: 'magnetic',
+        unit: 'm/s²'
+      }
+    ];
+  },
+  referenceFrames: [
+    {
+      id: 'helical-particle',
+      label: '带电粒子随动参考系 (2D 投影)',
+      getOrigin: (state) => ({
+        x: state.position.x + state.position.z * 0.45,
+        y: state.position.y + state.position.z * 0.25
+      }),
+      getVelocity: (state) => ({
+        x: state.velocity.x + state.velocity.z * 0.45,
+        y: state.velocity.y + state.velocity.z * 0.25
+      })
+    }
+  ],
+  formatFormulas: (state, params) => {
     const obs = computeObservables(state);
+    if (params.geometryType === 'finite-solenoid') {
+      return [
+        {
+          id: 'local-helical-motion',
+          label: '局部匀强磁场近似下的螺旋运动',
+          latex: '\\begin{aligned}\\text{局部匀强近似}\\\\ R &= \\frac{mv_\\perp}{|q|B}\\\\ T &= \\frac{2\\pi m}{|q|B}\\end{aligned}'
+        }
+      ];
+    }
     return [
       {
         id: 'biot-savart-lorentz',

@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { constrainedVelocityPresets } from './presets.js';
 import {
   checkInvariants,
@@ -38,6 +38,7 @@ export const mechConstrainedVelocityPlugin = defineSimulationPlugin<
     difficulty: '高三一轮',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.667, offsetRatioX: -0.2, offsetRatioY: 0.22 },
   paramSchema,
   presets: constrainedVelocityPresets,
   engine: {
@@ -65,6 +66,18 @@ export const mechConstrainedVelocityPlugin = defineSimulationPlugin<
       onDrag: (wp) => ({
         initialAngleDeg: Math.max(15, Math.min(75, Math.round((Math.atan2(Math.max(0.2, wp.y), Math.max(0.2, wp.x)) * 180) / Math.PI / 5) * 5))
       })
+    }
+  ],
+  getForceVectors: (state) => [
+    { id: 'gravity-specific-a', label: 'g_A', origin: state.posA, force: { x: 0, y: -9.81 }, color: '#fbbf24', category: 'gravity', unit: 'N/kg' },
+    { id: 'gravity-specific-b', label: 'g_B', origin: state.posB, force: { x: 0, y: -9.81 }, color: '#fb923c', category: 'gravity', unit: 'N/kg' }
+  ],
+  referenceFrames: [
+    {
+      id: 'block-a',
+      label: 'A 端随动参考系',
+      getOrigin: (s) => ({ x: s.posA.x, y: s.posA.y }),
+      getVelocity: (s) => ({ x: s.velA.x, y: s.velA.y })
     }
   ],
   sceneSerializer: {
@@ -101,19 +114,24 @@ export const mechConstrainedVelocityPlugin = defineSimulationPlugin<
     }
   ],
   renderCanvas: (ctx, state, _params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.16 * viewport.scale;
-    const ox = viewport.width * 0.25 + viewport.offsetX;
-    const oy = viewport.height * 0.72 + viewport.offsetY;
-    const toScr = (wx: number, wy: number) => ({ sx: ox + wx * ppm, sy: oy - wy * ppm });
+    const m = createWorldMapper(viewport);
+    const toScr = (wx: number, wy: number) => {
+      const point = m.toScreen(wx, wy);
+      return { sx: point.x, sy: point.y };
+    };
 
     ctx.save();
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(ox - 40, oy);
-    ctx.lineTo(viewport.width - 30, oy);
-    ctx.moveTo(ox, oy);
-    ctx.lineTo(ox, 30);
+    const floorStart = toScr(-1.2, 0);
+    const floorEnd = toScr(6.5, 0);
+    const wallBottom = toScr(0, 0);
+    const wallTop = toScr(0, 4.2);
+    ctx.moveTo(floorStart.sx, floorStart.sy);
+    ctx.lineTo(floorEnd.sx, floorEnd.sy);
+    ctx.moveTo(wallBottom.sx, wallBottom.sy);
+    ctx.lineTo(wallTop.sx, wallTop.sy);
     ctx.stroke();
 
     const pA = toScr(state.posA.x, state.posA.y);
@@ -139,8 +157,12 @@ export const mechConstrainedVelocityPlugin = defineSimulationPlugin<
     if (activeLayers.has('decomposition')) {
       const drawVec = (from: { sx: number; sy: number }, v: { x: number; y: number }, col: string, lbl: string) => {
         if (Math.hypot(v.x, v.y) < 1e-4) return;
-        const tx = from.sx + v.x * 0.35 * ppm;
-        const ty = from.sy - v.y * 0.35 * ppm;
+      const endpoint = m.toScreen(
+        (from === pA ? state.posA.x : state.posB.x) + v.x * 0.35,
+        (from === pA ? state.posA.y : state.posB.y) + v.y * 0.35
+      );
+      const tx = endpoint.x;
+      const ty = endpoint.y;
         ctx.strokeStyle = col;
         ctx.fillStyle = col;
         ctx.lineWidth = 2.5;

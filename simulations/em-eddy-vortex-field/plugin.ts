@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { eddyVortexPresets } from './presets.js';
 import {
   checkInvariants,
@@ -41,6 +41,7 @@ export const emEddyVortexFieldPlugin = defineSimulationPlugin<EddyVortexParams, 
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.917, offsetRatioX: 0.05 },
   paramSchema,
   presets: eddyVortexPresets,
   engine: {
@@ -73,6 +74,14 @@ export const emEddyVortexFieldPlugin = defineSimulationPlugin<EddyVortexParams, 
       }
     ];
   },
+  referenceFrames: [
+    {
+      id: 'eddy-probe',
+      label: '试探粒子随动参考系',
+      getOrigin: (s) => ({ x: s.px, y: s.py }),
+      getVelocity: (s) => ({ x: s.vx, y: s.vy })
+    }
+  ],
   getControlHandles: (_s, params) =>
     params.mode === 'betatron-vortex'
       ? [
@@ -117,55 +126,59 @@ export const emEddyVortexFieldPlugin = defineSimulationPlugin<EddyVortexParams, 
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.22 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
-    const toX = (wx: number) => cx + wx * ppm;
-    const toY = (wy: number) => cy - wy * ppm;
+    const m = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
+    const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = m.toScreen(x, y + height);
+      const b = m.toScreen(x + width, y);
+      ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    };
 
     ctx.save();
     if (params.mode === 'eddy-damping-compare') {
-      const drawPendulum = (px: number, th: number, col: string, label: string, slotted: boolean) => {
-        const py0 = viewport.height * 0.2;
-        const Lpx = params.pendulumLengthL * ppm;
-        // Magnetic pole gap at bottom equilibrium
+      const drawPendulum = (pivotX: number, th: number, col: string, label: string, slotted: boolean, id: string) => {
+        const pivotY = 1.25;
+        const pivot = m.toScreen(pivotX, pivotY);
+        const bx = pivotX + params.pendulumLengthL * Math.sin(th);
+        const by = pivotY - params.pendulumLengthL * Math.cos(th);
+        const bob = m.toScreen(bx, by);
+        const poleGap = m.toScreen(pivotX, pivotY - params.pendulumLengthL + 0.2);
         ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
-        ctx.fillRect(px - 36, py0 + Lpx - 22, 72, 44);
-        const bx = px + Lpx * Math.sin(th);
-        const by = py0 + Lpx * Math.cos(th);
+        fillWorldRect(pivotX - 0.38, pivotY - params.pendulumLengthL - 0.18, 0.76, 0.36);
         ctx.strokeStyle = '#cbd5e1';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(px, py0);
-        ctx.lineTo(bx, by);
+        ctx.moveTo(pivot.x, pivot.y);
+        ctx.lineTo(bob.x, bob.y);
         ctx.stroke();
 
         ctx.fillStyle = col;
-        ctx.fillRect(bx - 22, by - 16, 44, 32);
+        fillWorldRect(bx - 0.28, by - 0.2, 0.56, 0.4);
         if (slotted) {
           ctx.fillStyle = '#0f172a';
-          for (let k = -12; k <= 12; k += 8) {
-            ctx.fillRect(bx + k - 1.5, by - 4, 3, 20);
+          for (const offset of [-0.15, 0, 0.15]) {
+            fillWorldRect(bx + offset - 0.012, by - 0.16, 0.024, 0.25);
           }
         }
-        ctx.fillStyle = '#e2e8f0';
-        ctx.font = 'bold 13px sans-serif';
-        ctx.fillText(label, px - 48, py0 - 16);
+        labels.push({ id, x: pivot.x, y: pivot.y - m.len(0.27), text: label, color: '#e2e8f0', font: 'bold 13px sans-serif' });
+        labels.push({ id: `${id}-pole`, x: poleGap.x, y: poleGap.y, text: '磁极间隙', color: '#7dd3fc', font: '11px sans-serif' });
       };
 
-      drawPendulum(viewport.width * 0.34, state.solidTheta, '#f43f5e', '整块铜板（强涡流阻尼）', false);
-      drawPendulum(viewport.width * 0.66, state.slottedTheta, '#4ade80', '开槽铜板（微弱阻尼）', true);
+      drawPendulum(-1.1, state.solidTheta, '#f43f5e', '整块铜板（强涡流阻尼）', false, 'solid-pendulum');
+      drawPendulum(1.1, state.slottedTheta, '#4ade80', '开槽铜板（微弱阻尼）', true, 'slotted-pendulum');
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
 
-    const rPx = params.cylinderRadiusR * ppm;
+    const center = m.toScreen(0, 0);
+    const rPx = params.cylinderRadiusR * m.ppm;
     if (activeLayers.has('vortexRings')) {
       ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
+      ctx.arc(center.x, center.y, rPx, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
@@ -174,7 +187,7 @@ export const emEddyVortexFieldPlugin = defineSimulationPlugin<EddyVortexParams, 
       ctx.setLineDash([4, 4]);
       for (const factor of [0.45, 0.85, 1.3]) {
         ctx.beginPath();
-        ctx.arc(cx, cy, rPx * factor, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, rPx * factor, 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.setLineDash([]);
@@ -185,18 +198,24 @@ export const emEddyVortexFieldPlugin = defineSimulationPlugin<EddyVortexParams, 
         ctx.strokeStyle = '#4ade80';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(toX(state.trail[0]!.x), toY(state.trail[0]!.y));
+        const first = m.toScreen(state.trail[0]!.x, state.trail[0]!.y);
+        ctx.moveTo(first.x, first.y);
         for (let i = 1; i < state.trail.length; i++) {
-          ctx.lineTo(toX(state.trail[i]!.x), toY(state.trail[i]!.y));
+          const point = m.toScreen(state.trail[i]!.x, state.trail[i]!.y);
+          ctx.lineTo(point.x, point.y);
         }
         ctx.stroke();
       }
+      const particle = m.toScreen(state.px, state.py);
       ctx.fillStyle = '#4ade80';
       ctx.beginPath();
-      ctx.arc(toX(state.px), toY(state.py), 6.5, 0, Math.PI * 2);
+      ctx.arc(particle.x, particle.y, m.len(0.035), 0, Math.PI * 2);
       ctx.fill();
     }
 
+    const observables = computeObservables(state, params);
+    labels.push({ id: 'eddy-vortex-summary', x: viewport.width * 0.5, y: 28, text: `B=${state.bCurrent.toFixed(2)} T  |  |E感|=${(observables.eVortexMag ?? 0).toFixed(3)} V/m`, color: '#e2e8f0', font: 'bold 13px sans-serif' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state, params) => {

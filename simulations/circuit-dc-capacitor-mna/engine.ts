@@ -7,7 +7,8 @@ export type CircuitTopology =
   | 'series-parallel-dynamic'
   | 'rc-transient'
   | 'rc-bridge-charge'
-  | 'nonlinear-lamp-diode';
+  | 'nonlinear-lamp-diode'
+  | 'divider-lamp';
 
 export type CircuitParams = {
   topology: CircuitTopology;
@@ -70,6 +71,39 @@ function solveTopology(
       outputPower: pOut,
       efficiency: pTotal > 1e-9 ? pOut / pTotal : 0,
       capVoltage: 0,
+      capCurrent: 0,
+      capCharge: 0,
+      capEnergy: 0
+    };
+  }
+
+  if (params.topology === 'divider-lamp') {
+    const totalResistance = 20;
+    const ratio = Math.max(0.05, Math.min(0.95, params.sliderR / totalResistance));
+    const upperResistance = Math.max(0.2, totalResistance * (1 - ratio) + r);
+    const lowerResistance = Math.max(0.2, totalResistance * ratio);
+    const elements: NonlinearCircuitElement[] = [
+      { kind: 'voltageSource', id: 'V_main', pos: 1, neg: 0, voltage: E },
+      { kind: 'resistor', id: 'R_upper', a: 1, b: 2, resistance: upperResistance },
+      { kind: 'resistor', id: 'R_lower', a: 2, b: 0, resistance: lowerResistance },
+      { kind: 'lamp', id: 'Lamp', a: 2, b: 0, k: 0.25, alpha: 0.65 }
+    ];
+    const solution = solveNonlinearMna(2, elements);
+    const bulbVoltage = solution.nodeVoltages[2]!;
+    const bulbCurrent = solution.elementCurrents.Lamp!;
+    const sourceCurrent = solution.elementCurrents.R_upper!;
+    const lowerCurrent = solution.elementCurrents.R_lower!;
+    const inputPower = E * sourceCurrent;
+    const bulbPower = bulbVoltage * bulbCurrent;
+    return {
+      nodeVoltages: solution.nodeVoltages,
+      totalCurrent: sourceCurrent,
+      branchCurrent1: lowerCurrent,
+      branchCurrent2: bulbCurrent,
+      terminalVoltage: bulbVoltage,
+      outputPower: bulbPower,
+      efficiency: inputPower > 1e-9 ? bulbPower / inputPower : 0,
+      capVoltage: bulbVoltage,
       capCurrent: 0,
       capCharge: 0,
       capEnergy: 0
@@ -257,6 +291,20 @@ function solveTopology(
   };
 }
 
+/** Returns the same epsilon-regularized lamp law used by the nonlinear MNA stamps. */
+export function sampleDividerLampIvCurve(
+  maximumVoltage: number,
+  sampleCount = 16
+): Array<{ u: number; i: number }> {
+  const maxVoltage = Math.max(0, Number.isFinite(maximumVoltage) ? maximumVoltage : 0);
+  const count = Math.max(2, Math.min(512, Math.floor(Number.isFinite(sampleCount) ? sampleCount : 16)));
+  return Array.from({ length: count }, (_, index) => {
+    const u = maxVoltage * index / (count - 1);
+    const i = 0.25 * Math.pow(Math.abs(u) + 1e-6, 0.65 - 1) * u;
+    return { u, i };
+  });
+}
+
 export function createInitialState(params: CircuitParams): CircuitState {
   const initCapV = params.topology === 'rc-transient' && !params.switchClosed ? params.emf : 0;
   const first = solveTopology(params, initCapV, 0, 0);
@@ -348,6 +396,16 @@ export function checkInvariants(
         passed: kclErr < 1e-9
       }
     ];
+  }
+  if (params.topology === 'divider-lamp') {
+    const kclErr = Math.abs(state.totalCurrent - (state.branchCurrent1 + state.branchCurrent2)) /
+      Math.max(Math.abs(state.totalCurrent), 1e-9);
+    return [{
+      name: '分压小灯泡节点 KCL (I总 = I灯 + I下段)',
+      measuredError: kclErr,
+      tolerance: 1e-9,
+      passed: kclErr < 1e-9
+    }];
   }
   return [];
 }

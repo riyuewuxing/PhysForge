@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { electrostaticPresets } from './presets.js';
 import {
   checkInvariants,
@@ -49,6 +49,7 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.85, offsetRatioX: 0.05 },
   paramSchema,
   presets: electrostaticPresets,
   engine: {
@@ -137,12 +138,8 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width / 6.8, viewport.height / 4.8) * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
-    const toX = (wx: number) => cx + wx * ppm;
-    const toY = (wy: number) => cy - wy * ppm;
-
+    const m = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
     ctx.save();
 
     if (activeLayers.has('equipotentials') && params.mode !== 'deflection-tube') {
@@ -153,8 +150,10 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
       for (const c of contours) {
         ctx.beginPath();
         for (const seg of c.segments) {
-          ctx.moveTo(toX(seg.a.x), toY(seg.a.y));
-          ctx.lineTo(toX(seg.b.x), toY(seg.b.y));
+          const a = m.toScreen(seg.a.x, seg.a.y);
+          const b = m.toScreen(seg.b.x, seg.b.y);
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
         }
         ctx.stroke();
       }
@@ -169,9 +168,11 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
         for (const pts of lines) {
           if (pts.length < 2) continue;
           ctx.beginPath();
-          ctx.moveTo(toX(pts[0]!.x), toY(pts[0]!.y));
+          const first = m.toScreen(pts[0]!.x, pts[0]!.y);
+          ctx.moveTo(first.x, first.y);
           for (let i = 1; i < pts.length; i++) {
-            ctx.lineTo(toX(pts[i]!.x), toY(pts[i]!.y));
+            const point = m.toScreen(pts[i]!.x, pts[i]!.y);
+            ctx.lineTo(point.x, point.y);
           }
           ctx.stroke();
         }
@@ -184,47 +185,56 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
         ];
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 1.5;
+        const a = m.toScreen(sol.A.x, sol.A.y);
+        const b = m.toScreen(sol.B.x, sol.B.y);
+        const c = m.toScreen(sol.C.x, sol.C.y);
         ctx.beginPath();
-        ctx.moveTo(toX(sol.A.x), toY(sol.A.y));
-        ctx.lineTo(toX(sol.B.x), toY(sol.B.y));
-        ctx.lineTo(toX(sol.C.x), toY(sol.C.y));
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.lineTo(c.x, c.y);
         ctx.closePath();
         ctx.stroke();
 
         // Equal-potential segment B <-> equalPointOnAC
         ctx.strokeStyle = '#fbbf24';
         ctx.lineWidth = 2.2;
+        const equal = m.toScreen(sol.equalPointOnAC.x, sol.equalPointOnAC.y);
         ctx.beginPath();
-        ctx.moveTo(toX(sol.B.x), toY(sol.B.y));
-        ctx.lineTo(toX(sol.equalPointOnAC.x), toY(sol.equalPointOnAC.y));
+        ctx.moveTo(b.x, b.y);
+        ctx.lineTo(equal.x, equal.y);
         ctx.stroke();
 
         // E vector
         const eMag = Math.hypot(sol.Ex, sol.Ey) || 1;
+        const eOrigin = m.toScreen(0, 0);
+        const eEnd = m.toScreen((sol.Ex / eMag) * 1.1, (sol.Ey / eMag) * 1.1);
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(toX(0), toY(0));
-        ctx.lineTo(toX((sol.Ex / eMag) * 1.1), toY((sol.Ey / eMag) * 1.1));
+        ctx.moveTo(eOrigin.x, eOrigin.y);
+        ctx.lineTo(eEnd.x, eEnd.y);
         ctx.stroke();
 
-        ctx.fillStyle = '#e2e8f0';
-        ctx.font = '12px sans-serif';
         for (const pt of pts) {
+          const point = m.toScreen(pt.x, pt.y);
           ctx.beginPath();
-          ctx.arc(toX(pt.x), toY(pt.y), 5, 0, Math.PI * 2);
+          ctx.arc(point.x, point.y, m.len(0.025), 0, Math.PI * 2);
           ctx.fill();
-          ctx.fillText(pt.name, toX(pt.x) + 7, toY(pt.y) - 6);
+          labels.push({ id: `uniform-point-${pt.name[0]}`, x: point.x, y: point.y - m.len(0.1), text: pt.name, color: '#e2e8f0', font: '12px sans-serif' });
         }
       } else {
         // Parallel plates
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 4;
+        const plateLeftTop = m.toScreen(-1.0, 1.0);
+        const plateRightTop = m.toScreen(1.0, 1.0);
+        const plateLeftBottom = m.toScreen(-1.0, -1.0);
+        const plateRightBottom = m.toScreen(1.0, -1.0);
         ctx.beginPath();
-        ctx.moveTo(toX(-1.0), toY(1.0));
-        ctx.lineTo(toX(1.0), toY(1.0));
-        ctx.moveTo(toX(-1.0), toY(-1.0));
-        ctx.lineTo(toX(1.0), toY(-1.0));
+        ctx.moveTo(plateLeftTop.x, plateLeftTop.y);
+        ctx.lineTo(plateRightTop.x, plateRightTop.y);
+        ctx.moveTo(plateLeftBottom.x, plateLeftBottom.y);
+        ctx.lineTo(plateRightBottom.x, plateRightBottom.y);
         ctx.stroke();
       }
     }
@@ -232,12 +242,11 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
     if (params.mode === 'dipole-point-charges') {
       const drawCharge = (x: number, q: number, label: string) => {
         ctx.fillStyle = q > 0 ? '#f43f5e' : q < 0 ? '#38bdf8' : '#64748b';
+        const point = m.toScreen(x, 0);
         ctx.beginPath();
-        ctx.arc(toX(x), toY(0), 13, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, m.len(0.075), 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.fillText(`${label}${q > 0 ? '+' : ''}${q}`, toX(x) - 18, toY(0) + 25);
+        labels.push({ id: `charge-${label}`, x: point.x, y: point.y + m.len(0.15), text: `${label}${q > 0 ? '+' : ''}${q}`, color: '#fff', font: 'bold 12px sans-serif' });
       };
       drawCharge(params.x1, params.q1MicroC, 'q₁=');
       drawCharge(params.x2, params.q2MicroC, 'q₂=');
@@ -248,15 +257,18 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
         ctx.strokeStyle = '#4ade80';
         ctx.lineWidth = 2.2;
         ctx.beginPath();
-        ctx.moveTo(toX(state.trail[0]!.x), toY(state.trail[0]!.y));
+        const first = m.toScreen(state.trail[0]!.x, state.trail[0]!.y);
+        ctx.moveTo(first.x, first.y);
         for (let i = 1; i < state.trail.length; i++) {
-          ctx.lineTo(toX(state.trail[i]!.x), toY(state.trail[i]!.y));
+          const point = m.toScreen(state.trail[i]!.x, state.trail[i]!.y);
+          ctx.lineTo(point.x, point.y);
         }
         ctx.stroke();
       }
+      const particle = m.toScreen(state.px, state.py);
       ctx.fillStyle = '#4ade80';
       ctx.beginPath();
-      ctx.arc(toX(state.px), toY(state.py), 6.5, 0, Math.PI * 2);
+      ctx.arc(particle.x, particle.y, m.len(0.04), 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -279,11 +291,10 @@ export const emElectrostaticFieldPlugin = defineSimulationPlugin<ElectrostaticPa
         else ctx.lineTo(px, py);
       }
       ctx.stroke();
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '11px sans-serif';
-      ctx.fillText('连线邻域 φ(x) 分布', bx + 10, by + 16);
+      labels.push({ id: 'potential-profile-title', x: bx + 95, y: by + 15, text: '连线邻域 φ(x) 分布', color: '#cbd5e1', font: '11px sans-serif' });
     }
 
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state, params) => {

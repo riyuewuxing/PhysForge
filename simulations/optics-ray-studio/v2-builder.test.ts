@@ -36,4 +36,21 @@ describe('B3 builder-optics-ray V2 verification', () => {
     const ir = opticsRayStudioPlugin.exportDiagramIR?.(tirState, tirParams);
     expect(ir?.primitives.some((p) => p.kind === 'arcAngle')).toBe(true);
   });
+
+  it('anchors the draggable incident-angle control on the illuminated interface ring', () => {
+    const params = resolvePluginParams<OpticsParams>(opticsRayStudioPlugin.paramSchema, {
+      sceneMode: 'tir-interface',
+      n1: 1.5,
+      n2: 1,
+      incidentAngleDeg: 35,
+      animateSweep: false
+    });
+    const state = createInitialState(params);
+    const handle = opticsRayStudioPlugin.getControlHandles?.(state, params)[0];
+
+    expect(handle?.position).toEqual({ x: 0, y: 0 });
+    expect(handle?.showWhenIdle).toBe(false);
+    expect(handle?.onDrag({ x: -Math.sin((35 * Math.PI) / 180), y: Math.cos((35 * Math.PI) / 180) }).incidentAngleDeg)
+      .toBe(35);
+  });
 });

@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { capacitorMillikanPresets } from './presets.js';
 import {
   checkInvariants,
@@ -55,6 +55,7 @@ export const emCapacitorMillikanPlugin = defineSimulationPlugin<CapacitorMillika
     difficulty: '高三一轮',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.917, offsetRatioX: -0.02, offsetRatioY: 0.02 },
   paramSchema,
   presets: capacitorMillikanPresets,
   engine: {
@@ -85,6 +86,17 @@ export const emCapacitorMillikanPlugin = defineSimulationPlugin<CapacitorMillika
       { id: 'drop-qe', label: 'qE', origin: { x: 0, y: dropY }, force: { x: 0, y: 1.5 * fRatio }, category: 'electric', color: '#38bdf8' }
     ];
   },
+  referenceFrames: [
+    {
+      id: 'oil-droplet',
+      label: '油滴随动参考系',
+      getOrigin: (s, p) => {
+        const halfSpan = (p.distanceMm / 20) * 0.7;
+        return { x: 0, y: -halfSpan + s.dropYFrac * 2 * halfSpan };
+      },
+      getVelocity: (s, p) => ({ x: 0, y: s.dropVy * ((p.distanceMm / 20) * 1.4) })
+    }
+  ],
   getControlHandles: (_s, params) => {
     const halfSpan = (params.distanceMm / 20) * 0.7;
     return [
@@ -144,29 +156,31 @@ export const emCapacitorMillikanPlugin = defineSimulationPlugin<CapacitorMillika
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.22 * viewport.scale;
-    const cx = viewport.width * 0.43 + viewport.offsetX;
-    const cy = viewport.height * 0.52 + viewport.offsetY;
-    const toX = (wx: number) => cx + wx * ppm;
-    const toY = (wy: number) => cy - wy * ppm;
+    const mapper = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
+    const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = mapper.toScreen(x, y + height);
+      const b = mapper.toScreen(x + width, y);
+      ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    };
 
     const halfD = (params.distanceMm / 20) * 0.7;
-    const m = computeCapacitorMetrics(params);
+    const metrics = computeCapacitorMetrics(params);
 
     ctx.save();
 
     if (activeLayers.has('plates')) {
       if (params.dielectricEr > 1.05) {
         ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
-        ctx.fillRect(toX(-1.4), toY(halfD), 2.8 * ppm, 2 * halfD * ppm);
+        fillWorldRect(-1.4, -halfD, 2.8, 2 * halfD);
       }
 
       // Top movable plate (reflects areaRatioS horizontal shift)
       const shiftX = (1 - params.areaRatioS) * 2.4;
       ctx.fillStyle = '#e2e8f0';
-      ctx.fillRect(toX(-1.5 + shiftX), toY(halfD) - 8, 3.0 * ppm, 8);
+      fillWorldRect(-1.5 + shiftX, halfD - 0.04, 3, 0.04);
       // Bottom fixed plate
-      ctx.fillRect(toX(-1.5), toY(-halfD), 3.0 * ppm, 8);
+      fillWorldRect(-1.5, -halfD - 0.04, 3, 0.04);
 
       // Electric field arrows between overlapping region
       ctx.strokeStyle = 'rgba(74, 222, 128, 0.45)';
@@ -174,9 +188,11 @@ export const emCapacitorMillikanPlugin = defineSimulationPlugin<CapacitorMillika
       for (let i = -2; i <= 2; i++) {
         const fx = -1.5 + shiftX + 0.5 + ((i + 2) / 4) * (2.2 - shiftX);
         if (fx > 1.4) continue;
+        const top = mapper.toScreen(fx, halfD - 0.05);
+        const bottom = mapper.toScreen(fx, -halfD + 0.05);
         ctx.beginPath();
-        ctx.moveTo(toX(fx), toY(halfD - 0.05));
-        ctx.lineTo(toX(fx), toY(-halfD + 0.05));
+        ctx.moveTo(top.x, top.y);
+        ctx.lineTo(bottom.x, bottom.y);
         ctx.stroke();
       }
 
@@ -184,45 +200,54 @@ export const emCapacitorMillikanPlugin = defineSimulationPlugin<CapacitorMillika
       ctx.strokeStyle = '#fbbf24';
       ctx.lineWidth = 2;
       if (params.groundMode !== 'none') {
-        const gy = params.groundMode === 'bottom' ? toY(-halfD) + 12 : toY(halfD) - 16;
-        const gx = toX(-1.7);
+        const plateY = params.groundMode === 'bottom' ? -halfD - 0.04 : halfD + 0.04;
+        const stemEnd = params.groundMode === 'bottom' ? plateY - 0.16 : plateY + 0.16;
+        const gx = -1.7;
+        const plate = mapper.toScreen(-1.5, plateY);
+        const elbow = mapper.toScreen(gx, plateY);
+        const ground = mapper.toScreen(gx, stemEnd);
         ctx.beginPath();
-        ctx.moveTo(toX(-1.5), params.groundMode === 'bottom' ? toY(-halfD) + 4 : toY(halfD) - 4);
-        ctx.lineTo(gx, params.groundMode === 'bottom' ? toY(-halfD) + 4 : toY(halfD) - 4);
-        ctx.lineTo(gx, gy);
-        ctx.moveTo(gx - 12, gy);
-        ctx.lineTo(gx + 12, gy);
-        ctx.moveTo(gx - 7, gy + 5);
-        ctx.lineTo(gx + 7, gy + 5);
+        ctx.moveTo(plate.x, plate.y);
+        ctx.lineTo(elbow.x, elbow.y);
+        ctx.lineTo(ground.x, ground.y);
+        for (const width of [0.12, 0.075, 0.04]) {
+          const left = mapper.toScreen(gx - width, stemEnd);
+          const right = mapper.toScreen(gx + width, stemEnd);
+          ctx.moveTo(left.x, left.y);
+          ctx.lineTo(right.x, right.y);
+        }
         ctx.stroke();
       }
     }
 
     if (activeLayers.has('oilDrop')) {
       const py = -halfD + params.probeFracP * 2 * halfD;
+      const probe = mapper.toScreen(-0.9, py);
       ctx.fillStyle = '#f472b6';
       ctx.beginPath();
-      ctx.arc(toX(-0.9), toY(py), 5, 0, Math.PI * 2);
+      ctx.arc(probe.x, probe.y, mapper.len(0.025), 0, Math.PI * 2);
       ctx.fill();
-      ctx.font = '12px sans-serif';
-      ctx.fillText(`P (φ=${m.phiPV.toFixed(1)}V)`, toX(-0.9) + 10, toY(py) + 4);
+      labels.push({ id: 'capacitor-probe-label', x: probe.x, y: probe.y, text: `P (φ=${metrics.phiPV.toFixed(1)}V)`, color: '#f472b6', font: '12px sans-serif' });
 
       if (params.oilDropEnabled) {
         const dropY = -halfD + state.dropYFrac * 2 * halfD;
+        const drop = mapper.toScreen(0, dropY);
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.arc(toX(0), toY(dropY), 7, 0, Math.PI * 2);
+        ctx.arc(drop.x, drop.y, mapper.len(0.035), 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
     if (activeLayers.has('electrometer')) {
-      const ex = viewport.width - 135;
-      const ey = cy;
+      const meter = mapper.toScreen(2.05, 0);
+      const ex = meter.x;
+      const ey = meter.y;
+      const radius = mapper.len(0.3);
       ctx.strokeStyle = '#94a3b8';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(ex, ey, 46, 0, Math.PI * 2);
+      ctx.arc(ex, ey, radius, 0, Math.PI * 2);
       ctx.stroke();
 
       const rad = ((state.electrometerAngleDeg - 90) * Math.PI) / 180;
@@ -230,14 +255,15 @@ export const emCapacitorMillikanPlugin = defineSimulationPlugin<CapacitorMillika
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(ex, ey);
-      ctx.lineTo(ex + 38 * Math.cos(rad), ey + 38 * Math.sin(rad));
+      ctx.lineTo(ex + radius * 0.82 * Math.cos(rad), ey + radius * 0.82 * Math.sin(rad));
       ctx.stroke();
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '12px sans-serif';
-      ctx.fillText(`静电计 ${m.voltageV.toFixed(0)}V`, ex - 42, ey + 66);
-      ctx.fillText(params.switchMode === 'open-const-q' ? 'S断开 (Q恒定)' : 'S闭合 (U恒定)', ex - 46, ey + 84);
+      labels.push(
+        { id: 'electrometer-value', x: ex, y: ey + radius + mapper.len(0.12), text: `静电计 ${metrics.voltageV.toFixed(0)}V`, color: '#cbd5e1', font: '12px sans-serif' },
+        { id: 'electrometer-mode', x: ex, y: ey + radius + mapper.len(0.3), text: params.switchMode === 'open-const-q' ? 'S断开 (Q恒定)' : 'S闭合 (U恒定)', color: '#cbd5e1', font: '11px sans-serif' }
+      );
     }
 
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (_s, params) => {

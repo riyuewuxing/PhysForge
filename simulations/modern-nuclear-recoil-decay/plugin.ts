@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { nuclearRecoilPresets } from './presets.js';
 import {
   checkInvariants,
@@ -103,20 +103,27 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const width = viewport.width;
-    const height = viewport.height;
+    const m = createWorldMapper(viewport);
     if (!activeLayers.has('main')) return;
     ctx.save();
+    const labels: CanvasLabel[] = [];
 
     if (params.mode === 'cloud-chamber-recoil') {
-      const cx = width * 0.5;
-      const cy = height * 0.54;
       const maxExtent = Math.max(
         1,
         ...state.recoil.emittedTrackCm.map((p) => Math.hypot(p.x, p.y)),
         ...state.recoil.daughterTrackCm.map((p) => Math.hypot(p.x, p.y))
       );
-      const pxScale = (Math.min(width, height) * 0.36) / maxExtent;
+      const worldScale = 1.2 / maxExtent;
+
+      ctx.strokeStyle = 'rgba(56,189,248,0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const magneticTop = m.toScreen(1.65, 0.4);
+      const magneticBottom = m.toScreen(1.65, -0.8);
+      ctx.moveTo(magneticTop.x, magneticTop.y);
+      ctx.lineTo(magneticBottom.x, magneticBottom.y);
+      ctx.stroke();
 
       const drawTrack = (pts: readonly { x: number; y: number }[], color: string, lw: number) => {
         if (pts.length < 2) return;
@@ -124,34 +131,29 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
         ctx.lineWidth = lw;
         ctx.beginPath();
         pts.forEach((p, idx) => {
-          const sx = cx + p.x * pxScale;
-          const sy = cy - p.y * pxScale;
+          const point = m.toScreen(p.x * worldScale, p.y * worldScale);
+          const sx = point.x;
+          const sy = point.y;
           if (idx === 0) ctx.moveTo(sx, sy);
           else ctx.lineTo(sx, sy);
         });
         ctx.stroke();
       };
 
-      drawTrack(state.recoil.emittedTrackCm, '#38bdf8', 3);
-      drawTrack(state.recoil.daughterTrackCm, '#f59e0b', 4.5);
+      drawTrack(state.recoil.emittedTrackCm, '#38bdf8', m.len(0.014));
+      drawTrack(state.recoil.daughterTrackCm, '#f59e0b', m.len(0.02));
 
+      const origin = m.toScreen(0, 0);
       ctx.fillStyle = '#f43f5e';
       ctx.beginPath();
-      ctx.arc(cx, cy, 5, 0, 2 * Math.PI);
+      ctx.arc(origin.x, origin.y, m.len(0.025), 0, 2 * Math.PI);
       ctx.fill();
 
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 14px ui-sans-serif, system-ui';
-      ctx.fillText(
-        `${params.decayKind === 'alpha' ? 'α 衰变（外切圆）' : 'β⁻ 衰变（内切圆）'} | Q = ${state.recoil.qValueMev.toFixed(3)} MeV | 电荷比 q₂/q₁ = ${state.recoil.chargeRatioExpected.toFixed(1)}`,
-        20,
-        30
+      labels.push(
+        { id: 'cloud-chamber-summary', ...m.toScreen(-0.1, 1.55), text: `${params.decayKind === 'alpha' ? 'α 衰变（外切圆）' : 'β⁻ 衰变（内切圆）'} | Q = ${state.recoil.qValueMev.toFixed(3)} MeV | 电荷比 q₂/q₁ = ${state.recoil.chargeRatioExpected.toFixed(1)}`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' },
+        { id: 'cloud-chamber-radius', ...m.toScreen(-0.1, 1.32), text: `Boris 拟合半径比 R₁/R₂ = ${state.recoil.radiusRatioMeasured.toFixed(6)} (相对误差 ${state.recoil.ratioRelError.toExponential(2)})`, color: '#e2e8f0', font: '13px ui-sans-serif, system-ui' }
       );
-      ctx.fillText(
-        `Boris 拟合半径比 R₁/R₂ = ${state.recoil.radiusRatioMeasured.toFixed(6)} (相对误差 ${state.recoil.ratioRelError.toExponential(2)})`,
-        20,
-        54
-      );
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
@@ -159,28 +161,38 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
     if (params.mode === 'half-life-mc') {
       const n = state.decayedFlags.length;
       const cols = Math.ceil(Math.sqrt(n));
-      const gridSize = Math.min(width * 0.4, height * 0.68);
-      const cell = gridSize / cols;
-      const gx0 = width * 0.06;
-      const gy0 = height * 0.2;
+      const cell = 1.6 / cols;
+      const gx0 = -1.8;
+      const gy0 = 0.9;
 
       for (let i = 0; i < n; i++) {
         const r = Math.floor(i / cols);
         const c = i % cols;
         ctx.fillStyle = state.decayedFlags[i] ? '#334155' : '#4ade80';
-        ctx.fillRect(gx0 + c * cell, gy0 + r * cell, Math.max(1.5, cell * 0.78), Math.max(1.5, cell * 0.78));
+        const point = m.toScreen(gx0 + c * cell, gy0 - r * cell);
+        ctx.fillRect(point.x, point.y, m.len(cell * 0.78), m.len(cell * 0.78));
       }
 
-      const px0 = width * 0.52;
-      const py0 = height * 0.82;
-      const pw = width * 0.42;
-      const ph = height * 0.56;
+      const graphTopLeft = m.toScreen(0.15, 0.9);
+      const graphBottomRight = m.toScreen(2.1, -0.9);
+      const px0 = graphTopLeft.x;
+      const py0 = graphBottomRight.y;
+      const pw = graphBottomRight.x - px0;
+      const ph = py0 - graphTopLeft.y;
       ctx.strokeStyle = '#475569';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(px0, py0 - ph);
       ctx.lineTo(px0, py0);
       ctx.lineTo(px0 + pw, py0);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const halfLifeRailA = m.toScreen(0.15, -1.02);
+      const halfLifeRailB = m.toScreen(2.1, -1.02);
+      ctx.moveTo(halfLifeRailA.x, halfLifeRailA.y);
+      ctx.lineTo(halfLifeRailB.x, halfLifeRailB.y);
       ctx.stroke();
 
       const maxT = Math.max(4 * state.halfLifeS, state.t);
@@ -190,8 +202,9 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
         ctx.setLineDash(dash ? [5, 4] : []);
         ctx.beginPath();
         state.decayCurve.forEach((d, idx) => {
-          const x = px0 + (d.t / maxT) * pw;
-          const y = py0 - pick(d) * ph;
+          const point = m.toScreen(0.15 + (d.t / maxT) * 1.95, -0.9 + pick(d) * 1.8);
+          const x = point.x;
+          const y = point.y;
           if (idx === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         });
@@ -201,36 +214,126 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
       drawPoly((d) => d.theory, '#f59e0b', true);
       drawPoly((d) => d.fraction, '#38bdf8', false);
 
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 14px ui-sans-serif, system-ui';
-      ctx.fillText(
-        `N(t) = ${state.remainingCount} / ${n} (${((100 * state.remainingCount) / n).toFixed(1)}%) | t / T_{1/2} = ${(state.t / state.halfLifeS).toFixed(2)}`,
-        20,
-        30
-      );
+      labels.push({ id: 'half-life-summary', ...m.toScreen(1.05, 1.05), text: `N(t) = ${state.remainingCount} / ${n} (${((100 * state.remainingCount) / n).toFixed(1)}%) | t / T₁/₂ = ${(state.t / state.halfLifeS).toFixed(2)}`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
 
-    const bx0 = width * 0.1;
-    const by0 = height * 0.82;
-    const bw = width * 0.8;
-    const bh = height * 0.55;
+    const bx0 = -1.8;
+    const by0 = -0.9;
+    const bw = 3.8;
+    const bh = 1.55;
     const maxN = Math.max(10, ...state.chainGenerations.map((g) => g.neutrons));
     const barW = bw / state.chainGenerations.length;
     state.chainGenerations.forEach((g, idx) => {
       const h = (g.neutrons / maxN) * bh;
+      const barTopLeft = m.toScreen(bx0 + idx * barW + 0.05, by0 + h);
       ctx.fillStyle = state.kEff > 1.02 ? '#ef4444' : state.kEff < 0.98 ? '#38bdf8' : '#4ade80';
-      ctx.fillRect(bx0 + idx * barW + 8, by0 - h, Math.max(12, barW - 16), h);
+      ctx.fillRect(barTopLeft.x, barTopLeft.y, m.len(Math.max(0.04, barW - 0.1)), m.len(h));
       ctx.fillStyle = '#e2e8f0';
       ctx.font = '12px ui-sans-serif, system-ui';
-      ctx.fillText(`G${g.generation}`, bx0 + idx * barW + 10, by0 + 18);
+      const label = m.toScreen(bx0 + idx * barW + 0.05, by0 - 0.04);
+      ctx.fillText(`G${g.generation}`, label.x, label.y);
     });
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 14px ui-sans-serif, system-ui';
+    ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const rodRailTop = m.toScreen(1.85, 0.65);
+    const rodRailBottom = m.toScreen(1.85, -0.9);
+    ctx.moveTo(rodRailTop.x, rodRailTop.y);
+    ctx.lineTo(rodRailBottom.x, rodRailBottom.y);
+    ctx.stroke();
     const regime = state.kEff > 1.02 ? '超临界爆炸增长' : state.kEff < 0.98 ? '次临界逐渐熄灭' : '临界稳态可控发电';
-    ctx.fillText(`有效倍增系数 k_eff = ${state.kEff.toFixed(3)} → ${regime}`, 20, 30);
+    labels.push({ id: 'chain-reaction-summary', ...m.toScreen(0, 1.05), text: `有效倍增系数 k_eff = ${state.kEff.toFixed(3)} → ${regime}`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
+  },
+  getControlHandles: (state, params) => {
+    if (params.mode === 'cloud-chamber-recoil') {
+      return [
+        {
+          id: 'cloud-magnetic-field',
+          label: `B=${params.magneticFieldT.toFixed(1)} T`,
+          position: { x: 1.65, y: -0.8 + ((params.magneticFieldT - 0.1) / 2.9) * 1.2 },
+          handleKind: 'point',
+          color: '#38bdf8',
+          onDrag: (world) => ({
+            magneticFieldT: Number(Math.max(0.1, Math.min(3, Math.round((0.1 + ((world.y + 0.8) / 1.2) * 2.9) * 10) / 10)).toFixed(1))
+          })
+        }
+      ];
+    }
+    if (params.mode === 'half-life-mc') {
+      return [
+        {
+          id: 'half-life-slider',
+          label: `T₁/₂=${params.halfLifeS.toFixed(1)} s`,
+          position: { x: 0.15 + (params.halfLifeS / 6) * 1.95, y: -1.02 },
+          handleKind: 'point',
+          color: '#fbbf24',
+          onDrag: (world) => ({
+            halfLifeS: Number(Math.max(0.5, Math.min(6, Math.round((((world.x - 0.15) / 1.95) * 6) * 2) / 2)).toFixed(1))
+          })
+        }
+      ];
+    }
+    return [
+      {
+        id: 'control-rod-absorption',
+        label: `吸收率=${(params.controlRodAbsorption * 100).toFixed(0)}%`,
+        position: { x: 1.85, y: -0.9 + (params.controlRodAbsorption / 0.85) * 1.55 },
+        handleKind: 'point',
+        color: '#4ade80',
+        onDrag: (world) => ({
+          controlRodAbsorption: Number(Math.max(0, Math.min(0.85, Math.round((((world.y + 0.9) / 1.55) * 0.85) * 50) / 50)).toFixed(2))
+        })
+      }
+    ];
+  },
+  getForceVectors: (state, params) => {
+    if (params.mode !== 'cloud-chamber-recoil') return [];
+    const points = state.recoil.emittedTrackCm;
+    if (points.length < 2) return [];
+    const index = Math.min(points.length - 1, Math.max(1, Math.floor(points.length * 0.25)));
+    const point = points[index]!;
+    const previous = points[index - 1]!;
+    const tangentX = point.x - previous.x;
+    const tangentY = point.y - previous.y;
+    const tangentLength = Math.hypot(tangentX, tangentY);
+    if (tangentLength < 1e-12) return [];
+
+    const chargeNumber = params.decayKind === 'alpha' ? 2 : -1;
+    const massKg = params.decayKind === 'alpha' ? 6.6446573357e-27 : 9.1093837139e-31;
+    const momentum = state.recoil.momentumSi;
+    const gamma = Math.sqrt(1 + (momentum / (massKg * 299792458)) ** 2);
+    const speed = momentum / (gamma * massKg);
+    const charge = chargeNumber * 1.602176634e-19;
+    const forceMagnitude = Math.abs(charge) * speed * Math.max(0.05, Math.abs(params.magneticFieldT));
+    const maxExtent = Math.max(1, ...points.map((p) => Math.hypot(p.x, p.y)), ...state.recoil.daughterTrackCm.map((p) => Math.hypot(p.x, p.y)));
+    const worldScale = 1.2 / maxExtent;
+    const tangentXUnit = tangentX / tangentLength;
+    const tangentYUnit = tangentY / tangentLength;
+    return [
+      {
+        id: 'emitted-lorentz-force',
+        label: 'F洛 = qv×B',
+        origin: { x: point.x * worldScale, y: point.y * worldScale },
+        force: {
+          x: charge * speed * params.magneticFieldT * tangentYUnit,
+          y: -charge * speed * params.magneticFieldT * tangentXUnit
+        },
+        color: '#38bdf8',
+        category: 'magnetic' as const,
+        unit: 'N'
+      }
+    ].map((vector) => ({
+      ...vector,
+      force: {
+        x: vector.force.x * (forceMagnitude / Math.max(1e-300, Math.hypot(vector.force.x, vector.force.y))),
+        y: vector.force.y * (forceMagnitude / Math.max(1e-300, Math.hypot(vector.force.x, vector.force.y)))
+      }
+    }));
   },
   formatFormulas: (state, params) => [
     {

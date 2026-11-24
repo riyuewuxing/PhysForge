@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e:subpath": "node scripts/e2e-subpath-and-export.mjs",
+    "audit:visual": "node scripts/visual-audit.mjs",
     "build": "pnpm -r --if-present build",
     "dev:web": "pnpm --filter @physforge/web dev",
     "export:singlefile": "pnpm --filter @physforge/singlefile-exporter run export",

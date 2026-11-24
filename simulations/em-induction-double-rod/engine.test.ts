@@ -28,6 +28,18 @@ const baseParams: InductionParams = {
 };
 
 describe('em-induction-double-rod engine', () => {
+  it('uses the benchmark resistance value without changing the physical total resistance', () => {
+    const preset = emInductionDoubleRodPlugin.presets.find((item) => item.id === 'single-rod-battery-drive');
+    const params = resolvePluginParams(emInductionDoubleRodPlugin.paramSchema, preset?.params);
+    const state = createInitialState(params);
+    const formula = emInductionDoubleRodPlugin.formatFormulas?.(state, params)[0];
+
+    expect(preset?.params.resistorR).toBe(2);
+    expect(preset?.params.rodResistance1).toBe(0);
+    expect(preset?.params.mass1).toBe(4.5);
+    expect(formula?.latex).toContain('BLv');
+  });
+
   it('conserves total momentum (< 1e-6) and mechanical+Joule energy (< 1e-4) in smooth double-rod motion', () => {
     const initial = createInitialState(baseParams);
     let state = initial;

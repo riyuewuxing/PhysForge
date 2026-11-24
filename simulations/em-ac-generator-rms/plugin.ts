@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { acGeneratorPresets } from './presets.js';
 import {
   checkInvariants,
@@ -51,6 +51,31 @@ export const emAcGeneratorRmsPlugin = defineSimulationPlugin<AcGeneratorParams, 
     computeObservables,
     checkInvariants
   },
+  getForceVectors: (state, params): ForceVectorItem[] => {
+    const current = state.uInstV / Math.max(0.1, params.loadR);
+    const effectiveSideLengthM = Math.sqrt(Math.max(1e-9, params.coilAreaS));
+    const sideForceN = params.turnsN * params.magneticB * current * effectiveSideLengthM * Math.sin(state.angleRad);
+    const projectedHalfWidth = 0.48 * Math.cos(state.angleRad);
+    const tiltY = 0.12 * Math.sin(state.angleRad);
+    return [
+      {
+        id: 'ampere-force-a', label: 'F_A (l=√S)', origin: { x: -1.19 - projectedHalfWidth, y: 0.42 + tiltY },
+        force: { x: 0, y: -sideForceN }, color: '#f472b6', category: 'magnetic', unit: 'N'
+      },
+      {
+        id: 'ampere-force-b', label: 'F_B (l=√S)', origin: { x: -1.19 + projectedHalfWidth, y: 0.42 - tiltY },
+        force: { x: 0, y: sideForceN }, color: '#38bdf8', category: 'magnetic', unit: 'N'
+      }
+    ];
+  },
+  referenceFrames: [
+    {
+      id: 'coil-frame',
+      label: '线圈中心参考系（平动原点）',
+      getOrigin: () => ({ x: -1.19, y: 0 }),
+      getVelocity: () => ({ x: 0, y: 0 })
+    }
+  ],
   layers: [
     { id: 'coil3d', label: '2.5D 旋转线框与中性面提示', defaultVisible: true },
     { id: 'powerFill', label: '瞬时功率 p(t) 削峰填谷对照', defaultVisible: true }
@@ -106,76 +131,86 @@ export const emAcGeneratorRmsPlugin = defineSimulationPlugin<AcGeneratorParams, 
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
+    const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = m.toScreen(x, y + height);
+      const b = m.toScreen(x + width, y);
+      ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    };
+    const line = (points: Array<{ x: number; y: number }>, close = false) => {
+      if (points.length === 0) return;
+      const first = m.toScreen(points[0]!.x, points[0]!.y);
+      ctx.beginPath();
+      ctx.moveTo(first.x, first.y);
+      for (let i = 1; i < points.length; i++) {
+        const point = m.toScreen(points[i]!.x, points[i]!.y);
+        ctx.lineTo(point.x, point.y);
+      }
+      if (close) ctx.closePath();
+    };
     ctx.save();
 
     if (activeLayers.has('coil3d')) {
-      const cx = w * 0.25;
-      const cy = h * 0.5;
-      // Magnetic poles N / S
+      // Magnetic poles and rotating coil occupy the left world-space panel.
       ctx.fillStyle = 'rgba(244, 63, 94, 0.25)';
-      ctx.fillRect(cx - 125, cy - 55, 36, 110);
+      fillWorldRect(-1.85, -0.62, 0.28, 1.24);
       ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
-      ctx.fillRect(cx + 89, cy - 55, 36, 110);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 16px sans-serif';
-      ctx.fillText('N', cx - 114, cy + 6);
-      ctx.fillText('S', cx + 101, cy + 6);
+      fillWorldRect(-0.53, -0.62, 0.28, 1.24);
+      labels.push(
+        { id: 'generator-pole-n', x: m.toScreen(-1.71, 0).x, y: m.toScreen(-1.71, 0).y, text: 'N', color: '#e2e8f0', font: 'bold 16px sans-serif' },
+        { id: 'generator-pole-s', x: m.toScreen(-0.39, 0).x, y: m.toScreen(-0.39, 0).y, text: 'S', color: '#e2e8f0', font: 'bold 16px sans-serif' }
+      );
 
-      // 2.5D projected rotating coil
-      const projW = 68 * Math.cos(state.angleRad);
-      const tiltY = 14 * Math.sin(state.angleRad);
+      const projW = 0.48 * Math.cos(state.angleRad);
+      const tiltY = 0.12 * Math.sin(state.angleRad);
       ctx.strokeStyle = state.atNeutralPlane ? '#fbbf24' : '#38bdf8';
       ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(cx - projW, cy - 42 - tiltY);
-      ctx.lineTo(cx + projW, cy - 42 + tiltY);
-      ctx.lineTo(cx + projW, cy + 42 + tiltY);
-      ctx.lineTo(cx - projW, cy + 42 - tiltY);
-      ctx.closePath();
+      line([
+        { x: -1.19 - projW, y: 0.42 + tiltY },
+        { x: -1.19 + projW, y: 0.42 - tiltY },
+        { x: -1.19 + projW, y: -0.42 - tiltY },
+        { x: -1.19 - projW, y: -0.42 + tiltY }
+      ], true);
       ctx.stroke();
 
       if (state.atNeutralPlane) {
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.fillText('★ 中性面附近：Φ 最大，e ≈ 0', cx - 78, cy - 68);
+        const label = m.toScreen(-1.18, 0.92);
+        labels.push({ id: 'generator-neutral-plane', x: label.x, y: label.y, text: '★ 中性面附近：Φ 最大，e ≈ 0', color: '#fbbf24', font: 'bold 12px sans-serif' });
       }
     }
 
     if (activeLayers.has('powerFill')) {
-      const gx0 = w * 0.48;
-      const gw = w * 0.46;
-      const gyU = h * 0.32;
-      const gyP = h * 0.74;
-      const ampPx = 56;
+      const graphX0 = 0.3;
+      const graphWidth = 1.85;
+      const voltageCenterY = 0.42;
+      const powerBottomY = -0.52;
       const R = Math.max(0.1, params.loadR);
       const uScale = Math.max(1, state.uPeakV + params.dcOffsetV);
       const pMax = Math.max(0.1, (uScale * uScale) / R);
 
-      // Average power fill rectangle (constant P_avg)
-      const pAvgH = (state.pAvgW / pMax) * 68;
+      const pAvgH = (state.pAvgW / pMax) * 0.46;
       ctx.fillStyle = 'rgba(251, 191, 36, 0.16)';
-      ctx.fillRect(gx0, gyP - pAvgH, gw, pAvgH);
+      fillWorldRect(graphX0, powerBottomY, graphWidth, pAvgH);
       ctx.strokeStyle = '#fbbf24';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(gx0, gyP - pAvgH);
-      ctx.lineTo(gx0 + gw, gyP - pAvgH);
+      const avgLeft = m.toScreen(graphX0, powerBottomY + pAvgH);
+      const avgRight = m.toScreen(graphX0 + graphWidth, powerBottomY + pAvgH);
+      ctx.moveTo(avgLeft.x, avgLeft.y);
+      ctx.lineTo(avgRight.x, avgRight.y);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Instantaneous voltage & power curves across 1 period
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 2;
       ctx.beginPath();
       for (let i = 0; i <= 120; i++) {
         const f = i / 120;
         const u = evalWaveformVoltage(f, state.uPeakV, params);
-        const px = gx0 + f * gw;
-        const py = gyU - (u / uScale) * ampPx;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        const point = m.toScreen(graphX0 + f * graphWidth, voltageCenterY + (u / uScale) * 0.32);
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
       }
       ctx.stroke();
 
@@ -185,19 +220,48 @@ export const emAcGeneratorRmsPlugin = defineSimulationPlugin<AcGeneratorParams, 
         const f = i / 120;
         const u = evalWaveformVoltage(f, state.uPeakV, params);
         const p = (u * u) / R;
-        const px = gx0 + f * gw;
-        const py = gyP - (p / pMax) * 68;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        const point = m.toScreen(graphX0 + f * graphWidth, powerBottomY + (p / pMax) * 0.46);
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
       }
       ctx.stroke();
 
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '12px sans-serif';
-      ctx.fillText(`u(t) 波形 · Urms = ${state.uRmsV.toFixed(2)} V`, gx0, gyU - ampPx - 12);
-      ctx.fillText(`瞬时功率 p(t)=u²/R 削峰填谷（虚线 Pavg=${state.pAvgW.toFixed(1)}W）`, gx0, gyP - 76);
+      const voltageLabel = m.toScreen(graphX0 + graphWidth / 2, 0.88);
+      const powerLabel = m.toScreen(graphX0 + graphWidth / 2, -0.02);
+      labels.push(
+        { id: 'generator-voltage-wave', x: voltageLabel.x, y: voltageLabel.y, text: `u(t) 波形 · Urms = ${state.uRmsV.toFixed(2)} V`, color: '#cbd5e1', font: '12px sans-serif' },
+        { id: 'generator-power-wave', x: powerLabel.x, y: powerLabel.y, text: `p(t)=u²/R · 虚线 Pavg=${state.pAvgW.toFixed(1)}W`, color: '#cbd5e1', font: '12px sans-serif' }
+      );
     }
 
+    const railStart = m.toScreen(-1, -0.9);
+    const railEnd = m.toScreen(1, -0.9);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.3)';
+    ctx.lineWidth = m.len(0.1);
+    ctx.shadowColor = '#fbbf24';
+    ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.moveTo(railStart.x, railStart.y);
+    ctx.lineTo(railEnd.x, railEnd.y);
+    ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(railStart.x, railStart.y);
+    ctx.lineTo(railEnd.x, railEnd.y);
+    ctx.stroke();
+    for (const duty of [0.1, 0.25, 0.5, 0.75, 1]) {
+      const tick = m.toScreen(duty * 2 - 1, -0.9);
+      ctx.beginPath();
+      ctx.moveTo(tick.x, tick.y - m.len(0.07));
+      ctx.lineTo(tick.x, tick.y + m.len(0.07));
+      ctx.stroke();
+    }
+
+    labels.push({ id: 'generator-duty-rail', x: m.toScreen(0, -1.12).x, y: m.toScreen(0, -1.12).y, text: `占空比 D=${(params.dutyCycleD * 100).toFixed(0)}%`, color: '#fbbf24', font: 'bold 13px sans-serif' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state) => [

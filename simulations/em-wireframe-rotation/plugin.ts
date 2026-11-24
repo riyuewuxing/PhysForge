@@ -1,5 +1,5 @@
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { wireframePresets } from './presets.js';
 import {
   checkInvariants,
@@ -63,6 +63,7 @@ export const emWireframeRotationPlugin = defineSimulationPlugin<WireframeParams,
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.917, offsetRatioX: 0.05 },
   paramSchema,
   presets: wireframePresets,
   engine: {
@@ -137,19 +138,26 @@ export const emWireframeRotationPlugin = defineSimulationPlugin<WireframeParams,
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.22 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.28 + viewport.offsetY;
-    const toX = (wx: number) => cx + wx * ppm;
-    const toY = (wy: number) => cy - wy * ppm;
-
+    const m = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
+    const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = m.toScreen(x, y + height);
+      const b = m.toScreen(x + width, y);
+      ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    };
+    const strokeWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = m.toScreen(x, y + height);
+      const b = m.toScreen(x + width, y);
+      ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    };
     ctx.save();
     if (params.mode !== 'wireframe-gravity-fall') {
-      const rPx = params.loopSizeL * ppm;
-      const pivotY = viewport.height * 0.5 + viewport.offsetY;
+      const pivot = m.toScreen(0, 0);
+      const rWorld = params.loopSizeL * 0.5;
+      const rPx = rWorld * m.ppm;
       ctx.fillStyle = 'rgba(56, 189, 248, 0.1)';
       ctx.beginPath();
-      ctx.arc(cx, pivotY, rPx * 1.15, 0, Math.PI * 2);
+      ctx.arc(pivot.x, pivot.y, rPx * 1.15, 0, Math.PI * 2);
       ctx.fill();
 
       if (params.mode === 'faraday-disk') {
@@ -157,18 +165,19 @@ export const emWireframeRotationPlugin = defineSimulationPlugin<WireframeParams,
         ctx.strokeStyle = '#f59e0b';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(cx, pivotY, rPx, 0, Math.PI * 2);
+        ctx.arc(pivot.x, pivot.y, rPx, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
       }
-      const rx = cx + rPx * Math.cos(state.angleRad);
-      const ry = pivotY - rPx * Math.sin(state.angleRad);
+      const endpoint = m.toScreen(rWorld * Math.cos(state.angleRad), rWorld * Math.sin(state.angleRad));
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.moveTo(cx, pivotY);
-      ctx.lineTo(rx, ry);
+      ctx.moveTo(pivot.x, pivot.y);
+      ctx.lineTo(endpoint.x, endpoint.y);
       ctx.stroke();
+      labels.push({ id: 'rotation-cutting-summary', x: pivot.x, y: pivot.y - m.len(1), text: params.mode === 'faraday-disk' ? `法拉第圆盘 Φ=${state.fluxWb.toFixed(2)} Wb` : `旋转切割 ε=${state.emfV.toFixed(2)} V`, color: '#e2e8f0', font: 'bold 12px sans-serif' });
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
     }
@@ -176,18 +185,22 @@ export const emWireframeRotationPlugin = defineSimulationPlugin<WireframeParams,
     const H = params.zoneHeightH;
     if (activeLayers.has('fields')) {
       ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
-      ctx.fillRect(toX(-1.5), toY(0), 3.0 * ppm, H * ppm);
+      fillWorldRect(-1.5, -H, 3, H);
       if (params.fieldProfile === 'dual-opposite') {
         ctx.fillStyle = 'rgba(244, 114, 182, 0.12)';
-        ctx.fillRect(toX(-1.5), toY(-H), 3.0 * ppm, H * ppm);
+        fillWorldRect(-1.5, -2 * H, 3, H);
       }
       ctx.strokeStyle = '#64748b';
       ctx.setLineDash([5, 4]);
+      const zoneTopLeft = m.toScreen(-1.5, 0);
+      const zoneTopRight = m.toScreen(1.5, 0);
+      const zoneBottomLeft = m.toScreen(-1.5, -H);
+      const zoneBottomRight = m.toScreen(1.5, -H);
       ctx.beginPath();
-      ctx.moveTo(toX(-1.5), toY(0));
-      ctx.lineTo(toX(1.5), toY(0));
-      ctx.moveTo(toX(-1.5), toY(-H));
-      ctx.lineTo(toX(1.5), toY(-H));
+      ctx.moveTo(zoneTopLeft.x, zoneTopLeft.y);
+      ctx.lineTo(zoneTopRight.x, zoneTopRight.y);
+      ctx.moveTo(zoneBottomLeft.x, zoneBottomLeft.y);
+      ctx.lineTo(zoneBottomRight.x, zoneBottomRight.y);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -195,23 +208,29 @@ export const emWireframeRotationPlugin = defineSimulationPlugin<WireframeParams,
     if (activeLayers.has('conductor')) {
       const L = params.loopSizeL;
       const half = 0.5 * L;
+      const center = m.toScreen(0, state.centerY);
       ctx.strokeStyle = '#fbbf24';
       ctx.lineWidth = 3;
       if (params.loopShape === 'square') {
-        ctx.strokeRect(toX(-half), toY(state.centerY + half), L * ppm, L * ppm);
+        strokeWorldRect(-half, state.centerY - half, L, L);
       } else if (params.loopShape === 'circle') {
         ctx.beginPath();
-        ctx.arc(toX(0), toY(state.centerY), half * ppm, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, half * m.ppm, 0, Math.PI * 2);
         ctx.stroke();
       } else {
+        const top = m.toScreen(0, state.centerY + half);
+        const left = m.toScreen(-half, state.centerY - half);
+        const right = m.toScreen(half, state.centerY - half);
         ctx.beginPath();
-        ctx.moveTo(toX(0), toY(state.centerY + half));
-        ctx.lineTo(toX(-half), toY(state.centerY - half));
-        ctx.lineTo(toX(half), toY(state.centerY - half));
+        ctx.moveTo(top.x, top.y);
+        ctx.lineTo(left.x, left.y);
+        ctx.lineTo(right.x, right.y);
         ctx.closePath();
         ctx.stroke();
       }
+      labels.push({ id: 'wireframe-summary', x: center.x, y: center.y - m.len(half + 0.18), text: `Φ=${state.fluxWb.toFixed(2)} Wb · ε=${state.emfV.toFixed(2)} V`, color: '#e2e8f0', font: '12px sans-serif' });
     }
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state) => [

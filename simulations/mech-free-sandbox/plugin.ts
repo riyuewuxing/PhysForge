@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { ensureRapierLoaded } from './rapierLoader.js';
 import {
   checkInvariants,
@@ -94,6 +94,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     difficulty: '基础新授',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.58, offsetRatioX: 0.05 },
   getControlHandles: (state, params) => {
     const dyn = state.bodies.find((b) => b.dynamic);
     if (!dyn) return [];
@@ -305,13 +306,12 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     ];
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const pxPerM = Math.min(viewport.width, viewport.height) * 0.14 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
-    const toScreen = (wx: number, wy: number) => ({
-      sx: cx + wx * pxPerM,
-      sy: cy - wy * pxPerM
-    });
+    const m = createWorldMapper(viewport);
+    const pxPerM = m.ppm;
+    const toScreen = (wx: number, wy: number) => {
+      const point = m.toScreen(wx, wy);
+      return { sx: point.x, sy: point.y };
+    };
 
     if (activeLayers.has('bodies')) {
       if (params.scenario === 'atwood-constrained') {

@@ -3,6 +3,7 @@ import {
   Activity,
   BookOpen,
   Bot,
+  ChevronDown,
   Compass,
   Eye,
   EyeOff,
@@ -20,7 +21,8 @@ import {
   Sparkles,
   StepForward,
   SunMoon,
-  Undo2
+  Undo2,
+  Wrench,
 } from 'lucide-react';
 import type { ParamRecord, SimulationPluginV2 } from '@physforge/sim-sdk';
 import { useClassroomStore } from './store/useClassroomStore.js';
@@ -29,6 +31,7 @@ import { LeftCatalogSidebar } from './components/LeftCatalogSidebar.js';
 import { RightControlPanel } from './components/RightControlPanel.js';
 import { TeachingPackDrawer } from './components/TeachingPackDrawer.js';
 import type { MeasureToolKind } from './stage/RulerToolboxOverlay.js';
+import { KatexFormulaCard } from './components/KatexFormulaCard.js';
 
 const LazyExcalidrawOverlay = React.lazy(() =>
   import('./components/ExcalidrawOverlay.js').then((m) => ({ default: m.ExcalidrawOverlay }))
@@ -51,6 +54,14 @@ const LazyAiCopilotDrawer = React.lazy(() =>
 );
 
 const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
+const WORKBENCH_TITLES: Readonly<Record<string, string>> = {
+  'em-induction-double-rod': '电磁感应·单杆切割',
+  'builder-optics-ray': '几何光学·全反射与折射',
+  'optics-ray-studio': '几何光学·全反射与折射',
+  'builder-circuit-mna': '自由拓扑电路·非线性 MNA',
+  'circuit-dc-capacitor-mna': '自由拓扑电路·非线性 MNA',
+  'em-3d-magnetic-fields': '3D空间电磁场·螺旋轨迹'
+};
 
 export const App: React.FC = () => {
   const store = useClassroomStore();
@@ -61,6 +72,7 @@ export const App: React.FC = () => {
   const [exportStudioOpen, setExportStudioOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [labFrames, setLabFrames] = useState<readonly RecordedTelemetryFrame[]>([]);
 
   const handleRegisterSnapshotsGetter = useCallback(
@@ -73,12 +85,20 @@ export const App: React.FC = () => {
   const plugin = store.loadedPlugin;
   const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
 
+  useEffect(() => {
+    const search = new URLSearchParams(window.location.search);
+    const modelId = search.get('model');
+    if (modelId) {
+      void store.applyExternalState(modelId, search.get('preset') ?? undefined);
+    }
+  }, [store.applyExternalState]);
+
   // 同步文档主题属性
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', store.theme);
   }, [store.theme]);
 
-  // 课堂快捷键支持（Ctrl+K 全局检索、Ctrl+Z/Shift+Z 撤销重做、1-9 预设、Space 播放、S 单步、R 重置、P 遮罩、B 大屏）
+  // 课堂快捷键支持（Ctrl+K 全局检索、Ctrl+Z/Shift+Z 撤销重做、1-9 预设、Space 播放、S 单步、R 重置、P 遮罩、B 大屏、F 演说）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -98,9 +118,20 @@ export const App: React.FC = () => {
         return;
       }
 
+      if (e.key === 'Escape' && store.fullscreenPresentation) {
+        e.preventDefault();
+        store.toggleFullscreenPresentation();
+        return;
+      }
+
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (store.annotationOpen || commandPaletteOpen) return;
+
+      if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        store.toggleFullscreenPresentation();
+        return;
+      }
 
       if (e.key === ' ') {
         e.preventDefault();
@@ -123,15 +154,29 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [plugin, store.annotationOpen, commandPaletteOpen]);
+  }, [plugin, store.annotationOpen, store.fullscreenPresentation, commandPaletteOpen]);
 
   const toggleMeasureTool = (tool: Exclude<MeasureToolKind, 'none'>) => {
     store.setMeasureTool(store.measureTool === tool ? 'none' : tool);
   };
 
+  const handleParamUpdate = (key: string, value: number | boolean | string) => {
+    if (plugin.meta.id === 'builder-optics-ray' && key === 'incidentAngleDeg') {
+      store.updateParamsBatch({ incidentAngleDeg: value as number, animateSweep: false }, '手动调整入射角');
+      return;
+    }
+    store.updateParam(key, value);
+  };
+
+  const has3dView =
+    v2Plugin.renderMode === 'three3d' ||
+    v2Plugin.renderMode === 'hybrid' ||
+    Boolean(v2Plugin.mountThreeScene);
+
   return (
     <div
       data-testid="app-shell"
+      data-model-id={plugin.meta.id}
       className={`h-screen w-screen flex flex-col overflow-hidden select-none ${
         store.bigScreenMode ? 'big-screen-mode' : ''
       }`}
@@ -142,35 +187,58 @@ export const App: React.FC = () => {
     >
       {/* 顶部课堂控制工具栏 */}
       <header
-        className="shrink-0 border-b px-3 py-2 flex flex-wrap items-center justify-between gap-2"
+        data-testid="topbar"
+        className={`relative z-40 flex h-12 shrink-0 items-center justify-between border-b pl-[68px] pr-4 ${store.fullscreenPresentation ? 'hidden' : ''}`}
         style={{
           borderColor: 'var(--pf-border)',
-          backgroundColor: 'var(--pf-surface)'
+          backgroundColor: 'var(--pf-topbar-bg)'
         }}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          {!store.leftSidebarOpen && (
-            <button
-              type="button"
-              onClick={() => store.setLeftSidebarOpen(true)}
-              className="pf-touch-target px-3 py-1.5 rounded-xl border text-sm font-semibold cursor-pointer"
-              style={{ borderColor: 'var(--pf-border)' }}
-            >
-              模型目录
-            </button>
-          )}
-          <div className="truncate">
-            <div className="font-bold text-base truncate">{plugin.meta.title}</div>
-            <div className="text-xs truncate" style={{ color: 'var(--pf-text-muted)' }}>
-              {plugin.meta.textbookRef} · t = {store.telemetry.t.toFixed(3)} s
-            </div>
+        <div className="min-w-0 max-w-[34%]">
+          <div className="truncate text-[14px] font-medium tracking-tight text-slate-100">
+            {WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title.replace(/\s*\([A-Z]\d+\)$/, '')}
+          </div>
+          <div className="font-mono text-[11px] tabular-nums text-slate-400">
+            t = {store.telemetry.t.toFixed(2)} s
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="pf-floating-glass absolute left-1/2 flex h-9 -translate-x-1/2 items-center gap-1 rounded-full border border-white/10 p-1">
           <button
             type="button"
             data-testid="btn-play-pause"
+            onClick={store.togglePlaying}
+            aria-label={store.isPlaying ? '暂停' : '运行'}
+            className="grid h-7 w-7 place-items-center rounded-full bg-sky-400 text-slate-950 shadow-[0_0_20px_rgba(56,189,248,0.7)] transition hover:bg-sky-300 cursor-pointer"
+          >
+            {store.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
+          </button>
+          <button type="button" data-testid="btn-step" onClick={store.triggerStepOnce} className="h-7 rounded-full px-2.5 text-[11px] text-slate-300 hover:bg-white/10 cursor-pointer">前移</button>
+          <button type="button" data-testid="btn-reset" onClick={store.triggerReset} className="h-7 rounded-full px-2.5 text-[11px] text-slate-300 hover:bg-white/10 cursor-pointer">重置</button>
+          <select aria-label="播放倍速" value={store.playbackSpeed} onChange={(e) => store.setPlaybackSpeed(Number(e.target.value))} className="h-7 rounded-full bg-transparent px-1.5 font-mono text-[11px] text-slate-300 outline-none cursor-pointer">
+            {SPEED_OPTIONS.map((speed) => <option key={speed} value={speed}>{speed.toFixed(1)}x</option>)}
+          </select>
+        </div>
+
+        <div data-testid="topbar-actions" className="relative flex shrink-0 items-center gap-2">
+          <button type="button" data-testid="btn-tools-menu" aria-expanded={toolsOpen} onClick={() => setToolsOpen((open) => !open)} className="pf-top-pill">
+            <Wrench className="h-4 w-4" /> <span>工具</span> <ChevronDown className="h-3 w-3 text-slate-500" />
+          </button>
+          <button type="button" data-testid="btn-export-studio" onClick={() => setExportStudioOpen(true)} className="pf-top-pill">
+            <ImageIcon className="h-4 w-4" /> <span>导出</span>
+          </button>
+          <button type="button" data-testid="btn-fullscreen-speech" onClick={store.toggleFullscreenPresentation} className="pf-top-pill pf-top-pill-primary">
+            <Maximize2 className="h-4 w-4" /> <span>全屏演说</span>
+          </button>
+        </div>
+
+        {toolsOpen && (
+          <div data-testid="tools-menu" className="pf-floating-glass absolute right-3 top-11 z-50 max-h-[calc(100vh-64px)] w-80 space-y-1 overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-2xl">
+            <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">课堂工具</div>
+            <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            data-testid="menu-btn-play-pause"
             onClick={store.togglePlaying}
             className="pf-touch-target inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-500 text-slate-950 font-bold hover:bg-sky-400 transition cursor-pointer"
           >
@@ -180,7 +248,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-step"
+            data-testid="menu-btn-step"
             onClick={store.triggerStepOnce}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
             style={{ borderColor: 'var(--pf-border)' }}
@@ -191,7 +259,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-reset"
+            data-testid="menu-btn-reset"
             onClick={store.triggerReset}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
             style={{ borderColor: 'var(--pf-border)' }}
@@ -201,7 +269,7 @@ export const App: React.FC = () => {
           </button>
 
           <select
-            aria-label="播放倍速"
+            aria-label="工具菜单播放倍速"
             value={store.playbackSpeed}
             onChange={(e) => store.setPlaybackSpeed(Number(e.target.value))}
             className="pf-touch-target rounded-xl border px-2.5 py-1.5 text-sm cursor-pointer"
@@ -311,7 +379,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-tool-ruler"
+            data-testid="btn-menu-tool-ruler"
             onClick={() => toggleMeasureTool('ruler')}
             title="虚拟直尺"
             className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer"
@@ -326,7 +394,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-tool-protractor"
+            data-testid="btn-menu-tool-protractor"
             onClick={() => toggleMeasureTool('protractor')}
             title="0.1° 量角器"
             className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer"
@@ -341,7 +409,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-tool-compass"
+            data-testid="btn-menu-tool-compass"
             onClick={() => toggleMeasureTool('compass')}
             title="三点圆规"
             className="pf-touch-target inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-sm cursor-pointer"
@@ -408,7 +476,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-analysis-lab"
+            data-testid="btn-analysis-lab-menu"
             onClick={() => {
               setLabFrames(snapshotsGetterRef.current());
               setAnalysisLabOpen(true);
@@ -425,7 +493,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-command-palette"
+            data-testid="btn-command-palette-menu"
             onClick={() => setCommandPaletteOpen(true)}
             title="全局检索与 Vault (Ctrl+K)"
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
@@ -437,7 +505,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-export-studio"
+            data-testid="btn-export-studio-menu"
             onClick={() => setExportStudioOpen(true)}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
             style={{
@@ -451,7 +519,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-ai-copilot"
+            data-testid="btn-ai-copilot-menu"
             onClick={() => setAiCopilotOpen(true)}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
             style={{
@@ -465,7 +533,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            data-testid="btn-teaching-pack"
+            data-testid="btn-teaching-pack-menu"
             onClick={() => setTeachingPackOpen((v) => !v)}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
             style={{
@@ -487,20 +555,35 @@ export const App: React.FC = () => {
               参数栏
             </button>
           )}
-        </div>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* 主三栏工作区 */}
-      <main className="flex-1 flex min-h-0 overflow-hidden">
-        {store.leftSidebarOpen && (
+      <main className="relative flex min-h-0 flex-1 overflow-hidden">
+        {!store.fullscreenPresentation && (
           <LeftCatalogSidebar
             selectedPluginId={store.selectedPluginId}
+            isOpen={store.leftSidebarOpen}
+            theme={store.theme}
+            bigScreenMode={store.bigScreenMode}
             onSelectPlugin={store.selectPlugin}
+            onOpen={() => store.setLeftSidebarOpen(true)}
             onClose={() => store.setLeftSidebarOpen(false)}
+            onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+            onOpenTeachingPack={() => setTeachingPackOpen(true)}
+            onOpenAnalysisLab={() => {
+              setLabFrames(snapshotsGetterRef.current());
+              setAnalysisLabOpen(true);
+            }}
+            onOpenAiCopilot={() => setAiCopilotOpen(true)}
+            onToggleTheme={store.toggleTheme}
+            onToggleBigScreen={store.toggleBigScreenMode}
           />
         )}
 
-        <section className="flex-1 min-w-0 min-h-0 p-2.5 flex flex-col relative">
+        <section className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <SimulationStage
             plugin={plugin}
             params={store.params}
@@ -515,18 +598,48 @@ export const App: React.FC = () => {
             fbdComponentsEnabled={store.fbdComponentsEnabled}
             activeFrameId={store.activeFrameId}
             view3dEnabled={store.view3dEnabled}
+            oscilloscopeCollapsed={store.oscilloscopeCollapsed}
+            presentationMode={store.fullscreenPresentation}
             resetViewNonce={store.resetViewNonce}
             resetNonce={store.resetNonce}
             stepOnceNonce={store.stepOnceNonce}
             scrubTime={store.scrubTime}
             canvasRefExternal={simCanvasRef}
             onResetView={store.triggerResetView}
+            onToggleOscilloscope={() => store.setOscilloscopeCollapsed(!store.oscilloscopeCollapsed)}
+            onToggleMeasureTool={toggleMeasureTool}
             onUpdateParamsBatch={store.updateParamsBatch}
             onRegisterSnapshotsGetter={handleRegisterSnapshotsGetter}
             onScrubTime={store.setScrubTime}
             onTogglePoeMask={store.togglePoeMask}
             onTelemetryUpdate={store.setTelemetry}
           />
+
+          {store.fullscreenPresentation && (
+            <>
+              <div data-testid="fullscreen-title" className="pointer-events-none absolute left-[68px] top-6 z-20 max-w-[min(44vw,620px)] text-slate-100 drop-shadow-lg">
+                <div className="truncate text-2xl font-semibold tracking-tight">{WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title}</div>
+                <div className="mt-1 text-xs tracking-wide text-slate-400">全屏课堂演说模式</div>
+              </div>
+              {store.telemetry.formulaItems.length > 0 && (
+                <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
+                  <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} />
+                </div>
+              )}
+              <div data-testid="fullscreen-controls" className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/15 bg-slate-950/80 p-2 text-slate-100 shadow-2xl backdrop-blur-2xl">
+                <button type="button" data-testid="btn-play-pause" onClick={store.togglePlaying} aria-label={store.isPlaying ? '暂停' : '运行'} className="grid h-9 w-9 place-items-center rounded-full bg-sky-400 text-slate-950 hover:bg-sky-300">
+                  {store.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
+                </button>
+                <button type="button" data-testid="btn-reset" onClick={store.triggerReset} className="grid h-9 w-9 place-items-center rounded-full text-slate-200 hover:bg-white/10" aria-label="复位" title="复位"><RotateCcw className="h-4 w-4" /></button>
+                {has3dView && (
+                  <button type="button" data-testid="btn-view-3d-fullscreen" onClick={store.toggleView3d} className="rounded-full px-3 py-2 text-xs hover:bg-white/10">
+                    {store.view3dEnabled ? '2D 剖面' : '3D 空间'}
+                  </button>
+                )}
+                <button type="button" data-testid="btn-exit-fullscreen-speech" onClick={store.toggleFullscreenPresentation} className="rounded-full border border-white/10 px-3 py-2 text-xs hover:bg-white/10">退出全屏</button>
+              </div>
+            </>
+          )}
 
           {store.annotationOpen && (
             <Suspense
@@ -546,7 +659,7 @@ export const App: React.FC = () => {
           )}
         </section>
 
-        {store.rightSidebarOpen && (
+        {store.rightSidebarOpen && !store.fullscreenPresentation && (
           <RightControlPanel
             plugin={plugin}
             activePresetId={store.activePresetId}
@@ -554,7 +667,7 @@ export const App: React.FC = () => {
             activeLayers={store.activeLayers}
             telemetry={store.telemetry}
             onApplyPreset={store.applyPreset}
-            onUpdateParam={store.updateParam}
+            onUpdateParam={handleParamUpdate}
             onToggleLayer={store.toggleLayer}
             onClose={() => store.setRightSidebarOpen(false)}
           />

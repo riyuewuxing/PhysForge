@@ -4,6 +4,8 @@ import type { FormulaDisplayItem } from '@physforge/sim-sdk';
 
 interface KatexFormulaCardProps {
   items: readonly FormulaDisplayItem[];
+  compact?: boolean;
+  showSubstituted?: boolean;
 }
 
 function renderLatex(latex: string): string {
@@ -13,7 +15,11 @@ function renderLatex(latex: string): string {
   });
 }
 
-export const KatexFormulaCard: React.FC<KatexFormulaCardProps> = ({ items }) => {
+export const KatexFormulaCard: React.FC<KatexFormulaCardProps> = ({
+  items,
+  compact = false,
+  showSubstituted = true
+}) => {
   const rendered = useMemo(
     () =>
       items.map((item) => ({
@@ -28,27 +34,24 @@ export const KatexFormulaCard: React.FC<KatexFormulaCardProps> = ({ items }) => 
 
   return (
     <div
-      className="rounded-xl border p-3 space-y-2.5"
+      className={compact ? 'space-y-2 text-center' : 'space-y-2.5'}
       style={{
-        borderColor: 'var(--pf-border)',
-        backgroundColor: 'var(--pf-surface-elevated)'
+        ...(compact ? {} : {
+          borderColor: 'var(--pf-border)',
+          backgroundColor: 'var(--pf-surface-elevated)'
+        })
       }}
     >
-      <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--pf-accent)' }}>
-        实时物理公式代入
-      </div>
       {rendered.map((item) => (
         <div key={item.id} className="space-y-1">
-          <div className="text-xs" style={{ color: 'var(--pf-text-muted)' }}>
-            {item.label}
-          </div>
+          {!compact && <div className="text-xs" style={{ color: 'var(--pf-text-muted)' }}>{item.label}</div>}
           <div
-            className="text-sm overflow-x-auto py-0.5"
+            className={`overflow-x-auto py-0.5 ${compact ? 'pf-right-formula text-slate-100' : 'text-sm'}`}
             dangerouslySetInnerHTML={{ __html: item.baseHtml }}
           />
-          {item.subHtml && (
+          {showSubstituted && item.subHtml && (
             <div
-              className="text-sm overflow-x-auto py-0.5 text-emerald-400"
+              className="overflow-x-auto py-0.5 text-[11px] text-emerald-400/95"
               dangerouslySetInnerHTML={{ __html: item.subHtml }}
             />
           )}

@@ -5,6 +5,7 @@ import {
   checkInvariants,
   computeObservables,
   createInitialState,
+  sampleDividerLampIvCurve,
   stepCircuit,
   type CircuitParams
 } from './engine.js';
@@ -122,5 +123,26 @@ describe('circuit-dc-capacitor-mna engine', () => {
 
     const rcState = createInitialState({ ...zeroOhm, topology: 'rc-transient', r1: 4 });
     expect(rcState.events.some((event) => event.id === 'SHORT_CIRCUIT')).toBe(false);
+  });
+
+  it('solves the divider-lamp branch with MNA KCL and returns the physical lamp I-U curve', () => {
+    const dividerParams = { ...baseParams, topology: 'divider-lamp' as const, sliderR: 10 };
+    const state = createInitialState(dividerParams);
+    const samples = sampleDividerLampIvCurve(dividerParams.emf, 16);
+
+    expect(state.nodeVoltages).toHaveLength(3);
+    expect(state.terminalVoltage).toBeGreaterThan(0);
+    expect(state.outputPower).toBeGreaterThan(0);
+    expect(state.totalCurrent).toBeCloseTo(state.branchCurrent1 + state.branchCurrent2, 9);
+    expect(checkInvariants(state, state, dividerParams)[0]?.passed).toBe(true);
+    expect(samples).toHaveLength(16);
+    expect(samples[0]).toEqual({ u: 0, i: 0 });
+    expect(samples.at(-1)?.u).toBe(dividerParams.emf);
+    expect(samples.at(-1)?.i).toBeGreaterThan(samples[1]!.i);
+
+    for (const sliderR of [0, 20]) {
+      const boundary = createInitialState({ ...dividerParams, sliderR, emf: 0 });
+      expect(Object.values(computeObservables(boundary)).every(Number.isFinite)).toBe(true);
+    }
   });
 });

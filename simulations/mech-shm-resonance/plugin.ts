@@ -1,5 +1,5 @@
 import { degToRad, radToDeg } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { shmResonancePresets } from './presets.js';
 import {
   checkInvariants,
@@ -42,6 +42,7 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 1, offsetRatioX: -0.01, offsetRatioY: -0.34 },
   paramSchema,
   presets: shmResonancePresets,
   engine: {
@@ -102,6 +103,14 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
       }
     ];
   },
+  referenceFrames: [
+    {
+      id: 'shm-bob',
+      label: '摆球随动参考系',
+      getOrigin: (s, p) => ({ x: p.lengthL * Math.sin(s.theta), y: -p.lengthL * Math.cos(s.theta) }),
+      getVelocity: (s, p) => ({ x: p.lengthL * Math.cos(s.theta) * s.omega, y: p.lengthL * Math.sin(s.theta) * s.omega })
+    }
+  ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -146,9 +155,10 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.24 * viewport.scale;
-    const pivotX = viewport.width * 0.44 + viewport.offsetX;
-    const pivotY = viewport.height * 0.16 + viewport.offsetY;
+    const m = createWorldMapper(viewport);
+    const pivot = m.toScreen(0, 0);
+    const pivotX = pivot.x;
+    const pivotY = pivot.y;
     const L = params.lengthL;
 
     ctx.save();
@@ -157,20 +167,22 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(pivotX - 70, pivotY);
-      ctx.lineTo(pivotX + 70, pivotY);
+      ctx.moveTo(m.toX(-0.324), pivotY);
+      ctx.lineTo(m.toX(0.324), pivotY);
       ctx.stroke();
 
       ctx.strokeStyle = 'rgba(148,163,184,0.3)';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(pivotX, pivotY);
-      ctx.lineTo(pivotX, pivotY + (L + 0.3) * ppm);
+      const ghostAnchor = m.toScreen(0, -(L + 0.3));
+      ctx.lineTo(ghostAnchor.x, ghostAnchor.y);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      const gx = pivotX + L * Math.sin(state.thetaLinear) * ppm;
-      const gy = pivotY + L * Math.cos(state.thetaLinear) * ppm;
+      const ghostBob = m.toScreen(L * Math.sin(state.thetaLinear), -L * Math.cos(state.thetaLinear));
+      const gx = ghostBob.x;
+      const gy = ghostBob.y;
       ctx.strokeStyle = 'rgba(244, 114, 182, 0.5)';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 3]);
@@ -181,11 +193,12 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(244, 114, 182, 0.45)';
       ctx.beginPath();
-      ctx.arc(gx, gy, 10, 0, Math.PI * 2);
+      ctx.arc(gx, gy, m.len(0.046), 0, Math.PI * 2);
       ctx.fill();
 
-      const bx = pivotX + L * Math.sin(state.theta) * ppm;
-      const by = pivotY + L * Math.cos(state.theta) * ppm;
+      const bob = m.toScreen(L * Math.sin(state.theta), -L * Math.cos(state.theta));
+      const bx = bob.x;
+      const by = bob.y;
       ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -194,22 +207,23 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
       ctx.stroke();
       ctx.fillStyle = '#38bdf8';
       ctx.beginPath();
-      ctx.arc(bx, by, 13, 0, Math.PI * 2);
+      ctx.arc(bx, by, m.len(0.06), 0, Math.PI * 2);
       ctx.fill();
 
       if (activeLayers.has('referenceCircle')) {
         const amp = Math.max(0.08, degToRad(params.initialAngleDeg) * L);
-        const rPx = amp * ppm;
-        const cyRef = pivotY + (L + 0.55) * ppm + rPx;
+        const rPx = amp * m.ppm;
+        const referenceCenter = m.toScreen(0, -(L + 0.55 + amp));
+        const cyRef = referenceCenter.y;
         ctx.strokeStyle = 'rgba(74, 222, 128, 0.4)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(pivotX, cyRef, rPx, 0, Math.PI * 2);
+        ctx.arc(referenceCenter.x, cyRef, rPx, 0, Math.PI * 2);
         ctx.stroke();
 
         const xProj = bx;
-        const dx = Math.max(-rPx, Math.min(rPx, xProj - pivotX));
-        const yCirc = cyRef + Math.sqrt(Math.max(0, rPx * rPx - dx * dx));
+        const dxWorld = Math.max(-amp, Math.min(amp, L * Math.sin(state.theta)));
+        const yCirc = m.toScreen(dxWorld, -(L + 0.55 + amp) - Math.sqrt(Math.max(0, amp * amp - dxWorld * dxWorld))).y;
         ctx.strokeStyle = 'rgba(74, 222, 128, 0.35)';
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
@@ -219,7 +233,7 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
         ctx.setLineDash([]);
         ctx.fillStyle = '#4ade80';
         ctx.beginPath();
-        ctx.arc(xProj, yCirc, 5, 0, Math.PI * 2);
+        ctx.arc(xProj, yCirc, m.len(0.023), 0, Math.PI * 2);
         ctx.fill();
       }
     }

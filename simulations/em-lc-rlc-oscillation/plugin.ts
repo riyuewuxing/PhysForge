@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, drawGlowVectorArrow, drawRoundedPotentialPath, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { lcRlcPresets } from './presets.js';
 import {
   checkInvariants,
@@ -101,95 +101,114 @@ export const emLcRlcOscillationPlugin = defineSimulationPlugin<LcRlcParams, LcRl
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
+    const line = (worldPoints: Array<{ x: number; y: number }>, color: string, width: number) => {
+      if (worldPoints.length < 2) return;
+      const points = worldPoints.map((point) => m.toScreen(point.x, point.y));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(points[0]!.x, points[0]!.y);
+      for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+    };
+    const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = m.toScreen(x, y + height);
+      const b = m.toScreen(x + width, y);
+      ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    };
     ctx.save();
 
     if (activeLayers.has('circuit')) {
-      const cx = w * 0.25;
-      const cy = h * 0.5;
-      // LC loop rectangle
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(cx - 90, cy - 75, 180, 150);
+      const corners = [
+        m.toScreen(-1.95, 0.65), m.toScreen(-0.45, 0.65),
+        m.toScreen(-0.45, -0.65), m.toScreen(-1.95, -0.65),
+        m.toScreen(-1.95, 0.65)
+      ];
+      drawRoundedPotentialPath(ctx, corners, '#38bdf8', '#4ade80', m.len(0.12), 3);
 
-      // Capacitor plate glow proportional to q
+      // Capacitor plate charge and inductor current remain in the circuit world frame.
       const qRatio = Math.max(-1, Math.min(1, state.chargeQ / Math.max(0.05, params.initialChargeC)));
       ctx.fillStyle = qRatio >= 0 ? '#f43f5e' : '#38bdf8';
-      ctx.fillRect(cx - 110, cy - 16, 40, 6);
+      fillWorldRect(-2.1, -0.06, 0.3, 0.035);
       ctx.fillStyle = qRatio >= 0 ? '#38bdf8' : '#f43f5e';
-      ctx.fillRect(cx - 110, cy + 10, 40, 6);
+      fillWorldRect(-2.1, 0.04, 0.3, 0.035);
 
-      // Inductor core glow proportional to i
       const iMag = Math.min(1, Math.abs(state.currentI) / 2.5);
       ctx.fillStyle = `rgba(74, 222, 128, ${0.2 + 0.7 * iMag})`;
-      ctx.fillRect(cx + 76, cy - 35, 28, 70);
+      fillWorldRect(-0.58, -0.34, 0.26, 0.68);
       ctx.strokeStyle = '#4ade80';
-      ctx.strokeRect(cx + 76, cy - 35, 28, 70);
-
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = '12px sans-serif';
-      ctx.fillText(`q = ${state.chargeQ.toFixed(3)} C`, cx - 120, cy + 100);
-      ctx.fillText(`i = ${state.currentI.toFixed(2)} A`, cx + 45, cy + 100);
+      const coilA = m.toScreen(-0.58, 0.34);
+      const coilB = m.toScreen(-0.32, -0.34);
+      ctx.strokeRect(Math.min(coilA.x, coilB.x), Math.min(coilA.y, coilB.y), Math.abs(coilB.x - coilA.x), Math.abs(coilB.y - coilA.y));
+      const qLabel = m.toScreen(-1.35, -0.82);
+      const iLabel = m.toScreen(-0.35, -0.82);
+      labels.push(
+        { id: 'lc-charge', x: qLabel.x, y: qLabel.y, text: `q=${state.chargeQ.toFixed(3)} C`, color: '#e2e8f0', font: '12px sans-serif' },
+        { id: 'lc-current', x: iLabel.x, y: iLabel.y, text: `i=${state.currentI.toFixed(2)} A`, color: '#e2e8f0', font: '12px sans-serif' }
+      );
     }
 
     if (activeLayers.has('energyBars')) {
-      const bx = w * 0.52;
-      const by = h * 0.75;
       const maxE = Math.max(0.1, state.initialEnergyJ, state.energyElectricJ + state.energyMagneticJ);
-      const barMaxH = 150;
+      const barMaxH = 0.85;
       const hE = (state.energyElectricJ / maxE) * barMaxH;
       const hB = (state.energyMagneticJ / maxE) * barMaxH;
 
       ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(bx, by - hE, 44, hE);
+      fillWorldRect(0.12, -0.45, 0.3, hE);
       ctx.fillStyle = '#4ade80';
-      ctx.fillRect(bx + 68, by - hB, 44, hB);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = '12px sans-serif';
-      ctx.fillText(`E_E=${state.energyElectricJ.toFixed(2)}J`, bx - 6, by + 20);
-      ctx.fillText(`E_B=${state.energyMagneticJ.toFixed(2)}J`, bx + 62, by + 20);
+      fillWorldRect(0.62, -0.45, 0.3, hB);
+      const electric = m.toScreen(0.27, -0.62);
+      const magnetic = m.toScreen(0.77, -0.62);
+      labels.push(
+        { id: 'lc-electric-energy', x: electric.x, y: electric.y, text: `E_E=${state.energyElectricJ.toFixed(2)}J`, color: '#fbbf24', font: '11px sans-serif' },
+        { id: 'lc-magnetic-energy', x: magnetic.x, y: magnetic.y, text: `E_B=${state.energyMagneticJ.toFixed(2)}J`, color: '#4ade80', font: '11px sans-serif' }
+      );
     }
 
     if (activeLayers.has('phasorPlot')) {
       const imp = computeImpedanceSummary(params);
-      const px = w * 0.8;
-      const py = h * 0.45;
-      const sc = 18;
+      const center = m.toScreen(1.72, 0.12);
       ctx.strokeStyle = '#94a3b8';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(px - 60, py);
-      ctx.lineTo(px + 90, py);
-      ctx.moveTo(px, py - 85);
-      ctx.lineTo(px, py + 85);
+      const axisLeft = m.toScreen(1.25, 0.12);
+      const axisRight = m.toScreen(2.15, 0.12);
+      const axisTop = m.toScreen(1.72, 0.82);
+      const axisBottom = m.toScreen(1.72, -0.62);
+      ctx.moveTo(axisLeft.x, axisLeft.y);
+      ctx.lineTo(axisRight.x, axisRight.y);
+      ctx.moveTo(axisTop.x, axisTop.y);
+      ctx.lineTo(axisBottom.x, axisBottom.y);
       ctx.stroke();
 
-      // R, XL, XC phasors
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px + params.resistanceR * sc, py);
-      ctx.stroke();
-
-      ctx.strokeStyle = '#4ade80';
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px, py - Math.min(75, imp.xl * sc));
-      ctx.stroke();
-
-      ctx.strokeStyle = '#f472b6';
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px, py + Math.min(75, imp.xc * sc));
-      ctx.stroke();
-
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '11px sans-serif';
-      ctx.fillText(`XL=${imp.xl.toFixed(2)}Ω | XC=${imp.xc.toFixed(2)}Ω | |Z|=${imp.zMag.toFixed(2)}Ω`, px - 75, py + 102);
+      const scale = 0.14;
+      drawGlowVectorArrow(ctx, center.x, center.y, m.toScreen(1.72 + params.resistanceR * scale, 0.12).x, center.y, '#38bdf8', 3, 10);
+      const inductive = m.toScreen(1.72, 0.12 + Math.min(0.7, imp.xl * scale));
+      const capacitive = m.toScreen(1.72, 0.12 - Math.min(0.7, imp.xc * scale));
+      drawGlowVectorArrow(ctx, center.x, center.y, inductive.x, inductive.y, '#4ade80', 3, 10);
+      drawGlowVectorArrow(ctx, center.x, center.y, capacitive.x, capacitive.y, '#f472b6', 3, 10);
+      labels.push({ id: 'lc-phasor-summary', x: center.x, y: m.toScreen(1.72, -0.72).y, text: `XL=${imp.xl.toFixed(2)}Ω | XC=${imp.xc.toFixed(2)}Ω | |Z|=${imp.zMag.toFixed(2)}Ω`, color: '#cbd5e1', font: '11px sans-serif' });
     }
 
+    const railA = m.toScreen(-1, -0.9);
+    const railB = m.toScreen(1.8, -0.9);
+    ctx.strokeStyle = 'rgba(251,191,36,0.4)';
+    ctx.lineWidth = m.len(0.08);
+    ctx.beginPath();
+    ctx.moveTo(railA.x, railA.y);
+    ctx.lineTo(railB.x, railB.y);
+    ctx.stroke();
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(railA.x, railA.y);
+    ctx.lineTo(railB.x, railB.y);
+    ctx.stroke();
+    labels.push({ id: 'lc-drive-frequency', x: m.toScreen(0.4, -1.12).x, y: m.toScreen(0.4, -1.12).y, text: `驱动频率 ω=${params.driveOmega.toFixed(1)} rad/s`, color: '#fbbf24', font: 'bold 12px sans-serif' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state, params) => {

@@ -1,5 +1,8 @@
 import {
+  createWorldMapper,
   defineSimulationPlugin,
+  resolveAndDrawLabels,
+  type CanvasLabel,
   type DiagramPrimitive,
   type ParamFieldSpec,
   type ParamValue
@@ -72,7 +75,7 @@ export const emTransformerGridPlugin = defineSimulationPlugin<TransformerGridPar
     {
       id: 'step-up-ratio',
       label: params.mode === 'long-distance-grid' ? `k₁=${params.stepUpRatioK1}` : `R₀=${params.primaryR0}Ω`,
-      position: { x: params.mode === 'long-distance-grid' ? (params.stepUpRatioK1 - 20) * 0.08 : (params.primaryR0 - 10) * 0.08, y: 0.7 },
+      position: { x: params.mode === 'long-distance-grid' ? (params.stepUpRatioK1 - 20) * 0.08 : (params.primaryR0 - 10) * 0.08, y: -0.9 },
       handleKind: 'point',
       color: '#fbbf24',
       onDrag: (wp): Record<string, ParamValue> =>
@@ -112,95 +115,118 @@ export const emTransformerGridPlugin = defineSimulationPlugin<TransformerGridPar
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
     const c = state.current;
     const b = state.baseline;
+    const labels: CanvasLabel[] = [];
+    const fillWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = m.toScreen(x, y + height);
+      const d = m.toScreen(x + width, y);
+      ctx.fillRect(Math.min(a.x, d.x), Math.min(a.y, d.y), Math.abs(d.x - a.x), Math.abs(d.y - a.y));
+    };
+    const strokeWorldRect = (x: number, y: number, width: number, height: number) => {
+      const a = m.toScreen(x, y + height);
+      const d = m.toScreen(x + width, y);
+      ctx.strokeRect(Math.min(a.x, d.x), Math.min(a.y, d.y), Math.abs(d.x - a.x), Math.abs(d.y - a.y));
+    };
+    const drawLine = (points: Array<{ x: number; y: number }>, color: string, width: number) => {
+      if (points.length < 2) return;
+      const first = m.toScreen(points[0]!.x, points[0]!.y);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(first.x, first.y);
+      for (const world of points.slice(1)) {
+        const point = m.toScreen(world.x, world.y);
+        ctx.lineTo(point.x, point.y);
+      }
+      ctx.stroke();
+    };
     ctx.save();
 
     if (activeLayers.has('topology')) {
-      const cy = h * 0.4;
       if (params.mode === 'multi-tap-transformer') {
-        const cx = w * 0.45;
-        // Core lines
+        // Laminated core, primary winding, and two secondary taps share one world origin.
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 5;
-        ctx.strokeRect(cx - 56, cy - 75, 112, 150);
-
-        // Coils & loops
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(cx - 170, cy - 55);
-        ctx.lineTo(cx - 56, cy - 55);
-        ctx.moveTo(cx - 170, cy + 55);
-        ctx.lineTo(cx - 56, cy + 55);
-        ctx.stroke();
-
-        ctx.strokeStyle = '#4ade80';
-        ctx.beginPath();
-        ctx.moveTo(cx + 56, cy - 55);
-        ctx.lineTo(cx + 185, cy - 55);
-        ctx.moveTo(cx + 56, cy + 55);
-        ctx.lineTo(cx + 185, cy + 55);
-        ctx.stroke();
-
-        // Trend arrows next to meters
-        ctx.font = 'bold 14px monospace';
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillText(`U₁=${c.u1.toFixed(1)}V (${trendSymbol(c.u1, b.u1)})`, cx - 220, cy - 70);
-        ctx.fillText(`I₁=${c.i1.toFixed(2)}A (${trendSymbol(c.i1, b.i1)})`, cx - 220, cy + 82);
-        ctx.fillStyle = '#4ade80';
-        ctx.fillText(`U₂=${c.u2.toFixed(1)}V (${trendSymbol(c.u2, b.u2)})`, cx + 75, cy - 70);
-        ctx.fillText(`I₂=${c.i2.toFixed(2)}A (${trendSymbol(c.i2, b.i2)})`, cx + 75, cy + 82);
+        strokeWorldRect(-0.55, -0.65, 1.1, 1.3);
+        const drawCoil = (x: number, yTop: number, yBottom: number, color: string, phase: number) => {
+          const points: Array<{ x: number; y: number }> = [{ x, y: yTop }];
+          const turns = 7;
+          for (let i = 0; i < turns * 2; i++) {
+            points.push({ x: x + (i % 2 === 0 ? -0.12 : 0.12), y: yTop - ((yTop - yBottom) * (i + 1)) / (turns * 2 + 1) });
+          }
+          points.push({ x, y: yBottom });
+          drawLine(points, color, 2.5);
+          const start = m.toScreen(x, yTop);
+          const coreTop = m.toScreen(phase < 0 ? -0.55 : 0.55, yTop);
+          const end = m.toScreen(x, yBottom);
+          const coreBottom = m.toScreen(phase < 0 ? -0.55 : 0.55, yBottom);
+          drawLine([{ x: x, y: yTop }, { x: phase < 0 ? -0.55 : 0.55, y: yTop }], color, 1.5);
+          drawLine([{ x: phase < 0 ? -0.55 : 0.55, y: yBottom }, { x, y: yBottom }], color, 1.5);
+          void start; void coreTop; void end; void coreBottom;
+        };
+        drawCoil(-0.95, 0.5, -0.5, '#38bdf8', -1);
+        drawCoil(0.95, 0.5, -0.5, '#4ade80', 1);
+        drawCoil(1.28, 0.36, -0.36, '#86efac', 1);
+        labels.push(
+          { id: 'transformer-primary', x: m.toScreen(-1.45, 0.8).x, y: m.toScreen(-1.45, 0.8).y, text: `U₁=${c.u1.toFixed(1)}V (${trendSymbol(c.u1, b.u1)})`, color: '#38bdf8', font: 'bold 12px monospace' },
+          { id: 'transformer-primary-current', x: m.toScreen(-1.45, -0.8).x, y: m.toScreen(-1.45, -0.8).y, text: `I₁=${c.i1.toFixed(2)}A (${trendSymbol(c.i1, b.i1)})`, color: '#38bdf8', font: 'bold 12px monospace' },
+          { id: 'transformer-secondary', x: m.toScreen(1.52, 0.8).x, y: m.toScreen(1.52, 0.8).y, text: `U₂=${c.u2.toFixed(1)}V (${trendSymbol(c.u2, b.u2)})`, color: '#4ade80', font: 'bold 12px monospace' },
+          { id: 'transformer-secondary-current', x: m.toScreen(1.52, -0.8).x, y: m.toScreen(1.52, -0.8).y, text: `I₂=${c.i2.toFixed(2)}A (${trendSymbol(c.i2, b.i2)})`, color: '#4ade80', font: 'bold 12px monospace' }
+        );
       } else {
-        // 4-stage grid nodes
-        const xs = [w * 0.14, w * 0.36, w * 0.64, w * 0.86];
+        const xs = [-2, -0.7, 0.7, 2];
         const titles = ['发电机 P发', `升压变 (k₁=${params.stepUpRatioK1})`, `输电线 (R=${params.lineResistanceR}Ω)`, '降压→用户'];
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(xs[0]!, cy);
-        ctx.lineTo(xs[3]!, cy);
-        ctx.stroke();
+        drawLine([{ x: xs[0]!, y: 0.25 }, { x: xs[3]!, y: 0.25 }], '#fbbf24', 3);
 
-        xs.forEach((nx, i) => {
+        xs.forEach((worldX, i) => {
+          const node = m.toScreen(worldX, 0.25);
           ctx.fillStyle = '#1e293b';
           ctx.strokeStyle = i === 2 ? '#f43f5e' : '#38bdf8';
-          ctx.fillRect(nx - 42, cy - 26, 84, 52);
-          ctx.strokeRect(nx - 42, cy - 26, 84, 52);
-          ctx.fillStyle = '#e2e8f0';
-          ctx.font = '12px sans-serif';
-          ctx.fillText(titles[i]!, nx - 38, cy + 4);
+          fillWorldRect(worldX - 0.28, 0.02, 0.56, 0.46);
+          strokeWorldRect(worldX - 0.28, 0.02, 0.56, 0.46);
+          labels.push({ id: `grid-stage-${i}`, x: node.x, y: m.toScreen(worldX, 0.76).y, text: titles[i]!, color: '#e2e8f0', font: '11px sans-serif' });
         });
       }
     }
 
     if (activeLayers.has('powerWaterfall')) {
-      const barX = w * 0.14;
-      const barW = w * 0.72;
-      const barY = h * 0.74;
-      const barH = 26;
+      const barX = -2.1;
+      const barW = 4.2;
+      const barY = -1.5;
+      const barH = 0.14;
       const total = Math.max(1, c.pInW);
       const userFrac = c.pUserW / total;
       const lossFrac = c.pLineLossW / total;
 
       ctx.fillStyle = '#4ade80';
-      ctx.fillRect(barX, barY, barW * userFrac, barH);
+      fillWorldRect(barX, barY, barW * userFrac, barH);
       ctx.fillStyle = '#f43f5e';
-      ctx.fillRect(barX + barW * userFrac, barY, barW * lossFrac, barH);
+      fillWorldRect(barX + barW * userFrac, barY, barW * lossFrac, barH);
       ctx.strokeStyle = '#64748b';
-      ctx.strokeRect(barX, barY, barW, barH);
-
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = '13px sans-serif';
-      ctx.fillText(
-        `功率瀑布流：总投入 ${(total / 1000).toFixed(2)} kW ＝ 有效利用 ${(c.pUserW / 1000).toFixed(2)} kW (${(c.efficiency * 100).toFixed(2)}%) ＋ 线损 ${(c.pLineLossW / 1000).toFixed(2)} kW`,
-        barX,
-        barY - 12
-      );
+      strokeWorldRect(barX, barY, barW, barH);
+      const summary = m.toScreen(0, -1.22);
+      labels.push({ id: 'grid-power-summary', x: summary.x, y: summary.y, text: `功率：投入 ${(total / 1000).toFixed(2)} kW = 利用 ${(c.pUserW / 1000).toFixed(2)} kW (${(c.efficiency * 100).toFixed(2)}%) + 线损 ${(c.pLineLossW / 1000).toFixed(2)} kW`, color: '#e2e8f0', font: '13px sans-serif' });
     }
 
+    const railA = m.toScreen(-1.2, -0.9);
+    const railB = m.toScreen(1.6, -0.9);
+    ctx.strokeStyle = 'rgba(251,191,36,0.35)';
+    ctx.lineWidth = m.len(0.08);
+    ctx.beginPath();
+    ctx.moveTo(railA.x, railA.y);
+    ctx.lineTo(railB.x, railB.y);
+    ctx.stroke();
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(railA.x, railA.y);
+    ctx.lineTo(railB.x, railB.y);
+    ctx.stroke();
+    const parameterLabel = m.toScreen(0.2, -1.12);
+    labels.push({ id: 'transformer-control-rail', x: parameterLabel.x, y: parameterLabel.y, text: params.mode === 'long-distance-grid' ? `升压比 k₁=${params.stepUpRatioK1}` : `原边电阻 R₀=${params.primaryR0} Ω`, color: '#fbbf24', font: 'bold 12px sans-serif' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
   formatFormulas: (state) => [

@@ -130,6 +130,18 @@ export const mechConicalTurntablePlugin = defineSimulationPlugin<
     }
     return vectors;
   },
+  referenceFrames: [
+    {
+      id: 'turntable',
+      label: '转盘上 A 物块随动系',
+      getOrigin: (s, p) => p.mode === 'turntable-dual'
+        ? { x: -s.rA * Math.cos(s.angleRad), y: s.rA * Math.sin(s.angleRad) }
+        : { x: p.pendulumLength * Math.sin((s.coneAngleDeg * Math.PI) / 180) * Math.cos(s.angleRad), y: 1.1 - p.pendulumLength * Math.cos((s.coneAngleDeg * Math.PI) / 180) },
+      getVelocity: (s, p) => p.mode === 'turntable-dual'
+        ? { x: s.rA * p.omega * Math.sin(s.angleRad), y: s.rA * p.omega * Math.cos(s.angleRad) }
+        : { x: -p.pendulumLength * Math.sin((s.coneAngleDeg * Math.PI) / 180) * p.omega * Math.sin(s.angleRad), y: 0 }
+    }
+  ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',

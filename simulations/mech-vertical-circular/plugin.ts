@@ -1,5 +1,5 @@
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { verticalCircularPresets } from './presets.js';
 import {
   checkInvariants,
@@ -40,6 +40,7 @@ export const mechVerticalCircularPlugin = defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.83 },
   paramSchema,
   presets: verticalCircularPresets,
   engine: {
@@ -79,6 +80,14 @@ export const mechVerticalCircularPlugin = defineSimulationPlugin<
         : [])
     ];
   },
+  referenceFrames: [
+    {
+      id: 'circular-ball',
+      label: '圆周运动质点随动系',
+      getOrigin: (s) => ({ x: s.x, y: s.y }),
+      getVelocity: (s) => ({ x: s.vx, y: s.vy })
+    }
+  ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -101,10 +110,11 @@ export const mechVerticalCircularPlugin = defineSimulationPlugin<
     ] as DiagramPrimitive[]
   }),
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const ppm = Math.min(viewport.width, viewport.height) * 0.2 * viewport.scale;
-    const ox = viewport.width * 0.45 + viewport.offsetX;
-    const oy = viewport.height * 0.5 + viewport.offsetY;
-    const toScr = (wx: number, wy: number) => ({ sx: ox + wx * ppm, sy: oy - wy * ppm });
+    const m = createWorldMapper(viewport);
+    const toScr = (wx: number, wy: number) => {
+      const point = m.toScreen(wx, wy);
+      return { sx: point.x, sy: point.y };
+    };
 
     ctx.save();
     if (activeLayers.has('track')) {
@@ -113,9 +123,9 @@ export const mechVerticalCircularPlugin = defineSimulationPlugin<
       ctx.lineWidth = 3;
       ctx.beginPath();
       if (params.trackMode === 'outer-dome') {
-        ctx.arc(c.sx, c.sy, params.radius * ppm, Math.PI, 0, false);
+        ctx.arc(c.sx, c.sy, params.radius * m.ppm, Math.PI, 0, false);
       } else {
-        ctx.arc(c.sx, c.sy, params.radius * ppm, 0, Math.PI * 2);
+        ctx.arc(c.sx, c.sy, params.radius * m.ppm, 0, Math.PI * 2);
       }
       ctx.stroke();
 

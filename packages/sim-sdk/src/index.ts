@@ -212,6 +212,8 @@ export interface ControlHandle {
   /** 世界坐标系手柄锚点 */
   position: { x: number; y: number };
   handleKind: 'point' | 'vector' | 'angle' | 'radius';
+  /** 默认为真；已有场景符号充当手柄时可隐藏静止态标记。 */
+  showWhenIdle?: boolean;
   /** 矢量或角度手柄的基准原点（用于绘制牵引虚线与计算夹角） */
   origin?: { x: number; y: number };
   /** 可选矢量显示（若为空则使用 position - origin） */
@@ -334,8 +336,18 @@ export interface SimulationPlugin<TParams extends ParamRecord, TState> {
 /**
  * PhysForge V2.0 仿真插件扩展契约（100% 向后兼容 V1.0 插件）
  */
+export interface PluginDefaultViewSpec<TParams extends ParamRecord = ParamRecord> {
+  /** Relative scale against the standard 0.24 * min(W, H) world mapping. */
+  scale?: number | ((params: TParams, viewport: { width: number; height: number }) => number);
+  /** Pixel offset as a fraction of viewport width from the standard 0.45W origin. */
+  offsetRatioX?: number | ((params: TParams, viewport: { width: number; height: number }) => number);
+  /** Pixel offset as a fraction of viewport height from the standard 0.50H origin. */
+  offsetRatioY?: number | ((params: TParams, viewport: { width: number; height: number }) => number);
+}
+
 export interface SimulationPluginV2<TParams extends ParamRecord = ParamRecord, TState = unknown>
   extends SimulationPlugin<TParams, TState> {
+  defaultView?: PluginDefaultViewSpec<TParams>;
   renderMode?: 'canvas2d' | 'three3d' | 'hybrid';
   getControlHandles?: (state: TState, params: TParams) => ControlHandle[];
   getForceVectors?: (state: TState, params: TParams) => ForceVectorItem[];
@@ -362,6 +374,7 @@ export function isSimulationPluginV2<TParams extends ParamRecord, TState>(
     typeof candidate.sceneSerializer === 'object' ||
     typeof candidate.exportDiagramIR === 'function' ||
     typeof candidate.mountThreeScene === 'function' ||
+    candidate.defaultView !== undefined ||
     candidate.renderMode === 'three3d' ||
     candidate.renderMode === 'hybrid'
   );
@@ -473,3 +486,5 @@ export function defineSimulationPlugin<TParams extends ParamRecord, TState>(
 
   return plugin;
 }
+
+export * from './visualKit.js';

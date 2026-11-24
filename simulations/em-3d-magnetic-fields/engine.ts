@@ -222,6 +222,53 @@ export function trace3dFieldLines(params: Magnetic3dParams): Vec3[][] {
   }
 
   const R = Math.max(0.2, params.radiusR);
+  if (params.geometryType === 'finite-solenoid') {
+    const seeds: Vec3[] = [];
+    for (const radiusRatio of [0.82, 0.86, 0.88]) {
+      for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+        seeds.push({
+          x: radiusRatio * R * Math.cos(angle),
+          y: radiusRatio * R * Math.sin(angle),
+          z: 0
+        });
+      }
+    }
+
+    const traceDirection = (seed: Vec3, direction: 1 | -1): Vec3[] => {
+      const points: Vec3[] = [seed];
+      let point = seed;
+      let distance = 0;
+      for (let step = 0; step < 1400; step++) {
+        const next = stepRK4([point.x, point.y, point.z], 0, 0.035, (_t, xyz) => {
+          const field = evalBiotSavartB({ x: xyz[0]!, y: xyz[1]!, z: xyz[2]! }, params);
+          const magnitude = Math.hypot(field.x, field.y, field.z);
+          return magnitude > 1e-14
+            ? [direction * field.x / magnitude, direction * field.y / magnitude, direction * field.z / magnitude]
+            : [0, 0, 0];
+        });
+        point = { x: next[0]!, y: next[1]!, z: next[2]! };
+        if (![point.x, point.y, point.z].every(Number.isFinite)) break;
+        distance += 0.035;
+        points.push(point);
+
+        const distanceFromSeed = Math.hypot(
+          point.x - seed.x,
+          point.y - seed.y,
+          point.z - seed.z
+        );
+        if (step > 80 && distanceFromSeed < 0.07 * R) break;
+        if (distance > 48 || Math.hypot(point.x, point.y, point.z) > 10 * R) break;
+      }
+      return points;
+    };
+
+    return seeds.map((seed) => {
+      const backward = traceDirection(seed, -1);
+      const forward = traceDirection(seed, 1);
+      return [...backward.slice(1).reverse(), seed, ...forward.slice(1)];
+    });
+  }
+
   const seeds: Vec3[] =
     params.geometryType === 'straight-wire' || params.geometryType === 'parallel-wires'
       ? [
@@ -257,7 +304,9 @@ export function createInitialState(params: Magnetic3dParams): Magnetic3dState {
   const pos: Vec3 =
     params.geometryType === 'uniform-helix'
       ? { x: 0.4, y: 0, z: -1.2 }
-      : { x: 0.25 * params.radiusR, y: 0, z: -0.9 };
+      : params.geometryType === 'finite-solenoid'
+        ? { x: 0.35 * params.radiusR, y: 0.25 * params.radiusR, z: -0.65 * params.radiusR }
+        : { x: 0.25 * params.radiusR, y: 0, z: -0.9 };
   const vel: Vec3 = { x: params.vPerp, y: 0, z: params.vParallel };
   const bAtParticle = evalBiotSavartB(pos, params);
   const scaleQm =

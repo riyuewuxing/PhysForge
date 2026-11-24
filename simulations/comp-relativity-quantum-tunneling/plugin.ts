@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { relativityQuantumPresets } from './presets.js';
 import {
   TDSE_DX,
@@ -110,24 +110,26 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
     if (!activeLayers.has('main')) return;
     ctx.save();
 
     if (params.mode === 'minkowski-relativity') {
-      const cx = w * 0.5;
-      const cy = h * 0.54;
-      const sc = Math.min(w, h) * 0.042;
+      const sc = 0.22;
+      const point = (x: number, ct: number) => m.toScreen(x * sc, ct * sc);
       // Light cone |x| = ct
       ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.moveTo(cx - 8 * sc, cy + 8 * sc);
-      ctx.lineTo(cx + 8 * sc, cy - 8 * sc);
-      ctx.moveTo(cx - 8 * sc, cy - 8 * sc);
-      ctx.lineTo(cx + 8 * sc, cy + 8 * sc);
+      const coneA = point(-8, -8);
+      const coneB = point(8, 8);
+      const coneC = point(-8, 8);
+      const coneD = point(8, -8);
+      ctx.moveTo(coneA.x, coneA.y);
+      ctx.lineTo(coneB.x, coneB.y);
+      ctx.moveTo(coneC.x, coneC.y);
+      ctx.lineTo(coneD.x, coneD.y);
       ctx.stroke();
       ctx.setLineDash([]);
 
@@ -135,10 +137,14 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(cx - 8 * sc, cy);
-      ctx.lineTo(cx + 8 * sc, cy);
-      ctx.moveTo(cx, cy + 7 * sc);
-      ctx.lineTo(cx, cy - 8 * sc);
+      const xAxisA = point(-8, 0);
+      const xAxisB = point(8, 0);
+      const ctAxisA = point(0, -7);
+      const ctAxisB = point(0, 8);
+      ctx.moveTo(xAxisA.x, xAxisA.y);
+      ctx.lineTo(xAxisB.x, xAxisB.y);
+      ctx.moveTo(ctAxisA.x, ctAxisA.y);
+      ctx.lineTo(ctAxisB.x, ctAxisB.y);
       ctx.stroke();
 
       // Lorentz sheared axes x', ct'
@@ -146,17 +152,22 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 2.2;
       ctx.beginPath();
-      ctx.moveTo(cx - 7 * sc, cy + 7 * beta * sc);
-      ctx.lineTo(cx + 7 * sc, cy - 7 * beta * sc);
-      ctx.moveTo(cx - 7 * beta * sc, cy + 7 * sc);
-      ctx.lineTo(cx + 7 * beta * sc, cy - 7 * sc);
+      const xpA = point(-7, -7 * beta);
+      const xpB = point(7, 7 * beta);
+      const ctpA = point(-7 * beta, -7);
+      const ctpB = point(7 * beta, 7);
+      ctx.moveTo(xpA.x, xpA.y);
+      ctx.lineTo(xpB.x, xpB.y);
+      ctx.moveTo(ctpA.x, ctpA.y);
+      ctx.lineTo(ctpB.x, ctpB.y);
       ctx.stroke();
 
       // Event point & invariant hyperbola
       const lor = solveLorentzInterval(beta, params.eventX, params.eventCt);
       ctx.fillStyle = '#4ade80';
       ctx.beginPath();
-      ctx.arc(cx + params.eventX * sc, cy - params.eventCt * sc, 6, 0, Math.PI * 2);
+      const event = point(params.eventX, params.eventCt);
+      ctx.arc(event.x, event.y, m.len(0.028), 0, Math.PI * 2);
       ctx.fill();
 
       ctx.fillStyle = '#e2e8f0';
@@ -176,19 +187,23 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
     }
 
     // TDSE 512-grid wavefunction |psi(x)|^2 and potential barrier V(x)
-    const baseY = h * 0.78;
-    const gx0 = w * 0.06;
-    const gw = w * 0.88;
-    const toX = (j: number) => gx0 + (j / (TDSE_GRID_N - 1)) * gw;
+    const xMin = -2.3;
+    const xMax = 2.3;
+    const baseYWorld = -0.9;
+    const toX = (j: number) => xMin + (j / (TDSE_GRID_N - 1)) * (xMax - xMin);
+    const toScreen = (j: number, y: number) => m.toScreen(toX(j), y);
 
     // Draw Potential V(x)
     ctx.fillStyle = 'rgba(251, 191, 36, 0.22)';
     ctx.beginPath();
-    ctx.moveTo(toX(0), baseY);
+    const firstBase = m.toScreen(xMin, baseYWorld);
+    ctx.moveTo(firstBase.x, firstBase.y);
     for (let j = 0; j < TDSE_GRID_N; j++) {
-      ctx.lineTo(toX(j), baseY - state.potential[j]! * 48);
+      const pt = toScreen(j, baseYWorld + Math.max(-0.6, Math.min(0.6, state.potential[j]! * 0.12)));
+      ctx.lineTo(pt.x, pt.y);
     }
-    ctx.lineTo(toX(TDSE_GRID_N - 1), baseY);
+    const lastBase = m.toScreen(xMax, baseYWorld);
+    ctx.lineTo(lastBase.x, lastBase.y);
     ctx.closePath();
     ctx.fill();
 
@@ -198,9 +213,9 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
     ctx.beginPath();
     for (let j = 0; j < TDSE_GRID_N; j++) {
       const dens = state.psiRe[j]! * state.psiRe[j]! + state.psiIm[j]! * state.psiIm[j]!;
-      const py = baseY - dens * h * 2.2;
-      if (j === 0) ctx.moveTo(toX(j), py);
-      else ctx.lineTo(toX(j), py);
+      const pt = toScreen(j, baseYWorld + Math.min(1.3, dens * 0.8));
+      if (j === 0) ctx.moveTo(pt.x, pt.y);
+      else ctx.lineTo(pt.x, pt.y);
     }
     ctx.stroke();
 
@@ -208,9 +223,9 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
     ctx.lineWidth = 1.2;
     ctx.beginPath();
     for (let j = 0; j < TDSE_GRID_N; j++) {
-      const py = baseY - 60 - state.psiRe[j]! * 120;
-      if (j === 0) ctx.moveTo(toX(j), py);
-      else ctx.lineTo(toX(j), py);
+      const pt = toScreen(j, baseYWorld + 0.38 + state.psiRe[j]! * 0.18);
+      if (j === 0) ctx.moveTo(pt.x, pt.y);
+      else ctx.lineTo(pt.x, pt.y);
     }
     ctx.stroke();
 
@@ -223,6 +238,55 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
     );
     ctx.restore();
   },
+  getControlHandles: (state, params) => {
+    if (params.mode === 'minkowski-relativity') {
+      return [
+        {
+          id: 'spacetime-event',
+          label: `(x=${params.eventX.toFixed(1)}, ct=${params.eventCt.toFixed(1)})`,
+          position: { x: params.eventX * 0.22, y: params.eventCt * 0.22 },
+          handleKind: 'point',
+          color: '#4ade80',
+          onDrag: (world) => ({
+            eventX: Number(Math.max(-6, Math.min(6, Math.round((world.x / 0.22) * 2) / 2)).toFixed(1)),
+            eventCt: Number(Math.max(-6, Math.min(8, Math.round((world.y / 0.22) * 2) / 2)).toFixed(1))
+          })
+        }
+      ];
+    }
+
+    let peakIndex = 0;
+    for (let index = 1; index < state.potential.length; index += 1) {
+      if (Math.abs(state.potential[index]!) > Math.abs(state.potential[peakIndex]!)) peakIndex = index;
+    }
+    const x = -2.3 + (peakIndex / (TDSE_GRID_N - 1)) * 4.6;
+    const potential = state.potential[peakIndex]!;
+    const potentialOffset = Math.max(-0.6, Math.min(0.6, potential * 0.12));
+    return [
+      {
+        id: 'potential-height',
+        label: `|V₀|=${params.barrierHeightV0.toFixed(1)}`,
+        position: { x, y: -0.9 + potentialOffset },
+        handleKind: 'point',
+        color: '#fbbf24',
+        onDrag: (world) => ({
+          barrierHeightV0: Number(Math.max(0.5, Math.min(5, Math.round((Math.abs((world.y + 0.9) / 0.12)) * 10) / 10)).toFixed(1))
+        })
+      }
+    ];
+  },
+  referenceFrames: [
+    {
+      id: 'lorentz-boost-s-prime',
+      label: '高速运动飞船 S′ 系 (v = βc)',
+      getOrigin: (state, params) => params.mode === 'minkowski-relativity'
+        ? { x: params.lorentzBeta * state.t * 0.22, y: state.t * 0.22 }
+        : { x: 0, y: 0 },
+      getVelocity: (_state, params) => params.mode === 'minkowski-relativity'
+        ? { x: params.lorentzBeta * 0.22, y: 0.22 }
+        : { x: 0, y: 0 }
+    }
+  ],
   formatFormulas: (state, params) => [
     {
       id: 'relativity-tdse',

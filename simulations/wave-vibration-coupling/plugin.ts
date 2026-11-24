@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, drawGlowVectorArrow, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
   checkInvariants,
   computeDopplerFrequencies,
@@ -137,6 +137,7 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
     difficulty: '高三一轮',
     version: '2.0.0'
   },
+  defaultView: { scale: 0.72 },
   paramSchema,
   presets: [
     {
@@ -269,19 +270,26 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
     { key: 'probeAy', label: '质点加速度 a_y', unit: 'm/s²', color: '#f472b6' },
     { key: 'analyticalAmplitude', label: '合振幅 A_net', unit: 'm', color: '#fbbf24' }
   ],
-  getControlHandles: (_s, params) => [
-    {
+  getControlHandles: (state, params) => {
+    const probeY = params.mode === 'interference'
+      ? params.probeY
+      : params.mode === 'doppler'
+        ? 0
+        : (params.mode === 'standing'
+          ? evaluateStandingWave(params.probeX, state.t, params).y
+          : evaluateTransverseWave(params.probeX, state.t, params).y);
+    return [{
       id: 'wave-probe',
       label: `探针 Px=${params.probeX.toFixed(1)}`,
-      position: { x: params.probeX, y: params.probeY },
+      position: { x: params.probeX, y: probeY },
       handleKind: 'point',
       color: '#4ade80',
       onDrag: (wp) => ({
         probeX: Number(Math.max(-3.5, Math.min(3.5, wp.x)).toFixed(1)),
         probeY: Number(Math.max(-2.5, Math.min(2.5, wp.y)).toFixed(1))
       })
-    }
-  ],
+    }];
+  },
   referenceFrames: [
     {
       id: 'wavefront',
@@ -364,43 +372,40 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
     ];
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
+    const m = createWorldMapper(viewport);
+    const labels: CanvasLabel[] = [];
+    const drawWorldRect = (x: number, y: number, width: number, height: number, fill: boolean) => {
+      const a = m.toScreen(x, y + height);
+      const b = m.toScreen(x + width, y);
+      if (fill) ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+      else ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    };
     if (params.mode === 'transverse' || params.mode === 'standing') {
       const xMin = -4;
       const xMax = 4;
       const showSubGraph = activeLayers.has('vibrationGraph');
-      const waveCenterY = showSubGraph ? viewport.height * 0.36 : viewport.height * 0.5;
-      const scaleX = (viewport.width * 0.84) / (xMax - xMin);
-      const scaleY = viewport.height * 0.19 * viewport.scale;
-      const toScreen = (wx: number, wy: number) => ({
-        sx: viewport.width * 0.08 + (wx - xMin) * scaleX + viewport.offsetX,
-        sy: waveCenterY - wy * scaleY + viewport.offsetY
-      });
+      const toScreen = (wx: number, wy: number) => m.toScreen(wx, wy);
 
-      // x 轴
       ctx.save();
       ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
       ctx.lineWidth = 1.5;
       const axL = toScreen(xMin, 0);
       const axR = toScreen(xMax, 0);
       ctx.beginPath();
-      ctx.moveTo(axL.sx, axL.sy);
-      ctx.lineTo(axR.sx, axR.sy);
+      ctx.moveTo(axL.x, axL.y);
+      ctx.lineTo(axR.x, axR.y);
       ctx.stroke();
 
-      // 刻度
-      ctx.fillStyle = 'rgba(148, 163, 184, 0.85)';
-      ctx.font = '13px system-ui, sans-serif';
       for (let gx = -4; gx <= 4; gx += 1) {
         const gp = toScreen(gx, 0);
         ctx.beginPath();
-        ctx.moveTo(gp.sx, gp.sy - 4);
-        ctx.lineTo(gp.sx, gp.sy + 4);
+        ctx.moveTo(gp.x, gp.y - m.len(0.025));
+        ctx.lineTo(gp.x, gp.y + m.len(0.025));
         ctx.stroke();
-        ctx.fillText(`${gx}m`, gp.sx - 10, gp.sy + 18);
+        labels.push({ id: `wave-axis-${gx}`, x: gp.x, y: gp.y + m.len(0.13), text: `${gx}m`, color: 'rgba(148, 163, 184, 0.85)', font: '11px system-ui, sans-serif' });
       }
       ctx.restore();
 
-      // 微平移下一瞬间虚线波形（上下坡法可视化）
       if (activeLayers.has('slopeGhost')) {
         const dtGhost = params.frequency > 0 ? 0.08 / params.frequency : 0.05;
         ctx.save();
@@ -416,8 +421,8 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
               ? evaluateStandingWave(wx, state.t + dtGhost, params)
               : evaluateTransverseWave(wx, state.t + dtGhost, params);
           const p = toScreen(wx, y);
-          if (i === 0) ctx.moveTo(p.sx, p.sy);
-          else ctx.lineTo(p.sx, p.sy);
+          if (i === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
         }
         ctx.stroke();
         ctx.restore();
@@ -437,8 +442,8 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
               ? evaluateStandingWave(wx, state.t, params)
               : evaluateTransverseWave(wx, state.t, params);
           const p = toScreen(wx, y);
-          if (i === 0) ctx.moveTo(p.sx, p.sy);
-          else ctx.lineTo(p.sx, p.sy);
+          if (i === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
         }
         ctx.stroke();
 
@@ -451,7 +456,7 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
               : evaluateTransverseWave(wx, state.t, params);
           const p = toScreen(wx, y);
           ctx.beginPath();
-          ctx.arc(p.sx, p.sy, 3.2, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, m.len(0.02), 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.restore();
@@ -459,127 +464,111 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
 
       // 探测质点 P 与振动方向箭头
       if (activeLayers.has('probeParticle')) {
-        const { y, vy } = evaluateTransverseWave(params.probeX, state.t, params);
+        const { y, vy } = params.mode === 'standing'
+          ? evaluateStandingWave(params.probeX, state.t, params)
+          : evaluateTransverseWave(params.probeX, state.t, params);
         const eqP = toScreen(params.probeX, 0);
         const curP = toScreen(params.probeX, y);
         ctx.save();
         ctx.strokeStyle = 'rgba(244, 114, 182, 0.5)';
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
-        ctx.moveTo(eqP.sx, eqP.sy - 80);
-        ctx.lineTo(eqP.sx, eqP.sy + 80);
+        ctx.moveTo(eqP.x, eqP.y - m.len(0.55));
+        ctx.lineTo(eqP.x, eqP.y + m.len(0.55));
         ctx.stroke();
         ctx.setLineDash([]);
 
         // 速度方向箭头
-        const arrowLen = Math.max(-55, Math.min(55, vy * 14));
-        if (Math.abs(arrowLen) > 4) {
-          const tipY = curP.sy - arrowLen;
-          ctx.strokeStyle = '#4ade80';
-          ctx.fillStyle = '#4ade80';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(curP.sx, curP.sy);
-          ctx.lineTo(curP.sx, tipY);
-          ctx.stroke();
-
-          const sgn = arrowLen > 0 ? -1 : 1;
-          ctx.beginPath();
-          ctx.moveTo(curP.sx, tipY);
-          ctx.lineTo(curP.sx - 6, tipY - sgn * 10);
-          ctx.lineTo(curP.sx + 6, tipY - sgn * 10);
-          ctx.closePath();
-          ctx.fill();
+        const arrowHeight = Math.max(-0.35, Math.min(0.35, vy * 0.08));
+        if (Math.abs(arrowHeight) > 0.03) {
+          const endpoint = toScreen(params.probeX, y + arrowHeight);
+          drawGlowVectorArrow(ctx, curP.x, curP.y, endpoint.x, endpoint.y, '#4ade80', 3, 10);
         }
 
         ctx.fillStyle = '#f472b6';
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(curP.sx, curP.sy, 8, 0, Math.PI * 2);
+        ctx.arc(curP.x, curP.y, m.len(0.05), 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = '#f472b6';
-        ctx.font = 'bold 14px system-ui, sans-serif';
-        ctx.fillText(`质点 P (x=${params.probeX.toFixed(1)}m)`, curP.sx + 12, curP.sy - 8);
+        labels.push({ id: 'transverse-probe-label', x: curP.x, y: curP.y - m.len(0.15), text: `质点 P (x=${params.probeX.toFixed(1)}m)`, color: '#f472b6', font: 'bold 13px system-ui, sans-serif' });
         ctx.restore();
       }
 
       // 下半部分：质点 P 的实时 y-t 振动曲线
       if (showSubGraph) {
-        const boxTop = viewport.height * 0.64;
-        const boxH = viewport.height * 0.28;
-        const boxLeft = viewport.width * 0.08;
-        const boxW = viewport.width * 0.84;
-        const midY = boxTop + boxH * 0.5;
+        const boxLeft = -3.4;
+        const boxWidth = 6.8;
+        const boxBottom = -2.25;
+        const boxHeight = 0.9;
+        const boxTop = boxBottom + boxHeight;
+        const midY = boxBottom + boxHeight * 0.5;
 
         ctx.save();
         ctx.fillStyle = 'rgba(15, 23, 42, 0.35)';
         ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
         ctx.lineWidth = 1.2;
-        ctx.fillRect(boxLeft, boxTop, boxW, boxH);
-        ctx.strokeRect(boxLeft, boxTop, boxW, boxH);
+        drawWorldRect(boxLeft, boxBottom, boxWidth, boxHeight, true);
+        drawWorldRect(boxLeft, boxBottom, boxWidth, boxHeight, false);
 
+        const left = m.toScreen(boxLeft, midY);
+        const right = m.toScreen(boxLeft + boxWidth, midY);
         ctx.beginPath();
-        ctx.moveTo(boxLeft, midY);
-        ctx.lineTo(boxLeft + boxW, midY);
+        ctx.moveTo(left.x, left.y);
+        ctx.lineTo(right.x, right.y);
         ctx.stroke();
 
-        ctx.fillStyle = '#f472b6';
-        ctx.font = 'bold 13px system-ui, sans-serif';
-        ctx.fillText(`质点 P 振动图像 y - t（随右上方波前实时同步）`, boxLeft + 10, boxTop + 18);
+        const graphTitle = m.toScreen(0, boxTop + 0.15);
+        labels.push({ id: 'probe-vibration-history-label', x: graphTitle.x, y: graphTitle.y, text: `质点 P 振动图像 y - t（${params.probeX.toFixed(1)}m）`, color: '#f472b6', font: 'bold 12px system-ui, sans-serif' });
 
         if (state.probeHistory.length >= 2) {
           const windowSec = 6;
           const tMax = Math.max(windowSec, state.t);
           const tMin = tMax - windowSec;
-          const ampScale = (boxH * 0.36) / Math.max(params.amplitude, 0.4);
           ctx.strokeStyle = '#f472b6';
           ctx.lineWidth = 2.6;
           ctx.beginPath();
           let started = false;
           for (const pt of state.probeHistory) {
             if (pt.x < tMin) continue;
-            const px = boxLeft + ((pt.x - tMin) / windowSec) * boxW;
-            const py = midY - pt.y * ampScale;
+            const worldX = boxLeft + ((pt.x - tMin) / windowSec) * boxWidth;
+            const worldY = midY + Math.max(-0.34, Math.min(0.34, pt.y / Math.max(params.amplitude, 0.4) * 0.34));
+            const point = m.toScreen(worldX, worldY);
             if (!started) {
-              ctx.moveTo(px, py);
+              ctx.moveTo(point.x, point.y);
               started = true;
             } else {
-              ctx.lineTo(px, py);
+              ctx.lineTo(point.x, point.y);
             }
           }
           ctx.stroke();
         }
         ctx.restore();
       }
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       return;
     }
 
-    // 二维坐标映射（干涉 & 多普勒）
-    const pxPerMeter = Math.min(viewport.width, viewport.height) * 0.14 * viewport.scale;
-    const cx = viewport.width * 0.5 + viewport.offsetX;
-    const cy = viewport.height * 0.5 + viewport.offsetY;
-    const toScreen2D = (wx: number, wy: number) => ({
-      sx: cx + wx * pxPerMeter,
-      sy: cy - wy * pxPerMeter
-    });
+    const toScreen2D = m.toScreen;
 
     if (params.mode === 'interference') {
       if (activeLayers.has('interferenceField')) {
         const cols = 96;
         const rows = 58;
-        const xSpan = viewport.width / pxPerMeter;
-        const ySpan = viewport.height / pxPerMeter;
-        const cellW = viewport.width / cols;
-        const cellH = viewport.height / rows;
+        const xMin = -3.5;
+        const xMax = 3.5;
+        const yMin = -2.5;
+        const yMax = 2.5;
+        const cellWorldW = (xMax - xMin) / cols;
+        const cellWorldH = (yMax - yMin) / rows;
         const maxAmp = Math.max(2 * params.amplitude, 0.1);
 
         for (let r = 0; r < rows; r++) {
-          const wy = 0.5 * ySpan - ((r + 0.5) / rows) * ySpan;
+          const wy = yMax - ((r + 0.5) / rows) * (yMax - yMin);
           for (let c = 0; c < cols; c++) {
-            const wx = -0.5 * xSpan + ((c + 0.5) / cols) * xSpan;
+            const wx = xMin + ((c + 0.5) / cols) * (xMax - xMin);
             const res = evaluateInterferenceAtPoint(wx, wy, state.t, params);
             const norm = Math.max(-1, Math.min(1, res.displacement / maxAmp));
             const alpha = Math.abs(norm) * 0.72;
@@ -587,7 +576,8 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
               norm >= 0
                 ? `rgba(56, 189, 248, ${alpha.toFixed(2)})`
                 : `rgba(244, 114, 182, ${alpha.toFixed(2)})`;
-            ctx.fillRect(c * cellW, r * cellH, cellW + 0.8, cellH + 0.8);
+            const topLeft = m.toScreen(wx - cellWorldW * 0.5, wy + cellWorldH * 0.5);
+            ctx.fillRect(topLeft.x, topLeft.y, m.len(cellWorldW), m.len(cellWorldH));
           }
         }
       }
@@ -604,8 +594,8 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
         ctx.setLineDash([7, 6]);
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(pTop.sx, pTop.sy);
-        ctx.lineTo(pBot.sx, pBot.sy);
+        ctx.moveTo(pTop.x, pTop.y);
+        ctx.lineTo(pBot.x, pBot.y);
         ctx.stroke();
         ctx.restore();
       }
@@ -617,10 +607,9 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
         ctx.save();
         ctx.fillStyle = '#fbbf24';
         ctx.beginPath();
-        ctx.arc(sp.sx, sp.sy, 7, 0, Math.PI * 2);
+        ctx.arc(sp.x, sp.y, m.len(0.045), 0, Math.PI * 2);
         ctx.fill();
-        ctx.font = 'bold 14px system-ui, sans-serif';
-        ctx.fillText(`S${idx + 1}`, sp.sx - 8, sp.sy - 12);
+        labels.push({ id: `interference-source-${idx}`, x: sp.x, y: sp.y - m.len(0.12), text: `S${idx + 1}`, color: '#fbbf24', font: 'bold 13px system-ui, sans-serif' });
         ctx.restore();
       }
 
@@ -632,13 +621,13 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(pp.sx, pp.sy, 7 + Math.abs(res.displacement) * 6, 0, Math.PI * 2);
+        ctx.arc(pp.x, pp.y, m.len(0.05 + Math.abs(res.displacement) * 0.04), 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
-        ctx.font = 'bold 13px system-ui, sans-serif';
-        ctx.fillText(`P (A合=${res.analyticalAmplitude.toFixed(2)}m)`, pp.sx + 12, pp.sy - 6);
+        labels.push({ id: 'interference-probe-label', x: pp.x, y: pp.y - m.len(0.15), text: `P (A合=${res.analyticalAmplitude.toFixed(2)}m)`, color: '#e2e8f0', font: 'bold 13px system-ui, sans-serif' });
         ctx.restore();
       }
+      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       return;
     }
 
@@ -649,13 +638,13 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
       for (const wf of state.wavefronts) {
         const age = state.t - wf.emittedAt;
         if (age < 0) continue;
-        const r = vWave * age * pxPerMeter;
-        if (r > Math.max(viewport.width, viewport.height) * 1.2) continue;
+        const r = vWave * age * m.ppm;
+        if (r > m.len(6)) continue;
         const center = toScreen2D(wf.cx, wf.cy);
         ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(center.sx, center.sy, r, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, r, 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.restore();
@@ -666,24 +655,24 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
     if (params.sourceSpeedRatio > 1.0 && state.wavefronts.length > 1) {
       const sinAlpha = 1 / params.sourceSpeedRatio;
       const halfConeAngle = Math.asin(sinAlpha);
-      const coneLen = viewport.width * 0.65;
+      const coneLen = m.len(4.5);
       ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
-      ctx.moveTo(src.sx, src.sy);
-      ctx.lineTo(src.sx - coneLen * Math.cos(halfConeAngle), src.sy - coneLen * Math.sin(halfConeAngle));
-      ctx.moveTo(src.sx, src.sy);
-      ctx.lineTo(src.sx - coneLen * Math.cos(halfConeAngle), src.sy + coneLen * Math.sin(halfConeAngle));
+      ctx.moveTo(src.x, src.y);
+      ctx.lineTo(src.x - coneLen * Math.cos(halfConeAngle), src.y - coneLen * Math.sin(halfConeAngle));
+      ctx.moveTo(src.x, src.y);
+      ctx.lineTo(src.x - coneLen * Math.cos(halfConeAngle), src.y + coneLen * Math.sin(halfConeAngle));
       ctx.stroke();
       ctx.setLineDash([]);
     }
     ctx.fillStyle = '#fbbf24';
     ctx.beginPath();
-    ctx.arc(src.sx, src.sy, 8, 0, Math.PI * 2);
+    ctx.arc(src.x, src.y, m.len(0.05), 0, Math.PI * 2);
     ctx.fill();
-    ctx.font = 'bold 14px system-ui, sans-serif';
-    ctx.fillText(`波源 vs=${(params.sourceSpeedRatio * vWave).toFixed(2)}m/s`, src.sx - 35, src.sy - 14);
+    labels.push({ id: 'doppler-source-label', x: src.x, y: src.y - m.len(0.16), text: `波源 vs=${(params.sourceSpeedRatio * vWave).toFixed(2)}m/s`, color: '#fbbf24', font: 'bold 13px system-ui, sans-serif' });
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   }
 });

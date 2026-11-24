@@ -1,4 +1,14 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import {
+  createWorldMapper,
+  defineSimulationPlugin,
+  drawDotCrossField,
+  drawGlowVectorArrow,
+  drawGlowingConductorRod,
+  drawMetallicRail,
+  resolveAndDrawLabels,
+  type DiagramPrimitive,
+  type ParamFieldSpec
+} from '@physforge/sim-sdk';
 import {
   checkInvariants,
   computeObservables,
@@ -195,6 +205,7 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: 1.5, offsetRatioY: -0.105 },
   paramSchema,
   presets: [
     {
@@ -267,9 +278,9 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
         circuitLoad: 'battery',
         magneticB: 1.5,
         railWidth: 1.0,
-        mass1: 1.0,
-        resistorR: 1.5,
-        rodResistance1: 0.5,
+        mass1: 4.5,
+        resistorR: 2.0,
+        rodResistance1: 0,
         batteryEmf: 6.0,
         externalForce: 0,
         frictionMu: 0,
@@ -338,7 +349,7 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
     { key: 'kineticEnergy', label: '总动能 Ek', unit: 'J', color: '#4ade80' },
     { key: 'jouleHeat', label: '累计焦耳热 Q', unit: 'J', color: '#fb7185' }
   ],
-  getControlHandles: (state, params) => [
+  getControlHandles: (state, params) => params.externalForce > 0.05 ? [
     {
       id: 'external-force-rod1',
       label: `F外=${params.externalForce.toFixed(1)}N`,
@@ -350,7 +361,7 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
         externalForce: Number(Math.max(0, Math.min(12, (wp.x - state.x1) * 10)).toFixed(1))
       })
     }
-  ],
+  ] : [],
   getForceVectors: (state, params) => {
     const BL1 = params.magneticB * params.railWidth;
     const fAmp = BL1 * state.current;
@@ -426,143 +437,133 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
       {
         id: 'faraday-emf',
         label: '动生感应电动势与安培力',
-        latex: '\\mathcal{E} = BL\\Delta v, \\quad F_{\\text{安}} = BIL',
-        substitutedLatex: `\\mathcal{E} = ${emf.toFixed(2)}\\text{ V},\\quad I = ${state.current.toFixed(2)}\\text{ A},\\quad F_{\\text{安}} = ${(BL * Math.abs(state.current)).toFixed(2)}\\text{ N}`
+        latex: `\\begin{aligned}\\mathcal{E} &= BL${params.rodMode === 'double' ? '\\Delta v' : 'v'} \\\\ F_{\\text{安}} &= BIL\\end{aligned}`,
+        substitutedLatex: `\\begin{aligned}\\mathcal{E} &= ${emf.toFixed(2)}\\text{ V} \\\\ I &= ${state.current.toFixed(2)}\\text{ A},\\quad F_{\\text{安}} = ${(BL * Math.abs(state.current)).toFixed(2)}\\text{ N}\\end{aligned}`
       }
     ];
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const viewSpan = Math.max(12, state.x1 + 3);
-    const camShift = Math.max(0, state.x1 - viewSpan * 0.65);
-    const pxPerM = (viewport.width * 0.78) / 10;
-    const toX = (wx: number) => viewport.width * 0.14 + (wx - camShift) * pxPerM;
-    const railTopY = viewport.height * 0.34;
-    const railBotY = viewport.height * 0.64;
-    const railMidY = 0.5 * (railTopY + railBotY);
+    const m = createWorldMapper(viewport);
+    const camShift = Math.max(0, state.x1 - 1.6);
+    const frameOrigin = { x: 1.2 + camShift, y: 0 };
+    const toX = (worldX: number) => m.toX(worldX - frameOrigin.x);
+    const center = m.toScreen(0, 0);
+    const pixelsPerMeter = m.ppm;
+    const halfGap = Math.max(84, params.railWidth * pixelsPerMeter * 0.62);
+    const railMidY = center.y;
+    const railTopY = railMidY - halfGap;
+    const railBotY = railMidY + halfGap;
+    const basePixelsPerMeter = Math.min(viewport.width, viewport.height) * 0.24 * 1.5;
+    const spanHalf = m.len(320 / basePixelsPerMeter);
+    const railLeft = center.x - spanHalf - m.len(40 / basePixelsPerMeter);
+    const railRight = center.x + spanHalf - m.len(20 / basePixelsPerMeter);
+    const labels: Array<{ id: string; x: number; y: number; text: string; color: string; font?: string }> = [];
 
-    // 1. 导轨与磁场符号
     if (activeLayers.has('railsAndField')) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.07)';
-      ctx.fillRect(viewport.width * 0.1, railTopY - 22, viewport.width * 0.85, railBotY - railTopY + 44);
+      drawDotCrossField(
+        ctx,
+        railLeft + 24,
+        railTopY + 12,
+        railRight - railLeft - 48,
+        railBotY - railTopY - 24,
+        'in',
+        m.len(76 / basePixelsPerMeter),
+        m.len(56 / basePixelsPerMeter)
+      );
+      drawMetallicRail(ctx, railLeft, railTopY, railRight, 8);
+      drawMetallicRail(ctx, railLeft, railBotY, railRight, 8);
+    }
 
-      ctx.strokeStyle = 'rgba(125, 211, 252, 0.5)';
-      ctx.lineWidth = 1.4;
-      for (let sx = viewport.width * 0.16; sx < viewport.width * 0.9; sx += 58) {
-        for (let sy = railTopY + 28; sy < railBotY - 10; sy += 52) {
-          ctx.beginPath();
-          ctx.arc(sx, sy, 6, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(sx - 4, sy - 4);
-          ctx.lineTo(sx + 4, sy + 4);
-          ctx.moveTo(sx + 4, sy - 4);
-          ctx.lineTo(sx - 4, sy + 4);
-          ctx.stroke();
+    if (activeLayers.has('rods')) {
+      if (params.rodMode === 'single') {
+        const loadX = railLeft + m.len(18 / basePixelsPerMeter);
+        ctx.save();
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 2.4;
+        ctx.shadowColor = '#fbbf24';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.moveTo(loadX, railTopY);
+        ctx.lineTo(loadX, railMidY - 15);
+        if (params.circuitLoad === 'capacitor') {
+          ctx.moveTo(loadX - 12, railMidY - 8);
+          ctx.lineTo(loadX + 12, railMidY - 8);
+          ctx.moveTo(loadX - 12, railMidY + 8);
+          ctx.lineTo(loadX + 12, railMidY + 8);
+        } else if (params.circuitLoad === 'battery') {
+          ctx.moveTo(loadX - 10, railMidY - 6);
+          ctx.lineTo(loadX + 10, railMidY - 6);
+          ctx.moveTo(loadX - 6, railMidY + 5);
+          ctx.lineTo(loadX + 6, railMidY + 5);
+        } else {
+          ctx.moveTo(loadX, railMidY - 15);
+          ctx.lineTo(loadX - 8, railMidY - 10);
+          ctx.lineTo(loadX + 8, railMidY - 4);
+          ctx.lineTo(loadX - 8, railMidY + 2);
+          ctx.lineTo(loadX + 8, railMidY + 8);
+        }
+        ctx.moveTo(loadX, railMidY + 15);
+        ctx.lineTo(loadX, railBotY);
+        ctx.stroke();
+        ctx.restore();
+        labels.push({ id: 'load-label', x: loadX, y: railMidY + 34, text: params.circuitLoad === 'battery' ? '电源 E' : params.circuitLoad === 'capacitor' ? '电容 C' : '电阻 R', color: '#fcd34d' });
+      }
+
+      if (params.rodMode === 'double') {
+        const x2 = toX(state.x2);
+        drawGlowingConductorRod(ctx, x2, railTopY, railBotY, state.v2, '#f472b6', '#fbcfe8', 10);
+        labels.push({ id: 'rod2-label', x: x2, y: railBotY + 31, text: `杆2 v₂=${state.v2.toFixed(2)} m/s`, color: '#f9a8d4' });
+      }
+      const x1 = toX(state.x1);
+      drawGlowingConductorRod(ctx, x1, railTopY, railBotY, state.v1, '#38bdf8', '#e0f2fe', 11);
+      if (Math.abs(state.v1) > 0.05 || params.rodMode === 'single') {
+        const velocityLength = Math.max(-110, Math.min(110, state.v1 * 18));
+        if (Math.abs(velocityLength) >= 6) {
+          drawGlowVectorArrow(ctx, x1, railMidY + 14, x1 + velocityLength, railMidY + 14, '#38bdf8', 4.5, 14);
         }
       }
-
-      // 上下导轨线
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(viewport.width * 0.1, railTopY);
-      ctx.lineTo(viewport.width * 0.94, railTopY);
-      ctx.moveTo(viewport.width * 0.1, railBotY);
-      ctx.lineTo(viewport.width * 0.94, railBotY);
-      ctx.stroke();
-      ctx.restore();
     }
 
-    // 2. 导体棒与左端元件
-    if (activeLayers.has('rods')) {
-      ctx.save();
-      if (params.rodMode === 'single') {
-        const leftX = viewport.width * 0.1;
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(leftX, railTopY);
-        ctx.lineTo(leftX, railBotY);
-        ctx.stroke();
-
-        // 绘制负载符号框
-        ctx.fillStyle = '#0f172a';
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 2.5;
-        ctx.fillRect(leftX - 18, railMidY - 28, 36, 56);
-        ctx.strokeRect(leftX - 18, railMidY - 28, 36, 56);
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 14px system-ui, sans-serif';
-        const label =
-          params.circuitLoad === 'capacitor' ? 'C' : params.circuitLoad === 'battery' ? 'E' : 'R';
-        ctx.fillText(label, leftX - 5, railMidY + 5);
-      } else {
-        // 杆 2
-        const x2s = toX(state.x2);
-        ctx.fillStyle = '#f472b6';
-        ctx.fillRect(x2s - 6, railTopY - 8, 12, railBotY - railTopY + 16);
-        ctx.font = 'bold 14px system-ui, sans-serif';
-        ctx.fillText(`杆2 (v₂=${state.v2.toFixed(2)})`, x2s - 28, railBotY + 28);
-      }
-
-      // 杆 1
-      const x1s = toX(state.x1);
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(x1s - 7, railTopY - 8, 14, railBotY - railTopY + 16);
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      ctx.fillText(`杆1 (v₁=${state.v1.toFixed(2)})`, x1s - 28, railTopY - 16);
-      ctx.restore();
-    }
-
-    // 3. 电流方向高亮指示
     if (activeLayers.has('currentFlow') && Math.abs(state.current) > 0.02) {
-      ctx.save();
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = 'bold 15px system-ui, sans-serif';
-      const dirArrow = state.current > 0 ? '↑' : '↓';
-      const x1s = toX(state.x1);
-      ctx.fillText(`I = ${Math.abs(state.current).toFixed(2)} A ${dirArrow}`, x1s + 14, railMidY);
-      ctx.restore();
+      const x1 = toX(state.x1);
+      const direction = state.current >= 0 ? 1 : -1;
+      const start = x1 - 56 * direction;
+      drawGlowVectorArrow(ctx, start, railBotY + 18, start + 58 * direction, railBotY + 18, '#f59e0b', 4, 13);
+      labels.push({ id: 'current-label', x: start + 28 * direction, y: railBotY + 28, text: `I = ${Math.abs(state.current).toFixed(2)} A`, color: '#fbbf24', font: '600 14px system-ui, sans-serif' });
     }
 
-    // 4. 安培力与外力矢量
     if (activeLayers.has('forceVectors')) {
-      const x1s = toX(state.x1);
-      const BL = params.magneticB * params.railWidth;
-      const fAmp = BL * state.current;
-      const netElectro1 =
-        params.rodMode === 'single' && params.circuitLoad === 'battery' ? fAmp : -fAmp;
-      const scaleF = 16;
-
-      ctx.save();
-      if (Math.abs(netElectro1) > 0.05) {
-        const len = Math.max(-90, Math.min(90, netElectro1 * scaleF));
-        ctx.strokeStyle = '#fb7185';
-        ctx.fillStyle = '#fb7185';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(x1s, railMidY - 14);
-        ctx.lineTo(x1s + len, railMidY - 14);
-        ctx.stroke();
-        ctx.font = 'bold 13px system-ui, sans-serif';
-        ctx.fillText('F安', x1s + len + (len >= 0 ? 5 : -24), railMidY - 18);
+      const x1 = toX(state.x1);
+      const bl = params.magneticB * params.railWidth;
+      const ampereForce = bl * state.current;
+      const netForce = params.rodMode === 'single' && params.circuitLoad === 'battery' ? ampereForce : -ampereForce;
+      if (Math.abs(netForce) > 0.05) {
+        const length = Math.max(-120, Math.min(120, netForce * 24));
+        const forceY = railMidY - 14;
+        drawGlowVectorArrow(ctx, x1 - 6 * Math.sign(length), forceY, x1 + length, forceY, '#fb7185', 4.5, 14);
+        const forceLabel = `F安 = ${Math.abs(ampereForce).toFixed(2)} N`;
+        const forceLabelFont = '600 15px system-ui, sans-serif';
+        ctx.save();
+        ctx.font = forceLabelFont;
+        const forceLabelWidth = ctx.measureText(forceLabel).width + 12;
+        ctx.restore();
+        labels.push({
+          id: 'ampere-force',
+          x: x1 + Math.sign(length) * (forceLabelWidth * 0.5 + 14),
+          y: forceY - 24,
+          text: forceLabel,
+          color: '#fb7185',
+          font: forceLabelFont
+        });
       }
-
-      if (params.externalForce > 0.05) {
-        const lenExt = Math.min(95, params.externalForce * scaleF);
-        ctx.strokeStyle = '#4ade80';
-        ctx.fillStyle = '#4ade80';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(x1s, railMidY + 14);
-        ctx.lineTo(x1s + lenExt, railMidY + 14);
-        ctx.stroke();
-        ctx.font = 'bold 13px system-ui, sans-serif';
-        ctx.fillText('F外', x1s + lenExt + 5, railMidY + 18);
+      if (Math.abs(params.externalForce) > 0.05) {
+        const length = Math.max(-100, Math.min(100, params.externalForce * 16));
+        drawGlowVectorArrow(ctx, x1, railMidY + 12, x1 + length, railMidY + 12, '#4ade80', 3.5, 12);
+        labels.push({ id: 'external-force', x: x1 + length * 0.55, y: railMidY + 33, text: 'F外', color: '#4ade80' });
       }
-      ctx.restore();
     }
+
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
   }
 });
 

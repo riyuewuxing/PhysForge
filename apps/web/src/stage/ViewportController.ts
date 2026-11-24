@@ -1,4 +1,12 @@
-import type { Viewport } from '@physforge/sim-sdk';
+import {
+  getPixelsPerMeter,
+  resolveInitialCameraTransform,
+  screenToWorld,
+  worldToScreen,
+  type Viewport
+} from '@physforge/sim-sdk';
+
+export { getPixelsPerMeter, resolveInitialCameraTransform, screenToWorld, worldToScreen };
 
 export interface CameraTransform {
   readonly scale: number;
@@ -16,42 +24,6 @@ export function clampZoomScale(scale: number): number {
 
 export function getViewportAnchor(width: number, height: number): { cx: number; cy: number } {
   return { cx: width * 0.45, cy: height * 0.5 };
-}
-
-export function getPixelsPerMeter(viewport: Viewport): number {
-  return Math.min(viewport.width, viewport.height) * 0.24 * viewport.scale;
-}
-
-export function worldToScreen(
-  worldX: number,
-  worldY: number,
-  viewport: Viewport,
-  frameOrigin: { x: number; y: number } = { x: 0, y: 0 }
-): { x: number; y: number } {
-  const ppm = getPixelsPerMeter(viewport);
-  const { cx, cy } = getViewportAnchor(viewport.width, viewport.height);
-  const ox = cx + viewport.offsetX;
-  const oy = cy + viewport.offsetY;
-  return {
-    x: ox + (worldX - frameOrigin.x) * ppm,
-    y: oy - (worldY - frameOrigin.y) * ppm
-  };
-}
-
-export function screenToWorld(
-  screenX: number,
-  screenY: number,
-  viewport: Viewport,
-  frameOrigin: { x: number; y: number } = { x: 0, y: 0 }
-): { x: number; y: number } {
-  const ppm = Math.max(1e-6, getPixelsPerMeter(viewport));
-  const { cx, cy } = getViewportAnchor(viewport.width, viewport.height);
-  const ox = cx + viewport.offsetX;
-  const oy = cy + viewport.offsetY;
-  return {
-    x: frameOrigin.x + (screenX - ox) / ppm,
-    y: frameOrigin.y - (screenY - oy) / ppm
-  };
 }
 
 /**

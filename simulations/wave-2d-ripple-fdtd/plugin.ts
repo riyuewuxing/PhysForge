@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { waveFdtdPresets } from './presets.js';
 import {
   checkInvariants,
@@ -41,6 +41,7 @@ export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, Wav
   },
   paramSchema,
   presets: waveFdtdPresets,
+  defaultView: { offsetRatioX: -0.04 },
   engine: {
     createInitialState,
     step: stepWaveFdtd,
@@ -98,21 +99,25 @@ export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, Wav
   renderCanvas: (ctx, state, _params, viewport, activeLayers) => {
     const nx = state.nx;
     const ny = state.ny;
-    const drawW = viewport.width * 0.78;
-    const drawH = Math.min(viewport.height * 0.88, drawW * (ny / nx));
-    const x0 = viewport.width * 0.04;
-    const y0 = 0.5 * (viewport.height - drawH);
+    const m = createWorldMapper(viewport);
+    const centerJ = Math.floor(ny / 2);
+    const leftI = Math.max(0, state.wallI - 28);
+    const topJ = Math.max(0, centerJ - 24);
+    const columns = Math.min(68, nx - leftI);
+    const rows = Math.min(48, ny - topJ);
+    const gridTopLeft = m.toScreen(-2, 1.2);
+    const cell = m.len(0.05);
 
     ctx.save();
     if (activeLayers.has('waveField')) {
-      // Sample 2x2 grid blocks cleanly to Canvas 2D for ultra-fast interactive rendering
-      const cellW = drawW / nx;
-      const cellH = drawH / ny;
+      // Show a cropped physical window at the solver's 0.05 m cell pitch.
       const invMax = 1 / Math.max(0.25, state.maxAmplitude * 0.7);
 
-      for (let j = 0; j < ny; j += 2) {
-        for (let i = 0; i < nx; i += 2) {
-          const idx = j * nx + i;
+      for (let j = 0; j < rows; j += 1) {
+        for (let i = 0; i < columns; i += 1) {
+          const solverI = leftI + i;
+          const solverJ = topJ + j;
+          const idx = solverJ * nx + solverI;
           const spd = state.speedSnapshot[idx]!;
           if (spd === 0) {
             ctx.fillStyle = '#94a3b8';
@@ -126,17 +131,28 @@ export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, Wav
               ctx.fillStyle = `rgb(${c}, ${Math.round(c * 0.35)}, ${Math.round(c * 0.55)})`;
             }
           }
-          ctx.fillRect(x0 + i * cellW, y0 + j * cellH, cellW * 2.1, cellH * 2.1);
+          ctx.fillRect(gridTopLeft.x + i * cell, gridTopLeft.y + j * cell, cell + 0.5, cell + 0.5);
         }
       }
 
       ctx.strokeStyle = 'rgba(148,163,184,0.4)';
-      ctx.strokeRect(x0, y0, drawW, drawH);
+      ctx.strokeRect(gridTopLeft.x, gridTopLeft.y, m.len(3.4), m.len(2.4));
+      const wallX = m.toScreen(-0.6, 0).x;
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = m.len(0.012);
+      ctx.beginPath();
+      ctx.moveTo(wallX, m.toScreen(0, 1.2).y);
+      ctx.lineTo(wallX, m.toScreen(0, -1.2).y);
+      ctx.stroke();
     }
 
     if (activeLayers.has('screenProfile')) {
-      const sx0 = x0 + drawW + 14;
-      const sw = viewport.width - sx0 - 16;
+      const profileTopLeft = m.toScreen(1.55, 1.2);
+      const profileBottomRight = m.toScreen(2.15, -1.2);
+      const sx0 = profileTopLeft.x;
+      const y0 = profileTopLeft.y;
+      const sw = profileBottomRight.x - sx0;
+      const drawH = profileBottomRight.y - y0;
       ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
       ctx.fillRect(sx0, y0, sw, drawH);
       let maxI = 1e-6;
@@ -148,8 +164,8 @@ export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, Wav
       ctx.lineWidth = 2;
       ctx.beginPath();
       for (let j = 16; j < ny - 16; j++) {
-        const px = sx0 + (state.screenIntensity[j]! / maxI) * (sw - 12);
-        const py = y0 + (j / ny) * drawH;
+        const px = profileTopLeft.x + (state.screenIntensity[j]! / maxI) * sw;
+        const py = m.toScreen(0, 1.2 - ((j - 16) / (ny - 32)) * 2.4).y;
         if (j === 16) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       }

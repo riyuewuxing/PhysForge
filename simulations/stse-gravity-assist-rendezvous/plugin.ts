@@ -1,4 +1,4 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { gravityAssistPresets } from './presets.js';
 import {
   checkInvariants,
@@ -58,6 +58,7 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  defaultView: { scale: (params) => params.mode === 'rendezvous' ? 0.5 : 1.417 },
   paramSchema,
   presets: gravityAssistPresets,
   engine: {
@@ -81,13 +82,13 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
       id: 'impact-parameter',
       label: `b=${params.impactParam.toFixed(2)}`,
       position: {
-        x: (params.planetOrbitRadius - 3.2) * 0.5,
-        y: sign * params.impactParam * 0.5
+        x: params.planetOrbitRadius - 3.2,
+        y: sign * params.impactParam
       },
       handleKind: 'point',
       color: '#4ade80',
       onDrag: (worldPos) => {
-        const signedDistance = worldPos.y * 2;
+        const signedDistance = worldPos.y;
         return {
           impactParam: Number(Math.max(0.15, Math.min(1.2, Math.abs(signedDistance))).toFixed(2)),
           flybySide: signedDistance > 0 ? 'leading' : signedDistance < 0 ? 'trailing' : params.flybySide
@@ -138,24 +139,21 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
     if (!activeLayers.has('orbit')) return;
+    const m = createWorldMapper(viewport);
+    const center = m.toScreen(0, 0);
     ctx.save();
-    const cx = w * 0.45 + viewport.offsetX;
-    const cy = h * 0.5 + viewport.offsetY;
 
     if (params.mode === 'rendezvous') {
-      const scale = Math.min(w, h) * 0.34 * viewport.scale;
       ctx.strokeStyle = 'rgba(148,163,184,0.45)';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(cx, cy, scale, 0, Math.PI * 2);
+      ctx.arc(center.x, center.y, m.len(1), 0, Math.PI * 2);
       ctx.stroke();
 
       ctx.fillStyle = '#fbbf24';
       ctx.beginPath();
-      ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+      ctx.arc(center.x, center.y, m.len(0.1), 0, Math.PI * 2);
       ctx.fill();
 
       if (state.trail.length > 1) {
@@ -163,19 +161,20 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
         ctx.lineWidth = 2;
         ctx.beginPath();
         state.trail.forEach((pt, idx) => {
-          const sx = cx + pt.x * scale;
-          const sy = cy - pt.y * scale;
-          if (idx === 0) ctx.moveTo(sx, sy);
-          else ctx.lineTo(sx, sy);
+          const point = m.toScreen(pt.x, pt.y);
+          if (idx === 0) ctx.moveTo(point.x, point.y);
+          else ctx.lineTo(point.x, point.y);
         });
         ctx.stroke();
       }
 
       ctx.fillStyle = '#4ade80';
-      ctx.fillRect(cx + state.planetPos.x * scale - 6, cy - state.planetPos.y * scale - 6, 12, 12);
+      const planet = m.toScreen(state.planetPos.x, state.planetPos.y);
+      ctx.fillRect(planet.x - m.len(0.05), planet.y - m.len(0.05), m.len(0.1), m.len(0.1));
       ctx.fillStyle = '#38bdf8';
       ctx.beginPath();
-      ctx.arc(cx + state.pos.x * scale, cy - state.pos.y * scale, 6, 0, Math.PI * 2);
+      const chaser = m.toScreen(state.pos.x, state.pos.y);
+      ctx.arc(chaser.x, chaser.y, m.len(0.05), 0, Math.PI * 2);
       ctx.fill();
 
       ctx.fillStyle = '#e2e8f0';
@@ -189,12 +188,11 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
       return;
     }
 
-    const scale = Math.min(w, h) * 0.12 * viewport.scale;
-
     // Planet marker
     ctx.fillStyle = '#f59e0b';
     ctx.beginPath();
-    ctx.arc(cx + state.planetPos.x * scale, cy - state.planetPos.y * scale, 10, 0, Math.PI * 2);
+    const planet = m.toScreen(state.planetPos.x, state.planetPos.y);
+    ctx.arc(planet.x, planet.y, m.len(0.06), 0, Math.PI * 2);
     ctx.fill();
 
     // Spacecraft trail
@@ -205,17 +203,17 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
       state.trail.forEach((pt, idx) => {
         const px = pt.x;
         const py = pt.y;
-        const sx = cx + px * scale;
-        const sy = cy - py * scale;
-        if (idx === 0) ctx.moveTo(sx, sy);
-        else ctx.lineTo(sx, sy);
+        const point = m.toScreen(px, py);
+        if (idx === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
       });
       ctx.stroke();
     }
 
     ctx.fillStyle = '#4ade80';
     ctx.beginPath();
-    ctx.arc(cx + state.pos.x * scale, cy - state.pos.y * scale, 6, 0, Math.PI * 2);
+    const spacecraft = m.toScreen(state.pos.x, state.pos.y);
+    ctx.arc(spacecraft.x, spacecraft.y, m.len(0.05), 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = '#e2e8f0';

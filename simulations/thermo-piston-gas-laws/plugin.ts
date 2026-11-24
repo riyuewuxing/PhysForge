@@ -1,10 +1,12 @@
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec, type ParamValue } from '@physforge/sim-sdk';
+import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec, type ParamValue } from '@physforge/sim-sdk';
 import { thermoGasPresets } from './presets.js';
 import {
   checkInvariants,
   computeDetachCriticalTempK,
   computeObservables,
   createInitialState,
+  P_ATM,
   stepThermoGasLaws,
   type ThermoGasParams,
   type ThermoGasState
@@ -63,6 +65,40 @@ export const thermoPistonGasLawsPlugin = defineSimulationPlugin<ThermoGasParams,
     computeObservables,
     checkInvariants
   },
+  getForceVectors: (state, params): ForceVectorItem[] => {
+    const areaM2 = Math.max(1e-4, params.pistonAreaCm2 * 1e-4);
+    if (params.mode === 'stop-pin-cylinder') {
+      const y = -0.95 + Math.min(1.3, Math.max(0.1, (state.volumeM3 * 1000 / 10) * 1.9 * 0.72));
+      const origin = { x: -0.8, y };
+      const force = state.pressurePa * areaM2;
+      const externalPressure = P_ATM * areaM2;
+      const weight = Math.max(0, params.pistonMassKg) * CLASSROOM_GRAVITY;
+      const vectors: ForceVectorItem[] = [
+        { id: 'gas-pressure', label: 'F_gas=PS', origin, force: { x: 0, y: force }, color: '#38bdf8', category: 'other', unit: 'N' },
+        { id: 'atmospheric-pressure', label: 'F_atm=P₀S', origin, force: { x: 0, y: -externalPressure }, color: '#fbbf24', category: 'other', unit: 'N' },
+        { id: 'piston-weight', label: 'mg', origin, force: { x: 0, y: -weight }, color: '#fb923c', category: 'gravity', unit: 'N' }
+      ];
+      if (state.mode === 'pinned') {
+        const pinReaction = Math.max(0, externalPressure + weight - force);
+        vectors.push({ id: 'pin-reaction', label: 'F_pin', origin, force: { x: 0, y: pinReaction }, color: '#a78bfa', category: 'normal', unit: 'N' });
+      }
+      return vectors;
+    }
+
+    if (params.mode === 'mercury-tube-tilt') {
+      const angle = (params.tubeTiltDeg * Math.PI) / 180;
+      const area = areaM2;
+      const columnMass = 13546 * area * Math.max(0, state.mercuryColumnCm / 100);
+      const along = { x: Math.cos(angle), y: Math.sin(angle) };
+      const origin = { x: -1.05 + (state.airColumnCm / 100 + state.mercuryColumnCm / 200) * along.x, y: (state.airColumnCm / 100 + state.mercuryColumnCm / 200) * along.y };
+      return [
+        { id: 'gas-pressure-on-mercury', label: 'F_gas=PS', origin, force: { x: state.pressurePa * area * along.x, y: state.pressurePa * area * along.y }, color: '#38bdf8', category: 'other', unit: 'N' },
+        { id: 'atmospheric-pressure-on-mercury', label: 'F_atm=P₀S', origin, force: { x: -P_ATM * area * along.x, y: -P_ATM * area * along.y }, color: '#fbbf24', category: 'other', unit: 'N' },
+        { id: 'mercury-weight', label: 'm_Hg g', origin, force: { x: 0, y: -columnMass * CLASSROOM_GRAVITY }, color: '#fb923c', category: 'gravity', unit: 'N' }
+      ];
+    }
+    return [];
+  },
   layers: [
     { id: 'apparatus', label: '汽缸 / 水银管 / 气筒装置图', defaultVisible: true },
     { id: 'pvCurve', label: '实时 P-V 态变拐点轨迹', defaultVisible: true }
@@ -117,41 +153,43 @@ export const thermoPistonGasLawsPlugin = defineSimulationPlugin<ThermoGasParams,
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
+    const m = createWorldMapper(viewport);
     ctx.save();
+    const labels: CanvasLabel[] = [];
 
     if (activeLayers.has('apparatus')) {
-      const cx = w * 0.28;
-      const botY = h * 0.8;
       if (params.mode === 'mercury-tube-tilt') {
-        const cy = h * 0.5;
+        const center = m.toScreen(-1.05, 0.05);
         ctx.save();
-        ctx.translate(cx, cy);
+        ctx.translate(center.x, center.y);
         ctx.rotate((-params.tubeTiltDeg * Math.PI) / 180);
-        const lenPx = params.tubeLengthCm * 2.2;
+        const lenPx = m.len(Math.min(1.5, params.tubeLengthCm / 50));
         const airPx = (state.airColumnCm / params.tubeLengthCm) * lenPx;
         const hgPx = (state.mercuryColumnCm / params.tubeLengthCm) * lenPx;
         ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = m.len(0.014);
         ctx.beginPath();
-        ctx.moveTo(-lenPx / 2, -16);
-        ctx.lineTo(-lenPx / 2, 16);
-        ctx.lineTo(lenPx / 2, 16);
-        ctx.moveTo(-lenPx / 2, -16);
-        ctx.lineTo(lenPx / 2, -16);
+        ctx.moveTo(-lenPx / 2, -m.len(0.07));
+        ctx.lineTo(-lenPx / 2, m.len(0.07));
+        ctx.lineTo(lenPx / 2, m.len(0.07));
+        ctx.moveTo(-lenPx / 2, -m.len(0.07));
+        ctx.lineTo(lenPx / 2, -m.len(0.07));
         ctx.stroke();
 
         ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
-        ctx.fillRect(-lenPx / 2 + 2, -14, airPx, 28);
+        ctx.fillRect(-lenPx / 2 + m.len(0.01), -m.len(0.06), airPx, m.len(0.12));
         ctx.fillStyle = '#cbd5e1';
-        ctx.fillRect(-lenPx / 2 + 2 + airPx, -14, hgPx, 28);
+        ctx.fillRect(-lenPx / 2 + m.len(0.01) + airPx, -m.len(0.06), hgPx, m.len(0.12));
         ctx.restore();
       } else {
-        const cylW = 110;
-        const cylH = 220;
+        const bottom = m.toScreen(-1.05, -0.95);
+        const top = m.toScreen(-1.05, 0.95);
+        const cylW = m.len(0.72);
+        const cylH = bottom.y - top.y;
+        const cx = bottom.x;
+        const botY = bottom.y;
         ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = m.len(0.014);
         ctx.beginPath();
         ctx.moveTo(cx - cylW / 2, botY - cylH);
         ctx.lineTo(cx - cylW / 2, botY);
@@ -160,34 +198,36 @@ export const thermoPistonGasLawsPlugin = defineSimulationPlugin<ThermoGasParams,
         ctx.stroke();
 
         const volL = state.volumeM3 * 1000;
-        const gasH = Math.max(24, Math.min(cylH - 22, (volL / 10) * 140));
+        const gasH = Math.max(m.len(0.08), Math.min(cylH - m.len(0.08), (volL / 10) * cylH * 0.72));
         ctx.fillStyle = 'rgba(251, 146, 60, 0.25)';
-        ctx.fillRect(cx - cylW / 2 + 2, botY - gasH, cylW - 4, gasH);
+        ctx.fillRect(cx - cylW / 2 + m.len(0.01), botY - gasH, cylW - m.len(0.02), gasH);
 
         ctx.fillStyle = state.mode === 'pinned' ? '#fbbf24' : '#38bdf8';
-        ctx.fillRect(cx - cylW / 2 + 2, botY - gasH - 16, cylW - 4, 16);
+        ctx.fillRect(cx - cylW / 2 + m.len(0.01), botY - gasH - m.len(0.08), cylW - m.len(0.02), m.len(0.08));
 
         if (params.mode === 'stop-pin-cylinder') {
-          const pinH = (params.pinVolumeL / 10) * 140;
+          const pinH = (params.pinVolumeL / 10) * cylH * 0.72;
           ctx.fillStyle = '#f43f5e';
-          ctx.fillRect(cx - cylW / 2 - 4, botY - pinH - 2, 12, 6);
-          ctx.fillRect(cx + cylW / 2 - 8, botY - pinH - 2, 12, 6);
+          ctx.fillRect(cx - cylW / 2 - m.len(0.04), botY - pinH - m.len(0.01), m.len(0.08), m.len(0.03));
+          ctx.fillRect(cx + cylW / 2 - m.len(0.04), botY - pinH - m.len(0.01), m.len(0.08), m.len(0.03));
         }
       }
     }
 
     if (activeLayers.has('pvCurve')) {
-      const gx = w * 0.54;
-      const gy = h * 0.78;
-      const gw = w * 0.4;
-      const gh = h * 0.56;
+      const plotTopLeft = m.toScreen(0.2, 0.9);
+      const plotBottomRight = m.toScreen(2.1, -0.9);
+      const gx = plotTopLeft.x;
+      const gy = plotBottomRight.y;
+      const gw = plotBottomRight.x - gx;
+      const gh = gy - plotTopLeft.y;
       ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
       ctx.fillRect(gx, gy - gh, gw, gh);
       ctx.strokeStyle = '#475569';
       ctx.strokeRect(gx, gy - gh, gw, gh);
 
-      const toPx = (vL: number) => gx + Math.min(1, Math.max(0, vL / 15)) * (gw - 24) + 12;
-      const toPy = (pKPa: number) => gy - Math.min(1, Math.max(0, pKPa / 240)) * (gh - 24) - 12;
+      const toPx = (vL: number) => gx + Math.min(1, Math.max(0, vL / 15)) * gw;
+      const toPy = (pKPa: number) => gy - Math.min(1, Math.max(0, pKPa / 240)) * gh;
 
       if (state.pvHistory.length > 1) {
         ctx.strokeStyle = '#38bdf8';
@@ -201,17 +241,37 @@ export const thermoPistonGasLawsPlugin = defineSimulationPlugin<ThermoGasParams,
       }
       ctx.fillStyle = '#4ade80';
       ctx.beginPath();
-      ctx.arc(toPx(state.volumeM3 * 1000), toPy(state.pressurePa / 1000), 5, 0, Math.PI * 2);
+      ctx.arc(toPx(state.volumeM3 * 1000), toPy(state.pressurePa / 1000), m.len(0.025), 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '12px sans-serif';
       const critTxt =
         params.mode === 'stop-pin-cylinder'
           ? `Tcrit=${computeDetachCriticalTempK(params).toFixed(1)}K`
           : `P=${(state.pressurePa / 1000).toFixed(2)} kPa`;
-      ctx.fillText(`P-V 状态追踪 · ${critTxt}`, gx + 10, gy - gh + 20);
+      labels.push({
+        id: 'p-v-state-label',
+        x: gx + m.len(0.48),
+        y: gy - gh + m.len(0.09),
+        text: `P-V 状态追踪 · ${critTxt}`,
+        color: '#cbd5e1',
+        font: '12px sans-serif'
+      });
     }
+
+    const railTop = m.toScreen(0, 1);
+    const railBottom = m.toScreen(0, -1);
+    ctx.strokeStyle = 'rgba(148,163,184,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(railTop.x, railTop.y);
+    ctx.lineTo(railBottom.x, railBottom.y);
+    ctx.stroke();
+    const handle = m.toScreen(0, params.mode === 'mercury-tube-tilt' ? params.tubeTiltDeg / 90 : (params.targetTempK - 400) / 200);
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath();
+    ctx.arc(handle.x, handle.y, m.len(0.045), 0, Math.PI * 2);
+    ctx.fill();
+    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
 
     ctx.restore();
   },

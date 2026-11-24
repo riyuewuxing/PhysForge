@@ -125,6 +125,34 @@ export const mechSpringSeparationPlugin = defineSimulationPlugin<SpringSepParams
     }
     return vectors;
   },
+  referenceFrames: [
+    {
+      id: 'cm-frame',
+      label: '两物块质心系',
+      getOrigin: (s, p) => {
+        const theta = degToRad(p.inclineDeg);
+        const tangent = { x: Math.cos(theta), y: Math.sin(theta) };
+        const normal = { x: -Math.sin(theta), y: Math.cos(theta) };
+        const totalMass = p.mass1 + p.mass2;
+        const along = (p.mass1 * s.s1 + p.mass2 * (s.s2 + 0.34)) / totalMass;
+        return { x: along * tangent.x + 0.12 * normal.x, y: along * tangent.y + 0.12 * normal.y };
+      },
+      getVelocity: (s, p) => {
+        const theta = degToRad(p.inclineDeg);
+        const vCm = (p.mass1 * s.v1 + p.mass2 * s.v2) / (p.mass1 + p.mass2);
+        return { x: vCm * Math.cos(theta), y: vCm * Math.sin(theta) };
+      }
+    },
+    {
+      id: 'block1-frame',
+      label: '物块 1 随动系',
+      getOrigin: (s, p) => {
+        const theta = degToRad(p.inclineDeg);
+        return { x: s.s1 * Math.cos(theta) - 0.12 * Math.sin(theta), y: s.s1 * Math.sin(theta) + 0.12 * Math.cos(theta) };
+      },
+      getVelocity: (s, p) => ({ x: s.v1 * Math.cos(degToRad(p.inclineDeg)), y: s.v1 * Math.sin(degToRad(p.inclineDeg)) })
+    }
+  ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
