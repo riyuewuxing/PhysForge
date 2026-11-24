@@ -727,9 +727,10 @@ const ClassroomApp: React.FC = () => {
             onStoryParams={store.syncStoryParams}
             onStoryBeat={store.setStoryBeat}
             onStoryFreeze={store.setAutoFreezeBadge}
-            onStoryPlaying={store.setPlaying}
+            onStoryPlaying={(playing) => { store.setScrubTime(null); store.setPlaying(playing); }}
             onStoryFbd={(enabled) => { if (useClassroomStore.getState().autoFbdEnabled !== enabled) store.toggleAutoFbd(); }}
             onStoryFrame={store.setActiveFrameId}
+            onStoryLayers={store.setStoryLayers}
             onStoryView3d={store.setView3d}
             onMorphProgress={(progress) => { morphProgressRef.current = progress; }}
             onWebGLFallback={() => useClassroomStore.getState().setView3d(false)}
