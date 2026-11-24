@@ -24,7 +24,7 @@ import {
   Undo2,
   Wrench,
 } from 'lucide-react';
-import { isSimulationPluginV3, type ParamRecord, type SimulationPluginV2 } from '@physforge/sim-sdk';
+import { isSimulationPluginV3, selectLiveFormulas, type ParamRecord, type SimulationPluginV2 } from '@physforge/sim-sdk';
 import { getStoryDecks, resolvePresentationHotkey, useClassroomStore } from './store/useClassroomStore.js';
 import { SimulationStage, type RecordedTelemetryFrame, type StoryNavigation } from './components/SimulationStage.js';
 import { LeftCatalogSidebar } from './components/LeftCatalogSidebar.js';
@@ -95,7 +95,7 @@ const ClassroomApp: React.FC = () => {
 
   const plugin = store.loadedPlugin;
   const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
-  const liveFormulas = isSimulationPluginV3(plugin) ? plugin.liveFormulas ?? [] : [];
+  const liveFormulas = selectLiveFormulas(isSimulationPluginV3(plugin) ? plugin.liveFormulas : undefined, store.params);
   const storyNavigationRef = useRef<StoryNavigation | null>(null);
   const morphProgressRef = useRef(store.view3dEnabled ? 0 : 1);
   const decks = useMemo(() => getStoryDecks(plugin), [plugin]);
