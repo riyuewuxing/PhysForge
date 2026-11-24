@@ -194,6 +194,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const [heldThreeId, setHeldThreeId] = useState<string | null>(() => view3dEnabled ? plugin.meta.id : null);
   const showThree = view3dEnabled || Boolean(presentationMode && spatial && heldThreeId === plugin.meta.id);
   const previouslyShowThreeRef = useRef(showThree);
+  const initialFlatViewportRef = useRef<Viewport | undefined>(undefined);
   const enterFromCanvas = showThree && !previouslyShowThreeRef.current && Boolean(presentationMode && spatial);
   useEffect(() => {
     previouslyShowThreeRef.current = showThree;
@@ -235,6 +236,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     offsetX: 0,
     offsetY: 0
   });
+
+  if (enterFromCanvas) initialFlatViewportRef.current = { ...viewportRef.current };
+  else if (!showThree) initialFlatViewportRef.current = undefined;
 
   const [zoomPercent, setZoomPercent] = useState<number>(100);
   const [fbdCount, setFbdCount] = useState<number>(0);
@@ -1061,7 +1065,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               activeLayers={new Set(activeLayers)}
               presentationMode={presentationMode}
               morphTarget={view3dEnabled ? 0 : 1}
-              initialFlatViewport={enterFromCanvas ? viewportRef.current : undefined}
+              initialFlatViewport={initialFlatViewportRef.current}
               onMorphProgress={onMorphProgress}
               onMorphFlat={completeFlatMorph}
               onWebGLFallback={() => { setHeldThreeId(null); onWebGLFallback?.(); }}
