@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { acScopePresets } from './presets.js';
@@ -36,7 +37,25 @@ const paramSchema: readonly ParamFieldSpec<AcScopeParams>[] = [
   { key: 'initialAngleDeg', kind: 'number', label: '初始摆角 θ₀', unit: '°', min: -60, max: 60, step: 5, defaultValue: -10 }
 ];
 
-export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams, AcScopeState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "period-frequency",
+  "title": "交变场周期与角频率",
+  "latex": "\\omega=\\frac{2\\pi}{\\htmlClass{pf-live-var}{\\htmlData{param=periodT}{T}}}",
+  "bindings": [
+    {
+      "tokenKey": "periodT",
+      "paramKey": "periodT",
+      "label": "交变周期 T",
+      "unit": "s",
+      "min": 0.6,
+      "max": 4,
+      "step": 0.2,
+      "precision": 2
+    }
+  ]
+}];
+export const emAcFieldOscilloscopePlugin = Object.assign(defineSimulationPlugin<AcScopeParams, AcScopeState>({
   meta: {
     id: 'em-ac-field-oscilloscope',
     title: '交变电场、示波管与等效重力场 (E03)',
@@ -255,6 +274,6 @@ export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams,
       }
     ];
   }
-});
+}), { liveFormulas });
 
 export default emAcFieldOscilloscopePlugin;
