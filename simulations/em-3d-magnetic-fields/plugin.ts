@@ -299,25 +299,37 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
       })
     }
   ],
-  formatFormulas: (state, params) => {
+  formatFormulas: (state, params): import('@physforge/sim-sdk').FormulaDisplayItem[] => {
     const obs = computeObservables(state);
-    if (params.geometryType === 'finite-solenoid') {
-      return [
-        {
-          id: 'local-helical-motion',
-          label: '局部匀强磁场近似下的螺旋运动',
-          latex: '\\begin{aligned}\\text{局部匀强近似}\\\\ R &= \\frac{mv_\\perp}{|q|B}\\\\ T &= \\frac{2\\pi m}{|q|B}\\end{aligned}'
-        }
-      ];
+    const speed = obs.speed ?? 0;
+    const specificEnergy = obs.ke ?? 0;
+    const specificPower = obs.vDotF ?? 0;
+    if (params.geometryType === 'uniform-helix') {
+      const omega = Math.abs(params.qOverM * params.uniformBz);
+      const vPerp = Math.hypot(state.velocity.x, state.velocity.y);
+      const gyration = omega > 0
+        ? `\\begin{aligned}R&=${(vPerp / omega).toFixed(3)}\\text{ m}\\\\ T&=${(2 * Math.PI / omega).toFixed(3)}\\text{ s}\\end{aligned}`
+        : '\\text{荷质比为零：无磁回旋}';
+      return [{
+        id: 'uniform-helix-state', label: '均匀磁场中的实际速度与回旋参数',
+        latex: '\\omega_c=|q/m|B,\\quad R=v_\\perp/\\omega_c',
+        substitutedLatex: gyration
+      }, {
+        id: 'uniform-velocity-state', label: '速度分量与比动能',
+        latex: 'v^2=v_\\perp^2+v_\\parallel^2',
+        substitutedLatex: `\\begin{aligned}v_\\parallel&=${state.velocity.z.toFixed(3)}\\text{ m/s}\\\\v_\\perp&=${vPerp.toFixed(3)}\\text{ m/s}\\\\K/m&=${specificEnergy.toFixed(3)}\\text{ J/kg}\\end{aligned}`
+      }];
     }
-    return [
-      {
-        id: 'biot-savart-lorentz',
-        label: '3D 毕奥-萨伐尔磁场与洛伦兹加速度',
-        latex: 'd\\mathbf{B}=\\frac{\\mu_0 I}{4\\pi}\\frac{d\\mathbf{l}\\times\\mathbf{r}}{r^3},\\; \\mathbf{a}=\\frac{q}{m}\\mathbf{v}\\times\\mathbf{B}',
-        substitutedLatex: `|B|=${(obs.bMagMicroT ?? 0).toFixed(2)}\\ \\mu\\text{T},\\; E_k/m=${(obs.ke ?? 0).toFixed(4)}\\text{ J/kg},\\; \\mathbf{v}\\cdot\\mathbf{a}=${(obs.vDotF ?? 0).toFixed(6)}`
-      }
-    ];
+    const currentField = {
+      id: 'biot-savart-lorentz', label: '3D 毕奥—萨伐尔磁场与洛伦兹加速度',
+      latex: '\\begin{aligned}d\\mathbf B&=\\frac{\\mu_0 I}{4\\pi}\\frac{d\\boldsymbol\\ell\\times\\mathbf r}{r^3}\\\\\\mathbf a&=\\frac{q}{m}\\mathbf v\\times\\mathbf B\\end{aligned}',
+      substitutedLatex: `\\begin{aligned}|B|&=${(obs.bMagMicroT ?? 0).toFixed(3)}\\,\\mu\\text{T}\\\\v&=${speed.toFixed(3)}\\text{ m/s}\\\\K/m&=${specificEnergy.toFixed(3)}\\text{ J/kg}\\\\\\mathbf v\\cdot\\mathbf a&=${specificPower.toFixed(6)}\\text{ W/kg}\\end{aligned}`
+    };
+    if (params.geometryType === 'finite-solenoid') return [currentField, {
+      id: 'local-helical-motion', label: '局部匀强近似（不作为全轨迹精确解）',
+      latex: '\\begin{aligned}R&=mv_\\perp/(|q|B)\\\\T&=2\\pi m/(|q|B)\\end{aligned}',
+    }];
+    return [currentField];
   }
 }), { storyDecks: magnetic3dStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
   default3DAzimuthRad: 0.67, default3DPolarRad: 1.08 } });
