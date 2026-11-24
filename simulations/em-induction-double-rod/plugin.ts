@@ -1,6 +1,6 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { inductionStoryDecks } from './storyDecks.js';
-import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints } from './diagramGeometry.js';
+import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints, inductionLoadDimensions } from './diagramGeometry.js';
 export { rodDisplayX } from './diagramGeometry.js';
 import {
   createWorldMapper,
@@ -621,36 +621,18 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
 
     if (activeLayers.has('rods')) {
       if (params.rodMode === 'single') {
-        const loadX = m.toX(g.x2);
-        ctx.save();
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 2.4;
-        ctx.shadowColor = '#fbbf24';
-        ctx.shadowBlur = 8;
-        ctx.beginPath();
-        ctx.moveTo(loadX, railTopY);
-        ctx.lineTo(loadX, railMidY - 15);
-        if (params.circuitLoad === 'capacitor') {
-          ctx.moveTo(loadX - 12, railMidY - 8);
-          ctx.lineTo(loadX + 12, railMidY - 8);
-          ctx.moveTo(loadX - 12, railMidY + 8);
-          ctx.lineTo(loadX + 12, railMidY + 8);
-        } else if (params.circuitLoad === 'battery') {
-          ctx.moveTo(loadX - 10, railMidY - 6);
-          ctx.lineTo(loadX + 10, railMidY - 6);
-          ctx.moveTo(loadX - 6, railMidY + 5);
-          ctx.lineTo(loadX + 6, railMidY + 5);
-        } else {
-          ctx.moveTo(loadX, railMidY - 15);
-          ctx.lineTo(loadX - 8, railMidY - 10);
-          ctx.lineTo(loadX + 8, railMidY - 4);
-          ctx.lineTo(loadX - 8, railMidY + 2);
-          ctx.lineTo(loadX + 8, railMidY + 8);
+        const loadX=m.toX(g.x2),{halfGap,halfPlateWidth}=inductionLoadDimensions(g.l1);
+        const upper=m.toY(halfGap),lower=m.toY(-halfGap),halfPlate=m.len(halfPlateWidth);
+        ctx.save();ctx.strokeStyle='#fbbf24';ctx.lineWidth=2.4;ctx.shadowColor='#fbbf24';ctx.shadowBlur=8;
+        ctx.beginPath();ctx.moveTo(loadX,railTopY);ctx.lineTo(loadX,upper);
+        if(params.circuitLoad==='capacitor'||params.circuitLoad==='battery'){
+          const lowerPlate=params.circuitLoad==='battery'?halfPlate*0.55:halfPlate;
+          ctx.moveTo(loadX-halfPlate,upper);ctx.lineTo(loadX+halfPlate,upper);
+          ctx.moveTo(loadX-lowerPlate,lower);ctx.lineTo(loadX+lowerPlate,lower);
+        }else{
+          for(let i=1;i<=6;i++)ctx.lineTo(loadX+(i===6?0:(i%2===0?1:-1)*halfPlate*0.65),upper+(lower-upper)*i/6);
         }
-        ctx.moveTo(loadX, railMidY + 15);
-        ctx.lineTo(loadX, railBotY);
-        ctx.stroke();
-        ctx.restore();
+        ctx.moveTo(loadX,lower);ctx.lineTo(loadX,railBotY);ctx.stroke();ctx.restore();
         labels.push({ id: 'load-label', x: loadX, y: railMidY + 34, text: params.circuitLoad === 'battery' ? '电源 E' : params.circuitLoad === 'capacitor' ? '电容 C' : '电阻 R', color: '#fcd34d' });
       }
 
