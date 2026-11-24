@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import {
   resolvePluginParams,
+  isSimulationPluginV3,
+  type StoryDeck,
   type FormulaDisplayItem,
   type InvariantReport,
   type ParamRecord,
@@ -17,6 +19,39 @@ import { CommandStack } from '../stage/CommandStack.js';
 import type { MeasureToolKind } from '../stage/RulerToolboxOverlay.js';
 
 export type ClassroomTheme = 'chalkboard' | 'projector';
+export type AppMode = 'studio' | 'stage' | 'story';
+export type PresentationCommand = 'next' | 'prev' | 'play-toggle' | 'blackout' | 'mirror' | 'exit';
+
+export function resolvePresentationHotkey(mode: AppMode, key: string): PresentationCommand | null {
+  if (mode === 'studio') return null;
+  if (key === 'Escape') return 'exit';
+  if (key.toLowerCase() === 'b' || key === '.') return 'blackout';
+  if (key.toLowerCase() === 'f') return 'play-toggle';
+  if (key.toLowerCase() === 'm') return 'mirror';
+  if (key === ' ') return mode === 'story' ? 'next' : 'play-toggle';
+  if (mode === 'story') {
+    if (key === 'ArrowRight' || key === 'PageDown') return 'next';
+    if (key === 'ArrowLeft' || key === 'PageUp') return 'prev';
+  }
+  return null;
+}
+
+/** Legacy plugins inherit real preset-based beats, never fabricated observables. */
+export function getStoryDecks(plugin: AnySimulationPlugin): readonly StoryDeck[] {
+  if (isSimulationPluginV3(plugin) && plugin.storyDecks?.length) {
+    return plugin.storyDecks.filter((deck) => deck.modelId === plugin.meta.id && deck.beats.length > 0);
+  }
+  if (!plugin.presets.length) return [];
+  return [{
+    id: `${plugin.meta.id}:presets`, modelId: plugin.meta.id, title: plugin.meta.title,
+    beats: plugin.presets.map((preset) => ({
+      id: preset.id, title: preset.name, caption: preset.name,
+      speakerNotes: preset.curriculumNotes ?? preset.description,
+      paramPatch: resolvePluginParams(plugin.paramSchema, preset.params),
+      paramTweenMs: 0, simAction: 'reset-pause'
+    }))
+  }];
+}
 
 export interface TelemetrySummary {
   t: number;
@@ -42,6 +77,11 @@ interface ClassroomStore {
   theme: ClassroomTheme;
   bigScreenMode: boolean;
   fullscreenPresentation: boolean;
+  appMode: AppMode;
+  isBlackout: boolean;
+  activeDeckId: string | null;
+  storyBeatIndex: number;
+  autoFreezeBadge: string | null;
   leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
   oscilloscopeCollapsed: boolean;
@@ -80,6 +120,11 @@ interface ClassroomStore {
   toggleTheme: () => void;
   toggleBigScreenMode: () => void;
   toggleFullscreenPresentation: () => void;
+  setAppMode: (mode: AppMode, deckId?: string) => void;
+  toggleBlackout: () => void;
+  setStoryBeat: (index: number) => void;
+  setAutoFreezeBadge: (badge: string | null) => void;
+  syncStoryParams: (modelId: string, params: ParamRecord) => void;
   setLeftSidebarOpen: (open: boolean) => void;
   setRightSidebarOpen: (open: boolean) => void;
   setOscilloscopeCollapsed: (collapsed: boolean) => void;
@@ -147,6 +192,11 @@ function applyLoadedPluginState(
     params,
     activeLayers: getDefaultLayers(plugin, preset?.visibleLayers),
     isPlaying: false,
+    appMode: s.appMode === 'story' ? 'stage' : s.appMode,
+    activeDeckId: null,
+    storyBeatIndex: -1,
+    autoFreezeBadge: null,
+    isBlackout: false,
     leftSidebarOpen: false,
     oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, params),
     scrubTime: null,
@@ -173,6 +223,11 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
   theme: 'chalkboard',
   bigScreenMode: false,
   fullscreenPresentation: false,
+  appMode: 'studio',
+  isBlackout: false,
+  activeDeckId: null,
+  storyBeatIndex: -1,
+  autoFreezeBadge: null,
   leftSidebarOpen: false,
   rightSidebarOpen: true,
   oscilloscopeCollapsed: false,
@@ -342,8 +397,25 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
         rightSidebarOpen: true
       };
     }),
-  toggleFullscreenPresentation: () =>
-    set((s) => ({ fullscreenPresentation: !s.fullscreenPresentation })),
+  toggleFullscreenPresentation: () => get().setAppMode(get().appMode === 'studio' ? 'stage' : 'studio'),
+  setAppMode: (requested, deckId) => {
+    const cur = get();
+    const decks = requested === 'story' ? getStoryDecks(cur.loadedPlugin) : [];
+    const deck = decks.find((item) => item.id === deckId) ?? decks[0];
+    const appMode = requested === 'story' && !deck ? 'stage' : requested;
+    const activeDeckId = appMode === 'story' ? deck?.id ?? null : null;
+    if (cur.appMode === appMode && cur.activeDeckId === activeDeckId) return;
+    set({ appMode, fullscreenPresentation: appMode !== 'studio', activeDeckId,
+      storyBeatIndex: -1, autoFreezeBadge: null, isBlackout: false });
+  },
+  toggleBlackout: () => set((s) => ({ isBlackout: s.appMode === 'studio' ? false : !s.isBlackout })),
+  setStoryBeat: (storyBeatIndex) => set({ storyBeatIndex, autoFreezeBadge: null }),
+  setAutoFreezeBadge: (autoFreezeBadge) => set({ autoFreezeBadge }),
+  syncStoryParams: (modelId, params) => {
+    if (get().selectedPluginId !== modelId || get().params === params) return;
+    // Already normalized by the imperative stage; no reset/undo entry per animation frame.
+    set({ params, activePresetId: null, scrubTime: null });
+  },
   setLeftSidebarOpen: (open) => set({ leftSidebarOpen: open }),
   setRightSidebarOpen: (open) => set({ rightSidebarOpen: open }),
   setOscilloscopeCollapsed: (collapsed) => set({ oscilloscopeCollapsed: collapsed }),
