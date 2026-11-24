@@ -62,6 +62,7 @@ export interface TelemetrySummary {
 }
 
 const paramCommandStack = new CommandStack(50);
+let liveFormulaGesture: { modelId: string; key: string; before: ParamRecord } | null = null;
 
 interface ClassroomStore {
   selectedPluginId: string;
@@ -125,6 +126,9 @@ interface ClassroomStore {
   setStoryBeat: (index: number) => void;
   setAutoFreezeBadge: (badge: string | null) => void;
   syncStoryParams: (modelId: string, params: ParamRecord) => void;
+  beginLiveFormula: (modelId: string, key: string) => void;
+  updateLiveFormula: (modelId: string, key: string, value: number) => void;
+  endLiveFormula: (modelId: string, key: string) => void;
   setLeftSidebarOpen: (open: boolean) => void;
   setRightSidebarOpen: (open: boolean) => void;
   setOscilloscopeCollapsed: (collapsed: boolean) => void;
@@ -415,6 +419,34 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     if (get().selectedPluginId !== modelId || get().params === params) return;
     // Already normalized by the imperative stage; no reset/undo entry per animation frame.
     set({ params, activePresetId: null, scrubTime: null });
+  },
+  beginLiveFormula: (modelId, key) => {
+    if (get().selectedPluginId !== modelId) return;
+    if (liveFormulaGesture) get().endLiveFormula(liveFormulaGesture.modelId, liveFormulaGesture.key);
+    liveFormulaGesture = { modelId, key, before: get().params };
+  },
+  updateLiveFormula: (modelId, key, value) => {
+    const cur = get();
+    if (cur.selectedPluginId !== modelId || !Number.isFinite(value)) return;
+    const field = cur.loadedPlugin.paramSchema.find((item) => item.key === key);
+    if (field?.kind !== 'number') return;
+    if (liveFormulaGesture?.modelId !== modelId || liveFormulaGesture.key !== key) {
+      if (cur.params[key] !== value) get().updateParam(key, value);
+      return;
+    }
+    const params = resolvePluginParams(cur.loadedPlugin.paramSchema, { ...cur.params, [key]: value });
+    if (params[key] === cur.params[key]) return;
+    // Same reset semantics as a normal workbench slider; gesture is coalesced to one undo entry.
+    set((s) => ({ params, activePresetId: null, scrubTime: null, resetNonce: s.resetNonce + 1 }));
+  },
+  endLiveFormula: (modelId, key) => {
+    const gesture = liveFormulaGesture;
+    if (!gesture || gesture.modelId !== modelId || gesture.key !== key) return;
+    liveFormulaGesture = null;
+    const cur = get();
+    if (cur.selectedPluginId !== modelId || cur.params[key] === gesture.before[key]) return;
+    paramCommandStack.push({ modelId, label: `活公式调整 ${key}`, beforeParams: gesture.before, afterParams: cur.params });
+    set({ canUndo: paramCommandStack.canUndo(modelId), canRedo: paramCommandStack.canRedo(modelId) });
   },
   setLeftSidebarOpen: (open) => set({ leftSidebarOpen: open }),
   setRightSidebarOpen: (open) => set({ rightSidebarOpen: open }),
