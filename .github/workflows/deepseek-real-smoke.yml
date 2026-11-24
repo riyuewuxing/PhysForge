@@ -1,0 +1,38 @@
+name: DeepSeek authenticated public smoke (bounded)
+on:
+  push:
+    branches: [audit/deepseek-real-smoke]
+    paths: ['.github/workflows/deepseek-real-smoke.yml', 'scripts/deepseek-real-smoke.mjs']
+permissions:
+  contents: read
+concurrency:
+  group: deepseek-authenticated-smoke
+  cancel-in-progress: false
+jobs:
+  live:
+    if: github.repository == 'riyuewuxing/PhysForge' && github.event_name == 'push' && github.ref == 'refs/heads/audit/deepseek-real-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Bounded real public browser test
+        env:
+          DEEPSEEK_TEST_KEY: ${{ secrets.DEEPSEEK }}
+        run: node scripts/deepseek-real-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepseek-real-safe-report
+          path: artifacts/deepseek-real/
+          retention-days: 7
