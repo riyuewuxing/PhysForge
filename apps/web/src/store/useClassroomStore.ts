@@ -39,7 +39,8 @@ export function resolvePresentationHotkey(mode: AppMode, key: string): Presentat
 /** Legacy plugins inherit real preset-based beats, never fabricated observables. */
 export function getStoryDecks(plugin: AnySimulationPlugin): readonly StoryDeck[] {
   if (isSimulationPluginV3(plugin) && plugin.storyDecks?.length) {
-    return plugin.storyDecks.filter((deck) => deck.modelId === plugin.meta.id && deck.beats.length > 0);
+    const authored = plugin.storyDecks.filter((deck) => deck.modelId === plugin.meta.id && deck.beats.length > 0);
+    if (authored.length) return authored;
   }
   if (!plugin.presets.length) return [];
   return [{
