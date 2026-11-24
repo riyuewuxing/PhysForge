@@ -427,7 +427,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       poeMasked: masked,
       theme: currentTheme,
       autoFbdEnabled: showFbd,
-      fbdComponentsEnabled: showFbdComp
+      fbdComponentsEnabled: showFbdComp,
+      scrubTime: scrub
     } = latestRef.current;
 
     const baseVp = viewportRef.current;
