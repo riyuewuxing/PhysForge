@@ -7,6 +7,16 @@
 
 ## 当前施工快照（2026-11-24，V3.0，未封板）
 
+* **本轮交付入口**：`handoff/v3-complete-source`，供本地 Agent 拉取和整栈测试的累计源码分支，不是 release 或 main 合并目标。包含原 #2→#17 施工链、本轮 #18→#21、独立 #1 BYOK 五个文件（逐个 Git blob SHA 与 #1 一致）。#1 正式 PR 仍独立；不要把交付分支和各正式 PR 重复合并。保持总控的原子 PR 验收流程。
+* 本轮用户明确要求云端写手推进源码，本地 Agent 负责测试、修复与实际验收。本轮新增：
+  * [#18](https://github.com/riyuewuxing/PhysForge/pull/18) @330350e：实际执行 2D/3D 教学镜头关键帧、相机缓动与公式高亮；E04/B1 切镜，M06 取景；分镜选择和 FBD 控件。
+  * [#19](https://github.com/riyuewuxing/PhysForge/pull/19) @d9a533c：插值结束再按目标参数复位；逐 240 Hz 物理步检测临界观测，保留命中快照；预设图层继承；真实分镜浏览器审计脚本。
+  * [#20](https://github.com/riyuewuxing/PhysForge/pull/20) @d0a5f5a：E04 双杆安培力、电流箭头与累计电荷驱动的示意脉冲、不等杆长动生电动势公式；B1 数值引擎报告的出入边界标记。
+  * [#21](https://github.com/riyuewuxing/PhysForge/pull/21) @b34722d：副屏指令绑定模型/分镜身份，拒绝旧课件命令，并增加直接跳转。
+* **本地首要行动**：保留当前工作区，执行 `git fetch origin`；在独立分支或 worktree 检出 `origin/handoff/v3-complete-source`。按项目约定安装现有依赖，再执行 `pnpm typecheck`、`pnpm test`、`pnpm verify:packs`、`pnpm verify:scenes`、`pnpm verify:vault`、`pnpm build`、`pnpm test:e2e:subpath`、`pnpm audit:visual`、`pnpm export:release --v3-audit`；检查 /PhysForge/ 子路径、gzip 首屏、六旗舰单文件预算与截图。真实 BYOK 联调必须由本地用户提供 Key，不提交 Key。
+* **重点验收/修复顺序**：类型与构建 → 分镜快速切换/暂停/定格时间/公式拖拽与状态一致性 → 双屏跨模型与断开重连 → 六旗舰实机画质、2D/3D 投影及资源释放 → 全部导出。E04 电流脉冲仅为方向与累计电荷示意，非微观漂移速度；不等宽导轨连接仍为示意。S02、S01、M10 原有示意边界不变。本轮未执行运行测试，新回归测试仅为已提交的待执行代码。禁止提前声称 3.0 已验收。
+
+
 * main 最后核实为 `3a667f88219c504fced84212881c49080b3ae372`；以下均为独立 Draft PR 或校验专用分支，不能视为已合并或发布。
 * V3 实施依据：`docs/V3_WRITER_CONSTRUCTION_PLAN.md` 与 `docs/v3-specs/V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md`；不改动 engine 与旧物理阈值，不替代总控验收。
 * 施工链：[#1](https://github.com/riyuewuxing/PhysForge/pull/1) BYOK；[#2](https://github.com/riyuewuxing/PhysForge/pull/2) SDK/StoryRunner；[#3](https://github.com/riyuewuxing/PhysForge/pull/3) 三态演说；[#4](https://github.com/riyuewuxing/PhysForge/pull/4) 双屏；[#5](https://github.com/riyuewuxing/PhysForge/pull/5) 三个课件；[#6](https://github.com/riyuewuxing/PhysForge/pull/6) 活公式拖拽；[#7](https://github.com/riyuewuxing/PhysForge/pull/7) 与 [#8](https://github.com/riyuewuxing/PhysForge/pull/8) 15 模型绑定；[#9](https://github.com/riyuewuxing/PhysForge/pull/9) 3D 压平数学与材质；[#10](https://github.com/riyuewuxing/PhysForge/pull/10) E10；[#12](https://github.com/riyuewuxing/PhysForge/pull/12) E04/B1；[#14](https://github.com/riyuewuxing/PhysForge/pull/14) S02/M10；[#15](https://github.com/riyuewuxing/PhysForge/pull/15) S01；最终验收脚本分支 `chore/v3-w4b-audit-release`。#16 为已关闭的替代施工分支，不重复合入。
