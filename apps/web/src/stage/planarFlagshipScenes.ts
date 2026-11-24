@@ -225,12 +225,40 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
             region.position.x = params.mode === 'crossed-eb' ? 0 : width / 2;
           }
           fixed.add(region);
+          if (params.mode === 'circular') {
+            for (const [index, zPlane] of [-0.22, 0.22].entries()) {
+              const rimPoints = Array.from({ length: 72 }, (_, pointIndex) => {
+                const angle = (pointIndex / 72) * Math.PI * 2;
+                return new THREE.Vector3(radius * Math.cos(angle), radius * Math.sin(angle), zPlane);
+              });
+              const rim = new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(rimPoints),
+                new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.82 })
+              );
+              rim.name = `b1-field-rim-${index}`;
+              fixed.add(rim);
+            }
+          } else {
+            const width = params.mode === 'rectangular' ? radius : params.mode === 'half-space' ? 4 : 8;
+            const height = params.mode === 'rectangular' ? Math.max(params.fieldScale * 1.6, 0.2) : 5;
+            const centerX = params.mode === 'crossed-eb' ? 0 : width / 2;
+            const box = new THREE.BoxGeometry(width, height, 0.44);
+            const edges = new THREE.EdgesGeometry(box);
+            box.dispose();
+            const outline = new THREE.LineSegments(
+              edges,
+              new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.82 })
+            );
+            outline.name = 'b1-field-wire';
+            outline.position.x = centerX;
+            fixed.add(outline);
+          }
           if (Math.abs(params.magneticFieldZ) > 1e-9) {
             const sign = Math.sign(params.magneticFieldZ);
             for (let x = -3; x <= 4; x += 0.6) {
               for (let y = -2.4; y <= 2.4; y += 0.6) {
                 if (fieldSignedDistance({ x, y, z: 0 }, params.mode, params.fieldScale) > -0.05) continue;
-                fixed.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, sign), new THREE.Vector3(x, y, -0.25 * sign), 0.5, 0x38bdf8, 0.1, 0.05));
+                fixed.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, sign), new THREE.Vector3(x, y, -0.18 * sign), 0.36, 0x38bdf8, 0.08, 0.04));
               }
             }
           }
@@ -268,7 +296,7 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
           buffer.setXYZ(0,orbit.center.x,orbit.center.y,0);buffer.setXYZ(1,pos.x,pos.y,0);buffer.needsUpdate=true;
         }
         const v=track.state.velocity;
-        const showVelocity=layers.has('velocityVector')&&(track.id===0||state.particles.length<=3);
+        const showVelocity=layers.has('velocityVector')&&(track.id===0||state.particles.length<=5);
         const decomposition=layers.has('speedDecomposition')&&track.id===0&&params.mode==='crossed-eb'&&
           params.charge!==0&&Math.abs(params.magneticFieldZ)>1e-6;
         const vd=decomposition?params.electricFieldY/params.magneticFieldZ:0;

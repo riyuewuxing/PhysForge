@@ -334,6 +334,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const velocityLabel = createWorldLabel('v', '#facc15');
     const forceLabel = createWorldLabel('a洛', '#fb7185');
     const fieldLabel = createWorldLabel('B', '#38bdf8');
+    velocityLabel.visible = false;
+    forceLabel.visible = false;
+    fieldLabel.visible = false;
     scene.add(velocityLabel, forceLabel, fieldLabel);
 
     const performanceGuard = new PerformanceGuard();

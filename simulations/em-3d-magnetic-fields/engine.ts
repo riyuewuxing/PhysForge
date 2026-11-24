@@ -280,7 +280,10 @@ export function trace3dFieldLines(params: Magnetic3dParams): Vec3[][] {
           { x: 0, y: 0, z: -1.4 },
           { x: 0.35 * R, y: 0, z: -1.3 },
           { x: -0.35 * R, y: 0, z: -1.3 },
-          { x: 0, y: 0.35 * R, z: -1.3 }
+          { x: 0, y: 0.35 * R, z: -1.3 },
+          { x: 0, y: -0.35 * R, z: -1.3 },
+          { x: 0, y: 0.65 * R, z: -1.3 },
+          { x: 0, y: -0.65 * R, z: -1.3 }
         ];
 
   return seeds.map((seed) => {

@@ -226,6 +226,79 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
           ctx.lineTo(pi.x, pi.y);
         }
         ctx.stroke();
+
+        const midIndex = Math.floor((pts.length - 1) / 2);
+        let direction: { ax: number; ay: number; bx: number; by: number; distance: number } | null = null;
+        for (let index = 1; index < pts.length; index++) {
+          const a = project3D(pts[index - 1]!);
+          const b = project3D(pts[index]!);
+          const distance = Math.hypot(b.x - a.x, b.y - a.y);
+          if (distance <= 1e-3 || (direction && Math.abs(index - midIndex) >= direction.distance)) continue;
+          direction = { ax: a.x, ay: a.y, bx: b.x, by: b.y, distance: Math.abs(index - midIndex) };
+        }
+        if (direction) {
+          const dx = direction.bx - direction.ax, dy = direction.by - direction.ay;
+          const length = Math.hypot(dx, dy), ux = dx / length, uy = dy / length;
+          const halfLength = Math.max(3, m.len(0.055)), headLength = Math.max(2.5, m.len(0.035));
+          const centerX = 0.5 * (direction.ax + direction.bx), centerY = 0.5 * (direction.ay + direction.by);
+          const tipX = centerX + ux * halfLength, tipY = centerY + uy * halfLength;
+          const baseX = tipX - ux * headLength, baseY = tipY - uy * headLength;
+          const wing = headLength * 0.58;
+          ctx.save();
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.95)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(centerX - ux * halfLength, centerY - uy * halfLength);
+          ctx.lineTo(tipX, tipY);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(baseX - uy * wing, baseY + ux * wing);
+          ctx.lineTo(baseX + uy * wing, baseY - ux * wing);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }
+
+    if (activeLayers.has('conductors') && params.currentI !== 0 &&
+        (params.geometryType === 'single-loop' || params.geometryType === 'helmholtz-coil' || params.geometryType === 'finite-solenoid')) {
+      const R = Math.max(0.2, params.radiusR);
+      const turns = Math.max(4, Math.min(16, Math.round(params.solenoidTurns)));
+      const centers = params.geometryType === 'single-loop'
+        ? [0]
+        : params.geometryType === 'helmholtz-coil'
+          ? [-0.5 * R, 0.5 * R]
+          : Array.from({ length: turns }, (_, index) => -1.2 * R + (index / (turns - 1)) * 2.4 * R);
+      const currentSign = Math.sign(params.currentI);
+      const markerRadius = Math.max(4, m.len(0.055));
+      const dotRadius = Math.max(1.5, markerRadius * 0.18);
+      ctx.strokeStyle = '#f59e0b';
+      ctx.fillStyle = '#f59e0b';
+      ctx.lineWidth = 1.7;
+      for (const zCenter of centers) {
+        for (const side of [1, -1] as const) {
+          const screen = project3D({ x: 0, y: side * R, z: zCenter });
+          const currentOutOfPage = side * currentSign > 0;
+          ctx.beginPath();
+          ctx.arc(screen.x, screen.y, markerRadius, 0, Math.PI * 2);
+          ctx.stroke();
+          if (currentOutOfPage) {
+            ctx.beginPath();
+            ctx.arc(screen.x, screen.y, dotRadius, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            const arm = markerRadius * 0.45;
+            ctx.beginPath();
+            ctx.moveTo(screen.x - arm, screen.y - arm);
+            ctx.lineTo(screen.x + arm, screen.y + arm);
+            ctx.moveTo(screen.x - arm, screen.y + arm);
+            ctx.lineTo(screen.x + arm, screen.y - arm);
+            ctx.stroke();
+          }
+        }
       }
     }
 
@@ -325,10 +398,10 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
       latex: '\\begin{aligned}d\\mathbf B&=\\frac{\\mu_0 I}{4\\pi}\\frac{d\\boldsymbol\\ell\\times\\mathbf r}{r^3}\\\\\\mathbf a&=\\frac{q}{m}\\mathbf v\\times\\mathbf B\\end{aligned}',
       substitutedLatex: `\\begin{aligned}|B|&=${(obs.bMagMicroT ?? 0).toFixed(3)}\\,\\mu\\text{T}\\\\v&=${speed.toFixed(3)}\\text{ m/s}\\\\K/m&=${specificEnergy.toFixed(3)}\\text{ J/kg}\\\\\\mathbf v\\cdot\\mathbf a&=${specificPower.toFixed(6)}\\text{ W/kg}\\end{aligned}`
     };
-    if (params.geometryType === 'finite-solenoid') return [currentField, {
-      id: 'local-helical-motion', label: '局部匀强近似（不作为全轨迹精确解）',
-      latex: '\\begin{aligned}R&=mv_\\perp/(|q|B)\\\\T&=2\\pi m/(|q|B)\\end{aligned}',
-    }];
+    if (params.geometryType === 'finite-solenoid') return [{
+      id: 'local-helical-motion', label: '局部匀强磁场近似下的螺旋运动',
+      latex: '\\begin{aligned}\\text{局部匀强近似}\\\\ R &= \\frac{mv_\\perp}{|q|B}\\\\ T &= \\frac{2\\pi m}{|q|B}\\end{aligned}',
+    }, currentField];
     return [currentField];
   }
 }), { storyDecks: magnetic3dStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,

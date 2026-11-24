@@ -285,13 +285,14 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
 
     ctx.fillStyle = '#e2e8f0';
     ctx.font = 'bold 13px ui-sans-serif, system-ui';
+    ctx.textAlign = 'center';
     const crit = computeMirrorLossConeDeg(params);
     ctx.fillText(
       params.mode === 'magnetic-mirror'
         ? `θ=${params.pitchAngleDeg}° (逃逸锥角 θc=${crit.toFixed(1)}°) | 反射次数=${state.reflectionCount} | μ 波动 ${(state.maxMuRelDev * 100).toFixed(2)}% | ${state.escaped ? '已穿过磁喉' : state.reflectionCount > 0 ? '已记录反射，尚未穿过磁喉' : '尚未穿过磁喉'}`
         : `托卡马克螺旋约束 | R₀=${params.majorRadiusM.toFixed(1)}m | 安全因子 q=${params.safetyFactorQ}`,
-      18,
-      28
+      viewport.width * 0.5,
+      26
     );
     ctx.restore();
   },

@@ -158,6 +158,37 @@ describe('flagship physical display alignment', () => {
     driver?.dispose();
   });
 
+  it('outlines both ends of the circular B1 field volume and keeps the flat radius aligned', () => {
+    const scene = new THREE.Scene();
+    const driver = createPlanarFlagshipScene('builder-composite-em-field', scene)!;
+    const plugin = emBoundedMagneticFieldPlugin;
+    const params = resolvePluginParams<BoundedMagneticParams>(plugin.paramSchema, {
+      mode: 'circular', fieldScale: 1.2, magneticFieldZ: 0
+    });
+    driver.sync(plugin.engine.createInitialState(params), params, new Set(['fieldRegion']));
+
+    const rims = ['b1-field-rim-0', 'b1-field-rim-1'].map(name => scene.getObjectByName(name));
+    expect(rims.every((rim): rim is THREE.LineLoop => rim instanceof THREE.LineLoop)).toBe(true);
+    scene.updateMatrixWorld(true);
+    const camera = new CameraMorphController(plugin.spatial3D, 1280, 720);
+    camera.startMorphTo(1, 0, 0);
+    const mapper = createWorldMapper(alignedCanvasViewport(camera.get2DAlignMetrics()));
+    for (const [index, z] of [-0.22, 0.22].entries()) {
+      const rim = scene.getObjectByName(`b1-field-rim-${index}`) as THREE.LineLoop;
+      const vertex = rim.geometry.getAttribute('position');
+      expect(vertex.count).toBe(72);
+      const world = rim.localToWorld(new THREE.Vector3().fromBufferAttribute(vertex, 0));
+      expect(world.z).toBeCloseTo(z, 8);
+      expect(Math.hypot(world.x, world.y)).toBeCloseTo(params.fieldScale, 6);
+      const spatial = camera.project3DToScreen(world);
+      const planar = mapper.toScreen(world.x, world.y);
+      expect(Math.hypot(spatial.x - planar.x, spatial.y - planar.y)).toBeLessThan(0.5);
+    }
+
+    driver.dispose();
+    expect(scene.children).toHaveLength(0);
+  });
+
   it('shows B1 drift-frame radius and consistent velocity components without a fake neutral-particle drift',()=>{
     const p=emBoundedMagneticFieldPlugin,params=resolvePluginParams<BoundedMagneticParams>(p.paramSchema,{mode:'crossed-eb',family:'single',electricFieldY:2,magneticFieldZ:1,mass:2,charge:1});
     const initial=p.engine.createInitialState(params),first=initial.particles[0]!;

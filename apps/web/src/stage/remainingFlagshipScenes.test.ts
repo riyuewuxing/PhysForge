@@ -111,6 +111,33 @@ describe('remaining planar flagship projections',()=>{
     expect(Math.hypot(a.x-b.x,a.y-b.y)).toBeLessThan(0.5);
     driver.dispose();expect(scene.children.length).toBe(0);
   });
+  it('M10 analytical Kepler orbit passes through the initial body and rebuilds with orbital speed',()=>{
+    const p=astroOrbitalMechanicsPlugin;
+    const params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'kepler-ellipse',r1Ratio:1.3,v0Ratio:1.2});
+    const state=p.engine.createInitialState(params),scene=new THREE.Scene(),driver=createRemainingFlagshipScene(p.meta.id,scene)!;
+    driver.sync(state,params,new Set(['orbit']));
+
+    const orbit=scene.getObjectByName('kepler-analytical-orbit') as THREE.LineLoop;
+    const body=scene.getObjectByName('orbiting-body') as THREE.Mesh;
+    expect(orbit).toBeInstanceOf(THREE.LineLoop);
+    expect(scene.getObjectByName('primary-star-halo')).toBeInstanceOf(THREE.Mesh);
+    expect(body.position.distanceTo(new THREE.Vector3(1,0,0))).toBeLessThan(1e-12);
+    const positions=orbit.geometry.getAttribute('position');
+    expect(new THREE.Vector3().fromBufferAttribute(positions,0).distanceTo(body.position)).toBeLessThan(1e-6);
+
+    const camera=new CameraMorphController(p.spatial3D,1280,720);camera.startMorphTo(1,0,0);
+    const a=camera.project3DToScreen(body.position);
+    const b=createWorldMapper(alignedCanvasViewport(camera.get2DAlignMetrics())).toScreen(state.xNorm,state.yNorm);
+    expect(Math.hypot(a.x-b.x,a.y-b.y)).toBeLessThan(0.5);
+
+    const slower=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'kepler-ellipse',r1Ratio:1.3,v0Ratio:0.9});
+    driver.sync(p.engine.createInitialState(slower),slower,new Set(['orbit']));
+    const updated=scene.getObjectByName('kepler-analytical-orbit') as THREE.LineLoop;
+    expect(updated).not.toBe(orbit);
+    expect(updated.geometry.getAttribute('position').getZ(32)).not.toBeCloseTo(positions.getZ(32),4);
+
+    driver.dispose();expect(scene.children.length).toBe(0);
+  });
 });
 
 describe('spatial physical vector projections',()=>{

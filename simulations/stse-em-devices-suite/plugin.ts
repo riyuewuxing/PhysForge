@@ -535,9 +535,10 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       'mhd-generator': `MHD E=${state.mhdEmfV.toFixed(1)}V | r=${state.mhdInternalOhm.toFixed(2)}Ω | P=${state.mhdOutputWatt.toFixed(0)}W (峰值 ${state.mhdMaxPowerWatt.toFixed(0)}W)`,
       'em-flowmeter': `电磁流量计 Q = ${state.flowRateM3ps.toExponential(3)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
     };
-    ctx.fillText(summaryMap[params.device], 20, 30);
+    ctx.textAlign = 'center';
+    ctx.fillText(summaryMap[params.device], viewport.width * 0.5, 28);
     ctx.font='11px system-ui, sans-serif';ctx.fillStyle='#94a3b8';
-    ctx.fillText('归一化原理示意 · 轨迹不作为 SI 测量依据',20,48);
+    ctx.fillText('归一化原理示意 · 轨迹不作为 SI 测量依据', viewport.width * 0.5, 46);
     ctx.restore();
   },
   getControlHandles: (_state, params) => {

@@ -113,6 +113,10 @@ function ring(group:THREE.Group,name:string,radius:number,color:number) {
 function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
   const fixed=new THREE.Group(), moving=new THREE.Group(), guides=new THREE.Group();root.add(fixed,moving,guides);
   const primary=mesh(moving,'primary-star',new THREE.SphereGeometry(0.13,24,16),magneticFluxMaterial(0xfbbf24));
+  const stellarHalo=new THREE.Mesh(new THREE.RingGeometry(0.16,0.28,32),new THREE.MeshBasicMaterial({
+    color:0xfbbf24,transparent:true,opacity:0.28,side:THREE.DoubleSide,depthWrite:false
+  }));
+  stellarHalo.name='primary-star-halo';stellarHalo.rotation.x=-Math.PI/2;primary.add(stellarHalo);
   const secondary=mesh(moving,'secondary-star',new THREE.SphereGeometry(0.065,20,14),magneticFluxMaterial(0x60a5fa));
   const satellite=mesh(moving,'orbiting-body',new THREE.SphereGeometry(0.05,18,12),magneticFluxMaterial(0x4ade80));
   const trail=bufferedTrail(moving,421,0x38bdf8);
@@ -126,13 +130,30 @@ function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
     if(!s||!Number.isFinite(s.xNorm))return;
     corotating=p.mode==='binary-lagrange'&&layers.has('corotatingView');
     const project=(x:number,y:number)=>orbitDisplayPoint(x,y,s.tNorm,corotating);
-    const sig=JSON.stringify([p.mode,p.massRatioQ,p.r2OverR1,layers.has('rocheIsolines')]);
+    const sig=JSON.stringify([p.mode,p.r1Ratio,p.v0Ratio,p.massRatioQ,p.r2OverR1,layers.has('rocheIsolines')]);
     if(signature!==sig){
       signature=sig;clear(guides);clear(contours);
       const extent=p.mode==='hohmann-transfer'?p.r2OverR1+0.5:2.8;
       const disk=mesh(guides,'orbit-plane',new THREE.CylinderGeometry(extent,extent,0.018,96),new THREE.MeshStandardMaterial({color:0x1e293b,transparent:true,opacity:0.22,depthWrite:false}));
       disk.position.y=-0.09;
       if(p.mode==='hohmann-transfer'){ring(guides,'parking-orbit',1,0x94a3b8);ring(guides,'target-orbit',p.r2OverR1,0x94a3b8);}
+      if(p.mode==='kepler-ellipse'){
+        const speed=Math.max(0.5,p.v0Ratio),eccentricityX=speed*speed-1,semilatusRectum=speed*speed;
+        const eccentricity=Math.abs(eccentricityX),closed=eccentricity<0.98;
+        const samples=closed?128:256,points:THREE.Vector3[]=[];
+        for(let i=0;i<(closed?samples:samples+1);i++){
+          const theta=closed?(i/samples)*Math.PI*2:-Math.PI+(i/samples)*Math.PI*2;
+          const denominator=1+eccentricityX*Math.cos(theta);
+          if(!closed&&denominator<=0.08)continue;
+          const radius=semilatusRectum/denominator;
+          if(!closed&&Math.abs(radius)>6)continue;
+          points.push(orbitDisplayPoint(radius*Math.cos(theta),radius*Math.sin(theta),0,false));
+        }
+        const geometry=new THREE.BufferGeometry().setFromPoints(points);
+        const material=new THREE.LineBasicMaterial({color:0x38bdf8,transparent:true,opacity:0.48});
+        const analytical=closed?new THREE.LineLoop(geometry,material):new THREE.Line(geometry,material);
+        analytical.name='kepler-analytical-orbit';guides.add(analytical);
+      }
       if(p.mode==='binary-lagrange'&&layers.has('rocheIsolines')){
         for(const c of extractRocheIsolines(p.massRatioQ)){
           const vertices=c.segments.flatMap(seg=>[orbitDisplayPoint(seg.a.x,seg.a.y,0,false),orbitDisplayPoint(seg.b.x,seg.b.y,0,false)]);

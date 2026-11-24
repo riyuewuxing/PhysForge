@@ -17,6 +17,20 @@ function getPreset(idx: number): Magnetic3dParams {
 }
 
 describe('em-3d-magnetic-fields Biot-Savart & 3D Boris invariants (E10)', () => {
+  it('seeds both positive and negative side-view halves for loop and Helmholtz fields', () => {
+    for (const presetIndex of [0, 1]) {
+      const params = getPreset(presetIndex);
+      const lines = trace3dFieldLines(params);
+      const starts = lines.map(line => line[0]!);
+      const R = params.radiusR;
+
+      expect(starts).toHaveLength(7);
+      for (const y of [0.35 * R, -0.35 * R, 0.65 * R, -0.65 * R]) {
+        expect(starts.some(point => point.x === 0 && point.y === y && point.z === -1.3)).toBe(true);
+      }
+    }
+  });
+
   it('matches single circular loop on-axis Biot-Savart formula within < 1e-4 relative error', () => {
     const params = getPreset(1); // single-loop
     const R = params.radiusR;
