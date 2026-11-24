@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import {
   createWorldMapper,
   defineSimulationPlugin,
@@ -280,7 +281,35 @@ const paramSchema: readonly ParamFieldSpec<CircuitParams>[] = [
   }
 ];
 
-export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams, CircuitState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "linear-dc",
+  "title": "线性直流稳态闭合电路",
+  "latex": "I=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=emf}{E}}}{R_{\\rm eq}+\\htmlClass{pf-live-var}{\\htmlData{param=internalR}{r}}}",
+  "bindings": [
+    {
+      "tokenKey": "emf",
+      "paramKey": "emf",
+      "label": "电源电动势 E",
+      "unit": "V",
+      "min": 0,
+      "max": 24,
+      "step": 1,
+      "precision": 1
+    },
+    {
+      "tokenKey": "internalR",
+      "paramKey": "internalR",
+      "label": "电源内阻 r",
+      "unit": "Ω",
+      "min": 0,
+      "max": 5,
+      "step": 0.2,
+      "precision": 2
+    }
+  ]
+}];
+export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<CircuitParams, CircuitState>({
   meta: {
     id: 'builder-circuit-mna',
     title: '自由拓扑线性与非线性电路建模器 (B2)',
@@ -843,6 +872,6 @@ export const circuitDcCapacitorMnaPlugin = defineSimulationPlugin<CircuitParams,
       );
     }
   }
-});
+}), { liveFormulas });
 
 export default circuitDcCapacitorMnaPlugin;

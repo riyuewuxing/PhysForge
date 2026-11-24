@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { verticalCircularStoryDecks } from './storyDecks.js';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
@@ -29,6 +30,24 @@ const paramSchema: readonly ParamFieldSpec<VerticalCircularParams>[] = [
   { key: 'startAngleDeg', kind: 'number', label: '半球微扰起始角 θ₀', unit: '°', min: 0.5, max: 30, step: 0.5, defaultValue: 0.5 }
 ];
 
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "critical-speed",
+  "title": "内圆轨道最低点临界初速",
+  "latex": "v_{0,\\rm crit}=\\sqrt{5g\\htmlClass{pf-live-var}{\\htmlData{param=radius}{R}}}",
+  "bindings": [
+    {
+      "tokenKey": "radius",
+      "paramKey": "radius",
+      "label": "圆弧半径 R",
+      "unit": "m",
+      "min": 0.8,
+      "max": 2.5,
+      "step": 0.2,
+      "precision": 2
+    }
+  ]
+}];
 export const mechVerticalCircularPlugin = Object.assign(defineSimulationPlugin<
   VerticalCircularParams,
   VerticalCircularState
@@ -159,6 +178,6 @@ export const mechVerticalCircularPlugin = Object.assign(defineSimulationPlugin<
     ctx.fill();
     ctx.restore();
   }
-}), { storyDecks: verticalCircularStoryDecks });
+}), { storyDecks: verticalCircularStoryDecks, liveFormulas });
 
 export default mechVerticalCircularPlugin;

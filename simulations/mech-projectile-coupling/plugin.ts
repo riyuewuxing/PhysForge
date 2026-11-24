@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { projectileCouplingPresets } from './presets.js';
@@ -30,7 +31,35 @@ const paramSchema: readonly ParamFieldSpec<ProjectileCouplingParams>[] = [
   { key: 'mass', kind: 'number', label: '质点质量 m', unit: 'kg', min: 0.5, max: 5, step: 0.5, defaultValue: 1 }
 ];
 
-export const mechProjectileCouplingPlugin = defineSimulationPlugin<
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "launch-velocity",
+  "title": "初速度水平分量",
+  "latex": "v_{0x}=\\htmlClass{pf-live-var}{\\htmlData{param=v0}{v_0}}\\cos \\htmlClass{pf-live-var}{\\htmlData{param=launchAngleDeg}{\\alpha}}",
+  "bindings": [
+    {
+      "tokenKey": "v0",
+      "paramKey": "v0",
+      "label": "发射初速率 v₀",
+      "unit": "m/s",
+      "min": 1,
+      "max": 14,
+      "step": 0.5,
+      "precision": 2
+    },
+    {
+      "tokenKey": "launchAngleDeg",
+      "paramKey": "launchAngleDeg",
+      "label": "斜抛仰角 α",
+      "unit": "°",
+      "min": 0,
+      "max": 85,
+      "step": 5,
+      "precision": 1
+    }
+  ]
+}];
+export const mechProjectileCouplingPlugin = Object.assign(defineSimulationPlugin<
   ProjectileCouplingParams,
   ProjectileCouplingState
 >({
@@ -200,6 +229,6 @@ export const mechProjectileCouplingPlugin = defineSimulationPlugin<
     ctx.fill();
     ctx.restore();
   }
-});
+}), { liveFormulas });
 
 export default mechProjectileCouplingPlugin;

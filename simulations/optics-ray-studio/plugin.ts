@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { degToRad } from '@physforge/physics-core';
 import {
   createWorldMapper,
@@ -148,7 +149,45 @@ const paramSchema: readonly ParamFieldSpec<OpticsParams>[] = [
   }
 ];
 
-export const opticsRayStudioPlugin = defineSimulationPlugin<OpticsParams, OpticsState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "snell",
+  "title": "折射定律（存在传播折射光）",
+  "latex": "\\htmlClass{pf-live-var}{\\htmlData{param=n1}{n_1}}\\sin \\htmlClass{pf-live-var}{\\htmlData{param=incidentAngleDeg}{\\theta_1}}=\\htmlClass{pf-live-var}{\\htmlData{param=n2}{n_2}}\\sin\\theta_2",
+  "bindings": [
+    {
+      "tokenKey": "n1",
+      "paramKey": "n1",
+      "label": "介质 1 / 玻璃折射率 n₁",
+      "unit": "",
+      "min": 1,
+      "max": 2.2,
+      "step": 0.05,
+      "precision": 3
+    },
+    {
+      "tokenKey": "incidentAngleDeg",
+      "paramKey": "incidentAngleDeg",
+      "label": "入射角 θ₁",
+      "unit": "°",
+      "min": 0,
+      "max": 85,
+      "step": 1,
+      "precision": 1
+    },
+    {
+      "tokenKey": "n2",
+      "paramKey": "n2",
+      "label": "介质 2 / 包层折射率 n₂",
+      "unit": "",
+      "min": 1,
+      "max": 2,
+      "step": 0.05,
+      "precision": 3
+    }
+  ]
+}];
+export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<OpticsParams, OpticsState>({
   meta: {
     id: 'builder-optics-ray',
     title: '自由几何光学与波动光学建模器 (B3)',
@@ -663,6 +702,6 @@ export const opticsRayStudioPlugin = defineSimulationPlugin<OpticsParams, Optics
       ctx.restore();
     }
   }
-});
+}), { liveFormulas });
 
 export default opticsRayStudioPlugin;
