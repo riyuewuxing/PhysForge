@@ -491,7 +491,10 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
   const report = [];
   for (const device of ['velocity-selector','mass-spectrometer','cyclotron','hall-sensor','mhd-generator','em-flowmeter']) {
     // The real model selector, not a synthetic scene or a screenshot mock.
-    await page.locator('#param-device').selectOption(device);
+    const deviceSelect = page.locator('#param-device');
+    await deviceSelect.waitFor({state:'attached'});
+    if (!await deviceSelect.isVisible()) await page.getByText('更多参数与图层',{exact:false}).first().click();
+    await deviceSelect.selectOption(device);
     await page.getByTestId('btn-fullscreen-speech').click();
     const toggle = page.getByTestId('btn-view-3d-fullscreen');
     if ((await toggle.textContent())?.includes('3D 空间')) await toggle.click();
