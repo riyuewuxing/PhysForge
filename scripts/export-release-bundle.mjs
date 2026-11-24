@@ -13,7 +13,13 @@ const FLAGSHIP_SINGLEFILES = [
   'comp-relativity-quantum-tunneling'
 ];
 
-const targetList = process.argv.includes('--all')
+const V3_SPATIAL_FLAGSHIPS = [
+  'em-3d-magnetic-fields', 'em-induction-double-rod', 'builder-composite-em-field',
+  'stse-em-devices-suite', 'stse-tokamak-magnetic-mirror', 'astro-orbital-mechanics'
+];
+const targetList = process.argv.includes('--v3-audit')
+  ? V3_SPATIAL_FLAGSHIPS
+  : process.argv.includes('--all')
   ? FLAGSHIP_SINGLEFILES
   : FLAGSHIP_SINGLEFILES.slice(0, 4);
 
