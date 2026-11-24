@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { magneticStoryDecks } from './storyDecks.js';
 import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
@@ -158,6 +159,54 @@ function drawArrow(
   ctx.restore();
 }
 
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "larmor-initial",
+  "title": "纯磁场初始回旋半径（qB ≠ 0）",
+  "latex": "r_0=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=mass}{m}}\\htmlClass{pf-live-var}{\\htmlData{param=initialSpeed}{v_0}}}{|\\htmlClass{pf-live-var}{\\htmlData{param=charge}{q}}\\htmlClass{pf-live-var}{\\htmlData{param=magneticFieldZ}{B_z}}|}",
+  "bindings": [
+    {
+      "tokenKey": "mass",
+      "paramKey": "mass",
+      "label": "粒子质量 m",
+      "unit": "kg",
+      "min": 0.2,
+      "max": 5,
+      "step": 0.1,
+      "precision": 2
+    },
+    {
+      "tokenKey": "initialSpeed",
+      "paramKey": "initialSpeed",
+      "label": "入射初速率 v₀",
+      "unit": "m/s",
+      "min": 0,
+      "max": 6,
+      "step": 0.2,
+      "precision": 2
+    },
+    {
+      "tokenKey": "charge",
+      "paramKey": "charge",
+      "label": "粒子电荷量 q",
+      "unit": "C",
+      "min": -3,
+      "max": 3,
+      "step": 0.5,
+      "precision": 2
+    },
+    {
+      "tokenKey": "magneticFieldZ",
+      "paramKey": "magneticFieldZ",
+      "label": "磁感应强度 Bz",
+      "unit": "T",
+      "min": -4,
+      "max": 4,
+      "step": 0.2,
+      "precision": 2
+    }
+  ]
+}];
 export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin<
   BoundedMagneticParams,
   BoundedMagneticState
@@ -684,6 +733,6 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
       }
     }
   }
-}), { storyDecks: magneticStoryDecks });
+}), { storyDecks: magneticStoryDecks, liveFormulas });
 
 export default emBoundedMagneticFieldPlugin;
