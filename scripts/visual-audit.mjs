@@ -861,6 +861,7 @@ async function main() {
     if ((await n01Toggle.innerText()).trim() !== '显示数值') throw new Error('Formula toggle is not explicit');
     const uSlider = page.getByTestId('param-slider-anodeVoltageV');
     if (!await uSlider.isVisible()) throw new Error('Applied voltage slider not visible in photoelectric mode');
+    await page.waitForFunction(() => document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('光电流'));
     await page.screenshot({path:path.join(OUT_DIR,'N01_01_photoelectric.png')});
     const beforeVoltage = await uSlider.inputValue();
     const beforeVoltagePixels = await canvasFingerprint(page);
@@ -877,6 +878,9 @@ async function main() {
     await selectPreset(page,'compton-molybdenum-90deg');
     const angleSlider=page.getByTestId('param-slider-scatterAngleDeg');
     if (!await angleSlider.isVisible()) throw new Error('Compton scatter angle control not visible');
+    await page.waitForFunction(() => document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('康普顿波长差')
+      && document.querySelector('[data-testid="scope-channel-b"]')?.textContent?.includes('反冲电子动能'));
+    if (!(await page.getByTestId('param-value-xrayWavelengthNm').innerText()).includes('0.071')) throw new Error('Incident X-ray wavelength lost slider precision');
     await page.screenshot({path:path.join(OUT_DIR,'N01_04_compton.png')});
     const angleBefore=await angleSlider.inputValue();
     await dragRangeTo(page,angleSlider,135);

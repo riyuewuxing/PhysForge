@@ -94,7 +94,8 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
     { key: 'photonEnergyEv', label: '光子能量 hν', unit: 'eV', color: '#a855f7' },
     { key: 'stoppingVoltageV', label: '遏止电压 U_c', unit: 'V', color: '#38bdf8' },
     { key: 'currentMa', label: '光电流 I', unit: 'mA', color: '#4ade80' },
-    { key: 'deltaLambdaPm', label: '康普顿频移 Δλ', unit: 'pm', color: '#f59e0b' }
+    { key: 'deltaLambdaPm', label: '康普顿波长差 Δλ', unit: 'pm', color: '#f59e0b' },
+    { key: 'electronKineticKev', label: '反冲电子动能', unit: 'keV', color: '#4ade80' }
   ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
