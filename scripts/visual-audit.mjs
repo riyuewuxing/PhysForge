@@ -654,7 +654,7 @@ async function main() {
       const layout = await readLayoutMetrics(page, testCase.scopeHidden, testCase.title, testCase.hideEnergyBars ?? false);
       if (testCase.id === 'em-induction-double-rod') {
         const initialChannel = (await page.getByTestId('scope-channel-a').textContent())?.trim();
-        if (initialChannel !== 'I-t') layout.issues.push(`Single-rod E04 default channel is ${initialChannel ?? 'missing'}, expected I-t`);
+        if (initialChannel !== 'I-t · A') layout.issues.push(`Single-rod E04 default channel is ${initialChannel ?? 'missing'}, expected I-t · A`);
       }
       await page.screenshot({ path: path.join(OUT_DIR, `${testCase.tag}_01_init.png`) });
       if (testCase.id === 'builder-circuit-mna') {
