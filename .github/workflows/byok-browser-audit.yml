@@ -1,0 +1,51 @@
+name: BYOK cloud browser audit
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/ai-copilot/**'
+      - 'apps/web/src/components/AiCopilotDrawer.tsx'
+      - 'scripts/byok-browser-audit.mjs'
+      - '.github/workflows/byok-browser-audit.yml'
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm build
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - name: Real browser BYOK and public Pages audit
+        run: |
+          pnpm --filter @physforge/web exec vite preview --host 127.0.0.1 --port 4173 --strictPort > /tmp/byok-preview.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:4173/PhysForge/ > /dev/null; then break; fi
+            sleep 1
+          done
+          node scripts/byok-browser-audit.mjs
+      - name: Existing visual regression audit
+        if: always()
+        run: pnpm audit:visual
+      - name: Existing flagship single-file export
+        if: always()
+        run: pnpm export:release --v3-audit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: byok-browser-audit
+          path: |
+            artifacts/byok-audit/
+            artifacts/ui-audit/
+          retention-days: 7
