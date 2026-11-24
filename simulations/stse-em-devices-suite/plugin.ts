@@ -505,11 +505,11 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ctx.font = 'bold 14px ui-sans-serif, system-ui';
     const summaryMap: Record<EmDevicesParams['device'], string> = {
       'velocity-selector': `速度选择器 v_sel = E/B = ${state.selectedSpeed.toFixed(0)} m/s`,
-      'mass-spectrometer': `质谱仪偏转半径 R = ${scientificLatex(state.spectrometerRadiusM)} m`,
+      'mass-spectrometer': `质谱仪偏转半径 R = ${state.spectrometerRadiusM.toExponential(3)} m`,
       'cyclotron': `回旋出射动能 E_km = ${(state.cyclotronMaxEnergyJ / 1.602176634e-13).toFixed(3)} MeV (解析相对差 ${state.cyclotronRelError.toExponential(2)})`,
       'hall-sensor': `霍尔电压 U_H = ${(state.hallVoltageV * 1000).toFixed(4)} mV (${params.carrierType === 'electron' ? '电子负极性' : '空穴正极性'})`,
       'mhd-generator': `MHD E=${state.mhdEmfV.toFixed(1)}V | r=${state.mhdInternalOhm.toFixed(2)}Ω | P=${state.mhdOutputWatt.toFixed(0)}W (峰值 ${state.mhdMaxPowerWatt.toFixed(0)}W)`,
-      'em-flowmeter': `电磁流量计 Q = ${scientificLatex(state.flowRateM3ps)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
+      'em-flowmeter': `电磁流量计 Q = ${state.flowRateM3ps.toExponential(3)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
     };
     ctx.fillText(summaryMap[params.device], 20, 30);
     ctx.restore();
@@ -596,7 +596,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
         substitutedLatex: `v_s=${scientificLatex(state.selectedSpeed)}\\text{ m/s}` }];
       case 'mass-spectrometer': return [{ id, label: '质谱仪偏转磁场回旋半径',
         latex: 'r=\\frac{mv}{|q|B_2}',
-        substitutedLatex: `r=${state.spectrometerRadiusM.toExponential(3)}\\text{ m}` }];
+        substitutedLatex: `r=${scientificLatex(state.spectrometerRadiusM)}\\text{ m}` }];
       case 'cyclotron': return [{ id, label: '经典回旋加速器极限动能与模型计算值',
         latex: 'K_{\\max,\\text{经典}}=\\frac{q^2B^2R_{\\max}^2}{2m}',
         substitutedLatex: `\\begin{aligned}K_{\\text{经典}}&=${scientificLatex(state.cyclotronAnalyticalEnergyJ)}\\text{ J},\\\\K_{\\text{模型}}&=${scientificLatex(state.cyclotronMaxEnergyJ)}\\text{ J}\\end{aligned}` }];
@@ -608,7 +608,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
         substitutedLatex: `\\begin{aligned}P_R&=${scientificLatex(state.mhdOutputWatt)}\\text{ W},\\\\r&=${state.mhdInternalOhm.toFixed(3)}\\ \\Omega\\end{aligned}` }];
       case 'em-flowmeter': return [{ id, label: '电磁流量计体积流量与电压',
         latex: 'Q=\\frac{\\pi D^2v}{4}=\\frac{\\pi DU}{4B}',
-        substitutedLatex: `\\begin{aligned}Q&=${state.flowRateM3ps.toExponential(3)}\\text{ m}^3/\\text{s},\\\\U&=${scientificLatex(state.flowVoltageV)}\\text{ V}\\end{aligned}` }];
+        substitutedLatex: `\\begin{aligned}Q&=${scientificLatex(state.flowRateM3ps)}\\text{ m}^3/\\text{s},\\\\U&=${scientificLatex(state.flowVoltageV)}\\text{ V}\\end{aligned}` }];
     }
   }
 }), { storyDecks: emDevicesStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 3.4, sceneDepthRadius: 4, default3DAzimuthRad: 0.6, default3DPolarRad: 0.9 } });
