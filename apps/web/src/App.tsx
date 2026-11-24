@@ -100,6 +100,9 @@ const ClassroomApp: React.FC = () => {
   const morphProgressRef = useRef(store.view3dEnabled ? 0 : 1);
   const decks = useMemo(() => getStoryDecks(plugin), [plugin]);
   const storyDeck = store.appMode === 'story' ? decks.find((deck) => deck.id === store.activeDeckId) : undefined;
+  const highlightedFormulaId = storyDeck?.beats[store.storyBeatIndex]?.layerOverrides?.highlightFormulaId;
+  const highlightedReadOnly = highlightedFormulaId && !liveFormulas.some((spec) => spec.id === highlightedFormulaId)
+    ? store.telemetry.formulaItems.filter((item) => item.id === highlightedFormulaId) : [];
   const has3dView =
     v2Plugin.renderMode === 'three3d' ||
     v2Plugin.renderMode === 'hybrid' ||
@@ -727,6 +730,7 @@ const ClassroomApp: React.FC = () => {
             onStoryPlaying={store.setPlaying}
             onStoryFbd={(enabled) => { if (useClassroomStore.getState().autoFbdEnabled !== enabled) store.toggleAutoFbd(); }}
             onStoryFrame={store.setActiveFrameId}
+            onStoryView3d={store.setView3d}
             onMorphProgress={(progress) => { morphProgressRef.current = progress; }}
             onWebGLFallback={() => useClassroomStore.getState().setView3d(false)}
           />
@@ -734,17 +738,18 @@ const ClassroomApp: React.FC = () => {
           {store.fullscreenPresentation && (
             <>
               <div data-testid="fullscreen-title" className="pointer-events-none absolute left-[68px] top-6 z-20 max-w-[min(44vw,620px)] text-slate-100 drop-shadow-lg">
-                <div className="truncate text-2xl font-semibold tracking-tight">{WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title}</div>
+                <div className="truncate text-2xl font-semibold tracking-tight">{storyDeck?.title ?? (plugin.meta.id === 'em-induction-double-rod' && store.params.rodMode === 'double' ? '电磁感应·双杆切割' : WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title)}</div>
                 <div className="mt-1 text-xs tracking-wide text-slate-400">{store.appMode === 'story' ? '分镜讲课模式' : '全屏课堂演说模式'}</div>
               </div>
               {(store.telemetry.formulaItems.length > 0 || liveFormulas.length > 0) && (
                 <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
-                  {liveFormulas.length ? <Suspense fallback={<KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} />}>
-                    <LazyLiveFormulaCard key={plugin.meta.id} specs={liveFormulas} params={store.params} schema={plugin.paramSchema}
+                  {liveFormulas.length ? <Suspense fallback={<KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}>
+                    <LazyLiveFormulaCard key={plugin.meta.id} specs={liveFormulas} params={store.params} schema={plugin.paramSchema} highlightedId={highlightedFormulaId}
                       onBegin={(key) => store.beginLiveFormula(plugin.meta.id, key)}
                       onChange={(key, value) => store.updateLiveFormula(plugin.meta.id, key, value)}
                       onEnd={(key) => store.endLiveFormula(plugin.meta.id, key)} />
-                  </Suspense> : <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} />}
+                    {highlightedReadOnly.length > 0 && <KatexFormulaCard items={highlightedReadOnly} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
+                  </Suspense> : <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
                 </div>
               )}
               <div data-testid="fullscreen-controls" className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/15 bg-slate-950/80 p-2 text-slate-100 shadow-2xl backdrop-blur-2xl">
@@ -757,6 +762,19 @@ const ClassroomApp: React.FC = () => {
                     {store.view3dEnabled ? '2D 剖面' : '3D 空间'}
                   </button>
                 )}
+                {v2Plugin.getForceVectors && (
+                  <button type="button" data-testid="btn-stage-fbd" aria-pressed={store.autoFbdEnabled && !store.view3dEnabled}
+                    title="切换二维受力图" className={`rounded-full px-3 py-2 text-xs hover:bg-white/10 ${store.autoFbdEnabled && !store.view3dEnabled ? 'bg-sky-400/20 text-sky-200' : ''}`}
+                    onClick={() => {
+                      if (store.view3dEnabled) { store.setView3d(false); if (!store.autoFbdEnabled) store.toggleAutoFbd(); }
+                      else store.toggleAutoFbd();
+                    }}>受力</button>
+                )}
+                {store.appMode === 'story' && decks.length > 1 && <select aria-label="选择教学分镜" data-testid="story-deck-select" value={store.activeDeckId ?? ''}
+                  onChange={(event) => store.setAppMode('story', event.target.value)}
+                  className="max-w-[140px] rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-100">
+                  {decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.title}</option>)}
+                </select>}
                 <button type="button" data-testid="btn-toggle-story" disabled={!decks.length} onClick={() => store.setAppMode(store.appMode === 'story' ? 'stage' : 'story', decks[0]?.id)} className="rounded-full px-3 py-2 text-xs hover:bg-white/10 disabled:opacity-40">
                   {store.appMode === 'story' ? '自由演说' : '分镜讲课'}
                 </button>
