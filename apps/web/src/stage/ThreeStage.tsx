@@ -3,7 +3,15 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import type { ParamRecord, SimulationPluginV2, ThreeSceneBridge } from '@physforge/sim-sdk';
+import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
+import { DynamicTubeTrail } from './dynamicTubeTrail.js';
+import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
+import type { StorySpatialCommand } from '../presentation/storyCamera.js';
+import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial } from './spatialMaterials.js';
+import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
+import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
+import { magnetic3dDisplayPoint } from '@physforge/simulations/em-3d-magnetic-fields';
+import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
 import {
   buildConductorSegments,
   trace3dFieldLines,
@@ -12,6 +20,7 @@ import {
 } from '@physforge/simulations/em-3d-magnetic-fields/engine';
 import {
   buildTokamakMirrorSegments,
+  computeMirrorLossConeDeg,
   traceTokamakMirrorLines,
   type TokamakMirrorParams,
   type TokamakMirrorState
@@ -21,9 +30,18 @@ interface ThreeStageProps {
   readonly plugin: SimulationPluginV2<ParamRecord, unknown>;
   readonly simState: unknown;
   readonly simStateRef?: React.RefObject<unknown>;
+  readonly getFrameState?: () => unknown;
   readonly params: ParamRecord;
+  readonly getFrameParams?: () => ParamRecord;
+  readonly storyCameraCommandRef?: React.RefObject<StorySpatialCommand | null>;
   readonly activeLayers: ReadonlySet<string>;
+  readonly getFrameLayers?: () => ReadonlySet<string>;
   readonly presentationMode?: boolean;
+  readonly morphTarget?: 0 | 1;
+  readonly initialFlatViewport?: Viewport;
+  readonly onMorphProgress?: (progress: number) => void;
+  readonly onMorphFlat?: (viewport: Viewport) => void;
+  readonly onWebGLFallback?: () => void;
 }
 
 function disposeObjectResources(root: THREE.Object3D): void {
@@ -51,10 +69,9 @@ function disposeGroupChildren(group: THREE.Group): void {
   }
 }
 
-function mapPhysicalPoint(point: { x: number; y: number; z: number }, isMag3d: boolean): THREE.Vector3 {
-  return isMag3d
-    ? new THREE.Vector3(point.z, point.y, point.x)
-    : new THREE.Vector3(point.x, point.z, point.y);
+function mapMagneticPoint(point: { x: number; y: number; z: number }): THREE.Vector3 {
+  const p = magnetic3dDisplayPoint(point);
+  return new THREE.Vector3(p.x, p.y, p.z);
 }
 
 function updateVectorArrow(
@@ -158,15 +175,21 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   plugin,
   simState,
   simStateRef,
+  getFrameState,
   params,
   activeLayers,
-  presentationMode = false
+  getFrameLayers,
+  presentationMode = false,
+  morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ThreeSceneBridge<ParamRecord, unknown> | null>(null);
   const latestStateRef = useRef(simState);
   const latestParamsRef = useRef(params);
   const latestLayersRef = useRef(activeLayers);
+  const morphPropsRef = useRef({ morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback });
+  morphPropsRef.current = { morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback };
+  const initialViewportRef = useRef(initialFlatViewport);
   latestStateRef.current = simState;
   latestParamsRef.current = params;
   latestLayersRef.current = activeLayers;
@@ -175,10 +198,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
+    // A null result from the owner-checked getter is intentional; never fall back to a previous model.
+    const readState = () => getFrameState ? getFrameState() : simStateRef ? simStateRef.current : latestStateRef.current;
+    const readLayers = () => getFrameLayers?.() ?? latestLayersRef.current;
     if (plugin.mountThreeScene) {
       const bridge = plugin.mountThreeScene(container);
       bridgeRef.current = bridge;
-      bridge.sync(simState, params, activeLayers);
+      const state = readState();
+      if (state !== null && state !== undefined) bridge.sync(state, getFrameParams?.() ?? params, readLayers());
 
       const ro = new ResizeObserver(() => {
         if (!containerRef.current) return;
@@ -202,11 +229,31 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     scene.background = new THREE.Color('#0b0f17');
     scene.fog = new THREE.FogExp2('#0b0f17', 0.085);
 
-    const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 200);
-    camera.position.set(isMag3d ? 2.2 : 3.4, isMag3d ? 1.9 : 2.5, isMag3d ? 2.8 : 4.4);
-    camera.lookAt(0, 0, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
+    const morph = spatial ? new CameraMorphController(spatial, width, height) : null;
+    const camera = morph?.perspCamera ?? new THREE.PerspectiveCamera(48, width / height, 0.1, 200);
+    if (!morph) {
+      camera.position.set(isMag3d ? 2.2 : 3.4, isMag3d ? 1.9 : 2.5, isMag3d ? 2.8 : 4.4);
+      camera.lookAt(0, 0, 0);
+    }
+    const initialViewport = initialViewportRef.current;
+    const orbitTarget = new THREE.Vector3();
+    if (morph && spatial && initialViewport) {
+      const ppm = getPixelsPerMeter(initialViewport);
+      orbitTarget.copy(liftPoint((initialViewport.width * 0.05 - initialViewport.offsetX) / ppm,
+        initialViewport.offsetY / ppm, spatial.flattenPlane));
+      morph.setFraming(orbitTarget, initialViewport.height / ppm);
+      morph.startMorphTo(1, performance.now(), 0);
+    }
+    let lastMorphTarget: 0 | 1 = initialViewport && morph ? 1 : 0;
+    let flatNotified = false;
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch {
+      morphPropsRef.current.onWebGLFallback?.();
+      return;
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(width, height);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -230,6 +277,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    controls.target.copy(orbitTarget);
+    if (!morph || !initialViewport) controls.update();
+    else controls.enabled = false;
 
     const grid = createRadialGrid();
     const ambient = new THREE.HemisphereLight(0xc7e7ff, 0x101826, 1.05);
@@ -238,10 +288,25 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const rimLight = new THREE.DirectionalLight(0x38bdf8, 2.2);
     rimLight.position.set(-4, 2, -3);
     scene.add(grid, ambient, keyLight, rimLight);
+    const planarDriver = createPlanarFlagshipScene(plugin.meta.id, scene) ?? createRemainingFlagshipScene(plugin.meta.id, scene);
+    if (planarDriver) grid.visible = false;
 
     const staticGroup = new THREE.Group();
     const trailGroup = new THREE.Group();
     scene.add(staticGroup, trailGroup);
+    const magneticTrail=isMag3d?new DynamicTubeTrail(301,.012,6):null;
+    if(magneticTrail){
+      const mesh=new THREE.Mesh(magneticTrail.geometry,magneticFluxMaterial(0x4ade80));
+      mesh.name='magnetic-particle-trail';mesh.frustumCulled=false;trailGroup.add(mesh);
+    }
+    const fusionTrailGeometry = isTokamak3d ? new THREE.BufferGeometry() : null;
+    const fusionTrailBuffer = fusionTrailGeometry ? new THREE.BufferAttribute(new Float32Array(261 * 3), 3).setUsage(THREE.DynamicDrawUsage) : null;
+    if (fusionTrailGeometry && fusionTrailBuffer) {
+      fusionTrailGeometry.setAttribute('position', fusionTrailBuffer);
+      fusionTrailGeometry.setDrawRange(0, 0);
+      const line = new THREE.Line(fusionTrailGeometry, new THREE.LineBasicMaterial({ color: 0x4ade80 }));
+      line.frustumCulled = false; line.name = 'fusion-particle-trail'; trailGroup.add(line);
+    }
 
     const sphereGeo = new THREE.SphereGeometry(1, 20, 20);
     const sphereMat = new THREE.MeshStandardMaterial({
@@ -253,6 +318,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     });
     const marker = new THREE.Mesh(sphereGeo, sphereMat);
     scene.add(marker);
+    if (planarDriver) marker.visible = false;
 
     const velocityArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 0.65, 0xfacc15, 0.2, 0.12);
     const lorentzForceArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0.55, 0xfb7185, 0.18, 0.11);
@@ -266,13 +332,16 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     scene.add(velocityArrow, lorentzForceArrow, magneticFieldArrow);
 
     const velocityLabel = createWorldLabel('v', '#facc15');
-    const forceLabel = createWorldLabel('F洛', '#fb7185');
+    const forceLabel = createWorldLabel('a洛', '#fb7185');
     const fieldLabel = createWorldLabel('B', '#38bdf8');
+    velocityLabel.visible = false;
+    forceLabel.visible = false;
+    fieldLabel.visible = false;
     scene.add(velocityLabel, forceLabel, fieldLabel);
 
     const performanceGuard = new PerformanceGuard();
     let lastConfigSig = '';
-    let lastTrailToken = '';
+    let lastMagneticTrail:Magnetic3dState['trail']|null=null;
     let lastSyncedState: unknown;
     let rafId = 0;
     let dirty = true;
@@ -285,6 +354,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const onContextLost = (event: Event) => {
       event.preventDefault();
       contextLost = true;
+      morphPropsRef.current.onWebGLFallback?.();
     };
     const onContextRestored = () => {
       contextLost = false;
@@ -299,7 +369,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const fieldLabelAnchor = new THREE.Vector3();
 
     const separateWorldLabels = (viewportWidth: number, viewportHeight: number) => {
-      camera.updateMatrixWorld();
+      const activeCamera = morph?.getActiveCamera() ?? camera;
+      activeCamera.updateMatrixWorld();
       const activeLabels: Array<{ obj: CSS2DObject; anchor: THREE.Vector3; sx: number; sy: number; depth: number }> = [];
       const candidates: Array<{ obj: CSS2DObject; anchor: THREE.Vector3 }> = [
         { obj: velocityLabel, anchor: velocityLabelAnchor },
@@ -308,13 +379,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       ];
       for (const item of candidates) {
         if (!item.obj.visible) continue;
-        const projected = item.anchor.clone().project(camera);
+        const projected = item.anchor.clone().project(activeCamera);
         activeLabels.push({
           obj: item.obj,
           anchor: item.anchor,
           sx: (projected.x * 0.5 + 0.5) * viewportWidth,
           sy: (-projected.y * 0.5 + 0.5) * viewportHeight,
-          depth: Math.max(0.5, item.anchor.distanceTo(camera.position))
+          depth: Math.max(0.5, item.anchor.distanceTo(activeCamera.position))
         });
       }
       if (activeLabels.length === 0) return;
@@ -347,12 +418,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         }
       }
 
-      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(activeCamera.quaternion);
+      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(activeCamera.quaternion);
       const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
       for (let i = 0; i < activeLabels.length; i++) {
         const item = activeLabels[i]!;
-        const worldPerPx = (2 * item.depth * tanHalfFov) / Math.max(240, viewportHeight);
+        const worldPerPx = activeCamera instanceof THREE.OrthographicCamera
+          ? (activeCamera.top - activeCamera.bottom) / Math.max(240, viewportHeight)
+          : (2 * item.depth * tanHalfFov) / Math.max(240, viewportHeight);
         const shiftX = (item.sx - baseX[i]!) * worldPerPx;
         const shiftY = -(item.sy - baseY[i]!) * worldPerPx;
         item.obj.position
@@ -367,10 +440,17 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       curParams: ParamRecord,
       layers: ReadonlySet<string>
     ) => {
-      if (!state) return;
+      if (state === null || state === undefined) return;
+      if (planarDriver) { planarDriver.sync(state, curParams, layers); dirty = true; return; }
       if (isMag3d || isTokamak3d) {
         const magState = state as Magnetic3dState | TokamakMirrorState;
-        const position = mapPhysicalPoint(magState.position, isMag3d);
+        const fusionParams = curParams as TokamakMirrorParams;
+        const project = (point: { x: number; y: number; z: number }) => {
+          if (isMag3d) return mapMagneticPoint(point);
+          const p = fusionDisplayPoint(point, fusionParams.mode);
+          return new THREE.Vector3(p.x, p.y, p.z);
+        };
+        const position = project(magState.position);
         marker.position.copy(position);
 
         if (isMag3d) {
@@ -381,9 +461,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           marker.scale.setScalar(particleRadius);
           const particleState = state as Magnetic3dState;
           const vectorsVisible = layers.has('handednessTriad');
-          const velocity = mapPhysicalPoint(particleState.velocity, true);
-          const lorentzForce = mapPhysicalPoint(particleState.lorentzForce, true);
-          const magneticField = mapPhysicalPoint(particleState.bAtParticle, true);
+          const velocity = mapMagneticPoint(particleState.velocity);
+          const lorentzForce = mapMagneticPoint(particleState.lorentzForce);
+          const magneticField = mapMagneticPoint(particleState.bAtParticle);
           const speed = velocity.length();
           const forceMagnitude = lorentzForce.length();
           const fieldMagnitude = magneticField.length();
@@ -419,7 +499,15 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
           separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
         } else {
-          marker.scale.setScalar(0.12);
+          marker.scale.setScalar(0.055);
+          const fusion = state as TokamakMirrorState;
+          sphereMat.color.set(fusion.escaped ? 0xf87171 : 0x4ade80);
+          sphereMat.emissive.set(fusion.escaped ? 0x7f1d1d : 0x14532d);
+          if (fusionTrailGeometry && fusionTrailBuffer) {
+            const count = Math.min(261, fusion.trail.length), start = fusion.trail.length - count;
+            for (let i = 0; i < count; i++) { const p = project(fusion.trail[start + i]!); fusionTrailBuffer.setXYZ(i, p.x, p.y, p.z); }
+            fusionTrailBuffer.needsUpdate = true; fusionTrailGeometry.setDrawRange(0, count);
+          }
           velocityArrow.visible = false;
           lorentzForceArrow.visible = false;
           magneticFieldArrow.visible = false;
@@ -449,61 +537,49 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
                   : magneticParams.geometryType === 'helmholtz-coil' ? 72
                     : magneticParams.geometryType === 'finite-solenoid' ? 48
                       : magneticParams.geometryType === 'straight-wire' ? 24 : 0
-                : 0;
+                : fusionParams.mode === 'tokamak' ? 24 : 32;
               const segmentGroupSize = pointsPerConductor || segments.length;
               for (let start = 0; start < segments.length; start += segmentGroupSize) {
                 const group = segments.slice(start, start + segmentGroupSize);
                 if (group.length === 0) continue;
                 const points = [group[0]!.a, ...group.map((segment) => segment.b)].map(
-                  (point) => mapPhysicalPoint(point, isMag3d)
+                  project
                 );
-                const closed = pointsPerConductor > 24;
+                const closed = isTokamak3d || pointsPerConductor > 24;
+                if (closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
                 const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
                 const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), 0.026, 10, closed);
-                const conductorMat = new THREE.MeshStandardMaterial({
-                  color: 0xd97706,
-                  metalness: 0.84,
-                  roughness: 0.24,
-                  emissive: 0x7c2d12,
-                  emissiveIntensity: 0.26
-                });
+                const conductorMat = brushedCopperMaterial();
                 staticGroup.add(new THREE.Mesh(tubeGeo, conductorMat));
               }
             }
           }
 
+          if (isTokamak3d && layers.has('conductors') && fusionParams.mode === 'tokamak') {
+            const chamber = new THREE.Mesh(new THREE.TorusGeometry(fusionParams.majorRadiusM, 0.55, 24, 96), dielectricGlassMaterial());
+            chamber.name = 'tokamak-vacuum-chamber';
+            staticGroup.add(chamber);
+          }
           if (layers.has('fieldLines3d')) {
             const lines = isMag3d
               ? trace3dFieldLines(curParams as Magnetic3dParams)
               : traceTokamakMirrorLines(curParams as TokamakMirrorParams);
             for (const line of lines) {
               if (line.length < 2) continue;
-              const points = line.map((point) => mapPhysicalPoint(point, isMag3d));
+              const points = line.map(project);
               const closed = points[0]!.distanceTo(points[points.length - 1]!) < 0.06;
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
               const geometry = new THREE.TubeGeometry(curve, Math.max(32, points.length * 2), 0.012, 5, closed);
-              const material = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.8 });
+              const material = magneticFluxMaterial();
               staticGroup.add(new THREE.Mesh(geometry, material));
             }
           }
         }
 
-        if (isMag3d) {
-          const trail = (state as Magnetic3dState).trail;
-          const lastPoint = trail[trail.length - 1];
-          const trailToken = lastPoint
-            ? `${trail.length}:${lastPoint.x.toPrecision(6)}:${lastPoint.y.toPrecision(6)}:${lastPoint.z.toPrecision(6)}`
-            : 'empty';
-          if (trailToken !== lastTrailToken) {
-            lastTrailToken = trailToken;
-            disposeGroupChildren(trailGroup);
-            if (trail.length > 1) {
-              const points = trail.map((point) => mapPhysicalPoint(point, true));
-              const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
-              const geometry = new THREE.TubeGeometry(curve, Math.max(24, points.length), 0.012, 5, false);
-              const material = new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.82 });
-              trailGroup.add(new THREE.Mesh(geometry, material));
-            }
+        if(isMag3d&&magneticTrail){
+          const trail=(state as Magnetic3dState).trail;
+          if(trail!==lastMagneticTrail){
+            lastMagneticTrail=trail;magneticTrail.update(trail,magnetic3dDisplayPoint);
           }
         }
       } else {
@@ -518,8 +594,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       resize: (nextWidth, nextHeight) => {
         const nextW = Math.max(320, nextWidth);
         const nextH = Math.max(240, nextHeight);
-        camera.aspect = nextW / nextH;
-        camera.updateProjectionMatrix();
+        if (morph) {
+          if (morph.getMorphT() === 0 && !morph.isAnimating) morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
+          morph.resize(nextW, nextH);
+        }
+        else { camera.aspect = nextW / nextH; camera.updateProjectionMatrix(); }
         renderer.setSize(nextW, nextH);
         cssRenderer.setSize(nextW, nextH);
         dirty = true;
@@ -529,6 +608,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
+        planarDriver?.dispose();
         disposeGroupChildren(staticGroup);
         disposeGroupChildren(trailGroup);
         scene.remove(velocityArrow, lorentzForceArrow, magneticFieldArrow, marker, velocityLabel, forceLabel, fieldLabel);
@@ -555,16 +635,58 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     });
     resizeObserver.observe(container);
 
-    syncState(simStateRef?.current ?? latestStateRef.current, latestParamsRef.current, latestLayersRef.current);
+    let lastSyncedParams = getFrameParams?.() ?? latestParamsRef.current;
+    let lastSyncedLayers = readLayers();
+    syncState(readState(), lastSyncedParams, lastSyncedLayers);
 
     const renderLoop = (now: number) => {
       rafId = requestAnimationFrame(renderLoop);
-      controls.update();
+      if (morph) {
+        const target = morphPropsRef.current.morphTarget;
+        const command = storyCameraCommandRef?.current;
+        const wasEnabled = controls.enabled;
+        let authored = false;
+        if (command && command.modelId === plugin.meta.id &&
+            target === (command.view.morphT === 1 ? 1 : 0)) {
+          if (morph.getMorphT() === 0 && !morph.isAnimating) {
+            morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
+          }
+          morph.startKeyframe(command.view, now, command.durationMs);
+          if (storyCameraCommandRef) storyCameraCommandRef.current = null;
+          lastMorphTarget = target;
+          flatNotified = false;
+          authored = true;
+          dirty = true;
+        } else if (target !== lastMorphTarget) {
+          if (target === 1 && morph.getMorphT() === 0 && !morph.isAnimating) {
+            morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
+          }
+          morph.startMorphTo(target, now);
+          lastMorphTarget = target;
+          flatNotified = false;
+          dirty = true;
+        }
+        if (morph.update(now)) dirty = true;
+        controls.enabled = morph.getMorphT() === 0 && !morph.isAnimating;
+        if (controls.enabled) {
+          if (!wasEnabled || authored) controls.target.copy(morph.getOrbitTarget());
+          controls.update();
+        }
+        const progress = morph.getMorphT();
+        container.dataset.morphT = String(progress);
+        morphPropsRef.current.onMorphProgress?.(progress);
+      } else {
+        controls.update();
+      }
 
-      const latestState = simStateRef?.current ?? latestStateRef.current;
-      if (latestState && latestState !== lastSyncedState) {
-        syncState(latestState, latestParamsRef.current, latestLayersRef.current);
+      const latestState = readState();
+      const frameParams = getFrameParams?.() ?? latestParamsRef.current;
+      const frameLayers = readLayers();
+      if (latestState !== null && latestState !== undefined && (latestState !== lastSyncedState || frameParams !== lastSyncedParams || frameLayers !== lastSyncedLayers)) {
+        syncState(latestState, frameParams, frameLayers);
         lastSyncedState = latestState;
+        lastSyncedParams = frameParams;
+        lastSyncedLayers = frameLayers;
       }
 
       if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) {
@@ -575,14 +697,19 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (isMag3d) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
-      renderer.render(scene, camera);
-      cssRenderer.render(scene, camera);
+      const renderCamera = morph?.getActiveCamera() ?? camera;
+      renderer.render(scene, renderCamera);
+      cssRenderer.render(scene, renderCamera);
+      if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
+        flatNotified = true;
+        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)));
+      }
       const renderDuration = performance.now() - renderStart;
       performanceGuard.observe(renderDuration);
       lastRenderTime = now;
       dirty = false;
     };
-    lastSyncedState = simStateRef?.current ?? latestStateRef.current;
+    lastSyncedState = readState();
     rafId = requestAnimationFrame(renderLoop);
 
     return () => {
@@ -593,8 +720,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   }, [plugin]);
 
   useEffect(() => {
-    bridgeRef.current?.sync(simState, params, activeLayers);
-  }, [simState, params, activeLayers]);
+    if (plugin.mountThreeScene && simState !== null && simState !== undefined) bridgeRef.current?.sync(simState, params, activeLayers);
+  }, [plugin, simState, params, activeLayers]);
 
   const magnetic3dState = plugin.meta.id === 'em-3d-magnetic-fields'
     && simState !== null
@@ -616,6 +743,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     ? 0.055 * Math.max(0.2, typeof params.radiusR === 'number' ? params.radiusR : 1)
     : undefined;
 
+  const lossCone = plugin.meta.id === 'stse-tokamak-magnetic-mirror' && params.mode === 'magnetic-mirror'
+    ? computeMirrorLossConeDeg(params as TokamakMirrorParams) : undefined;
+  const coneRadius = 23;
+  const coneX = lossCone === undefined ? 0 : coneRadius * Math.cos(lossCone * Math.PI / 180);
+  const coneY = lossCone === undefined ? 0 : coneRadius * Math.sin(lossCone * Math.PI / 180);
   return (
     <div
       ref={containerRef}
@@ -629,10 +761,19 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-particle-radius={particleRadius}
       className="relative w-full h-full min-h-[260px] rounded-xl overflow-hidden"
     >
+      {lossCone !== undefined && <div data-testid="mirror-loss-cone" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200">
+        <div>速度空间逃逸锥 θc={lossCone.toFixed(1)}°</div>
+        <svg viewBox="0 0 104 60" width="104" height="60" aria-label="速度空间示意">
+          <path d={`M52 30 L${52 + coneX} ${30 - coneY} L${52 + coneX} ${30 + coneY} Z M52 30 L${52 - coneX} ${30 - coneY} L${52 - coneX} ${30 + coneY} Z`} fill="#fbbf2455" stroke="#fbbf24" />
+          <path d="M5 30 H99 M52 5 V55" stroke="#94a3b8" strokeWidth="1" />
+        </svg>
+      </div>}
+      {plugin.meta.id === 'stse-em-devices-suite' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">归一化原理示意 · 蓝色箭头 B 垂直剖面 · 定量值见公式区</div>}
+      {plugin.meta.id === 'astro-orbital-mechanics' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">轨道使用归一化长度 · 天体尺寸为示意{params.mode === 'binary-lagrange' && activeLayers.has('corotatingView') ? ' · 共转系不绘制无逐点时刻的历史轨迹' : params.mode === 'hohmann-transfer' ? ' · 橙色标记为引擎记录的点火' : ''}</div>}
       {vectorsVisible && (
         <div data-testid="three-vector-legend" className={`pointer-events-none absolute ${presentationMode ? 'bottom-3 left-3' : 'left-3 top-3'} z-10 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-950/75 px-3 py-2 text-[11px] text-slate-200 shadow-lg backdrop-blur`}>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-amber-300" />v 速度</span>
-          <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-rose-400" />Fₗ 洛伦兹力</span>
+          <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-rose-400" />aₗ 洛伦兹加速度</span>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-sky-400" />B 磁场</span>
         </div>
       )}

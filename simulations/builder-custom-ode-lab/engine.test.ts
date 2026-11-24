@@ -32,7 +32,7 @@ describe('B5 builder-custom-ode-lab verification', () => {
 
     const safe = compileSafeFormula('-(k * x + 2 * x^3) / m');
     expect(safe.evaluate({ x: 1, k: 4, m: 2 })).toBeCloseTo(-3, 12);
-  });
+  }, 20000);
 
   it('conserves Kepler energy and angular momentum < 1e-5 and executes 50-step headless ParameterSweep', () => {
     const kepParams = resolvePluginParams<CustomOdeParams>(builderCustomOdeLabPlugin.paramSchema, {

@@ -1,3 +1,5 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
+import { verticalCircularStoryDecks } from './storyDecks.js';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { verticalCircularPresets } from './presets.js';
@@ -28,7 +30,116 @@ const paramSchema: readonly ParamFieldSpec<VerticalCircularParams>[] = [
   { key: 'startAngleDeg', kind: 'number', label: '半球微扰起始角 θ₀', unit: '°', min: 0.5, max: 30, step: 0.5, defaultValue: 0.5 }
 ];
 
-export const mechVerticalCircularPlugin = defineSimulationPlugin<
+
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "critical-speed",
+    "title": "内圆轨道最低点临界初速",
+    "latex": "v_{0,\\rm crit}=\\sqrt{5g\\htmlClass{pf-live-var}{\\htmlData{param=radius}{R}}}",
+    "bindings": [
+      {
+        "tokenKey": "radius",
+        "paramKey": "radius",
+        "label": "圆弧半径 R",
+        "unit": "m",
+        "min": 0.8,
+        "max": 2.5,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "trackMode": [
+        "inner-loop"
+      ]
+    }
+  },
+  {
+    "id": "dome-initial-normal",
+    "title": "外凸半球起始接触条件（所需反力非负）",
+    "latex": "N_0=\\htmlClass{pf-live-var}{\\htmlData{param=mass}{m}}\\left(g\\cos \\htmlClass{pf-live-var}{\\htmlData{param=startAngleDeg}{\\theta_0}}-\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=vLaunch}{v_0}}^2}{\\htmlClass{pf-live-var}{\\htmlData{param=radius}{R}}}\\right)",
+    "bindings": [
+      {
+        "tokenKey": "mass",
+        "paramKey": "mass",
+        "label": "质点质量 m",
+        "unit": "kg",
+        "min": 0.5,
+        "max": 5,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "startAngleDeg",
+        "paramKey": "startAngleDeg",
+        "label": "半球微扰起始角 θ₀",
+        "unit": "°",
+        "min": 0.5,
+        "max": 30,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "vLaunch",
+        "paramKey": "vLaunch",
+        "label": "初始切向速率 v₀",
+        "unit": "m/s",
+        "min": 0,
+        "max": 12,
+        "step": 0.2,
+        "precision": 2
+      },
+      {
+        "tokenKey": "radius",
+        "paramKey": "radius",
+        "label": "圆弧半径 R",
+        "unit": "m",
+        "min": 0.8,
+        "max": 2.5,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "trackMode": [
+        "outer-dome"
+      ]
+    }
+  },
+  {
+    "id": "rod-radial-reaction",
+    "title": "双边轻杆的径向约束力（向内为正，θ 从最高点计）",
+    "latex": "F_r=\\htmlClass{pf-live-var}{\\htmlData{param=mass}{m}}\\left(\\frac{v^2}{\\htmlClass{pf-live-var}{\\htmlData{param=radius}{R}}}-g\\cos\\theta\\right)",
+    "bindings": [
+      {
+        "tokenKey": "mass",
+        "paramKey": "mass",
+        "label": "质点质量 m",
+        "unit": "kg",
+        "min": 0.5,
+        "max": 5,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "radius",
+        "paramKey": "radius",
+        "label": "圆弧半径 R",
+        "unit": "m",
+        "min": 0.8,
+        "max": 2.5,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "trackMode": [
+        "light-rod"
+      ]
+    }
+  }
+];
+export const mechVerticalCircularPlugin = Object.assign(defineSimulationPlugin<
   VerticalCircularParams,
   VerticalCircularState
 >({
@@ -109,6 +220,12 @@ export const mechVerticalCircularPlugin = defineSimulationPlugin<
       { kind: 'arrow', x1: state.x, y1: state.y, x2: state.x, y2: state.y - 0.7, label: 'mg' }
     ] as DiagramPrimitive[]
   }),
+  formatFormulas: (state, params) => [{
+    id: 'radial-reaction-state', label: state.derailed ? '脱离轨道后的运动状态' : '实际约束力与速率',
+    latex: state.derailed ? '\\mathbf a=\\mathbf g' : params.trackMode === 'outer-dome'
+      ? 'N=m(g\\cos\\theta-v^2/R)' : 'F_r=m(v^2/R-g\\cos\\theta)',
+    substitutedLatex: `\\begin{aligned}v&=${Math.hypot(state.vx, state.vy).toFixed(3)}\\text{ m/s}\\\\${params.trackMode === 'light-rod' ? 'F_r' : 'N'}&=${(state.derailed ? 0 : state.normalForceN).toFixed(3)}\\text{ N}\\end{aligned}`
+  }],
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
     const toScr = (wx: number, wy: number) => {
@@ -158,6 +275,6 @@ export const mechVerticalCircularPlugin = defineSimulationPlugin<
     ctx.fill();
     ctx.restore();
   }
-});
+}), { storyDecks: verticalCircularStoryDecks, liveFormulas });
 
 export default mechVerticalCircularPlugin;

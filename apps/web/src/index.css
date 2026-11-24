@@ -330,3 +330,23 @@ input[type="range"].pf-slider::-moz-range-thumb {
     box-shadow: none !important;
   }
 }
+
+/* V3 spatial presentation; studio selectors remain unchanged. */
+.pf-story-caption { position:absolute; z-index:25; bottom:5.4rem; left:50%; transform:translateX(-50%); max-width:min(80vw,1000px); width:max-content; text-align:center; color:#f8fafc; border:1px solid rgba(255,255,255,.15); border-radius:1rem; background:rgba(2,6,23,.78); padding:.65rem 1.15rem; backdrop-filter:blur(14px); }
+.pf-story-caption-text { font-size:clamp(1.1rem,2.4vw,2rem); font-weight:650; line-height:1.35; overflow-wrap:anywhere; }
+.pf-story-navigation { display:flex; align-items:center; justify-content:center; gap:.45rem; margin-top:.3rem; font-size:.75rem; }
+.pf-story-navigation button { cursor:pointer; min-width:1.5rem; min-height:1.5rem; border-radius:50%; }
+.pf-story-navigation button:disabled { opacity:.35; cursor:default; }
+.pf-story-navigation .pf-story-dot { min-width:.75rem; min-height:.75rem; background:#64748b; }
+.pf-story-navigation .pf-story-dot.active { background:#38bdf8; }
+.pf-story-freeze { color:#fde68a; font-weight:600; margin-top:.25rem; }
+.pf-story-blackout { position:absolute; inset:0; z-index:80; background:#000; display:flex; align-items:flex-end; justify-content:center; }
+.pf-story-blackout button { margin:1rem; color:#94a3b8; padding:.5rem .85rem; border:1px solid #334155; border-radius:999px; cursor:pointer; }
+
+/* V3 live formula touch targets and independent scrub HUD. */
+.pf-live-var { padding:3px 6px; touch-action:none; user-select:none; cursor:ew-resize; border-bottom:1px dashed #38bdf8; color:#7dd3fc; }
+.pf-live-var--dragging { background:rgba(56,189,248,.18); border-radius:4px; }
+.pf-live-formula-markup { text-align:center; font-size:.9rem; }
+.pf-live-formula-markup .katex-display { margin:.3rem 0; }
+.pf-live-formula-hud { position:fixed; z-index:90; transform:translate(-50%,calc(-100% - 9px)); pointer-events:none; border:1px solid #475569; border-radius:8px; background:#020617; color:#e2e8f0; padding:.45rem .65rem; font-size:12px; box-shadow:0 6px 20px #0008; }
+.pf-live-formula-hud[hidden] { display:none; }
