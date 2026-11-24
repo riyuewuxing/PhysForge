@@ -125,6 +125,39 @@ describe('circuit-dc-capacitor-mna engine', () => {
     expect(rcState.events.some((event) => event.id === 'SHORT_CIRCUIT')).toBe(false);
   });
 
+  it('matches independent scalar circuit balance and exact divider endpoints', () => {
+    const base: CircuitParams = { ...baseParams, topology: 'divider-lamp', emf: 12, internalR: 1.5 };
+    for (const sliderR of [0, .5, 5, 10, 19.5, 20]) {
+      const p = { ...base, sliderR };
+      const state = createInitialState(p);
+      // Independent bisection of source current minus the two branch currents.
+      let lo = 0, hi = p.emf;
+      if (sliderR > 0) for (let j=0;j<80;j++) {
+        const v=(lo+hi)/2;
+        const i=(p.emf-v)/(p.internalR+20-sliderR);
+        const load=v/sliderR+.25*v*Math.pow(v+1e-6,-.35);
+        if(i>load)lo=v;else hi=v;
+      }
+      const expected = sliderR===0?0:(lo+hi)/2;
+      expect(state.terminalVoltage).toBeCloseTo(expected,8);
+      expect(state.divider?.sourceTerminalVoltage).toBeCloseTo(p.emf-state.totalCurrent*p.internalR,10);
+      expect(state.divider?.lowerResistance).toBe(sliderR);
+      expect(state.divider?.upperResistance).toBe(20-sliderR);
+      expect(checkInvariants(state,state,p).every(report=>report.passed)).toBe(true);
+      expect(state.capVoltage).toBe(0);
+      expect(computeObservables(state).lampVoltage).toBe(state.terminalVoltage);
+    }
+    const bottom = createInitialState({...base, sliderR:0});
+    expect(bottom.branchCurrent2).toBe(0);
+    expect(bottom.totalCurrent).toBeCloseTo(12/21.5,12);
+    const top = createInitialState({...base, sliderR:20,internalR:0});
+    expect(top.terminalVoltage).toBe(12);
+    expect(top.divider?.sourceTerminalVoltage).toBe(12);
+    expect(top.totalCurrent).toBeCloseTo(12/20+.25*12*Math.pow(12+1e-6,-.35),12);
+    const off=createInitialState({...base,emf:0,sliderR:10});
+    expect(off.outputPower).toBeCloseTo(0,12);
+  });
+
   it('solves the divider-lamp branch with MNA KCL and returns the physical lamp I-U curve', () => {
     const dividerParams = { ...baseParams, topology: 'divider-lamp' as const, sliderR: 10 };
     const state = createInitialState(dividerParams);

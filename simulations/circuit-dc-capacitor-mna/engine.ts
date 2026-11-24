@@ -21,6 +21,24 @@ export type CircuitParams = {
   switchClosed: boolean; // RC 模式下：true 接电源充电，false 对 R1 放电
 };
 
+export interface DividerReadouts {
+  readonly sourceTerminalVoltage: number;
+  readonly lowerResistance: number;
+  readonly upperResistance: number;
+  readonly sourcePower: number;
+  readonly internalLoss: number;
+  readonly upperLoss: number;
+  readonly lowerLoss: number;
+}
+
+export const DIVIDER_RESISTANCE = 20;
+export function dividerLowerResistance(sliderR: number): number {
+  return Math.max(0, Math.min(DIVIDER_RESISTANCE, sliderR));
+}
+export function dividerLampCurrent(voltage: number): number {
+  return 0.25 * Math.pow(Math.abs(voltage) + 1e-6, 0.65 - 1) * voltage;
+}
+
 export interface CircuitState {
   readonly t: number;
   readonly nodeVoltages: readonly number[];
@@ -34,6 +52,7 @@ export interface CircuitState {
   readonly capCurrent: number;
   readonly capCharge: number;
   readonly capEnergy: number;
+  readonly divider?: DividerReadouts;
   readonly events: readonly PhysicsEvent[];
 }
 
@@ -78,35 +97,53 @@ function solveTopology(
   }
 
   if (params.topology === 'divider-lamp') {
-    const totalResistance = 20;
-    const ratio = Math.max(0.05, Math.min(0.95, params.sliderR / totalResistance));
-    const upperResistance = Math.max(0.2, totalResistance * (1 - ratio) + r);
-    const lowerResistance = Math.max(0.2, totalResistance * ratio);
-    const elements: NonlinearCircuitElement[] = [
-      { kind: 'voltageSource', id: 'V_main', pos: 1, neg: 0, voltage: E },
-      { kind: 'resistor', id: 'R_upper', a: 1, b: 2, resistance: upperResistance },
-      { kind: 'resistor', id: 'R_lower', a: 2, b: 0, resistance: lowerResistance },
-      { kind: 'lamp', id: 'Lamp', a: 2, b: 0, k: 0.25, alpha: 0.65 }
-    ];
-    const solution = solveNonlinearMna(2, elements);
-    const bulbVoltage = solution.nodeVoltages[2]!;
-    const bulbCurrent = solution.elementCurrents.Lamp!;
-    const sourceCurrent = solution.elementCurrents.R_upper!;
-    const lowerCurrent = solution.elementCurrents.R_lower!;
+    const lowerResistance = dividerLowerResistance(params.sliderR);
+    const upperResistance = DIVIDER_RESISTANCE - lowerResistance;
+    const internal = Math.max(0, params.internalR);
+    const series = upperResistance + internal;
+    let bulbVoltage: number, bulbCurrent: number, sourceCurrent: number, lowerCurrent: number;
+    // Exact zero-resistance topology reductions; no hidden 5% clamp.
+    if (lowerResistance === 0) {
+      bulbVoltage = 0; bulbCurrent = 0;
+      sourceCurrent = E / series; lowerCurrent = sourceCurrent;
+    } else if (series === 0) {
+      bulbVoltage = E; bulbCurrent = dividerLampCurrent(E);
+      lowerCurrent = E / lowerResistance; sourceCurrent = lowerCurrent + bulbCurrent;
+    } else {
+      const elements: NonlinearCircuitElement[] = [
+        { kind: 'voltageSource', id: 'V_main', pos: 1, neg: 0, voltage: E },
+        { kind: 'resistor', id: 'R_upper', a: 1, b: 2, resistance: series },
+        { kind: 'resistor', id: 'R_lower', a: 2, b: 0, resistance: lowerResistance },
+        { kind: 'lamp', id: 'Lamp', a: 2, b: 0, k: 0.25, alpha: 0.65 }
+      ];
+      const solution = solveNonlinearMna(2, elements);
+      bulbVoltage = solution.nodeVoltages[2]!;
+      bulbCurrent = solution.elementCurrents.Lamp!;
+      sourceCurrent = solution.elementCurrents.R_upper!;
+      lowerCurrent = solution.elementCurrents.R_lower!;
+    }
     const inputPower = E * sourceCurrent;
     const bulbPower = bulbVoltage * bulbCurrent;
     return {
-      nodeVoltages: solution.nodeVoltages,
+      nodeVoltages: [0, E, bulbVoltage],
       totalCurrent: sourceCurrent,
       branchCurrent1: lowerCurrent,
       branchCurrent2: bulbCurrent,
-      terminalVoltage: bulbVoltage,
+      terminalVoltage: bulbVoltage, // historical alias; source terminal is separate
       outputPower: bulbPower,
       efficiency: inputPower > 1e-9 ? bulbPower / inputPower : 0,
-      capVoltage: bulbVoltage,
+      capVoltage: 0,
       capCurrent: 0,
       capCharge: 0,
-      capEnergy: 0
+      capEnergy: 0,
+      divider: {
+        sourceTerminalVoltage: E - sourceCurrent * internal,
+        lowerResistance, upperResistance,
+        sourcePower: inputPower,
+        internalLoss: sourceCurrent * sourceCurrent * internal,
+        upperLoss: sourceCurrent * sourceCurrent * upperResistance,
+        lowerLoss: lowerCurrent * lowerCurrent * lowerResistance
+      }
     };
   }
 
@@ -300,7 +337,7 @@ export function sampleDividerLampIvCurve(
   const count = Math.max(2, Math.min(512, Math.floor(Number.isFinite(sampleCount) ? sampleCount : 16)));
   return Array.from({ length: count }, (_, index) => {
     const u = maxVoltage * index / (count - 1);
-    const i = 0.25 * Math.pow(Math.abs(u) + 1e-6, 0.65 - 1) * u;
+    const i = dividerLampCurrent(u);
     return { u, i };
   });
 }
@@ -362,7 +399,14 @@ export function computeObservables(state: CircuitState): Record<string, number> 
     capVoltage: state.capVoltage,
     capCurrent: state.capCurrent,
     capCharge: state.capCharge,
-    capacitorEnergy: state.capEnergy
+    capacitorEnergy: state.capEnergy,
+    ...(state.divider ? {
+      sourceTerminalVoltage: state.divider.sourceTerminalVoltage,
+      lampVoltage: state.terminalVoltage, lampCurrent: state.branchCurrent2,
+      sourcePower: state.divider.sourcePower, internalLoss: state.divider.internalLoss,
+      upperLoss: state.divider.upperLoss, lowerLoss: state.divider.lowerLoss,
+      dividerLowerResistance: state.divider.lowerResistance, dividerUpperResistance: state.divider.upperResistance
+    } : {})
   };
 }
 
@@ -400,12 +444,14 @@ export function checkInvariants(
   if (params.topology === 'divider-lamp') {
     const kclErr = Math.abs(state.totalCurrent - (state.branchCurrent1 + state.branchCurrent2)) /
       Math.max(Math.abs(state.totalCurrent), 1e-9);
-    return [{
-      name: '分压小灯泡节点 KCL (I总 = I灯 + I下段)',
-      measuredError: kclErr,
-      tolerance: 1e-9,
-      passed: kclErr < 1e-9
-    }];
+    const divider = state.divider;
+    const powerError = divider ? Math.abs(divider.sourcePower - divider.internalLoss - divider.upperLoss - divider.lowerLoss - state.outputPower) : Infinity;
+    const loopError = divider ? Math.abs(params.emf - state.totalCurrent * (params.internalR + divider.upperResistance) - state.terminalVoltage) : Infinity;
+    return [
+      { name: '分压小灯泡节点 KCL (I总 = I灯 + I下段)', measuredError: kclErr, tolerance: 1e-9, passed: kclErr < 1e-9 },
+      { name: '分压回路 KVL', measuredError: loopError, tolerance: 1e-8, passed: loopError < 1e-8, unit: 'V' },
+      { name: '分压电路功率平衡', measuredError: powerError, tolerance: 1e-8, passed: powerError < 1e-8, unit: 'W' }
+    ];
   }
   return [];
 }
