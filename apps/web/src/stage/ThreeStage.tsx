@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
 import { DynamicTubeTrail } from './dynamicTubeTrail.js';
-import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection } from './cameraMorphController.js';
+import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
@@ -409,7 +409,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const separateWorldLabels = (viewportWidth: number, viewportHeight: number) => {
       const activeCamera = morph?.getActiveCamera() ?? camera;
       activeCamera.updateMatrixWorld();
-      const activeLabels: Array<{ obj: CSS2DObject; anchor: THREE.Vector3; sx: number; sy: number; depth: number }> = [];
+      const activeLabels: Array<{ obj: CSS2DObject; ndcZ: number; x: number; y: number; width: number; height: number }> = [];
       const candidates: Array<{ obj: CSS2DObject; anchor: THREE.Vector3 }> = [
         { obj: velocityLabel, anchor: velocityLabelAnchor },
         { obj: forceLabel, anchor: forceLabelAnchor },
@@ -418,58 +418,26 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       for (const item of candidates) {
         if (!item.obj.visible) continue;
         const projected = item.anchor.clone().project(activeCamera);
+        if (![projected.x, projected.y, projected.z].every(Number.isFinite)) continue;
+        const rect = item.obj.element.getBoundingClientRect();
         activeLabels.push({
           obj: item.obj,
-          anchor: item.anchor,
-          sx: (projected.x * 0.5 + 0.5) * viewportWidth,
-          sy: (-projected.y * 0.5 + 0.5) * viewportHeight,
-          depth: Math.max(0.5, item.anchor.distanceTo(activeCamera.position))
+          ndcZ: projected.z,
+          x: (projected.x * 0.5 + 0.5) * viewportWidth,
+          y: (-projected.y * 0.5 + 0.5) * viewportHeight,
+          width: Math.max(30, rect.width, item.obj.element.offsetWidth),
+          height: Math.max(32, rect.height, item.obj.element.offsetHeight)
         });
       }
-      if (activeLabels.length === 0) return;
-
-      const baseX = activeLabels.map((item) => item.sx);
-      const baseY = activeLabels.map((item) => item.sy);
-      const minDx = 42;
-      const minDy = 24;
-      for (let iter = 0; iter < 8; iter++) {
-        for (let i = 0; i < activeLabels.length; i++) {
-          for (let j = i + 1; j < activeLabels.length; j++) {
-            const a = activeLabels[i]!;
-            const b = activeLabels[j]!;
-            const dx = b.sx - a.sx;
-            const dy = b.sy - a.sy;
-            const gapX = minDx - Math.abs(dx);
-            const gapY = minDy - Math.abs(dy);
-            if (gapX > 0 && gapY > 0) {
-              const dirX = Math.abs(dx) > 1 ? Math.sign(dx) : (i % 2 === 0 ? -1 : 1);
-              const dirY = Math.abs(dy) > 1 ? Math.sign(dy) : -1;
-              if (gapX < gapY) {
-                a.sx -= dirX * (gapX * 0.55 + 2);
-                b.sx += dirX * (gapX * 0.55 + 2);
-              } else {
-                a.sy -= dirY * (gapY * 0.55 + 2);
-                b.sy += dirY * (gapY * 0.55 + 2);
-              }
-            }
-          }
-        }
-      }
-
-      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(activeCamera.quaternion);
-      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(activeCamera.quaternion);
-      const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+      const separated = separateScreenLabelBoxes(activeLabels);
       for (let i = 0; i < activeLabels.length; i++) {
-        const item = activeLabels[i]!;
-        const worldPerPx = activeCamera instanceof THREE.OrthographicCamera
-          ? (activeCamera.top - activeCamera.bottom) / Math.max(240, viewportHeight)
-          : (2 * item.depth * tanHalfFov) / Math.max(240, viewportHeight);
-        const shiftX = (item.sx - baseX[i]!) * worldPerPx;
-        const shiftY = -(item.sy - baseY[i]!) * worldPerPx;
-        item.obj.position
-          .copy(item.anchor)
-          .addScaledVector(cameraRight, shiftX)
-          .addScaledVector(cameraUp, shiftY);
+        const item = activeLabels[i]!, next = separated[i]!;
+        // Exact inverse projection at the same NDC depth, including orthographic morph.
+        item.obj.position.copy(new THREE.Vector3(
+          next.x / viewportWidth * 2 - 1,
+          1 - next.y / viewportHeight * 2,
+          item.ndcZ
+        ).unproject(activeCamera));
       }
     };
 

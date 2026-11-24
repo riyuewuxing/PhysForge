@@ -1,12 +1,29 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { createWorldMapper, type Spatial3DFlattenSpec } from '@physforge/sim-sdk';
-import { CameraMorphController, alignedCanvasViewport, flattenPoint, liftPoint, project3DToScreen, projectCameraDirection } from './cameraMorphController.js';
+import { CameraMorphController, alignedCanvasViewport, flattenPoint, liftPoint, project3DToScreen, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 
 const spec = (flattenPlane: Spatial3DFlattenSpec['flattenPlane']): Spatial3DFlattenSpec => ({
   flattenPlane, defaultVisibleHeight: 8, sceneDepthRadius: 5, default3DAzimuthRad: 0.7, default3DPolarRad: 1.1
 });
 describe('3D perspective to orthographic morph', () => {
+  it('separates measured E10 vector labels even when their previous fixed spacing missed a CSS gap', () => {
+    const input = [
+      { x: 966.89, y: 444.58, width: 23.77, height: 28.39 },
+      { x: 962.28, y: 415.65, width: 28.69, height: 28.39 },
+      { x: 963, y: 416, width: 47, height: 28.39 }
+    ];
+    const before = JSON.stringify(input);
+    const result = separateScreenLabelBoxes(input);
+    expect(JSON.stringify(input)).toBe(before);
+    for (let i=0;i<result.length;i++) for (let j=i+1;j<result.length;j++) {
+      const a=result[i]!, b=result[j]!;
+      const gapX=Math.abs(a.x-b.x)-(a.width+b.width)/2;
+      const gapY=Math.abs(a.y-b.y)-(a.height+b.height)/2;
+      expect(Math.max(gapX,gapY)).toBeGreaterThan(6);
+    }
+  });
+
   it('projects physical axis directions into camera coordinates, preserving depth sign and ignoring translation', () => {
     const camera = new THREE.PerspectiveCamera();
     camera.position.set(4, 8, 2);
