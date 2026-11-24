@@ -50,7 +50,11 @@ function drawInterfaceLabels(ctx:CanvasRenderingContext2D,labels:OpticalLabel[],
     for(let d=24;d<=120;d+=24) for(const [dx,dy] of [[0,-d],[0,d],[-d,0],[d,0],[-d,-d],[d,-d],[-d,d],[d,d]] as const) candidates.push(box(label.x+dx,label.y+dy));
     const found=candidates.find(b=>!obstacles.some(s=>intersectsLabel(s,b))&&!placed.some(q=>Math.abs(q.x-b.x)<(q.w+b.w)/2+4&&Math.abs(q.y-b.y)<(q.h+b.h)/2+4));
     const b=found??candidates[0]!;
-    if(!found){ctx.fillStyle=viewport.theme==='projector'?'rgba(255,255,255,.94)':'rgba(12,17,23,.90)';ctx.fillRect(b.x-b.w/2,b.y-b.h/2,b.w,b.h);}
+    if(!found){
+      // Text halo, not a conditional world-space rectangle.
+      ctx.strokeStyle=viewport.theme==='projector'?'rgba(255,255,255,.98)':'rgba(12,17,23,.95)';
+      ctx.lineWidth=4;ctx.lineJoin='round';ctx.strokeText(label.text,b.x,b.y);
+    }
     ctx.fillStyle=label.color;ctx.fillText(label.text,b.x,b.y);placed.push(b);
   }
   ctx.restore();
@@ -86,10 +90,12 @@ function renderTirInterface(ctx:CanvasRenderingContext2D,state:OpticsState,param
     upper.addColorStop(0,paper?'rgba(56,189,248,.045)':'rgba(70,139,188,.055)');
     upper.addColorStop(.48,paper?'rgba(56,189,248,.15)':'rgba(81,156,203,.21)');
     upper.addColorStop(1,paper?'rgba(56,189,248,.21)':'rgba(110,185,228,.31)');
-    ctx.fillStyle=upper;ctx.fillRect(left,top,right-left,p.y-top);
+    ctx.fillStyle=upper;
+    ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(right,top);ctx.lineTo(right,p.y);ctx.lineTo(left,p.y);ctx.closePath();ctx.fill();
     const lower=ctx.createLinearGradient(0,p.y,0,bottom);
     lower.addColorStop(0,paper?'rgba(100,116,139,.075)':'rgba(112,138,167,.10)');lower.addColorStop(1,'rgba(100,116,139,0)');
-    ctx.fillStyle=lower;ctx.fillRect(left,p.y,right-left,bottom-p.y);
+    ctx.fillStyle=lower;
+    ctx.beginPath();ctx.moveTo(left,p.y);ctx.lineTo(right,p.y);ctx.lineTo(right,bottom);ctx.lineTo(left,bottom);ctx.closePath();ctx.fill();
     ctx.strokeStyle=paper?'#64748b':'rgba(164,218,248,.73)';ctx.lineWidth=1.5;
     if(!paper){ctx.shadowColor='#78c9ec';ctx.shadowBlur=7;}
     ctx.beginPath();ctx.moveTo(left,p.y);ctx.lineTo(right,p.y);ctx.stroke();ctx.shadowBlur=0;
@@ -100,7 +106,7 @@ function renderTirInterface(ctx:CanvasRenderingContext2D,state:OpticsState,param
   if(layers.has('normalLine')) {
     const a={x:p.x,y:m.toY(2.14)},b={x:p.x,y:m.toY(-2.14)};
     ctx.strokeStyle=normal;ctx.lineWidth=1.4;ctx.setLineDash([6,6]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);obstacles.push({a,b});
-    const radius=Math.max(36,Math.min(78,m.len(.49))),theta1=degToRad(state.activeAngleDeg),a1=-Math.PI/2-theta1/2;
+    const radius=m.len(.49),theta1=degToRad(state.activeAngleDeg),a1=-Math.PI/2-theta1/2;
     ctx.strokeStyle=warm;ctx.lineWidth=1.6;
     if(theta1>1e-5){ctx.beginPath();ctx.arc(p.x,p.y,radius,-Math.PI/2-theta1,-Math.PI/2);ctx.stroke();}
     add('θ₁ = '+state.activeAngleDeg.toFixed(1)+'°',warm,p.x+(radius+32)*Math.cos(a1),p.y+(radius+32)*Math.sin(a1));
