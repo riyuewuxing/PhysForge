@@ -27,6 +27,7 @@ export class StoryRunner {
   private cb: StoryRunnerCallbacks;
   private beatIndex = -1;
   private activeTween: ActiveTween | null = null;
+  private pendingReset: 'reset-play' | 'reset-pause' | null = null;
   private freezeArmed = false;
   private prevObservableVal: number | null = null;
 
@@ -38,6 +39,14 @@ export class StoryRunner {
   /** A manual parameter edit owns the current value; it must not fight an old tween. */
   public cancelTween(): void {
     this.activeTween = null;
+    this.pendingReset = null;
+    // A manual edit may invalidate an authored physical threshold.
+    this.freezeArmed = false;
+    this.prevObservableVal = null;
+  }
+
+  public get hasArmedFreeze(): boolean {
+    return this.freezeArmed && this.pendingReset === null;
   }
 
   public getCurrentIndex(): number {
@@ -64,7 +73,8 @@ export class StoryRunner {
     if (!Number.isInteger(index) || index < 0 || index >= this.deck.beats.length || !Number.isFinite(nowMs)) return false;
     const beat = this.deck.beats[index];
     if (!beat) return false;
-    // Advance the old tween to the exact interruption time, without testing the old beat's freeze rule.
+    // Advance the old tween without firing any superseded reset or freeze action.
+    this.pendingReset = null;
     this.tick(nowMs);
     this.beatIndex = index;
 
@@ -105,7 +115,13 @@ export class StoryRunner {
 
     // 3. 仿真播放状态与临界定格武装
     if (beat.simAction && beat.simAction !== 'keep') {
-      this.cb.controlSimulation(beat.simAction);
+      if (this.activeTween && (beat.simAction === 'reset-play' || beat.simAction === 'reset-pause')) {
+        // Initial conditions must use the completed parameter patch, not the old start of the tween.
+        this.pendingReset = beat.simAction;
+        this.cb.controlSimulation('pause');
+      } else {
+        this.cb.controlSimulation(beat.simAction);
+      }
     }
     this.freezeArmed = Boolean(beat.autoFreeze);
     this.prevObservableVal = null;
@@ -118,6 +134,7 @@ export class StoryRunner {
   public tick(nowMs: number, observables?: Record<string, number>): void {
     if (!Number.isFinite(nowMs)) return;
     // 1. 推进参数平滑插值
+    let resetCompleted = false;
     if (this.activeTween) {
       const elapsed = nowMs - this.activeTween.startTimeMs;
       const rawT = elapsed / this.activeTween.durationMs;
@@ -130,12 +147,24 @@ export class StoryRunner {
         patch[key] = rawT >= 1 ? b : a * (1 - eased) + b * eased;
       }
       this.cb.applyParamsImperative(patch);
-      if (rawT >= 1) this.activeTween = null;
+      if (rawT >= 1) {
+        this.activeTween = null;
+        const reset = this.pendingReset;
+        this.pendingReset = null;
+        if (reset) {
+          this.cb.controlSimulation(reset);
+          resetCompleted = true;
+        }
+      }
     }
+    // Observations supplied by the caller before reset belong to the previous physical state.
+    if (!resetCompleted && observables) this.checkAutoFreeze(observables);
+  }
 
-    // 2. 临界自动定格检测
+  /** May be called at every fixed physical step; a true return requests an immediate stop. */
+  public checkAutoFreeze(observables: Record<string, number>): boolean {
     const beat = this.getCurrentBeat();
-    if (this.freezeArmed && beat?.autoFreeze && observables) {
+    if (this.hasArmedFreeze && beat?.autoFreeze) {
       const { observableKey, operator, threshold, badgeText } = beat.autoFreeze;
       const val = observables[observableKey];
       if (typeof val === 'number' && Number.isFinite(val)) {
@@ -152,11 +181,13 @@ export class StoryRunner {
           this.freezeArmed = false;
           this.cb.controlSimulation('pause');
           this.cb.onAutoFreezeTriggered(badgeText);
+          return true;
         }
       } else {
         // Never infer a crossing across a missing or non-finite observation.
         this.prevObservableVal = null;
       }
     }
+    return false;
   }
 }
