@@ -5,15 +5,37 @@
 
 ---
 
-## 当前权威状态快照（2026-11-24，V2.0.2 Wave A–C 已验收并合入 `main@b5e3ae4`）
+## 当前施工快照（2026-11-24，V3.0，未封板）
 
-* **Git 基线与工作区边界**：当前基线为 `main@b5e3ae4`（已合并提交 Wave A UI 1:1 复刻、Wave B 43 单元坐标系、Wave C 43/43 手柄 + 30/43 Auto-FBD + 28/43 随动系及总控 3 处验收直修），随交接日志一并推送至 `origin/main`。**注意：目前完成的是 V2.0.2，V3.0 尚未启动。**
+* main 最后核实为 `3a667f88219c504fced84212881c49080b3ae372`；以下均为独立 Draft PR 或校验专用分支，不能视为已合并或发布。
+* V3 实施依据：`docs/V3_WRITER_CONSTRUCTION_PLAN.md` 与 `docs/v3-specs/V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md`；不改动 engine 与旧物理阈值，不替代总控验收。
+* 施工链：[#1](https://github.com/riyuewuxing/PhysForge/pull/1) BYOK；[#2](https://github.com/riyuewuxing/PhysForge/pull/2) SDK/StoryRunner；[#3](https://github.com/riyuewuxing/PhysForge/pull/3) 三态演说；[#4](https://github.com/riyuewuxing/PhysForge/pull/4) 双屏；[#5](https://github.com/riyuewuxing/PhysForge/pull/5) 三个课件；[#6](https://github.com/riyuewuxing/PhysForge/pull/6) 活公式拖拽；[#7](https://github.com/riyuewuxing/PhysForge/pull/7) 与 [#8](https://github.com/riyuewuxing/PhysForge/pull/8) 15 模型绑定；[#9](https://github.com/riyuewuxing/PhysForge/pull/9) 3D 压平数学与材质；[#10](https://github.com/riyuewuxing/PhysForge/pull/10) E10；[#12](https://github.com/riyuewuxing/PhysForge/pull/12) E04/B1；[#14](https://github.com/riyuewuxing/PhysForge/pull/14) S02/M10；[#15](https://github.com/riyuewuxing/PhysForge/pull/15) S01；最终验收脚本分支 `chore/v3-w4b-audit-release`。#16 为已关闭的替代施工分支，不重复合入。
+* 已核实 CI：#1、#2；[#11](https://github.com/riyuewuxing/PhysForge/pull/11) W1A+W1B（run 45365320013，verify 与 Playwright 均成功）；[#13](https://github.com/riyuewuxing/PhysForge/pull/13) W3A 独立数学核心（run 45365665722，同样成功）。#11/#13 为 CI-only 校验，禁止合入。其余实际累计链尚未取得全量 CI 实证，不能以独立测试通过代替累计通过。
+* 最终门禁：保留旧视觉审计，增加六旗舰双向切镜、实际中间帧、WebGL 上下文失效、暂停时钟保持、自动定格与活公式真实指针拖拽；单文件六旗舰上限 2,500,000 bytes 与 Three.js module graph 防泄漏。脚本已写入，**尚未实际运行最终累计链**。
+* 未闭环：本地按施工链逐个审查、CI 全量运行、实际查看 3D/2D 截图，验证每个物理投影/标签布局与资源释放（context lost 不等同于测得显存归零）；真实 BYOK 联调须用户配置 Key。E04 部分导轨为示意；S02 归一化轨迹/间隙提示是原理示意，非真实 RF 相位；M10 球体大小非按比例。通过全部门禁后由总控决定 merge 和 v3.0.0 tag。禁止提前声称封板。
+
+---
+
+## V2 历史状态快照（2026-11-24，V3 全波次草稿代码提交，未封板）
+
+* 写手起点 main@3a667f88219c504fced84212881c49080b3ae372；未直推 main、未合并、未打 v3.0.0 标签。
+* 独立 #1 Step 0；依赖链 #2→#3→#4→#5→#6→#7→#8→#9→#10→#12→#14→#15→本分支 `chore/v3-w4b-audit-release`。全部是待总控审阅的原子 PR。六旗舰空间视图、15 个高频模型活公式及三套示范课已提交代码；不能视为通过整体验收。
+* CI 已验证：[#1](https://github.com/riyuewuxing/PhysForge/actions/runs/45362188181)、[#2](https://github.com/riyuewuxing/PhysForge/actions/runs/45362611166)、[#3 同 SHA 累积](https://github.com/riyuewuxing/PhysForge/actions/runs/45365320013)、[#9 独立相机数学核心](https://github.com/riyuewuxing/PhysForge/actions/runs/45365665722)，均 verify + Playwright 全绿。#11/#13 验证用 PR 已关闭；#16 备用 W4A 已关闭，额外公式及注释已迁入 canonical #15。其余叠加 PR 未跑整栈 CI（工作流仅触发目标 main）。
+* 分支头部依次：#1 337ea3e；#2 47b9ab2；#3 94c6e38；#4 b391a2b；#5 3e61dcc；#6 e5c14f8；#7 1100cfe；#8 b462179；#9 571ff57；#10 4ae18b6；#12 f75969b；#14 3b97d99；#15 c0a8dd6。
+* 总控须逐张检查 PR（单张≤12 文件）、调整下游 base 后跑 CI，不得直接把累计顶端 squash 进 main 绕过门禁。执行 typecheck/test/verify:packs/verify:scenes/verify:vault、VITE_BASE_PATH=/PhysForge/ 构建、test:e2e:subpath、audit:visual、`pnpm export:release --v3-audit`。实际查看 artifacts/ui-audit/V3_*.png；六旗舰单文件 <2,500,000 bytes 且不含 Three.js。通过全部门禁才允许总控封板。
+* S02 轨迹是既有归一化示意而非完整 SI 数值轨迹；能量由已有内核计算。S01 逃逸锥为速度空间，模式相关投影采用 #15；M10 天体大小为示意。真实服务商 BYOK 实网与多设备副屏仍待现场联调。
+
+---
+
+## 历史验收基线（V2.0.2 Wave A–C 已验收并合入 main@b5e3ae4）
+
+* **Git 基线与工作区边界**：当前基线为 `main@b5e3ae4`（已合并提交 Wave A UI 1:1 复刻、Wave B 43 单元坐标系、Wave C 43/43 手柄 + 30/43 Auto-FBD + 28/43 随动系及总控 3 处验收直修），随交接日志一并推送至 `origin/main`。该段仅记录 V2.0.2 的历史验收基线；V3 现状以上方快照为准。
 * **全量门禁实证（总控终审后）**：18 项 TypeScript（11 `tsconfig.json` + 7 `tsconfig.build.json`）及 7 个 workspace 包构建全过；Vitest **63 文件 / 301 用例通过**（含 `wave-c-interaction.test.ts` 2/2、`coordinate-alignment.test.ts` 43/43、`catalog.test.ts` 44/44）；`verify:packs`（6 包/20 题）、`verify:scenes`（10 场景）、`verify:vault`（43 单元，ZIP 6080 B）全通过；`/PhysForge/` 主包 `index-LTu6VV9G.js` **259.78 kB gzip**，单文件 `modern-rutherford-bohr.html` 导出 `2009.8 KB`；`visual-audit.mjs`（0 错误/0 外网请求）与 `e2e-subpath-and-export.mjs`（direct WebM `10458 B`、PNG `111632 B`、drawer WebM `134308 B`）全通过；`git diff --check` 通过。
 * **待后续治理与环境备注**：
   * **在线 AI（BYOK）待检查联调**：`@physforge/ai-copilot` 真实在线服务商实网链路尚未联调检查；
   * **既有非阻塞告警**：Vite 存在 `[INEFFECTIVE_DYNAMIC_IMPORT]`（`em-induction-double-rod`）与大延迟 chunk 告警；
   * **Windows 避坑**：Corepack `pnpm` 受 DNS 阻塞需直调本地 `node_modules` 二进制；PowerShell 5.1 不支持 `&&`/`||`；Playwright 与 Git 写入需 `BypassSandbox: true`。
-* **下一会话任务（按 [V3_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V3_WRITER_CONSTRUCTION_PLAN.md) 原子 PR 派单执行）**：
+* **历史派单记录（按 [V3_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V3_WRITER_CONSTRUCTION_PLAN.md) 原子 PR 派单执行）**：
   1. **PR-0 (`fix/v3-step0-online-byok`)**：补齐 `byokClient.ts` Schema 摘要、`refiner.ts` 未知参数键拦截与 Schema 回馈、`AiCopilotDrawer.tsx` 提供商模板与连通性自检；
   2. **PR-1A (`feat/v3-w1a-story-runner`) → PR-1B (`feat/v3-w1b-tri-mode-shell`) → PR-1C (`feat/v3-w1c-presenter-decks`)**：严格按 [V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md](file:///d:/project%20code/44-PhysForge/docs/v3-specs/V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md) 与施工单单 PR ≤ 12 文件提分支 PR 过 CI 后交本地总控验收合入。
 

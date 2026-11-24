@@ -93,6 +93,47 @@ async function launchBrowser() {
   throw new Error(`Unable to launch Chromium, Chrome, or Edge: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
+async function auditV3Morph(page, origin, screenshot) {
+  const cases = [
+    ['E10', 'em-3d-magnetic-fields'], ['E04', 'em-induction-double-rod'],
+    ['B1', 'builder-composite-em-field'], ['S02', 'stse-em-devices-suite'],
+    ['S01', 'stse-tokamak-magnetic-mirror'], ['M10', 'astro-orbital-mechanics']
+  ];
+  const report = [];
+  for (const [code, id] of cases) {
+    const url = new URL(origin);
+    url.searchParams.set('model', id);
+    await page.goto(url.toString(), { waitUntil: 'networkidle' });
+    await page.waitForFunction(modelId => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === modelId, id, { timeout: 20000 });
+    const enter = page.getByTestId('btn-fullscreen-speech');
+    if (await enter.isVisible()) await enter.click();
+    const toggle = page.getByTestId('btn-view-3d-fullscreen');
+    await toggle.waitFor({ state: 'visible' });
+    if ((await toggle.textContent())?.includes('3D 空间')) await toggle.click();
+    const spatial = page.getByTestId('three-stage-container');
+    await spatial.waitFor({ state: 'visible', timeout: 20000 });
+    await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0, null, { timeout: 15000 });
+    if (screenshot) await screenshot(code + '_3d');
+    // Capture a genuine intermediate frame, not just the button label.
+    await toggle.click();
+    await page.waitForFunction(() => {
+      const v = Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN');
+      return v > 0 && v < 1;
+    }, null, { timeout: 10000 });
+    await spatial.waitFor({ state: 'detached', timeout: 15000 });
+    await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
+    if (screenshot) await screenshot(code + '_flat');
+    await toggle.click();
+    await spatial.waitFor({ state: 'visible', timeout: 20000 });
+    await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0, null, { timeout: 15000 });
+    await toggle.click();
+    await spatial.waitFor({ state: 'detached', timeout: 15000 });
+    await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
+    report.push({ model: id, intermediateMorph: true, flatCanvas: true, roundTrip: true });
+  }
+  return report;
+}
+
 async function main() {
   if (!fs.existsSync(path.join(distDir, 'index.html'))) {
     throw new Error('apps/web/dist/index.html 不存在，请先运行 VITE_BASE_PATH=/PhysForge/ pnpm build');
@@ -294,10 +335,10 @@ async function main() {
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x + (beforeField > 300000 ? -60 : 60), y, { steps: 6 });
-    await page.getByTestId('live-formula-hud').waitFor({ state: 'visible' });
+    await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'visible' });
     if (!await fieldToken.evaluate(node => node === window.__PF_TEST_TOKEN)) throw new Error('Live formula token was replaced during pointer capture');
     await page.mouse.up();
-    await page.getByTestId('live-formula-hud').waitFor({ state: 'hidden' });
+    await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'detached' });
     await page.getByTestId('btn-exit-fullscreen-speech').click();
     await fieldSlider.waitFor({ timeout: 15000 });
     const afterField = Number(await fieldSlider.inputValue());
@@ -332,6 +373,9 @@ async function main() {
     await page.getByTestId('story-blackout').waitFor({ state: 'detached', timeout: 5000 });
     await presenter.close();
     await page.getByTestId('btn-exit-fullscreen-speech').click();
+
+    const morphReport = await auditV3Morph(page, `${origin}${basePrefix}`);
+    console.log('V3_MORPH_ROUND_TRIPS', morphReport);
 
     if (consoleErrors.length || pageErrors.length || failedResponses.length || externalRequests.length) {
       throw new Error(JSON.stringify({ consoleErrors, pageErrors, failedResponses, externalRequests }, null, 2));
