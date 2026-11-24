@@ -3,6 +3,8 @@ import {
   ByokClientError,
   extractJsonFromLlmOutput,
   fetchWithTimeoutAndCorsHint,
+  formatModelSchemaHint,
+  probeByokConnection,
   requestByokSceneCandidate
 } from './byokClient.js';
 
@@ -85,6 +87,58 @@ describe('BYOK client resilience', () => {
 
     await expect(fetchWithTimeoutAndCorsHint('https://example.test/chat/completions', {}, 1000, failedFetch))
       .rejects.toMatchObject({ name: 'ByokClientError', code: 'HTTP_ERROR', status: 502 });
+  });
+
+  it('formats compact parameter signatures with range, unit, enum and boolean', () => {
+    expect(formatModelSchemaHint('demo', [
+      { key: 'v', kind: 'number', label: 'v', min: 0, max: 10, step: 1, defaultValue: 1, unit: 'm/s' },
+      { key: 'mode', kind: 'select', label: 'mode', defaultValue: 'a', options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] },
+      { key: 'show', kind: 'boolean', label: 'show', defaultValue: false }
+    ])).toBe('Schema demo: v: number[0..10] m/s; mode: select(a|b); show: boolean');
+  });
+
+  it('probes the provider models endpoint without submitting a generation request', async () => {
+    const config = { baseUrl: 'https://example.test/v1/', apiKey: 'unit-test-key', model: 'demo' };
+    const success: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe('https://example.test/v1/models');
+      expect(init?.method).toBe('GET');
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer unit-test-key');
+      return new Response(JSON.stringify({ data: [{ id: 'demo' }] }));
+    };
+    await expect(probeByokConnection(config, 1000, success)).resolves.toBeUndefined();
+    await expect(probeByokConnection(config, 1000, async () => new Response('<html>')))
+      .rejects.toMatchObject({ code: 'INVALID_JSON' });
+    await expect(probeByokConnection(config, 1000, async () => new Response('{}')))
+      .rejects.toMatchObject({ code: 'INVALID_JSON' });
+    await expect(probeByokConnection(config, 1000, async () => new Response('', { status: 401 })))
+      .rejects.toMatchObject({ code: 'HTTP_ERROR', status: 401 });
+    await expect(probeByokConnection(config, 1000, async () => { throw new TypeError('Failed to fetch'); }))
+      .rejects.toMatchObject({ code: 'CORS_OR_NETWORK' });
+    const stalled: typeof fetch = (_input, init) => new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      const abort = () => reject(new Error('aborted'));
+      if (signal?.aborted) abort();
+      else signal?.addEventListener('abort', abort, { once: true });
+    });
+    await expect(probeByokConnection(config, 10, stalled)).rejects.toMatchObject({ code: 'TIMEOUT' });
+  });
+
+  it('injects the locally suggested schema and carries actual refinement feedback', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: '{"schemaVersion":"2.0","modelId":"modern-photoelectric-compton","params":{}}' } }]
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+    const config = { baseUrl: 'https://example.test/v1', apiKey: 'unit-test-key', model: 'demo' };
+    await requestByokSceneCandidate(config, '光电效应');
+    const first = String(fetchMock.mock.calls[0]?.[1]?.body);
+    expect(first).toContain('Schema modern-photoelectric-compton');
+    expect(first).toContain('wavelengthNm: number[200..750] nm');
+    expect(first).toContain('mode: select(photoelectric|compton)');
+    const feedback = 'Unknown param "fake". Schema modern-photoelectric-compton: wavelengthNm: number[200..750] nm';
+    await requestByokSceneCandidate(config, '光电效应', feedback);
+    const second = String(fetchMock.mock.calls[1]?.[1]?.body);
+    expect(second).toContain('wavelengthNm: number[200..750] nm');
+    expect(second).toContain('Unknown param');
   });
 
   it('routes the existing request function through the parser without persisting its key', async () => {
