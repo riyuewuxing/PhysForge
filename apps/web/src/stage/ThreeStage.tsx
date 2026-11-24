@@ -9,6 +9,7 @@ import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
+import { magnetic3dDisplayPoint } from '@physforge/simulations/em-3d-magnetic-fields';
 import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
 import {
   buildConductorSegments,
@@ -65,10 +66,9 @@ function disposeGroupChildren(group: THREE.Group): void {
   }
 }
 
-function mapPhysicalPoint(point: { x: number; y: number; z: number }, isMag3d: boolean): THREE.Vector3 {
-  return isMag3d
-    ? new THREE.Vector3(point.z, point.y, point.x)
-    : new THREE.Vector3(point.x, point.z, point.y);
+function mapMagneticPoint(point: { x: number; y: number; z: number }): THREE.Vector3 {
+  const p = magnetic3dDisplayPoint(point);
+  return new THREE.Vector3(p.x, p.y, p.z);
 }
 
 function updateVectorArrow(
@@ -318,7 +318,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     scene.add(velocityArrow, lorentzForceArrow, magneticFieldArrow);
 
     const velocityLabel = createWorldLabel('v', '#facc15');
-    const forceLabel = createWorldLabel('F洛', '#fb7185');
+    const forceLabel = createWorldLabel('a洛', '#fb7185');
     const fieldLabel = createWorldLabel('B', '#38bdf8');
     scene.add(velocityLabel, forceLabel, fieldLabel);
 
@@ -429,7 +429,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         const magState = state as Magnetic3dState | TokamakMirrorState;
         const fusionParams = curParams as TokamakMirrorParams;
         const project = (point: { x: number; y: number; z: number }) => {
-          if (isMag3d) return mapPhysicalPoint(point, true);
+          if (isMag3d) return mapMagneticPoint(point);
           const p = fusionDisplayPoint(point, fusionParams.mode);
           return new THREE.Vector3(p.x, p.y, p.z);
         };
@@ -444,9 +444,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           marker.scale.setScalar(particleRadius);
           const particleState = state as Magnetic3dState;
           const vectorsVisible = layers.has('handednessTriad');
-          const velocity = mapPhysicalPoint(particleState.velocity, true);
-          const lorentzForce = mapPhysicalPoint(particleState.lorentzForce, true);
-          const magneticField = mapPhysicalPoint(particleState.bAtParticle, true);
+          const velocity = mapMagneticPoint(particleState.velocity);
+          const lorentzForce = mapMagneticPoint(particleState.lorentzForce);
+          const magneticField = mapMagneticPoint(particleState.bAtParticle);
           const speed = velocity.length();
           const forceMagnitude = lorentzForce.length();
           const fieldMagnitude = magneticField.length();
@@ -569,7 +569,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             lastTrailToken = trailToken;
             disposeGroupChildren(trailGroup);
             if (trail.length > 1) {
-              const points = trail.map((point) => mapPhysicalPoint(point, true));
+              const points = trail.map((point) => mapMagneticPoint(point));
               const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
               const geometry = new THREE.TubeGeometry(curve, Math.max(24, points.length), 0.012, 5, false);
               const material = magneticFluxMaterial(0x4ade80);
@@ -768,7 +768,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       {vectorsVisible && (
         <div data-testid="three-vector-legend" className={`pointer-events-none absolute ${presentationMode ? 'bottom-3 left-3' : 'left-3 top-3'} z-10 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-950/75 px-3 py-2 text-[11px] text-slate-200 shadow-lg backdrop-blur`}>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-amber-300" />v 速度</span>
-          <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-rose-400" />Fₗ 洛伦兹力</span>
+          <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-rose-400" />aₗ 洛伦兹加速度</span>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-sky-400" />B 磁场</span>
         </div>
       )}
