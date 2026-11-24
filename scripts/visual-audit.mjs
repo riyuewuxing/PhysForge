@@ -452,6 +452,13 @@ async function auditV3Morph(page, origin, screenshot) {
     await spatial.waitFor({ state: 'visible', timeout: 20000 });
     await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0, null, { timeout: 15000 });
     if (screenshot) await screenshot(code + '_3d');
+    // Keep the actual context across DOM removal; detachment alone is not resource release.
+    await spatial.locator('canvas').evaluate(canvas => {
+      const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+      if (!gl || gl.isContextLost()) throw new Error('Expected a live WebGL context before flattening');
+      window.__PF_AUDIT_GL = gl;
+    });
+    const beforeTime = await readDisplayedTime(page);
     // Capture a genuine intermediate frame, not just the button label.
     await toggle.click();
     await page.waitForFunction(() => {
@@ -460,6 +467,10 @@ async function auditV3Morph(page, origin, screenshot) {
     }, null, { timeout: 10000 });
     await spatial.waitFor({ state: 'detached', timeout: 15000 });
     await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => window.__PF_AUDIT_GL?.isContextLost() === true, null, { timeout: 10000 });
+    const afterTime = await readDisplayedTime(page);
+    if (beforeTime === null || afterTime !== beforeTime) throw new Error(code + ': paused simulation time changed during morph');
+    await page.evaluate(() => { delete window.__PF_AUDIT_GL; });
     if (screenshot) await screenshot(code + '_flat');
     await toggle.click();
     await spatial.waitFor({ state: 'visible', timeout: 20000 });
@@ -467,7 +478,7 @@ async function auditV3Morph(page, origin, screenshot) {
     await toggle.click();
     await spatial.waitFor({ state: 'detached', timeout: 15000 });
     await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
-    report.push({ model: id, intermediateMorph: true, flatCanvas: true, roundTrip: true });
+    report.push({ model: id, intermediateMorph: true, flatCanvas: true, roundTrip: true, firstContextLost: true, pausedTimePreserved: true });
   }
   return report;
 }
