@@ -4,6 +4,9 @@ import {
   extractJsonFromLlmOutput,
   fetchWithTimeoutAndCorsHint,
   formatModelSchemaHint,
+  listByokModels,
+  validateByokConfig,
+  describeByokError,
   probeByokConnection,
   requestByokSceneCandidate
 } from './byokClient.js';
@@ -176,5 +179,46 @@ describe('BYOK client resilience', () => {
     );
 
     expect(scene).toEqual({ schemaVersion: '2.0', modelId: 'mech-vertical-circular', params: {} });
+  });
+  it('rejects unsafe API destinations before sending credentials', async () => {
+    const apiKey = 'unit-test-key';
+    for (const baseUrl of ['http://example.test/v1', 'https://user:pass@example.test/v1', 'https://example.test/v1?secret=1', 'https://example.test/v1/chat/completions']) {
+      expect(() => validateByokConfig({ baseUrl, apiKey, model: 'demo' })).toThrow(ByokClientError);
+    }
+    expect(validateByokConfig({ baseUrl: 'http://127.0.0.1:8000/v1', apiKey, model: 'demo' }).hostname).toBe('127.0.0.1');
+    const never = vi.fn<typeof fetch>();
+    await expect(listByokModels({ baseUrl: 'http://example.test', apiKey, model: 'demo' }, 1000, never)).rejects.toMatchObject({ code: 'CONFIG' });
+    expect(never).not.toHaveBeenCalled();
+  });
+
+  it('lists unique model IDs and does not expose upstream error bodies', async () => {
+    const config = { baseUrl: 'https://example.test/v1', apiKey: 'unit-test-key', model: 'demo' };
+    await expect(listByokModels(config, 1000, async () => new Response(JSON.stringify({
+      data: [{ id: 'b' }, { id: 'a' }, { id: 'b' }, { id: config.apiKey }, { id: 1 }]
+    })))).resolves.toEqual(['a', 'b']);
+    try {
+      await listByokModels(config, 1000, async () => new Response(config.apiKey, { status: 401 }));
+      expect.unreachable('must reject');
+    } catch (error) {
+      expect(String(error)).not.toContain(config.apiKey);
+      expect(describeByokError(error)).toContain('401');
+    }
+  });
+
+  it('uses current DeepSeek JSON mode without default reasoning overhead', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe('https://api.deepseek.com/chat/completions');
+      expect(init?.credentials).toBe('omit');
+      expect(init?.redirect).toBe('error');
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        model: 'deepseek-flash', thinking: { type: 'disabled' },
+        response_format: { type: 'json_object' }, max_tokens: 2048, stream: false
+      });
+      return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: {
+        content: '{"schemaVersion":"2.0","modelId":"mech-vertical-circular","params":{}}'
+      }}] }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(requestByokSceneCandidate({ baseUrl: 'https://api.deepseek.com', apiKey: 'unit-test-key', model: 'deepseek-flash' }, '竖直圆周运动')).resolves.toMatchObject({ modelId: 'mech-vertical-circular' });
   });
 });
