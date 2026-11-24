@@ -114,43 +114,82 @@ const paramSchema: readonly ParamFieldSpec<BlockConveyorParams>[] = [
 ];
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "belt-kinetic-friction",
-  "title": "斜传送带相对滑动时的摩擦力大小",
-  "latex": "f_k=\\htmlClass{pf-live-var}{\\htmlData{param=muBlockCarrier}{\\mu_1}}\\htmlClass{pf-live-var}{\\htmlData{param=massBlock}{m_1}}g\\cos \\htmlClass{pf-live-var}{\\htmlData{param=inclineDeg}{\\theta}}",
-  "bindings": [
-    {
-      "tokenKey": "muBlockCarrier",
-      "paramKey": "muBlockCarrier",
-      "label": "块与带/板间动摩擦因数 μ₁",
-      "unit": "",
-      "min": 0,
-      "max": 0.8,
-      "step": 0.05,
-      "precision": 3
-    },
-    {
-      "tokenKey": "massBlock",
-      "paramKey": "massBlock",
-      "label": "物块质量 m₁",
-      "unit": "kg",
-      "min": 0.5,
-      "max": 10,
-      "step": 0.5,
-      "precision": 2
-    },
-    {
-      "tokenKey": "inclineDeg",
-      "paramKey": "inclineDeg",
-      "label": "传送带倾角 θ",
-      "unit": "°",
-      "min": 0,
-      "max": 45,
-      "step": 1,
-      "precision": 1
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "belt-kinetic-friction",
+    "title": "斜传送带相对滑动时的摩擦力大小",
+    "latex": "f_k=\\htmlClass{pf-live-var}{\\htmlData{param=muBlockCarrier}{\\mu_1}}\\htmlClass{pf-live-var}{\\htmlData{param=massBlock}{m_1}}g\\cos \\htmlClass{pf-live-var}{\\htmlData{param=inclineDeg}{\\theta}}",
+    "bindings": [
+      {
+        "tokenKey": "muBlockCarrier",
+        "paramKey": "muBlockCarrier",
+        "label": "块与带/板间动摩擦因数 μ₁",
+        "unit": "",
+        "min": 0,
+        "max": 0.8,
+        "step": 0.05,
+        "precision": 3
+      },
+      {
+        "tokenKey": "massBlock",
+        "paramKey": "massBlock",
+        "label": "物块质量 m₁",
+        "unit": "kg",
+        "min": 0.5,
+        "max": 10,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "inclineDeg",
+        "paramKey": "inclineDeg",
+        "label": "传送带倾角 θ",
+        "unit": "°",
+        "min": 0,
+        "max": 45,
+        "step": 1,
+        "precision": 1
+      }
+    ],
+    "when": {
+      "systemMode": [
+        "conveyor"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "plank-kinetic-friction",
+    "title": "水平木板与木块相对滑动时的摩擦力大小",
+    "latex": "f_k=\\htmlClass{pf-live-var}{\\htmlData{param=muBlockCarrier}{\\mu_1}}\\htmlClass{pf-live-var}{\\htmlData{param=massBlock}{m_1}}g",
+    "bindings": [
+      {
+        "tokenKey": "muBlockCarrier",
+        "paramKey": "muBlockCarrier",
+        "label": "木块—承载面动摩擦因数",
+        "unit": "",
+        "min": 0,
+        "max": 0.8,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "massBlock",
+        "paramKey": "massBlock",
+        "label": "木块质量 m₁",
+        "unit": "kg",
+        "min": 0.5,
+        "max": 10,
+        "step": 0.5,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "systemMode": [
+        "plank"
+      ]
+    }
+  }
+];
 export const mechBlockConveyorPlugin = Object.assign(defineSimulationPlugin<
   BlockConveyorParams,
   BlockConveyorState
