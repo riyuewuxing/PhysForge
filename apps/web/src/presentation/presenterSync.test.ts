@@ -62,3 +62,74 @@ describe('PresenterSyncBridge', () => {
     expect(presenter.available).toBe(false);
   });
 });
+
+
+import { isSimulationPluginV3, resolvePluginParams, StoryRunner, type ParamRecord } from '@physforge/sim-sdk';
+import { loadSimulationById } from '@physforge/simulations/catalog';
+
+describe('authored physics StoryDecks use real schemas and headless engines', () => {
+  it.each(['em-induction-double-rod', 'builder-composite-em-field', 'mech-vertical-circular'])('executes every beat of %s with its actual plugin', async (id) => {
+    const plugin = await loadSimulationById(id);
+    if (!plugin || !isSimulationPluginV3(plugin) || !plugin.storyDecks?.length) throw new Error('Missing authored V3 deck: ' + id);
+    const schema = plugin.paramSchema;
+    for (const deck of plugin.storyDecks) {
+      expect(deck.modelId).toBe(plugin.meta.id);
+      for (const [index, beat] of deck.beats.entries()) {
+        let params = resolvePluginParams(schema);
+        let state = plugin.engine.createInitialState(params);
+        let playing = false;
+        let frozen = 0;
+        let freezeObs: Record<string, number> | null = null;
+        const patch = beat.paramPatch ?? {};
+        for (const [key, value] of Object.entries(patch)) {
+          const field = schema.find((item) => item.key === key);
+          if (!field) throw new Error('Unknown authored parameter: ' + key);
+          if (field.kind === 'number') {
+            expect(typeof value).toBe('number');
+            expect(Number(value)).toBeGreaterThanOrEqual(field.min);
+            expect(Number(value)).toBeLessThanOrEqual(field.max);
+          } else if (field.kind === 'select') expect(field.options.some((option) => option.value === value)).toBe(true);
+          else expect(typeof value).toBe('boolean');
+        }
+        const runner = new StoryRunner(deck, {
+          getCurrentParams: () => params,
+          applyParamsImperative: (raw) => {
+            const next: ParamRecord = { ...params };
+            for (const [key, value] of Object.entries(raw)) {
+              if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') next[key] = value;
+            }
+            params = resolvePluginParams(schema, next);
+          },
+          controlSimulation: (action) => {
+            if (action === 'reset-play' || action === 'reset-pause') state = plugin.engine.createInitialState(params);
+            playing = action === 'play' || action === 'reset-play';
+          },
+          applyCameraKeyframe: () => {}, applyLayerOverrides: () => {}, onBeatChanged: () => {},
+          onAutoFreezeTriggered: () => { frozen++; freezeObs = plugin.engine.computeObservables(state, params); }
+        });
+        expect(runner.goTo(index, 0)).toBe(true);
+        const initial = plugin.engine.computeObservables(state, params);
+        if (beat.autoFreeze) expect(Number.isFinite(initial[beat.autoFreeze.observableKey])).toBe(true);
+        // One fixed physics step per iteration; autoFreeze observes the exact engine state, not a mock signal.
+        const dt = 1 / 240;
+        const maxSteps = beat.autoFreeze ? 2880 : 120;
+        for (let i = 0; i < maxSteps; i++) {
+          runner.tick(i * dt * 1000, plugin.engine.computeObservables(state, params));
+          if (!playing) break;
+          state = plugin.engine.step(state, params, dt).nextState;
+        }
+        const end = plugin.engine.computeObservables(state, params);
+        expect(Object.values(end).every(Number.isFinite)).toBe(true);
+        if (beat.autoFreeze) {
+          expect(frozen, beat.id).toBe(1);
+          expect(playing).toBe(false);
+          const value = (freezeObs ?? end)[beat.autoFreeze.observableKey];
+          expect(value).toBeDefined();
+          if (beat.autoFreeze.operator === '>=') expect(value).toBeGreaterThanOrEqual(beat.autoFreeze.threshold);
+          if (beat.autoFreeze.operator === '<=') expect(value).toBeLessThanOrEqual(beat.autoFreeze.threshold);
+        }
+        if (beat.id === 'b1-radius' || beat.id === 'b1-focus') expect(initial['larmorRadius']).toBeCloseTo(1.2, 8);
+      }
+    }
+  }, 20000);
+});
