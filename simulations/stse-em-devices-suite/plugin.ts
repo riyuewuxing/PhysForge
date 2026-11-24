@@ -1,4 +1,5 @@
 import { emDevicesStoryDecks } from './storyDecks.js';
+import { deviceDiagramPoint, getDeviceSchematic, deeOutline } from './deviceGeometry.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { emDevicesPresets } from './presets.js';
@@ -430,26 +431,30 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     importScene: (dsl) => dsl.params as Partial<EmDevicesParams>
   },
   exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'rect', x: -1.6, y: -1.0, width: 3.2, height: 2.0 },
-      { kind: 'fieldMarker', x: -0.8, y: 0.5, symbol: 'cross', radius: 0.12 },
-      { kind: 'trajectory', points: state.trail.slice(-30).map((p) => ({ x: p.x, y: p.y })), strokeWidth: 1.5 },
-      { kind: 'mathLabel', x: 0, y: 1.25, text: `\\text{Device: }${params.device}`, align: 'middle' }
-    ];
+    const diagram = getDeviceSchematic(params.device);
+    const primitives: DiagramPrimitive[] = [];
+    for (const part of diagram.parts) {
+      if (part.kind === 'dee') primitives.push({ kind:'polyline', points:deeOutline(part), closed:true });
+      else primitives.push({ kind:'rect', x:part.x-part.width/2, y:part.y-part.height/2,
+        width:part.width,height:part.height, hatch:part.material==='rail' });
+    }
+    for (const p of diagram.fields) primitives.push({kind:'fieldMarker',x:p.x,y:p.y,symbol:'dot',radius:0.04});
+    for (const cue of diagram.cues) primitives.push({kind:'arrow',x1:cue.x,y1:cue.y,x2:cue.x+cue.dx,y2:cue.y+cue.dy,label:cue.label});
+    for (const label of diagram.labels) primitives.push({kind:'text',...label,align:'middle'});
+    primitives.push({kind:'trajectory',points:state.trail.slice(-121).map(p=>deviceDiagramPoint(p.x,p.y)),strokeWidth:1.5});
+    const position=deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
+    primitives.push({kind:'circle',cx:position.x,cy:position.y,r:0.035,fill:true});
+    primitives.push({kind:'text',x:0,y:-1.38,text:'归一化原理示意（不按 SI 尺度）',align:'middle'});
     return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.2, minY: -1.5, maxX: 2.2, maxY: 1.5 },
-      title: '现代电磁器件原理配图',
-      primitives
+      width: 680, height: 400, viewBox: { minX: -2.2, minY: -1.6, maxX: 2.2, maxY: 1.6 },
+      title: '现代电磁器件原理配图', primitives
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     if (!activeLayers.has('main')) return;
     ctx.save();
     const m = createWorldMapper(viewport);
-    const center = m.toScreen(-0.25, 0);
-    const scale = m.len(0.85);
+    const diagram = getDeviceSchematic(params.device);
 
     ctx.strokeStyle = 'rgba(148,163,184,0.35)';
     ctx.lineWidth = 1;
@@ -464,22 +469,39 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ctx.lineTo(eRailBottom.x, eRailBottom.y);
     ctx.stroke();
 
-    // Draw device schematic box
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 2.5;
-    if (params.device === 'cyclotron') {
+    // All hardware outlines share the same normalized footprint as the spatial stage and exported diagram.
+    for (const part of diagram.parts) {
+      ctx.strokeStyle = part.material==='copper'?'#d97706':part.material==='glass'?'#64748b':'#94a3b8';
+      ctx.fillStyle = part.material==='copper'?'rgba(217,119,6,0.18)':part.material==='glass'?'rgba(56,189,248,0.035)':'rgba(148,163,184,0.12)';
+      ctx.lineWidth=2;
       ctx.beginPath();
-      ctx.arc(center.x - m.len(0.04), center.y, scale, Math.PI / 2, (3 * Math.PI) / 2);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(center.x + m.len(0.04), center.y, scale, -Math.PI / 2, Math.PI / 2);
-      ctx.closePath();
-      ctx.stroke();
-    } else {
-      const topLeft = m.toScreen(-1.45, 0.6);
-      ctx.strokeRect(topLeft.x, topLeft.y, m.len(2.4), m.len(1.2));
+      if (part.kind==='dee') {
+        deeOutline(part).forEach((p,i)=>{const q=m.toScreen(p.x,p.y);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);});
+        ctx.closePath();
+      } else {
+        const corner=m.toScreen(part.x-part.width/2,part.y+part.height/2);
+        ctx.rect(corner.x,corner.y,m.len(part.width),m.len(part.height));
+      }
+      ctx.fill();ctx.stroke();
     }
+    for (const field of diagram.fields) {
+      const point=m.toScreen(field.x,field.y),radius=Math.max(3,m.len(0.045));
+      ctx.strokeStyle='#38bdf8';ctx.fillStyle='#38bdf8';ctx.lineWidth=1.25;
+      ctx.beginPath();ctx.arc(point.x,point.y,radius,0,Math.PI*2);ctx.stroke();
+      ctx.beginPath();ctx.arc(point.x,point.y,1.5,0,Math.PI*2);ctx.fill();
+    }
+    for (const cue of diagram.cues) {
+      const a=m.toScreen(cue.x,cue.y),b=m.toScreen(cue.x+cue.dx,cue.y+cue.dy);
+      const angle=Math.atan2(b.y-a.y,b.x-a.x),size=8;
+      ctx.strokeStyle=cue.kind==='electric'?'#fbbf24':'#4ade80';ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+      ctx.moveTo(b.x-size*Math.cos(angle-.45),b.y-size*Math.sin(angle-.45));ctx.lineTo(b.x,b.y);
+      ctx.lineTo(b.x-size*Math.cos(angle+.45),b.y-size*Math.sin(angle+.45));ctx.stroke();
+      ctx.font='600 12px system-ui, sans-serif';ctx.fillText(cue.label,(a.x+b.x)/2+6,(a.y+b.y)/2-8);
+    }
+    ctx.fillStyle='#94a3b8';ctx.font='12px system-ui, sans-serif';ctx.textAlign='center';
+    for (const label of diagram.labels) { const p=m.toScreen(label.x,label.y);ctx.fillText(label.text,p.x,p.y); }
+    ctx.textAlign='left';
 
     // Draw particle trail & head
     if (state.trail.length > 1) {
@@ -487,7 +509,8 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       ctx.lineWidth = 2.4;
       ctx.beginPath();
       state.trail.forEach((p, idx) => {
-        const point = m.toScreen(-0.25 + p.x * 0.7, p.y * 0.7);
+        const world = deviceDiagramPoint(p.x,p.y);
+        const point = m.toScreen(world.x,world.y);
         const sx = point.x;
         const sy = point.y;
         if (idx === 0) ctx.moveTo(sx, sy);
@@ -495,9 +518,10 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       });
       ctx.stroke();
     }
-    ctx.fillStyle = params.carrierType === 'hole' ? '#f43f5e' : '#4ade80';
+    ctx.fillStyle = params.device === 'hall-sensor' && params.carrierType === 'hole' ? '#f43f5e' : '#4ade80';
     ctx.beginPath();
-    const particle = m.toScreen(-0.25 + state.particlePos.x * 0.7, state.particlePos.y * 0.7);
+    const world = deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
+    const particle = m.toScreen(world.x,world.y);
     ctx.arc(particle.x, particle.y, m.len(0.03), 0, Math.PI * 2);
     ctx.fill();
 
@@ -512,6 +536,8 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       'em-flowmeter': `电磁流量计 Q = ${state.flowRateM3ps.toExponential(3)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
     };
     ctx.fillText(summaryMap[params.device], 20, 30);
+    ctx.font='11px system-ui, sans-serif';ctx.fillStyle='#94a3b8';
+    ctx.fillText('归一化原理示意 · 轨迹不作为 SI 测量依据',20,48);
     ctx.restore();
   },
   getControlHandles: (_state, params) => {
@@ -545,16 +571,16 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
   },
   getForceVectors: (state, params) => {
     if (params.device !== 'velocity-selector' && params.device !== 'mass-spectrometer') return [];
-    const chargeSign = params.carrierType === 'hole' ? 1 : -1;
-    const charge = chargeSign * Math.abs(params.chargeC);
+    // chargeC is a positive particle charge; carrierType is specific to the Hall sensor.
+    const charge = Math.abs(params.chargeC);
     const field = params.device === 'mass-spectrometer' ? params.bDeflectT : params.bFieldT;
-    const origin = { x: -0.25 + state.particlePos.x * 0.7, y: state.particlePos.y * 0.7 };
+    const origin = deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
     const magneticForce = charge * params.particleSpeedMps * field;
     if (params.device === 'velocity-selector') {
       return [
         {
           id: 'selector-electric-force',
-          label: 'F电=qE',
+          label: 'F电=qE（入射）',
           origin,
           force: { x: 0, y: charge * params.eFieldVPerM },
           color: '#fbbf24',
@@ -563,7 +589,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
         },
         {
           id: 'selector-magnetic-force',
-          label: 'F洛=qv×B',
+          label: 'F洛=qv×B（入射）',
           origin,
           force: { x: 0, y: -magneticForce },
           color: '#38bdf8',
