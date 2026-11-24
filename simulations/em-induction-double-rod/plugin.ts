@@ -201,33 +201,132 @@ export function rodDisplayX(state: { x1: number }, x: number): number {
   return x - (1.2 + Math.max(0, state.x1 - 1.6));
 }
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "rod-emf",
-  "title": "杆长、速度与磁场互相垂直",
-  "latex": "|\\mathcal E_1|=\\htmlClass{pf-live-var}{\\htmlData{param=magneticB}{B}}\\htmlClass{pf-live-var}{\\htmlData{param=railWidth}{L_1}}|v_1|",
-  "bindings": [
-    {
-      "tokenKey": "magneticB",
-      "paramKey": "magneticB",
-      "label": "磁感应强度 B",
-      "unit": "T",
-      "min": 0,
-      "max": 3,
-      "step": 0.1,
-      "precision": 2
-    },
-    {
-      "tokenKey": "railWidth",
-      "paramKey": "railWidth",
-      "label": "杆 1 导轨间距 L₁",
-      "unit": "m",
-      "min": 0.5,
-      "max": 2,
-      "step": 0.1,
-      "precision": 2
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "rod-emf",
+    "title": "杆长、速度与磁场互相垂直",
+    "latex": "|\\mathcal E_1|=\\htmlClass{pf-live-var}{\\htmlData{param=magneticB}{B}}\\htmlClass{pf-live-var}{\\htmlData{param=railWidth}{L_1}}|v_1|",
+    "bindings": [
+      {
+        "tokenKey": "magneticB",
+        "paramKey": "magneticB",
+        "label": "磁感应强度 B",
+        "unit": "T",
+        "min": 0,
+        "max": 3,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "railWidth",
+        "paramKey": "railWidth",
+        "label": "杆 1 导轨间距 L₁",
+        "unit": "m",
+        "min": 0.5,
+        "max": 2,
+        "step": 0.1,
+        "precision": 2
+      }
+    ]
+  },
+  {
+    "id": "single-resistor-ampere",
+    "title": "单杆纯电阻闭合回路安培力（总电阻非零）",
+    "latex": "|F_{\\rm 安}|=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=magneticB}{B}}^2\\htmlClass{pf-live-var}{\\htmlData{param=railWidth}{L_1}}^2|v_1|}{\\htmlClass{pf-live-var}{\\htmlData{param=resistorR}{R}}+\\htmlClass{pf-live-var}{\\htmlData{param=rodResistance1}{r_1}}}",
+    "bindings": [
+      {
+        "tokenKey": "magneticB",
+        "paramKey": "magneticB",
+        "label": "磁感应强度 B",
+        "unit": "T",
+        "min": 0,
+        "max": 3,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "railWidth",
+        "paramKey": "railWidth",
+        "label": "杆 1 导轨间距 L₁",
+        "unit": "m",
+        "min": 0.5,
+        "max": 2,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "resistorR",
+        "paramKey": "resistorR",
+        "label": "外接电阻 R",
+        "unit": "Ω",
+        "min": 0,
+        "max": 6,
+        "step": 0.2,
+        "precision": 2
+      },
+      {
+        "tokenKey": "rodResistance1",
+        "paramKey": "rodResistance1",
+        "label": "杆 1 内阻 r₁",
+        "unit": "Ω",
+        "min": 0,
+        "max": 3,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "rodMode": [
+        "single"
+      ],
+      "circuitLoad": [
+        "resistor"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "double-rod-current",
+    "title": "双杆回路电流（L₂ 为有效杆长，总电阻非零）",
+    "latex": "I=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=magneticB}{B}}(\\htmlClass{pf-live-var}{\\htmlData{param=railWidth}{L_1}}v_1-L_2v_2)}{\\htmlClass{pf-live-var}{\\htmlData{param=resistorR}{R}}+r_1+r_2}",
+    "bindings": [
+      {
+        "tokenKey": "magneticB",
+        "paramKey": "magneticB",
+        "label": "磁感应强度 B",
+        "unit": "T",
+        "min": 0,
+        "max": 3,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "railWidth",
+        "paramKey": "railWidth",
+        "label": "杆 1 导轨间距 L₁",
+        "unit": "m",
+        "min": 0.5,
+        "max": 2,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "resistorR",
+        "paramKey": "resistorR",
+        "label": "外接电阻 R",
+        "unit": "Ω",
+        "min": 0,
+        "max": 6,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "rodMode": [
+        "double"
+      ]
+    }
+  }
+];
 export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
   InductionParams,
   InductionState
