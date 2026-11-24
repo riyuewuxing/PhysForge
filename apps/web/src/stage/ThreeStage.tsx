@@ -6,6 +6,7 @@ import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRe
 import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
 import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
 import { brushedCopperMaterial, magneticFluxMaterial } from './spatialMaterials.js';
+import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
 import {
   buildConductorSegments,
   trace3dFieldLines,
@@ -272,6 +273,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const rimLight = new THREE.DirectionalLight(0x38bdf8, 2.2);
     rimLight.position.set(-4, 2, -3);
     scene.add(grid, ambient, keyLight, rimLight);
+    const planarDriver = createPlanarFlagshipScene(plugin.meta.id, scene);
+    if (planarDriver) grid.visible = false;
 
     const staticGroup = new THREE.Group();
     const trailGroup = new THREE.Group();
@@ -287,6 +290,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     });
     const marker = new THREE.Mesh(sphereGeo, sphereMat);
     scene.add(marker);
+    if (planarDriver) marker.visible = false;
 
     const velocityArrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 0.65, 0xfacc15, 0.2, 0.12);
     const lorentzForceArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0.55, 0xfb7185, 0.18, 0.11);
@@ -406,6 +410,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       layers: ReadonlySet<string>
     ) => {
       if (!state) return;
+      if (planarDriver) { planarDriver.sync(state, curParams, layers); dirty = true; return; }
       if (isMag3d || isTokamak3d) {
         const magState = state as Magnetic3dState | TokamakMirrorState;
         const position = mapPhysicalPoint(magState.position, isMag3d);
@@ -564,6 +569,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
+        planarDriver?.dispose();
         disposeGroupChildren(staticGroup);
         disposeGroupChildren(trailGroup);
         scene.remove(velocityArrow, lorentzForceArrow, magneticFieldArrow, marker, velocityLabel, forceLabel, fieldLabel);
