@@ -91,12 +91,13 @@ export function extractJsonFromLlmOutput(raw: string): unknown {
   throw new ByokClientError('INVALID_JSON', 'JSON 大括号未闭合（模型输出可能被截断）');
 }
 
-export async function fetchWithTimeoutAndCorsHint(
+async function withByokResponse<T>(
   url: string,
   init: RequestInit,
-  timeoutMs = 25_000,
-  fetchImpl: typeof fetch = fetch
-): Promise<Response> {
+  consume: (response: Response) => Promise<T>,
+  timeoutMs: number,
+  fetchImpl: typeof fetch
+): Promise<T> {
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -118,15 +119,15 @@ export async function fetchWithTimeoutAndCorsHint(
         response.status
       );
     }
-    return response;
+    return await consume(response);
   } catch (error) {
-    if (error instanceof ByokClientError) throw error;
     if (timedOut) {
       throw new ByokClientError(
         'TIMEOUT',
         `模型请求超时（超过 ${timeoutMs} ms），请检查网络或切换更快的模型端点`
       );
     }
+    if (error instanceof ByokClientError) throw error;
     throw new ByokClientError(
       'CORS_OR_NETWORK',
       '网络请求失败，可能被浏览器 CORS 跨域策略拦截。请改用允许浏览器直连的 API 中转地址，或配置本地代理后重试。'
@@ -135,6 +136,33 @@ export async function fetchWithTimeoutAndCorsHint(
     clearTimeout(timeout);
     callerSignal?.removeEventListener('abort', forwardCallerAbort);
   }
+}
+
+/** Legacy response-level helper; JSON callers below keep the deadline through body consumption. */
+export function fetchWithTimeoutAndCorsHint(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 25_000,
+  fetchImpl: typeof fetch = fetch
+): Promise<Response> {
+  return withByokResponse(url, init, async response => response, timeoutMs, fetchImpl);
+}
+
+function fetchByokJson(
+  url: string,
+  init: RequestInit,
+  invalidJsonMessage: string,
+  timeoutMs = 25_000,
+  fetchImpl: typeof fetch = fetch
+): Promise<unknown> {
+  return withByokResponse(url, init, async response => {
+    try {
+      return await response.json() as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new ByokClientError('INVALID_JSON', invalidJsonMessage);
+      throw error;
+    }
+  }, timeoutMs, fetchImpl);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -162,18 +190,12 @@ export async function probeByokConnection(
   fetchImpl: typeof fetch = fetch
 ): Promise<void> {
   const endpoint = `${config.baseUrl.trim().replace(/\/+$/, '')}/models`;
-  const response = await fetchWithTimeoutAndCorsHint(endpoint, {
+  const data = await fetchByokJson(endpoint, {
     method: 'GET',
     headers: { Authorization: `Bearer ${config.apiKey}` },
     cache: 'no-store',
     redirect: 'error'
-  }, timeoutMs, fetchImpl);
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new ByokClientError('INVALID_JSON', '模型目录响应不是合法 JSON');
-  }
+  }, '模型目录响应不是合法 JSON', timeoutMs, fetchImpl);
   if (!isRecord(data) || !Array.isArray(data['data'])) {
     throw new ByokClientError('INVALID_JSON', '响应缺少 OpenAI 兼容模型目录 data 数组');
   }
@@ -197,7 +219,7 @@ export async function requestByokSceneCandidate(
   userPrompt: string,
   feedback?: string
 ): Promise<unknown> {
-  const endpoint = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const endpoint = `${config.baseUrl.trim().replace(/\/+$/, '')}/chat/completions`;
   const content = feedback
     ? `${userPrompt}\n\n[上轮无头物理引擎检验未通过，请针对下列报错修正参数后重试]:\n${feedback}`
     : userPrompt;
@@ -208,8 +230,9 @@ export async function requestByokSceneCandidate(
   const suggested = feedback ? undefined : await loadSimulationById(route.modelId);
   const schemaHint = suggested ? formatModelSchemaHint(suggested.meta.id, suggested.paramSchema) : undefined;
 
-  const res = await fetchWithTimeoutAndCorsHint(endpoint, {
+  const data = await fetchByokJson(endpoint, {
     method: 'POST',
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`
@@ -222,14 +245,7 @@ export async function requestByokSceneCandidate(
         { role: 'user', content }
       ]
     })
-  });
-
-  let data: unknown;
-  try {
-    data = await res.json();
-  } catch {
-    throw new ByokClientError('INVALID_JSON', 'BYOK API 返回的响应体不是合法 JSON');
-  }
+  }, 'BYOK API 返回的响应体不是合法 JSON');
 
   const choices = isRecord(data) && Array.isArray(data['choices']) ? data['choices'] : [];
   const firstChoice: unknown = choices[0];
