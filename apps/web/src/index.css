@@ -389,3 +389,14 @@ input[type="range"].pf-slider::-moz-range-thumb {
   [data-theme="chalkboard"] [data-testid="topbar"] > div:first-child > div:first-child { font-size: 18px; line-height: 1.25; }
   [data-theme="chalkboard"] [data-testid="topbar"] > div:first-child > div:nth-child(2) { font-size: 11px; font-family: inherit; }
 }
+
+/* E04 instrument prototype: independent physical-unit axes, room for true
+   traces, a reserved center lane between tools and the inspector. */
+.pf-hero-scope-chart { height: 152px; }
+.pf-energy-readouts { color: var(--pf-text-muted); }
+.pf-energy-readouts [data-testid^="e04-energy-"] { color: var(--pf-text); }
+@media (min-width: 1024px) {
+  .pf-hero-scope { left: calc((100% - 80px) / 2); width: min(520px, calc(100% - 520px)); }
+}
+@media (max-height: 720px) { .pf-hero-scope-chart { height: 110px; } }
+[data-theme="projector"] .pf-hero-scope .text-sky-200 { color: #075985; }

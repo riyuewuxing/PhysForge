@@ -720,6 +720,16 @@ async function main() {
               forceArrowVisible: stage.getAttribute('data-force-arrow-visible') === 'true'
             }))
           : null;
+        if (testCase.id === 'em-induction-double-rod') {
+          const scope = page.getByTestId('floating-scope-dock');
+          if (await scope.getAttribute('data-scope-units') !== 'separate') throw new Error('E04 current and velocity must have independent unit axes');
+          const scopeCanvas = await scope.locator('canvas').first().boundingBox();
+          if (!scopeCanvas || scopeCanvas.height < 140) throw new Error('E04 instrument chart is clipped or too short');
+          for (const key of ['kineticEnergy','jouleHeat','sourceWork']) {
+            const value = await page.getByTestId('e04-energy-'+key).innerText();
+            if (!/^\d+\.\d{3} J$/.test(value) || parseFloat(value) <= 0) throw new Error('E04 missing measured energy in joules: '+key);
+          }
+        }
         await page.screenshot({ path: path.join(OUT_DIR, `${testCase.tag}_02_running.png`) });
 
         const timeAdvanced = beforeTime !== null && afterTime !== null && afterTime - beforeTime > 0.2;
@@ -857,6 +867,25 @@ async function main() {
         await page.screenshot({ path: path.join(OUT_DIR, 'B2_04_rc_no_handle.png') });
       }
 
+      if (testCase.id === 'em-induction-double-rod') {
+        // Real 1024x768 layout and projector-theme smoke; restore defaults for other models.
+        await page.setViewportSize({width:1024,height:768});
+        await page.waitForTimeout(300);
+        const small = await page.getByTestId('floating-scope-dock').boundingBox();
+        const inspector = await page.getByTestId('right-control-panel').boundingBox();
+        if (!small || !inspector || small.x + small.width > inspector.x || small.y + small.height > 768) throw new Error('E04 compact scope overlaps inspector or viewport');
+        await page.screenshot({path:path.join(OUT_DIR,'H1_E04_compact.png')});
+        await page.getByTestId('btn-tools-menu').click();
+        await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+        if (await page.getByTestId('tools-menu').isVisible()) await page.getByTestId('btn-tools-menu').click();
+        await page.screenshot({path:path.join(OUT_DIR,'H1_E04_projector.png')});
+        await page.getByTestId('btn-tools-menu').click();
+        await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+        if (await page.getByTestId('tools-menu').isVisible()) await page.getByTestId('btn-tools-menu').click();
+        await page.setViewportSize(VIEWPORT);
+      }
       report.push({ model: testCase.id, layout, runVerified, sliderVerified });
     }
 
