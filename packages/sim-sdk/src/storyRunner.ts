@@ -35,6 +35,11 @@ export class StoryRunner {
     this.cb = callbacks;
   }
 
+  /** A manual parameter edit owns the current value; it must not fight an old tween. */
+  public cancelTween(): void {
+    this.activeTween = null;
+  }
+
   public getCurrentIndex(): number {
     return this.beatIndex;
   }
