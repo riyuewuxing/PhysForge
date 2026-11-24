@@ -33,7 +33,12 @@ const paramSchema: readonly ParamFieldSpec<TokamakMirrorParams>[] = [
   { key: 'safetyFactorQ', kind: 'number', label: '安全因子 q', defaultValue: 2.5, min: 1.2, max: 5.0, step: 0.2 }
 ];
 
-export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMirrorParams, TokamakMirrorState>({
+/** Shared right-handed physical-to-display rotation. XY is the torus plane;
+ * for a mirror the axial z direction is horizontal and depth is -x. */
+export function fusionDisplayPoint(point: { x: number; y: number; z: number }, mode: TokamakMirrorParams['mode']) {
+  return mode === 'tokamak' ? { x: point.x, y: point.y, z: point.z } : { x: point.z, y: point.y, z: -point.x };
+}
+export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlugin<TokamakMirrorParams, TokamakMirrorState>({
   meta: {
     id: 'stse-tokamak-magnetic-mirror',
     title: '托卡马克环形磁场与磁镜/磁瓶 (S01)',
@@ -71,11 +76,11 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
     }),
     importScene: (dsl) => dsl.params as Partial<TokamakMirrorParams>
   },
-  exportDiagramIR: (state) => {
+  exportDiagramIR: (state, params) => {
     const primitives: DiagramPrimitive[] = [
-      { kind: 'line', x1: -2.2, y1: 0, x2: 2.2, y2: 0, dashed: true },
-      { kind: 'trajectory', points: state.trail.map((p) => ({ x: p.z, y: p.x })), strokeWidth: 1.5 },
-      { kind: 'circle', cx: state.position.z, cy: state.position.x, r: 0.08, fill: true }
+      ...(params.mode === 'tokamak' ? [{ kind: 'circle' as const, cx: 0, cy: 0, r: params.majorRadiusM, fill: false }] : [{ kind: 'line' as const, x1: -2.2, y1: 0, x2: 2.2, y2: 0, dashed: true }]),
+      { kind: 'trajectory', points: state.trail.map(p => fusionDisplayPoint(p, params.mode)), strokeWidth: 1.5 },
+      { kind: 'circle', cx: fusionDisplayPoint(state.position, params.mode).x, cy: fusionDisplayPoint(state.position, params.mode).y, r: 0.08, fill: true }
     ];
     return {
       width: 680,
@@ -87,7 +92,7 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
-    const proj = (p: { x: number; y: number; z: number }) => m.toScreen(p.z * 0.85 + p.x * 0.32, p.y * 0.85 + p.x * 0.2);
+    const proj = (p: { x: number; y: number; z: number }) => { const v = fusionDisplayPoint(p, params.mode); return m.toScreen(v.x, v.y); };
     ctx.save();
     if (activeLayers.has('conductors')) {
       ctx.strokeStyle = '#f59e0b';
@@ -133,8 +138,8 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
     ctx.fill();
 
     const radiusGuideEnd = params.mode === 'magnetic-mirror'
-      ? { x: params.coilHalfSpanM * 0.85, y: 0 }
-      : { x: params.majorRadiusM * 0.32, y: params.majorRadiusM * 0.2 };
+      ? { x: params.coilHalfSpanM, y: 0 }
+      : { x: params.majorRadiusM, y: 0 };
     const radiusGuideStart = m.toScreen(0, 0);
     const radiusGuide = m.toScreen(radiusGuideEnd.x, radiusGuideEnd.y);
     ctx.strokeStyle = 'rgba(245,158,11,0.5)';
@@ -163,39 +168,40 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
       ? {
           id: 'mirror-coil-span',
           label: `z_c=${params.coilHalfSpanM.toFixed(1)} m`,
-          position: { x: params.coilHalfSpanM * 0.85, y: 0 },
+          position: { x: params.coilHalfSpanM, y: 0 },
           origin: { x: 0, y: 0 },
           handleKind: 'point' as const,
           color: '#f59e0b',
           onDrag: (world: { x: number; y: number }) => {
-            const span = Math.max(0.8, Math.min(2.5, Math.round((Math.abs(world.x) / 0.85) * 10) / 10));
+            const span = Math.max(0.8, Math.min(2.5, Math.round((Math.abs(world.x)) * 10) / 10));
             return { coilHalfSpanM: Number(span.toFixed(1)) };
           }
         }
       : {
           id: 'tokamak-major-radius',
           label: `R₀=${params.majorRadiusM.toFixed(1)} m`,
-          position: { x: params.majorRadiusM * 0.32, y: params.majorRadiusM * 0.2 },
+          position: { x: params.majorRadiusM, y: 0 },
           origin: { x: 0, y: 0 },
           handleKind: 'radius' as const,
           color: '#f59e0b',
           onDrag: (world: { x: number; y: number }) => {
-            const radius = Math.max(1, Math.min(2.2, Math.round((Math.hypot(world.x, world.y) / Math.hypot(0.32, 0.2)) * 10) / 10));
+            const radius = Math.max(1, Math.min(2.2, Math.round((Math.hypot(world.x, world.y)) * 10) / 10));
             return { majorRadiusM: Number(radius.toFixed(1)) };
           }
         }
   ],
-  getForceVectors: (state) => {
+  getForceVectors: (state, params) => {
     const velocity = state.velocity;
     const magnetic = state.bField;
     const ax = velocity.y * magnetic.z - velocity.z * magnetic.y;
     const ay = velocity.z * magnetic.x - velocity.x * magnetic.z;
     const az = velocity.x * magnetic.y - velocity.y * magnetic.x;
+    const a = fusionDisplayPoint({ x: ax * params.qOverM, y: ay * params.qOverM, z: az * params.qOverM }, params.mode);
     return [{
       id: 'fusion-lorentz-acceleration',
       label: 'a洛 = (q/m)v×B',
-      origin: { x: state.position.z * 0.85 + state.position.x * 0.32, y: state.position.y * 0.85 + state.position.x * 0.2 },
-      force: { x: az * 0.85 + ax * 0.32, y: ay * 0.85 + ax * 0.2 },
+      origin: fusionDisplayPoint(state.position, params.mode),
+      force: { x: a.x, y: a.y },
       color: '#38bdf8',
       category: 'magnetic',
       unit: 'm/s²'
@@ -204,8 +210,8 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
   referenceFrames: [{
     id: 'confined-particle',
     label: '约束带电粒子随动参考系',
-    getOrigin: (state) => ({ x: state.position.z * 0.85 + state.position.x * 0.32, y: state.position.y * 0.85 + state.position.x * 0.2 }),
-    getVelocity: (state) => ({ x: state.velocity.z * 0.85 + state.velocity.x * 0.32, y: state.velocity.y * 0.85 + state.velocity.x * 0.2 })
+    getOrigin: (state, params) => fusionDisplayPoint(state.position, params.mode),
+    getVelocity: (state, params) => fusionDisplayPoint(state.velocity, params.mode)
   }],
   formatFormulas: (state, params) => [
     {
@@ -215,6 +221,6 @@ export const stseTokamakMagneticMirrorPlugin = defineSimulationPlugin<TokamakMir
       substitutedLatex: `|B|=${Math.hypot(state.bField.x, state.bField.y, state.bField.z).toFixed(2)}\\text{ T},\\; \\theta_c=${computeMirrorLossConeDeg(params).toFixed(1)}^\\circ,\\; \\Delta\\mu/\\mu=${(state.maxMuRelDev * 100).toFixed(2)}\\%`
     }
   ]
-});
+}), { spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 6.5, sceneDepthRadius: 5, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
 
 export default stseTokamakMagneticMirrorPlugin;
