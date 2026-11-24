@@ -49,10 +49,10 @@ describe('V3 tri-mode shell', () => {
     if (!field || field.kind !== 'number') throw new Error('No numeric field for gesture test');
     const initial = before.params[field.key];
     const last = initial === field.max ? field.min : field.max;
-    before.beginLiveFormula(before.selectedPluginId, field.key);
-    before.updateLiveFormula(before.selectedPluginId, field.key, (field.min + field.max) / 2);
-    before.updateLiveFormula(before.selectedPluginId, field.key, last);
-    before.endLiveFormula(before.selectedPluginId, field.key);
+    before.beginLiveFormula(before.selectedPluginId, field.key, before.paramContextEpoch);
+    before.updateLiveFormula(before.selectedPluginId, field.key, (field.min + field.max) / 2, before.paramContextEpoch);
+    before.updateLiveFormula(before.selectedPluginId, field.key, last, before.paramContextEpoch);
+    before.endLiveFormula(before.selectedPluginId, field.key, before.paramContextEpoch);
     expect(get().params[field.key]).toBe(last);
     get().undoParam();
     expect(get().params[field.key]).toBe(initial);
@@ -60,6 +60,35 @@ describe('V3 tri-mode shell', () => {
     expect(get().params[field.key]).toBe(last);
     get().undoParam();
     useClassroomStore.setState({ params: before.params, activePresetId: before.activePresetId, scrubTime: before.scrubTime });
+  });
+  it('rejects late drag samples and undo finalization from a previous beat, including a replay of the same beat', () => {
+    const get = useClassroomStore.getState;
+    get().setAppMode('story');
+    get().setStoryBeat(0);
+    const before = get();
+    const field = before.loadedPlugin.paramSchema.find(item => item.kind === 'number' && item.max > item.min);
+    if (field?.kind !== 'number') throw new Error('Expected numeric field');
+    const value = before.params[field.key] === field.max ? field.min : field.max;
+    before.beginLiveFormula(before.selectedPluginId, field.key, before.paramContextEpoch);
+    before.setAutoFreezeBadge('old freeze');
+    before.setStoryBeat(0);
+    const current = get();
+    expect(current.paramContextEpoch).toBeGreaterThan(before.paramContextEpoch);
+    expect(current.autoFreezeBadge).toBeNull();
+    before.updateLiveFormula(before.selectedPluginId, field.key, value, before.paramContextEpoch);
+    before.endLiveFormula(before.selectedPluginId, field.key, before.paramContextEpoch);
+    expect(get().params).toBe(current.params);
+    expect(get().resetNonce).toBe(current.resetNonce);
+    expect(get().canUndo).toBe(current.canUndo);
+  });
+  it('manual reset clears the old freeze and invalidates prior gesture scope', () => {
+    const get = useClassroomStore.getState;
+    get().setAutoFreezeBadge('stale');
+    const before = get();
+    before.triggerReset();
+    expect(get().autoFreezeBadge).toBeNull();
+    expect(get().paramContextEpoch).toBe(before.paramContextEpoch + 1);
+    expect(get().resetNonce).toBe(before.resetNonce + 1);
   });
   it('uses real preset layer visibility and rejects foreign layer ids during story navigation', () => {
     const get = useClassroomStore.getState;
