@@ -597,7 +597,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               staticGroup.add(new THREE.Mesh(tubeGeo, isMag3d ? coilCopperMaterial() : brushedCopperMaterial()));
               if (isMag3d && !closed) {
                 // The visual finite conductor is a solid cylinder, not an open pipe.
-                for (const [end, adjacent] of [[points[0]!,points[1]!],[points.at(-1)!,points.at(-2)!]]) {
+                for (const [end, adjacent] of [[points[0]!,points[1]!],[points.at(-1)!,points.at(-2)!]] as const) {
                   const cap=new THREE.Mesh(new THREE.CircleGeometry(radius,16),coilCopperMaterial());
                   cap.position.copy(end);
                   cap.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),end.clone().sub(adjacent).normalize());
