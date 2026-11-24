@@ -1,4 +1,6 @@
-import { simulationCatalog } from '@physforge/simulations/catalog';
+import type { AnyParamFieldSpec } from '@physforge/sim-sdk';
+import { loadSimulationById, simulationCatalog } from '@physforge/simulations/catalog';
+import { routePhysicsProblemPrompt } from './router.js';
 
 export interface ByokConfig {
   readonly baseUrl: string;
@@ -139,12 +141,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function buildByokSystemPrompt(): string {
+/** Compact deterministic signature; callers load only the relevant plugin. */
+export function formatModelSchemaHint(modelId: string, schema: readonly AnyParamFieldSpec[]): string {
+  const fields = schema.map((field) => {
+    if (field.kind === 'number') {
+      return `${field.key}: number[${field.min}..${field.max}]${field.unit ? ` ${field.unit}` : ''}`;
+    }
+    if (field.kind === 'select') {
+      return `${field.key}: select(${field.options.map((option) => option.value).join('|')})`;
+    }
+    return `${field.key}: boolean`;
+  });
+  return `Schema ${modelId}: ${fields.join('; ')}`;
+}
+
+/** Test the provider's models endpoint, not the selected model's generation ability. */
+export async function probeByokConnection(
+  config: ByokConfig,
+  timeoutMs = 10_000,
+  fetchImpl: typeof fetch = fetch
+): Promise<void> {
+  const endpoint = `${config.baseUrl.trim().replace(/\/+$/, '')}/models`;
+  const response = await fetchWithTimeoutAndCorsHint(endpoint, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${config.apiKey}` },
+    cache: 'no-store',
+    redirect: 'error'
+  }, timeoutMs, fetchImpl);
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new ByokClientError('INVALID_JSON', '模型目录响应不是合法 JSON');
+  }
+  if (!isRecord(data) || !Array.isArray(data['data'])) {
+    throw new ByokClientError('INVALID_JSON', '响应缺少 OpenAI 兼容模型目录 data 数组');
+  }
+}
+
+export function buildByokSystemPrompt(schemaHint?: string): string {
   const ids = simulationCatalog.map((c) => `${c.meta.id} (${c.meta.title})`).join('\n');
   return [
     '你是 PhysForge 物理逆向建模助手。请把用户的物理题描述转为一个合法的 JSON SceneDSL (schemaVersion: "2.0")。',
     '可用模型 ID 列表：',
     ids,
+    '优先匹配合法 modelId。params 只能使用该模型 Schema 声明的键、类型、枚举值和数值范围；不确定的参数应省略，由引擎采用默认值。禁止猜造参数键。',
+    ...(schemaHint ? ['本地题干路由的候选模型 Schema（仅供匹配参考，不强制选择此模型）：', schemaHint] : []),
+    '若更换模型，应使用该模型自己的 Schema；修正轮次以审计反馈中对应 modelId 的签名为准。',
     '仅输出纯 JSON 对象：{ "schemaVersion": "2.0", "modelId": "...", "title": "...", "params": { ... } }。'
   ].join('\n');
 }
@@ -159,6 +202,12 @@ export async function requestByokSceneCandidate(
     ? `${userPrompt}\n\n[上轮无头物理引擎检验未通过，请针对下列报错修正参数后重试]:\n${feedback}`
     : userPrompt;
 
+  // Keep the catalog lightweight: lazy-load only the locally suggested model.
+  // Refine rounds already carry the actual selected model's schema on validation errors.
+  const route = routePhysicsProblemPrompt(userPrompt);
+  const suggested = feedback ? undefined : await loadSimulationById(route.modelId);
+  const schemaHint = suggested ? formatModelSchemaHint(suggested.meta.id, suggested.paramSchema) : undefined;
+
   const res = await fetchWithTimeoutAndCorsHint(endpoint, {
     method: 'POST',
     headers: {
@@ -169,7 +218,7 @@ export async function requestByokSceneCandidate(
       model: config.model,
       temperature: 0.1,
       messages: [
-        { role: 'system', content: buildByokSystemPrompt() },
+        { role: 'system', content: buildByokSystemPrompt(schemaHint) },
         { role: 'user', content }
       ]
     })
