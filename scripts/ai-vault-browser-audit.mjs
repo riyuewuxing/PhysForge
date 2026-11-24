@@ -80,6 +80,12 @@ try {
   assert.equal(await other.getByTestId('byok-api-key').inputValue(), key);
   await other.getByTestId('vault-lock').click();
   assert.equal(await other.getByTestId('byok-enabled').isChecked(), false);
+  // Removing shared ciphertext invalidates unlocked state in other open tabs.
+  await other.getByTestId('vault-forget').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid=vault-status]')?.textContent?.includes('另一标签页'));
+  assert.equal(await page.getByTestId('byok-enabled').isChecked(), false);
+  await page.getByTestId('vault-file').setInputFiles({name:'ai-vault.enc.json',mimeType:'application/json',buffer:Buffer.from(raw)});
+  await page.getByTestId('vault-password').waitFor();
   await page.reload();
   await drawer(page);
   await page.getByTestId('vault-password').waitFor();

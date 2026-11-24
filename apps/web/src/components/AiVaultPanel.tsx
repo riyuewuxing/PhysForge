@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { decryptAiVault, VAULT_MAX_BYTES, type AiVaultProfile } from '../security/aiVault.js';
 import {
   forgetEncryptedAiVault, getEncryptedAiVault, getUnlockedAiProfiles, lockAiVault,
-  rememberEncryptedAiVault, setUnlockedAiProfiles
+  rememberEncryptedAiVault, setUnlockedAiProfiles, getAiVaultRevision, subscribeAiVaultCache
 } from '../security/aiVaultSession.js';
 
 interface Props {
@@ -21,6 +21,18 @@ export function AiVaultPanel({ busy, onActivate, onLock, onBusy, lockRevision }:
   const [working, setWorking] = useState(false);
   const alive = useRef(true);
   const request = useRef<AbortController | null>(null);
+  const callbacks = useRef({ onLock, onBusy });
+  callbacks.current = { onLock, onBusy };
+  useEffect(() => subscribeAiVaultCache(() => {
+    request.current?.abort();
+    callbacks.current.onLock();
+    callbacks.current.onBusy(false);
+    setWorking(false);
+    setRaw(getEncryptedAiVault());
+    setProfiles([]);
+    setPassword('');
+    setMessage('另一标签页已更新或删除密文，当前页面已锁定。');
+  }), []);
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; request.current?.abort(); };
@@ -80,8 +92,9 @@ export function AiVaultPanel({ busy, onActivate, onLock, onBusy, lockRevision }:
     if (!raw || !password) return;
     start();
     try {
+      const revision = getAiVaultRevision();
       const value = await decryptAiVault(raw, password);
-      if (!alive.current || !value[0]) return;
+      if (!alive.current || revision !== getAiVaultRevision() || !value[0]) return;
       setUnlockedAiProfiles(value);
       setProfiles(value);
       onActivate(value[0]);

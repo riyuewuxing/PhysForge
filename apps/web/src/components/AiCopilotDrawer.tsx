@@ -75,6 +75,8 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
     invalidateResult();
   };
   const clearAllKeys = (disableOnline = false) => {
+    activeRequest.current?.abort();
+    setRunning(false); setProbing(false);
     lockAiVault();
     clearKey();
     if (disableOnline) setUseByok(false);
