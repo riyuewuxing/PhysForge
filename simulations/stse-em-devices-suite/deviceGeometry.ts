@@ -89,8 +89,9 @@ export function getDeviceSchematic(device: EmDeviceKind): DeviceSchematic {
         box('mhd-load',-0.25,1.02,0.52,0.18,'rail'),
         box('mhd-lead-left',-0.9,0.78,0.05,0.46,'copper'),
         box('mhd-lead-top',-0.57,1.02,0.66,0.05,'copper'),
-        box('mhd-lead-right',0.4,0.25,0.05,1.54,'copper'),
-        box('mhd-lead-return',0.19,1.02,0.42,0.05,'copper')
+        box('mhd-lead-bottom',0.72,-0.55,0.54,0.05,'copper'),
+        box('mhd-lead-right',0.99,0.235,0.05,1.57,'copper'),
+        box('mhd-lead-return',0.50,1.02,0.98,0.05,'copper')
       ],
       fields: fieldGrid([-0.85,-0.25,0.35],[-0.32,0.32]),
       cues: [{id:'mhd-flow',x:-1.4,y:0,dx:2.3,dy:0,kind:'flow',label:'v'}],
@@ -100,9 +101,7 @@ export function getDeviceSchematic(device: EmDeviceKind): DeviceSchematic {
       parts: [
         {id:'flowmeter-pipe',kind:'tube',x:-0.25,y:0,width:2.4,height:0.95,depth:0.95,material:'glass'},
         box('flowmeter-upper-electrode',-0.25,0.48,0.32,0.09,'copper'),
-        box('flowmeter-lower-electrode',-0.25,-0.48,0.32,0.09,'copper'),
-        box('flowmeter-upper-pole',-0.25,0.7,0.8,0.13,'rail'),
-        box('flowmeter-lower-pole',-0.25,-0.7,0.8,0.13,'rail')
+        box('flowmeter-lower-electrode',-0.25,-0.48,0.32,0.09,'copper')
       ],
       fields: fieldGrid([-0.7,-0.25,0.2],[-0.26,0.26]),
       cues: [{id:'flowmeter-flow',x:-1.38,y:0,dx:2.25,dy:0,kind:'flow',label:'v'}],
