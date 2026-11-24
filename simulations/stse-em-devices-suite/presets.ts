@@ -4,8 +4,8 @@ import type { EmDevicesParams } from './engine.js';
 export const emDevicesPresets: readonly PresetSpec<EmDevicesParams>[] = [
   {
     id: 'cyclotron-classic-vs-rel',
-    name: '医用回旋加速器（经典动能 E_km 精确解析 vs 相对论质速失谐）',
-    description: '演示质子在 D 形盒间的等周期回旋加速，校验出射最大动能公式并可开启相对论质速失谐对照',
+    name: '回旋加速器：经典上限与实际轨道、相对论失谐',
+    description: '观察实际过缝做功与圆弧、有限装置外缘和相对论失谐；经典回旋半径上限不等于离散终止动能',
     curriculumNotes: '选择性必修二 第一章第 4 节 · 质谱仪与回旋加速器 STSE',
     params: {
       device: 'cyclotron',
@@ -109,5 +109,6 @@ export const emDevicesPresets: readonly PresetSpec<EmDevicesParams>[] = [
       mhdLoadOhm: 0.8,
       flowDiameterM: 0.2
     }
-  }
+  },
+  { id:'cyclotron-gap-classroom',name:'低能回旋：逐次过缝与圆弧',description:'小装置与较低磁场，观察少量过缝、同步极性与有限外缘',curriculumNotes:'经典回旋半周与狭缝做功',params:{device:'cyclotron',bFieldT:0.6,cyclotronRadiusM:0.15,cyclotronVoltageV:25000,relativisticDetune:false,massKg:1.67262192369e-27,chargeC:1.602176634e-19} }
 ];

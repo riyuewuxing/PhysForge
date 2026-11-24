@@ -1,6 +1,8 @@
 import type { InvariantReport, StepResult } from '@physforge/sim-sdk';
 import { advanceBeamFlight, beamDisplayVelocity, beamTrail, isBeamDevice, sampleBeamFlight, BEAM_LENGTH_M, type ParticleFlight } from './particleFlight.js';
 
+import { getCyclotronPlan, sampleCyclotron, advanceCyclotron, cyclotronDisplayVelocity, cyclotronTrail, C_LIGHT, type CyclotronFlight } from './cyclotronFlight.js';
+
 export type EmDeviceKind =
   | 'velocity-selector'
   | 'mass-spectrometer'
@@ -52,6 +54,7 @@ export interface EmDevicesState {
   readonly particleVel: { x: number; y: number };
   readonly trail: readonly { x: number; y: number }[];
   readonly flight: ParticleFlight | null;
+  readonly cyclotron: CyclotronFlight | null;
 }
 
 export function computeHallVoltageV(params: EmDevicesParams): number {
@@ -85,60 +88,17 @@ export function computeCyclotronExitMetrics(params: EmDevicesParams): {
   relError: number;
   turnsCompleted: number;
 } {
-  const q = Math.max(1e-22, params.chargeC);
-  const m0 = Math.max(1e-30, params.massKg);
-  const B = Math.max(0.05, params.bFieldT);
-  const Rmax = Math.max(0.05, params.cyclotronRadiusM);
-  const analyticalMaxJ = (q * q * B * B * Rmax * Rmax) / (2 * m0);
-
-  if (!params.relativisticDetune) {
-    // Synchronous cyclotron acceleration across gaps matching exact radius constraint R <= Rmax
-    const dV = Math.max(1, params.cyclotronVoltageV);
-    const dE = q * dV;
-    const cLight = 299792458;
-    // Smooth exit matching final extraction radius Rmax
-    void cLight;
-    const nGaps = Math.max(1, Math.floor(analyticalMaxJ / dE));
-    const discreteMaxJ = analyticalMaxJ;
-    return {
-      analyticalMaxJ,
-      discreteMaxJ,
-      relError: Math.abs(discreteMaxJ - analyticalMaxJ) / analyticalMaxJ,
-      turnsCompleted: Math.round(nGaps / 2)
-    };
-  }
-
-  // Relativistic mass growth m = gamma*m0 slips out of RF phase before reaching Rmax
-  const c = 299792458;
-  const dE = q * Math.max(1, params.cyclotronVoltageV);
-  let eKin = 0;
-  let phase = 0;
-  let gaps = 0;
-  const omega0 = (q * B) / m0;
-  while (gaps < 50000) {
-    const gamma = 1 + eKin / (m0 * c * c);
-    const cosPhi = Math.cos(phase);
-    if (cosPhi <= 0) break;
-    eKin += dE * cosPhi;
-    // Momentum p = sqrt((gamma*m0*c)^2 - (m0*c)^2) -> radius R = p / (qB)
-    const gammaNew = 1 + eKin / (m0 * c * c);
-    const p = m0 * c * Math.sqrt(Math.max(0, gammaNew * gammaNew - 1));
-    const R = p / (q * B);
-    if (R >= Rmax) break;
-    phase += Math.PI * (gamma - 1);
-    gaps++;
-  }
-  return {
-    analyticalMaxJ,
-    discreteMaxJ: eKin,
-    relError: Math.abs(eKin - analyticalMaxJ) / analyticalMaxJ,
-    turnsCompleted: Math.round(gaps / 2)
-  };
+  const plan=getCyclotronPlan(params);
+  const discreteMaxJ=plan.arcs.at(-1)?.energyJ??0;
+  const analyticalMaxJ=plan.analyticalMaxJ;
+  return {analyticalMaxJ,discreteMaxJ,
+    relError:analyticalMaxJ>0?Math.abs(discreteMaxJ-analyticalMaxJ)/analyticalMaxJ:0,
+    turnsCompleted:plan.completedHalfTurns/2};
 }
 
 export function solveAllDeviceMetrics(params: EmDevicesParams): Omit<
   EmDevicesState,
-  't' | 'particlePos' | 'particleVel' | 'trail' | 'flight'
+  't' | 'particlePos' | 'particleVel' | 'trail' | 'flight' | 'cyclotron'
 > {
   const selectedSpeed = params.eFieldVPerM / Math.max(1e-6, params.bFieldT);
   const specRadius =
@@ -170,15 +130,17 @@ export function solveAllDeviceMetrics(params: EmDevicesParams): Omit<
 export function createInitialState(params: EmDevicesParams): EmDevicesState {
   const metrics = solveAllDeviceMetrics(params);
   const flight=isBeamDevice(params)?sampleBeamFlight(params,0):null;
-  const pos0=flight?.position??{x:-1.5,y:0};
-  const vel0=flight?beamDisplayVelocity(flight):{x:1.2,y:0};
+  const cyclotron=params.device==='cyclotron'?sampleCyclotron(params,0):null;
+  const pos0=flight?.position??cyclotron?.position??{x:-1.5,y:0};
+  const vel0=flight?beamDisplayVelocity(flight):cyclotron?cyclotronDisplayVelocity(params,cyclotron):{x:1.2,y:0};
   return {
     t: 0,
     ...metrics,
     particlePos: pos0,
     particleVel: vel0,
     trail: [pos0],
-    flight
+    flight,
+    cyclotron
   };
 }
 
@@ -194,25 +156,24 @@ export function stepEmDevices(
   if(isBeamDevice(params)){
     const previous=state.flight??sampleBeamFlight(params,0);
     const {flight,events}=advanceBeamFlight(params,previous,dt,state.t);
-    return {nextState:{...state,...metrics,t:state.t+dt,flight,particlePos:flight.position,particleVel:beamDisplayVelocity(flight),
+    return {nextState:{...state,...metrics,t:state.t+dt,flight,cyclotron:null,particlePos:flight.position,particleVel:beamDisplayVelocity(flight),
       trail:flight===previous?state.trail:beamTrail(params,flight)},events};
   }
-  // The other four devices retain their explicitly schematic animations.
+  if(params.device==='cyclotron'){
+    const previous=state.cyclotron??sampleCyclotron(params,0);
+    const {flight,events}=advanceCyclotron(params,previous,dt,state.t);
+    return {nextState:{...state,...metrics,t:state.t+dt,flight:null,cyclotron:flight,particlePos:flight.position,
+      particleVel:cyclotronDisplayVelocity(params,flight),trail:flight===previous?state.trail:cyclotronTrail(params,flight)},events};
+  }
+  // Hall and flow devices retain explicitly schematic carrier animations.
   let { x, y } = state.particlePos;
   let { x: vx, y: vy } = state.particleVel;
   const substeps = 10;
   const h = dt / substeps;
 
   for (let i = 0; i < substeps; i++) {
-    if (params.device === 'cyclotron') {
-      const ang = (state.t + (i + 1) * h) * 6.0;
-      const r = Math.min(1.3, 0.12 + 0.08 * ang);
-      x = r * Math.cos(ang);
-      y = r * Math.sin(ang);
-    } else {
-      x += 1.2 * h;
-      if (x > 1.5) x = -1.5;
-    }
+    x += 1.2 * h;
+    if (x > 1.5) x = -1.5;
   }
 
   const nextPos = { x, y };
@@ -224,7 +185,8 @@ export function stepEmDevices(
       particlePos: nextPos,
       particleVel: { x: vx, y: vy },
       trail,
-      flight:null
+      flight:null,
+      cyclotron:null
     },
     events: []
   };
@@ -236,6 +198,9 @@ export function computeObservables(state: EmDevicesState): Record<string, number
     selectedSpeed: state.selectedSpeed,
     spectrometerRadiusM: state.spectrometerRadiusM,
     cyclotronMaxEnergyJ: state.cyclotronMaxEnergyJ,
+    cyclotronEnergyJ:state.cyclotron?.energyJ??0,
+    cyclotronGapCount:state.cyclotron?.gapCount??0,
+    cyclotronPhaseSlipRad:state.cyclotron?.phaseSlip??0,
     hallVoltageMv: state.hallVoltageV * 1000,
     mhdOutputWatt: state.mhdOutputWatt,
     flowVoltageMv: state.flowVoltageV * 1000
@@ -250,13 +215,19 @@ export function checkInvariants(state: EmDevicesState, _init: EmDevicesState, pa
     const error=Math.abs(K-initialK-work)/Math.max(Math.abs(K),Math.abs(initialK),Math.abs(work),1e-40);
     return [{name:params.device==='velocity-selector'?'电场功与动能变化一致':'磁场中速率守恒',measuredError:error,tolerance:1e-8,passed:error<1e-8}];
   }
-  const cycErr = params.relativisticDetune ? 0 : state.cyclotronRelError;
-  return [
-    {
-      name: '经典回旋加速器最大出射动能解析误差',
-      measuredError: cycErr,
-      tolerance: 1e-5,
-      passed: cycErr < 1e-5
-    }
-  ];
+  if(state.cyclotron){
+    const f=state.cyclotron,m=params.massKg,q=Math.abs(params.chargeC),B=params.bFieldT;
+    const gamma=params.relativisticDetune&&m>0?1+f.energyJ/(m*C_LIGHT*C_LIGHT):1;
+    const speed=Math.hypot(f.velocityMps.x,f.velocityMps.y);
+    const momentum=m*gamma*speed;
+    const expectedRadius=q*B>0?momentum/(q*B):0;
+    const expectedK=params.relativisticDetune&&m>0?momentum*momentum/(m*(gamma+1)):0.5*m*speed*speed;
+    const workErr=Math.abs(f.energyJ-f.totalWorkJ)/Math.max(Math.abs(f.energyJ),1e-40);
+    const radiusErr=Math.abs(f.radiusM-expectedRadius)/Math.max(f.radiusM,1e-20);
+    const kineticErr=Math.abs(f.energyJ-expectedK)/Math.max(f.energyJ,1e-40);
+    return [{name:'实际过缝RF功与动能一致',measuredError:workErr,tolerance:1e-8,passed:workErr<1e-8},
+      {name:'磁场轨道半径与动量一致',measuredError:radiusErr,tolerance:1e-8,passed:radiusErr<1e-8},
+      {name:'速度与动能一致',measuredError:kineticErr,tolerance:1e-8,passed:kineticErr<1e-8}];
+  }
+  return [];
 }
