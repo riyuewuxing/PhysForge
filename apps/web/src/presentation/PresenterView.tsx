@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { PresenterSyncBridge, type PresenterCommand, type StageSnapshotPayload } from './presenterSync.js';
+import { PresenterSyncBridge, scopePresenterAction, type PresenterAction, type StageSnapshotPayload } from './presenterSync.js';
 
 interface Props { sessionId: string }
 
@@ -11,7 +11,10 @@ export const PresenterView: React.FC<Props> = ({ sessionId }) => {
   const bridgeRef = useRef<PresenterSyncBridge | null>(null);
   const lastSnapshotAt = useRef(-Infinity);
   const laserAt = useRef(-Infinity);
-  const send = (command: PresenterCommand) => bridgeRef.current?.sendCommand(command);
+  const send = (action: PresenterAction) => {
+    if (action.type === 'CMD_REQUEST_SYNC' || action.type === 'CMD_LASER_POINTER') bridgeRef.current?.sendCommand(action);
+    else if (snapshot) bridgeRef.current?.sendCommand(scopePresenterAction(action, snapshot));
+  };
 
   useEffect(() => {
     if (!sessionId) { setConnection('缺少演说会话 ID，请从主屏打开副屏。'); return; }
@@ -76,6 +79,15 @@ export const PresenterView: React.FC<Props> = ({ sessionId }) => {
           <div data-testid="presenter-notes" className="mt-4 whitespace-pre-wrap text-2xl leading-relaxed">{snapshot.speakerNotes || '自由演说模式，无私密讲稿。'}</div>
           <div className="mt-5 border-t border-slate-700 pt-3 text-slate-400">下一镜：{snapshot.nextBeatTitle ?? '—'}</div>
           {snapshot.freezeBadge && <div className="mt-3 text-amber-300">{snapshot.freezeBadge}</div>}
+          {snapshot.totalBeats > 0 && <label className="mt-4 flex items-center justify-between gap-2 text-sm">
+            <span>直接跳转分镜</span>
+            <select data-testid="presenter-goto-beat" className="rounded bg-slate-800 p-2"
+              disabled={!enabled || snapshot.appMode !== 'story'} value={snapshot.beatIndex}
+              onChange={(event) => send({ type: 'CMD_GOTO_BEAT', index: Number(event.target.value) })}>
+              {snapshot.beatIndex < 0 && <option value={-1} disabled>尚未开始</option>}
+              {Array.from({ length: snapshot.totalBeats }, (_, i) => <option key={i} value={i}>第 {i + 1} 镜</option>)}
+            </select>
+          </label>}
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button className={control} data-testid="presenter-prev" disabled={!enabled || snapshot.appMode !== 'story' || snapshot.beatIndex <= 0} onClick={() => send({ type: 'CMD_PREV_BEAT' })}>上一镜</button>
             <button className={control} data-testid="presenter-next" disabled={!enabled || snapshot.appMode !== 'story' || snapshot.beatIndex >= snapshot.totalBeats - 1} onClick={() => send({ type: 'CMD_NEXT_BEAT' })}>下一镜</button>
