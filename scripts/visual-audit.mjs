@@ -514,6 +514,20 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
       if((await play.getAttribute('aria-label'))==='暂停')await play.click();
       if(screenshot)await screenshot('S02_mass-spectrometer_detector');
     }
+    if(device==='cyclotron'){
+      const play=page.locator('[data-testid="btn-play-pause"]:visible');
+      const initial=Number(await stage.getAttribute('data-cyclotron-energy'));
+      if(!(initial>0))throw new Error('S02 cyclotron initial kick absent');
+      if((await play.getAttribute('aria-label'))==='运行')await play.click();
+      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-cyclotron-gaps'))>2,null,{timeout:15000});
+      const middle=Number(await stage.getAttribute('data-cyclotron-energy'));
+      if(!(middle>initial))throw new Error('S02 cyclotron physical energy did not increase');
+      if(screenshot)await screenshot('S02_cyclotron_running');
+      await page.waitForFunction(()=>['wall','detuned','limit'].includes(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-cyclotron-status')??''),null,{timeout:20000});
+      if(await stage.getAttribute('data-cyclotron-status')!=='wall')throw new Error('S02 classic cyclotron did not reach outer wall');
+      if((await play.getAttribute('aria-label'))==='暂停')await play.click();
+      if(screenshot)await screenshot('S02_cyclotron_wall');
+    }
     if (screenshot) await screenshot('S02_' + device + '_3d');
     await toggle.click();
     await stage.waitFor({state:'detached',timeout:15000});

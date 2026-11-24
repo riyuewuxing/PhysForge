@@ -14,6 +14,8 @@ import { magnetic3dDisplayPoint, magnetic3dDefaultVisibleHeight } from '@physfor
 import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
 import type { EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { flightReadout } from '../../../../simulations/stse-em-devices-suite/particleFlight.js';
+import { cyclotronReadout } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
+import type { EmDevicesParams } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import {
   buildMagneticConductorPaths,
   magneticFieldGeometrySignature,
@@ -811,7 +813,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     && typeof simState === 'object'
     ? simState as Magnetic3dState
     : null;
-  const deviceFlight=plugin.meta.id==='stse-em-devices-suite'?(simState as EmDevicesState|null)?.flight:null;
+  const deviceState=plugin.meta.id==='stse-em-devices-suite'?simState as EmDevicesState|null:null;
+  const deviceFlight=deviceState?.flight;
+  const cyclotron=deviceState?.cyclotron;
   const speed = magnetic3dState
     ? Math.hypot(magnetic3dState.velocity.x, magnetic3dState.velocity.y, magnetic3dState.velocity.z)
     : undefined;
@@ -847,6 +851,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-beam-physical-time={deviceFlight?.physicalTimeS}
       data-beam-x={deviceFlight?.position.x}
       data-beam-y={deviceFlight?.position.y}
+      data-cyclotron-status={cyclotron?.status}
+      data-cyclotron-gaps={cyclotron?.gapCount}
+      data-cyclotron-energy={cyclotron?.energyJ}
+      data-cyclotron-phase={cyclotron?.phaseSlip}
+      data-cyclotron-time={cyclotron?.physicalTimeS}
+      data-cyclotron-radius={cyclotron?.radiusM}
+      data-cyclotron-rf={cyclotron?.rfVoltageV}
       className="relative w-full h-full min-h-[260px] rounded-xl overflow-hidden"
     >
       {lossCone !== undefined && <div data-testid="mirror-loss-cone" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200">
@@ -856,7 +867,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           <path d="M5 30 H99 M52 5 V55" stroke="#94a3b8" strokeWidth="1" />
         </svg>
       </div>}
-      {plugin.meta.id === 'stse-em-devices-suite' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">{deviceFlight?flightReadout(deviceFlight):'归一化原理示意 · 蓝色箭头 B 垂直剖面 · 定量值见公式区'}</div>}
+      {plugin.meta.id === 'stse-em-devices-suite' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">{deviceFlight?flightReadout(deviceFlight):cyclotron?cyclotronReadout(params as EmDevicesParams,cyclotron):'归一化原理示意 · 蓝色箭头 B 垂直剖面 · 定量值见公式区'}</div>}
       {plugin.meta.id === 'astro-orbital-mechanics' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">轨道使用归一化长度 · 天体尺寸为示意{params.mode === 'binary-lagrange' && activeLayers.has('corotatingView') ? ' · 共转系不绘制无逐点时刻的历史轨迹' : params.mode === 'hohmann-transfer' ? ' · 橙色标记为引擎记录的点火' : ''}</div>}
       {vectorsVisible && (
         <div data-testid="three-vector-legend" className={`pointer-events-none absolute ${presentationMode ? 'bottom-3 left-3' : 'left-3 top-3'} z-10 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-950/75 px-3 py-2 text-[11px] text-slate-200 shadow-lg backdrop-blur`}>

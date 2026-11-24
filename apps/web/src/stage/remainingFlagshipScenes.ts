@@ -36,7 +36,7 @@ function bufferedTrail(group: THREE.Group, capacity: number, color: number) {
     attr.needsUpdate=true; geometry.setDrawRange(0,count); trail.visible=count>1;
   }};
 }
-/** The S02 engine explicitly uses schematic, normalized particle positions; preserve the exact canvas map. */
+/** S02 shares engine display coordinates with Canvas, including physically scaled beam and cyclotron trajectories. */
 export function deviceDisplayPoint(x:number,y:number) {
   const p=deviceDiagramPoint(x,y);
   return new THREE.Vector3(p.x,0,-p.y);
@@ -68,6 +68,8 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
   const track=bufferedTrail(moving,121,0x38bdf8);
   const gap=mesh(moving,'accelerating-gap',new THREE.BoxGeometry(0.045,0.035,1.55),magneticFluxMaterial(0xfbbf24));
   gap.position.set(-0.25,-0.025,0);
+  const rf=new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(-0.38,.06,-.95),.26,0xfbbf24,.065,.045);
+  rf.name='cyclotron-rf-direction';moving.add(rf);
   let signature='';
   return {sync(raw,rawParams,layers) {
     const state=raw as EmDevicesState|null, p=rawParams as EmDevicesParams;
@@ -101,8 +103,10 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
     material.color.set(p.device==='hall-sensor'&&p.carrierType==='hole'?0xf43f5e:0x4ade80);
     material.emissive.copy(material.color);
     track.update(state.trail,deviceDisplayPoint);
-    // Gap highlights only proximity of the engine's schematic particle, not an invented RF phase.
-    gap.visible=p.device==='cyclotron'&&Math.abs(state.particlePos.x*0.7)<=0.07;
+    const f=state.cyclotron;
+    gap.visible=!!f&&Math.abs(state.particlePos.x*0.7)<=0.04;
+    rf.visible=!!f&&Math.abs(f.rfVoltageV)>1e-6;
+    if(f&&rf.visible){const sign=Math.sign(f.rfVoltageV);rf.position.set(-0.25-sign*.13,.06,-.95);rf.setDirection(new THREE.Vector3(sign,0,0));}
   },dispose(){dispose(root);}};
 }
 function ring(group:THREE.Group,name:string,radius:number,color:number) {

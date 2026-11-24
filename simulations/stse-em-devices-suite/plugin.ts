@@ -1,5 +1,6 @@
 import { emDevicesStoryDecks } from './storyDecks.js';
 import { flightReadout } from './particleFlight.js';
+import { cyclotronReadout, CYCL_DISPLAY_RADIUS } from './cyclotronFlight.js';
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline } from './deviceGeometry.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
@@ -418,6 +419,8 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
   ],
   telemetryChannels: [
     { key: 'selectedSpeed', label: '选择速度 E/B', unit: 'm/s', color: '#38bdf8' },
+    { key:'cyclotronEnergyJ', label:'回旋粒子当前动能', unit:'J', color:'#fbbf24' },
+    { key:'cyclotronPhaseSlipRad', label:'过缝相位差', unit:'rad', color:'#c084fc' },
     { key: 'hallVoltageMv', label: '霍尔电压 U_H', unit: 'mV', color: '#f59e0b' },
     { key: 'mhdOutputWatt', label: 'MHD 输出功率', unit: 'W', color: '#4ade80' },
     { key: 'flowVoltageMv', label: '流量计感生电压', unit: 'mV', color: '#a855f7' }
@@ -443,9 +446,13 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     for (const cue of diagram.cues) primitives.push({kind:'arrow',x1:cue.x,y1:cue.y,x2:cue.x+cue.dx,y2:cue.y+cue.dy,label:cue.label});
     for (const label of diagram.labels) primitives.push({kind:'text',...label,align:'middle'});
     primitives.push({kind:'trajectory',points:state.trail.slice(-121).map(p=>deviceDiagramPoint(p.x,p.y)),strokeWidth:1.5});
+    if(state.cyclotron){
+      const sign=Math.sign(state.cyclotron.rfVoltageV);
+      if(Math.abs(state.cyclotron.rfVoltageV)>1e-6)primitives.push({kind:'arrow',x1:-0.25-sign*0.13,y1:0.94,x2:-0.25+sign*0.13,y2:0.94,label:'RF'});
+    }
     const position=deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
     primitives.push({kind:'circle',cx:position.x,cy:position.y,r:0.035,fill:true});
-    primitives.push({kind:'text',x:0,y:-1.38,text:state.flight?flightReadout(state.flight):'归一化原理示意（不按 SI 尺度）',align:'middle'});
+    primitives.push({kind:'text',x:0,y:-1.38,text:state.flight?flightReadout(state.flight):state.cyclotron?cyclotronReadout(params,state.cyclotron):'归一化原理示意（不按 SI 尺度）',align:'middle'});
     return {
       width: 680, height: 400, viewBox: { minX: -2.2, minY: -1.6, maxX: 2.2, maxY: 1.6 },
       title: '现代电磁器件原理配图', primitives
@@ -504,6 +511,13 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     for (const label of diagram.labels) { const p=m.toScreen(label.x,label.y);ctx.fillText(label.text,p.x,p.y); }
     ctx.textAlign='left';
 
+    // RF arrow above the actual gap; direction from the current RF voltage.
+    if(state.cyclotron){
+      const sign=Math.sign(state.cyclotron.rfVoltageV),a=m.toScreen(-0.25-sign*0.14,CYCL_DISPLAY_RADIUS+0.12),b=m.toScreen(-0.25+sign*0.14,CYCL_DISPLAY_RADIUS+0.12);
+      if(Math.abs(state.cyclotron.rfVoltageV)>1e-6){
+        ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineTo(b.x-sign*7,b.y-4);ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-sign*7,b.y+4);ctx.stroke();
+      }
+    }
     // Draw particle trail & head
     if (state.trail.length > 1) {
       ctx.strokeStyle = '#38bdf8';
@@ -531,7 +545,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     const summaryMap: Record<EmDevicesParams['device'], string> = {
       'velocity-selector': `速度选择器 v_sel = E/B = ${state.selectedSpeed.toFixed(0)} m/s`,
       'mass-spectrometer': `质谱仪偏转半径 R = ${state.spectrometerRadiusM.toExponential(3)} m`,
-      'cyclotron': `回旋出射动能 E_km = ${(state.cyclotronMaxEnergyJ / 1.602176634e-13).toFixed(3)} MeV (解析相对差 ${state.cyclotronRelError.toExponential(2)})`,
+      'cyclotron': `当前 K=${((state.cyclotron?.energyJ??0)/1.602176634e-13).toFixed(3)} MeV · 理想经典上限 ${(state.cyclotronAnalyticalEnergyJ/1.602176634e-13).toFixed(3)} MeV`,
       'hall-sensor': `霍尔电压 U_H = ${(state.hallVoltageV * 1000).toFixed(4)} mV (${params.carrierType === 'electron' ? '电子负极性' : '空穴正极性'})`,
       'mhd-generator': `MHD E=${state.mhdEmfV.toFixed(1)}V | r=${state.mhdInternalOhm.toFixed(2)}Ω | P=${state.mhdOutputWatt.toFixed(0)}W (峰值 ${state.mhdMaxPowerWatt.toFixed(0)}W)`,
       'em-flowmeter': `电磁流量计 Q = ${state.flowRateM3ps.toExponential(3)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
@@ -539,7 +553,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ctx.textAlign = 'center';
     ctx.fillText(summaryMap[params.device], viewport.width * 0.5, 28);
     ctx.font='11px system-ui, sans-serif';ctx.fillStyle='#94a3b8';
-    ctx.fillText(state.flight?flightReadout(state.flight):'归一化原理示意 · 轨迹不作为 SI 测量依据', viewport.width * 0.5, 46);
+    ctx.fillText(state.flight?flightReadout(state.flight):state.cyclotron?cyclotronReadout(params,state.cyclotron):'归一化原理示意 · 轨迹不作为 SI 测量依据', viewport.width * 0.5, 46);
     ctx.restore();
   },
   getControlHandles: (_state, params) => {
@@ -572,6 +586,11 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ];
   },
   getForceVectors: (state, params) => {
+    if(state.cyclotron){
+      if(state.cyclotron.status!=='running')return [];
+      const v=state.cyclotron.velocityMps,q=Math.abs(params.chargeC),B=params.bFieldT;
+      return [{id:'cyclotron-magnetic-force',label:'F洛=qv×B（盒内）',origin:deviceDiagramPoint(state.particlePos.x,state.particlePos.y),force:{x:q*B*v.y,y:-q*B*v.x},color:'#38bdf8',category:'magnetic',unit:'N'}];
+    }
     if (!state.flight || state.flight.status !== 'flying' || state.flight.region==='entry') return [];
     // chargeC is a positive particle charge; carrierType is specific to the Hall sensor.
     const charge = Math.abs(params.chargeC);
@@ -626,9 +645,9 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       case 'mass-spectrometer': return [{ id, label: '质谱仪偏转磁场回旋半径',
         latex: 'r=\\frac{mv}{|q|B_2}',
         substitutedLatex: `r=${scientificLatex(state.spectrometerRadiusM)}\\text{ m}` }];
-      case 'cyclotron': return [{ id, label: '经典回旋加速器极限动能与模型计算值',
-        latex: 'K_{\\max,\\text{经典}}=\\frac{q^2B^2R_{\\max}^2}{2m}',
-        substitutedLatex: `\\begin{aligned}K_{\\text{经典}}&=${scientificLatex(state.cyclotronAnalyticalEnergyJ)}\\text{ J},\\\\K_{\\text{模型}}&=${scientificLatex(state.cyclotronMaxEnergyJ)}\\text{ J}\\end{aligned}` }];
+      case 'cyclotron': return [{ id, label: '理想经典上限 / 当前动能 / 终止预测（有限装置）',
+        latex: 'K_{\\mathrm{lim}}=\\frac{q^2B^2R^2}{2m},\\quad \\Delta K=qU\\cos\\phi',
+        substitutedLatex: `\\begin{aligned}K_{\\mathrm{lim}}&=${scientificLatex(state.cyclotronAnalyticalEnergyJ)}\\text{ J},\\\\K_{\\mathrm{now}}&=${scientificLatex(state.cyclotron?.energyJ??0)}\\text{ J},\\\\K_{\\mathrm{end}}&=${scientificLatex(state.cyclotronMaxEnergyJ)}\\text{ J},\\\\\\phi&=${(state.cyclotron?.phaseSlip??0).toFixed(3)}\\text{ rad}\\end{aligned}` }];
       case 'hall-sensor': return [{ id, label: '霍尔电势差（载流子电荷含符号）',
         latex: 'U_H=\\frac{IB}{nq_cd}',
         substitutedLatex: `U_H=${scientificLatex(state.hallVoltageV * 1000)}\\text{ mV}` }];

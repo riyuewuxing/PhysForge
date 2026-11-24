@@ -1,4 +1,5 @@
 import type { EmDeviceKind } from './engine.js';
+import { CYCL_DISPLAY_RADIUS, CYCL_GAP_HALF } from './cyclotronFlight.js';
 import { RIGHT_X,SPECTROMETER_DEPTH,SPECTROMETER_SLIT_HALF } from './particleFlight.js';
 
 /** Display geometry only: all lengths are schematic normalized coordinates, not SI device dimensions. */
@@ -65,11 +66,11 @@ export function getDeviceSchematic(device: EmDeviceKind): DeviceSchematic {
     };
     case 'cyclotron': return {
       parts: ([-1,1] as const).map(side => ({
-        id: side===-1?'dee-left':'dee-right',kind:'dee',x:-0.25+side*0.04,y:0,width:0.85,height:1.7,depth:0.13,material:'copper',side
+        id: side===-1?'dee-left':'dee-right',kind:'dee',x:-0.25+side*CYCL_GAP_HALF,y:0,width:CYCL_DISPLAY_RADIUS,height:2*CYCL_DISPLAY_RADIUS,depth:0.13,material:'copper',side
       })),
       fields: fieldGrid([-0.73,-0.25,0.23],[-0.4,0,0.4]),
       cues: [],
-      labels: [{x:-0.25,y:1.02,text:'D 形盒 · 狭缝加速'}]
+      labels: [{x:-0.25,y:1.15,text:'D 形盒 · 理想零宽狭缝'}, {x:-0.65,y:0.96,text:'RF'}]
     };
     case 'hall-sensor': return {
       parts: [
@@ -114,9 +115,10 @@ export function getDeviceSchematic(device: EmDeviceKind): DeviceSchematic {
 /** Outline of one D-shaped half disk, identical in Canvas, export and the 3D mesh. */
 export function deeOutline(part: DevicePart): {x:number;y:number}[] {
   if (part.kind !== 'dee' || part.side === undefined) return [];
-  const start = part.side === -1 ? Math.PI/2 : -Math.PI/2;
-  return Array.from({length:49},(_,i)=>{
-    const angle=start+i*Math.PI/48;
-    return {x:part.x+part.width*Math.cos(angle),y:part.y+part.height/2*Math.sin(angle)};
+  const center=part.x-part.side*CYCL_GAP_HALF;
+  const span=Math.acos(CYCL_GAP_HALF/part.width),axis=part.side===1?0:Math.PI;
+  return Array.from({length:65},(_,i)=>{
+    const angle=axis-span+2*span*i/64;
+    return {x:center+part.width*Math.cos(angle),y:part.y+part.height/2*Math.sin(angle)};
   });
 }
