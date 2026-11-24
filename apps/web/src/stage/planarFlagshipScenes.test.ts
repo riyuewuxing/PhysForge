@@ -23,6 +23,52 @@ describe('flagship physical display alignment', () => {
     const canvas = createWorldMapper(alignedCanvasViewport(camera.get2DAlignMetrics())).toScreen(x, 0);
     expect(Math.hypot(canvas.x - projected.x, canvas.y - projected.y)).toBeLessThan(0.5);
   });
+  it('renders opposite Ampere forces, reverses current, and stops pulses at zero current', () => {
+    const scene = new THREE.Scene();
+    const driver = createPlanarFlagshipScene('em-induction-double-rod', scene);
+    const p = emInductionDoubleRodPlugin;
+    const params = resolvePluginParams<InductionParams>(p.paramSchema, { rodMode: 'double', magneticB: 1, railWidth: 1, railWidth2: 1 });
+    const state = { ...p.engine.createInitialState(params), current: 2 };
+    const layers = new Set(p.layers.map(layer => layer.id));
+    driver?.sync(state, params, layers);
+    const f1 = scene.getObjectByName('induction-ampere-1');
+    const f2 = scene.getObjectByName('induction-ampere-2');
+    const arrow = scene.getObjectByName('induction-current-0');
+    const pulse = scene.getObjectByName('induction-charge-pulse-0');
+    expect(f1?.visible).toBe(true);
+    expect(f2?.visible).toBe(true);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(f1!.quaternion).x).toBeCloseTo(-1);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(f2!.quaternion).x).toBeCloseTo(1);
+    const before = pulse!.position.clone();
+    driver?.sync({ ...state, qTotalIntegral: state.qTotalIntegral + 0.5 }, params, layers);
+    expect(pulse!.position.distanceTo(before)).toBeGreaterThan(0);
+    driver?.sync({ ...state, current: -2 }, params, layers);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(arrow!.quaternion).z).toBeCloseTo(1);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(f1!.quaternion).x).toBeCloseTo(1);
+    driver?.sync({ ...state, current: 0 }, params, layers);
+    expect(arrow?.visible).toBe(false);
+    expect(pulse?.visible).toBe(false);
+    expect(f1?.visible).toBe(false);
+    expect(f2?.visible).toBe(false);
+    driver?.dispose();
+  });
+
+  it('uses the battery current convention consistently with the engine force', () => {
+    const scene = new THREE.Scene();
+    const driver = createPlanarFlagshipScene('em-induction-double-rod', scene);
+    const p = emInductionDoubleRodPlugin;
+    const params = resolvePluginParams<InductionParams>(p.paramSchema, { rodMode: 'single', circuitLoad: 'battery', magneticB: 1, railWidth: 1 });
+    const state = { ...p.engine.createInitialState(params), current: 2 };
+    driver?.sync(state, params, new Set(['rods', 'forceVectors', 'currentFlow']));
+    const f1 = scene.getObjectByName('induction-ampere-1');
+    const f2 = scene.getObjectByName('induction-ampere-2');
+    const arrow = scene.getObjectByName('induction-current-0');
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(f1!.quaternion).x).toBeCloseTo(1);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(arrow!.quaternion).z).toBeCloseTo(1);
+    expect(f2?.visible).toBe(false);
+    driver?.dispose();
+  });
+
   it('removes the owned Three scene graph on dispose', () => {
     const scene = new THREE.Scene();
     const driver = createPlanarFlagshipScene('em-induction-double-rod', scene);
