@@ -27,6 +27,7 @@ import {
 } from '../stage/ViewportController.js';
 import { RulerToolboxOverlay, type MeasureToolKind } from '../stage/RulerToolboxOverlay.js';
 import { AutoFbdBadge, renderAutoFbdToCanvas } from '../stage/AutoFbdOverlay.js';
+import { createDisplayLayerSelector, selectDisplayFrame } from '../stage/displayFrame.js';
 import { cameraToStoryView, flatStoryView, interpolateStoryView, spatialStoryView, storyCameraDuration,
   storyViewToCamera, validStoryView2D, validStoryView3D, type StorySpatialCommand, type StoryView2D } from '../presentation/storyCamera.js';
 
@@ -140,24 +141,6 @@ function getDotPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
   return pattern;
 }
 
-function findClosestSnapshot(snapshots: readonly SnapshotFrame[], targetT: number): SnapshotFrame | null {
-  if (snapshots.length === 0) return null;
-  let lo = 0;
-  let hi = snapshots.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (snapshots[mid]!.t < targetT) lo = mid + 1;
-    else hi = mid;
-  }
-  const cand = snapshots[lo]!;
-  if (lo > 0) {
-    const prev = snapshots[lo - 1]!;
-    if (Math.abs(prev.t - targetT) < Math.abs(cand.t - targetT)) {
-      return prev;
-    }
-  }
-  return cand;
-}
 
 export const SimulationStage: React.FC<SimulationStageProps> = ({
   plugin,
@@ -202,7 +185,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const storySpatialCommandRef = useRef<StorySpatialCommand | null>(null);
   const storyCameraTweenRef = useRef<{ from: StoryView2D; to: StoryView2D; start: number; duration: number } | null>(null);
   const storyCameraUiAtRef = useRef(-Infinity);
-  const threeLayers = useMemo(() => new Set(activeLayers), [activeLayers]);
+  const selectDisplayLayers = useMemo(() => createDisplayLayerSelector(), []);
+  const threeLayers = selectDisplayLayers(activeLayers, poeMasked);
   const previouslyShowThreeRef = useRef(showThree);
   const initialFlatViewportRef = useRef<Viewport | undefined>(undefined);
   const enterFromCanvas = showThree && !previouslyShowThreeRef.current && Boolean(presentationMode && spatial);
@@ -230,6 +214,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
+  const simStateModelIdRef = useRef<string | null>(null);
   const initialStateRef = useRef<unknown>(null);
   const eventsRef = useRef<PhysicsEvent[]>([]);
   const snapshotsRef = useRef<SnapshotFrame[]>([]);
@@ -388,6 +373,16 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     );
   }, [onRegisterSnapshotsGetter]);
 
+  const readDisplayedFrame = (expectedModelId = latestRef.current.plugin.meta.id) => {
+    if (latestRef.current.plugin.meta.id !== expectedModelId) return null;
+    return selectDisplayFrame({
+      modelId: expectedModelId, ownerModelId: simStateModelIdRef.current,
+      currentState: simStateRef.current, currentTime: simulationTimeRef.current,
+      scrubTime: latestRef.current.scrubTime, snapshots: snapshotsRef.current
+    });
+  };
+  const readDisplayedLayers = () => selectDisplayLayers(latestRef.current.activeLayers, latestRef.current.poeMasked);
+
   const computeEffectiveViewport = (baseVp: Viewport, drawState: unknown): {
     effectiveVp: Viewport;
     frameOrigin: { x: number; y: number };
@@ -405,7 +400,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (frameId !== 'ground' && drawState !== null && v2.referenceFrames) {
       const spec = v2.referenceFrames.find((f) => f.id === frameId);
       if (spec) {
-        frameOrigin = spec.getOrigin(drawState, pm, new Set(latestRef.current.activeLayers));
+        frameOrigin = spec.getOrigin(drawState, pm, readDisplayedLayers());
       }
     }
     const ppm = getPixelsPerMeter(zoomedVp);
@@ -428,13 +423,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const {
       plugin: p,
       params: pm,
-      activeLayers: layersArr,
       strobeEnabled: strobe,
       poeMasked: masked,
       theme: currentTheme,
       autoFbdEnabled: showFbd,
-      fbdComponentsEnabled: showFbdComp,
-      scrubTime: scrub
+      fbdComponentsEnabled: showFbdComp
     } = latestRef.current;
 
     const baseVp = viewportRef.current;
@@ -452,23 +445,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       }
     }
 
-    const frame =
-      scrub !== null
-        ? findClosestSnapshot(snapshotsRef.current, scrub)
-        : snapshotsRef.current[snapshotsRef.current.length - 1] ?? null;
-    const drawState = storyRunnerRef.current && scrub === null ? simStateRef.current : frame ? frame.state : simStateRef.current;
+    const frame = readDisplayedFrame(p.meta.id);
+    const drawState = frame?.state ?? null;
     const { effectiveVp: vp, frameOrigin } = computeEffectiveViewport(baseVp, drawState);
 
     if (drawState !== null) {
-      const layerSet = new Set(layersArr);
-      // POE 遮罩启用时隐藏轨迹与动态圆包络等揭示答案图层
-      if (masked) {
-        layerSet.delete('trajectory');
-        layerSet.delete('larmorCircle');
-        layerSet.delete('slopeGhost');
-        layerSet.delete('vibrationGraph');
-        layerSet.delete('eventPins');
-      }
+      const layerSet = readDisplayedLayers();
       p.renderCanvas(ctx, drawState, pm, vp, layerSet);
 
       // 壳层统一 Strobe 频闪打点叠加
@@ -625,14 +607,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (!force && now - lastUiSyncMsRef.current < 90) return;
     lastUiSyncMsRef.current = now;
 
-    const { plugin: p, params: pm, scrubTime: scrub, onTelemetryUpdate: notify } = latestRef.current;
-    const snaps = snapshotsRef.current;
-    const activeSnap =
-      scrub !== null
-        ? findClosestSnapshot(snaps, scrub)
-        : storyRunnerRef.current && simStateRef.current !== null
-          ? { t: simulationTimeRef.current, state: simStateRef.current, observables: p.engine.computeObservables(simStateRef.current, pm) }
-          : snaps[snaps.length - 1] ?? null;
+    const { plugin: p, params: pm, onTelemetryUpdate: notify } = latestRef.current;
+    const activeSnap = readDisplayedFrame(p.meta.id);
 
     if (!activeSnap || initialStateRef.current === null) return;
     const invariants = p.engine.checkInvariants
@@ -642,7 +618,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     notify({
       t: activeSnap.t,
-      observables: activeSnap.observables,
+      observables: activeSnap.observables ?? p.engine.computeObservables(activeSnap.state, pm),
       events: eventsRef.current,
       invariants,
       formulaItems
@@ -656,6 +632,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const obs0 = p.engine.computeObservables(init, pm);
     simStateRef.current = init;
     initialStateRef.current = init;
+    simStateModelIdRef.current = p.meta.id;
     eventsRef.current = [];
     snapshotsRef.current = [{ t: 0, state: init, observables: obs0 }];
     lastSnapshotTRef.current = 0;
@@ -1148,12 +1125,13 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             <LazyThreeStage
               key={plugin.meta.id}
               plugin={plugin as SimulationPluginV2<ParamRecord, unknown>}
-              simState={simStateRef.current}
-              simStateRef={simStateRef}
+              simState={readDisplayedFrame(plugin.meta.id)?.state ?? null}
+              getFrameState={() => readDisplayedFrame(plugin.meta.id)?.state ?? null}
               params={params}
               getFrameParams={() => latestRef.current.params}
               storyCameraCommandRef={storySpatialCommandRef}
               activeLayers={threeLayers}
+              getFrameLayers={readDisplayedLayers}
               presentationMode={presentationMode}
               morphTarget={view3dEnabled ? 0 : 1}
               initialFlatViewport={initialFlatViewportRef.current}
@@ -1331,7 +1309,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         <RulerToolboxOverlay
           activeTool={measureTool}
           viewport={overlayViewport}
-          frameOrigin={computeEffectiveViewport(overlayViewport, simStateRef.current).frameOrigin}
+          frameOrigin={computeEffectiveViewport(overlayViewport, readDisplayedFrame(plugin.meta.id)?.state ?? null).frameOrigin}
         />
 
         {!presentationMode && <AutoFbdBadge active={autoFbdEnabled && !poeMasked} count={fbdCount} />}
