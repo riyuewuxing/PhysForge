@@ -850,6 +850,10 @@ async function main() {
         if (presentation.topbarVisible || presentation.railVisible || presentation.panelVisible || presentation.scopeVisible || !presentation.threeCanvas || !presentation.axisWidgetVisible || !presentation.vectorLegendVisible || !presentation.velocityArrowVisible || !presentation.forceArrowVisible || presentation.formulaOverflows || !readableVectorLabels || !presentation.labelsDisjoint || presentation.trailPoints < 10 || Math.abs(presentation.particleRadius - 0.055 * 0.7) > 1e-6) {
           layout.issues.push(`Fullscreen E10 layout failed: ${JSON.stringify(presentation)}`);
         }
+        await page.waitForFunction(() => {
+          const stage = document.querySelector('[data-testid="three-stage-container"]');
+          return Number(stage?.getAttribute('data-field-line-count')) === 21 && Number(stage?.getAttribute('data-conductor-count')) === 10;
+        });
         await page.screenshot({ path: path.join(OUT_DIR, 'E10_04_fullscreen_3d.png') });
       }
 

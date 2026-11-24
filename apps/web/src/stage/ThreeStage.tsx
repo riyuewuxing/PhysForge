@@ -7,14 +7,15 @@ import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type Simulat
 import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
-import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial } from './spatialMaterials.js';
+import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
 import { magnetic3dDisplayPoint } from '@physforge/simulations/em-3d-magnetic-fields';
 import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
 import {
-  buildConductorSegments,
-  trace3dFieldLines,
+  buildMagneticConductorPaths,
+  magneticFieldGeometrySignature,
+  getMagneticDisplayFieldLines,
   type Magnetic3dParams,
   type Magnetic3dState
 } from '@physforge/simulations/em-3d-magnetic-fields/engine';
@@ -296,7 +297,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     scene.add(staticGroup, trailGroup);
     const magneticTrail=isMag3d?new DynamicTubeTrail(301,.012,6):null;
     if(magneticTrail){
-      const mesh=new THREE.Mesh(magneticTrail.geometry,magneticFluxMaterial(0x4ade80));
+      const mesh=new THREE.Mesh(magneticTrail.geometry,new THREE.MeshBasicMaterial({ color: 0xffcb75, toneMapped: false }));
       mesh.name='magnetic-particle-trail';mesh.frustumCulled=false;trailGroup.add(mesh);
     }
     const fusionTrailGeometry = isTokamak3d ? new THREE.BufferGeometry() : null;
@@ -310,13 +311,15 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const sphereGeo = new THREE.SphereGeometry(1, 20, 20);
     const sphereMat = new THREE.MeshStandardMaterial({
-      color: 0x86efac,
-      emissive: 0x16a34a,
+      color: isMag3d ? 0xffe8bd : 0x86efac,
+      emissive: isMag3d ? 0xffb64f : 0x16a34a,
       emissiveIntensity: 1.4,
       metalness: 0.2,
       roughness: 0.28
     });
     const marker = new THREE.Mesh(sphereGeo, sphereMat);
+    const particleGlow = isMag3d ? createParticleGlow() : null;
+    if (particleGlow) marker.add(particleGlow.sprite);
     scene.add(marker);
     if (planarDriver) marker.visible = false;
 
@@ -518,7 +521,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
         const configSignature = JSON.stringify({
           model: plugin.meta.id,
-          params: curParams,
+          params: isMag3d ? magneticFieldGeometrySignature(curParams as Magnetic3dParams) : curParams,
           conductors: layers.has('conductors'),
           fieldLines: layers.has('fieldLines3d')
         });
@@ -526,32 +529,24 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           lastConfigSig = configSignature;
           disposeGroupChildren(staticGroup);
 
+          if (isMag3d) grid.position.y = -1.2 * Math.max(0.2, (curParams as Magnetic3dParams).radiusR);
+          let renderedConductorCount = 0;
           if (layers.has('conductors')) {
-            const segments = isMag3d
-              ? buildConductorSegments(curParams as Magnetic3dParams)
-              : buildTokamakMirrorSegments(curParams as TokamakMirrorParams);
-            if (segments.length > 0) {
-              const magneticParams = curParams as Magnetic3dParams;
-              const pointsPerConductor = isMag3d
-                ? magneticParams.geometryType === 'single-loop' ? 96
-                  : magneticParams.geometryType === 'helmholtz-coil' ? 72
-                    : magneticParams.geometryType === 'finite-solenoid' ? 48
-                      : magneticParams.geometryType === 'straight-wire' ? 24 : 0
-                : fusionParams.mode === 'tokamak' ? 24 : 32;
-              const segmentGroupSize = pointsPerConductor || segments.length;
-              for (let start = 0; start < segments.length; start += segmentGroupSize) {
-                const group = segments.slice(start, start + segmentGroupSize);
-                if (group.length === 0) continue;
-                const points = [group[0]!.a, ...group.map((segment) => segment.b)].map(
-                  project
-                );
-                const closed = isTokamak3d || pointsPerConductor > 24;
-                if (closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
-                const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
-                const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), 0.026, 10, closed);
-                const conductorMat = brushedCopperMaterial();
-                staticGroup.add(new THREE.Mesh(tubeGeo, conductorMat));
-              }
+            const magneticParams = curParams as Magnetic3dParams;
+            const fusionSegments = isTokamak3d ? buildTokamakMirrorSegments(fusionParams) : [];
+            const fusionSize = fusionParams.mode === 'tokamak' ? 24 : 32;
+            const paths = isMag3d ? buildMagneticConductorPaths(magneticParams)
+              : Array.from({ length: Math.ceil(fusionSegments.length / fusionSize) }, (_, i) => fusionSegments.slice(i*fusionSize, (i+1)*fusionSize));
+            for (const group of paths) {
+              if (group.length === 0) continue;
+              const points = [group[0]!.a, ...group.map(segment => segment.b)].map(project);
+              const closed = isTokamak3d || (isMag3d && ['single-loop','helmholtz-coil','finite-solenoid'].includes(magneticParams.geometryType));
+              if (closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
+              const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
+              const radius = isMag3d ? Math.min(0.055, 0.063 * Math.max(0.2, magneticParams.radiusR)) : 0.026;
+              const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), radius, isMag3d ? 14 : 10, closed);
+              staticGroup.add(new THREE.Mesh(tubeGeo, isMag3d ? coilCopperMaterial() : brushedCopperMaterial()));
+              renderedConductorCount++;
             }
           }
 
@@ -560,19 +555,41 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             chamber.name = 'tokamak-vacuum-chamber';
             staticGroup.add(chamber);
           }
+          let renderedFieldCount = 0;
           if (layers.has('fieldLines3d')) {
             const lines = isMag3d
-              ? trace3dFieldLines(curParams as Magnetic3dParams)
+              ? getMagneticDisplayFieldLines(curParams as Magnetic3dParams)
               : traceTokamakMirrorLines(curParams as TokamakMirrorParams);
             for (const line of lines) {
               if (line.length < 2) continue;
               const points = line.map(project);
               const closed = points[0]!.distanceTo(points[points.length - 1]!) < 0.06;
+              if (isMag3d && closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
-              const geometry = new THREE.TubeGeometry(curve, Math.max(32, points.length * 2), 0.012, 5, closed);
-              const material = magneticFluxMaterial();
-              staticGroup.add(new THREE.Mesh(geometry, material));
+              const divisions = isMag3d ? Math.min(512, Math.max(32, points.length)) : Math.max(32, points.length * 2);
+              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d ? 0.0048 : 0.012, 5, closed);
+              staticGroup.add(new THREE.Mesh(geometry, isMag3d ? coilFluxCoreMaterial() : magneticFluxMaterial()));
+              if (isMag3d) {
+                const haloGeometry = new THREE.TubeGeometry(curve, divisions, 0.014, 5, closed);
+                staticGroup.add(new THREE.Mesh(haloGeometry, coilFluxHaloMaterial()));
+                // Tangent of an actual ordered field sample, not a decorative direction.
+                if (renderedFieldCount % 4 === 0) {
+                  const index = Math.max(1, Math.floor(points.length / 2));
+                  const start = points[index-1]!, delta = points[index]!.clone().sub(start);
+                  if (delta.lengthSq() > 1e-10) {
+                    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085, 8), coilFluxCoreMaterial());
+                    cone.position.copy(start).lerp(points[index]!, 0.5);
+                    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), delta.normalize());
+                    staticGroup.add(cone);
+                  }
+                }
+              }
+              renderedFieldCount++;
             }
+          }
+          if (isMag3d) {
+            container.dataset.fieldLineCount = String(renderedFieldCount);
+            container.dataset.conductorCount = String(renderedConductorCount);
           }
         }
 
@@ -615,6 +632,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         disposeObjectResources(velocityArrow);
         disposeObjectResources(lorentzForceArrow);
         disposeObjectResources(magneticFieldArrow);
+        if (particleGlow) { marker.remove(particleGlow.sprite); particleGlow.material.dispose(); particleGlow.texture.dispose(); }
         sphereGeo.dispose();
         sphereMat.dispose();
         disposeObjectResources(grid);
@@ -775,6 +793,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-amber-300" />v 速度</span>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-rose-400" />aₗ 洛伦兹加速度</span>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-sky-400" />B 磁场</span>
+          <span className="text-slate-400">方向示意 · 非比例</span>
         </div>
       )}
       <div aria-hidden="true" data-testid="three-axis-widget" className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-lg border border-white/10 bg-slate-950/70 p-1 shadow-lg backdrop-blur">

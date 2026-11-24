@@ -9,6 +9,8 @@ import {
   evalBiotSavartB,
   stepMagnetic3d,
   trace3dFieldLines,
+  getMagneticDisplayFieldLines,
+  buildMagneticConductorPaths,
   type Magnetic3dParams
 } from './engine.js';
 
@@ -29,6 +31,47 @@ describe('em-3d-magnetic-fields Biot-Savart & 3D Boris invariants (E10)', () => 
         expect(starts.some(point => point.x === 0 && point.y === y && point.z === -1.3)).toBe(true);
       }
     }
+  });
+
+  it('uses no degenerate field lines at zero and follows the signed uniform field', () => {
+    expect(getMagneticDisplayFieldLines({ ...getPreset(2), currentI: 0 })).toEqual([]);
+    const uniform = { ...getPreset(3), uniformBz: 0 };
+    expect(getMagneticDisplayFieldLines(uniform)).toEqual([]);
+    for (const sign of [-1, 1]) {
+      const lines = getMagneticDisplayFieldLines({ ...uniform, uniformBz: sign });
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) expect(Math.sign(line.at(-1)!.z - line[0]!.z)).toBe(sign);
+    }
+  });
+
+  it('samples the bore and outer solenoid field with real tangent directions and caches independently of particle parameters', () => {
+    const params = getPreset(2);
+    const lines = getMagneticDisplayFieldLines(params);
+    expect(lines).toHaveLength(21);
+    expect(getMagneticDisplayFieldLines({ ...params, qOverM: params.qOverM + 0.5, vPerp: 0 })).toBe(lines);
+    for (const line of lines) {
+      expect(line.length).toBeGreaterThan(1);
+      expect(line.every(q => [q.x, q.y, q.z].every(Number.isFinite))).toBe(true);
+      const i = Math.floor(line.length / 2);
+      const a = line[i - 1]!, b = line[i]!;
+      const field = evalBiotSavartB({ x: (a.x+b.x)/2, y: (a.y+b.y)/2, z: (a.z+b.z)/2 }, params);
+      const dx = b.x-a.x, dy = b.y-a.y, dz = b.z-a.z;
+      const cosine = (dx*field.x+dy*field.y+dz*field.z)/(Math.hypot(dx,dy,dz)*Math.hypot(field.x,field.y,field.z));
+      expect(cosine).toBeGreaterThan(0.97);
+    }
+    expect(getMagneticDisplayFieldLines({ ...params, currentI: 0 })).not.toBe(lines);
+  }, 15000);
+
+  it('keeps the two parallel conductors continuous and physically separate', () => {
+    const paths = buildMagneticConductorPaths({ ...getPreset(2), geometryType: 'parallel-wires' });
+    expect(paths).toHaveLength(2);
+    for (const path of paths) {
+      expect(path).toHaveLength(20);
+      expect(path.every(segment => segment.a.x === segment.b.x && segment.a.x === path[0]!.a.x)).toBe(true);
+      for (let i = 1; i < path.length; i++) expect(path[i]!.a).toEqual(path[i-1]!.b);
+    }
+    expect(paths[0]![0]!.a.x).toBeLessThan(0);
+    expect(paths[1]![0]!.a.x).toBeGreaterThan(0);
   });
 
   it('matches single circular loop on-axis Biot-Savart formula within < 1e-4 relative error', () => {

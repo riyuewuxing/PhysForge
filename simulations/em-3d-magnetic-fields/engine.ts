@@ -203,7 +203,8 @@ export function evalBiotSavartB(pos: Vec3, params: Magnetic3dParams): Vec3 {
   return { x: bx * prefactor, y: by * prefactor, z: bz * prefactor };
 }
 
-export function trace3dFieldLines(params: Magnetic3dParams): Vec3[][] {
+export function trace3dFieldLines(params: Magnetic3dParams, displaySampling = false): Vec3[][] {
+  if (params.geometryType === 'uniform-helix' ? params.uniformBz === 0 : params.currentI === 0) return [];
   if (params.geometryType === 'uniform-helix') {
     const lines: Vec3[][] = [];
     for (const offset of [
@@ -214,8 +215,8 @@ export function trace3dFieldLines(params: Magnetic3dParams): Vec3[][] {
       { x: 0, y: 0 }
     ]) {
       lines.push([
-        { x: offset.x, y: offset.y, z: -2.2 },
-        { x: offset.x, y: offset.y, z: 2.2 }
+        { x: offset.x, y: offset.y, z: -2.2 * Math.sign(params.uniformBz) },
+        { x: offset.x, y: offset.y, z: 2.2 * Math.sign(params.uniformBz) }
       ]);
     }
     return lines;
@@ -234,11 +235,11 @@ export function trace3dFieldLines(params: Magnetic3dParams): Vec3[][] {
       }
     }
 
-    const traceDirection = (seed: Vec3, direction: 1 | -1): Vec3[] => {
+    const traceDirection = (seed: Vec3, direction: 1 | -1, extent = 10 * R, maxSteps = 1400): Vec3[] => {
       const points: Vec3[] = [seed];
       let point = seed;
       let distance = 0;
-      for (let step = 0; step < 1400; step++) {
+      for (let step = 0; step < maxSteps; step++) {
         const next = stepRK4([point.x, point.y, point.z], 0, 0.035, (_t, xyz) => {
           const field = evalBiotSavartB({ x: xyz[0]!, y: xyz[1]!, z: xyz[2]! }, params);
           const magnitude = Math.hypot(field.x, field.y, field.z);
@@ -246,8 +247,9 @@ export function trace3dFieldLines(params: Magnetic3dParams): Vec3[][] {
             ? [direction * field.x / magnitude, direction * field.y / magnitude, direction * field.z / magnitude]
             : [0, 0, 0];
         });
-        point = { x: next[0]!, y: next[1]!, z: next[2]! };
-        if (![point.x, point.y, point.z].every(Number.isFinite)) break;
+        const candidate = { x: next[0]!, y: next[1]!, z: next[2]! };
+        if (![candidate.x, candidate.y, candidate.z].every(Number.isFinite) || Math.hypot(candidate.x - point.x, candidate.y - point.y, candidate.z - point.z) < 1e-10) break;
+        point = candidate;
         distance += 0.035;
         points.push(point);
 
@@ -257,10 +259,34 @@ export function trace3dFieldLines(params: Magnetic3dParams): Vec3[][] {
           point.z - seed.z
         );
         if (step > 80 && distanceFromSeed < 0.07 * R) break;
-        if (distance > 48 || Math.hypot(point.x, point.y, point.z) > 10 * R) break;
+        if (distance > 48 || Math.hypot(point.x, point.y, point.z) > extent) break;
       }
       return points;
     };
+
+    if (displaySampling) {
+      // A complete forward orbit is not traced a second time. Open curves are
+      // joined from both directions and stopped at the display domain.
+      const sample = (seed: Vec3): Vec3[] => {
+        const forward = traceDirection(seed, 1, 3.4 * R);
+        const end = forward.at(-1)!;
+        if (forward.length > 81 && Math.hypot(end.x - seed.x, end.y - seed.y, end.z - seed.z) < 0.07 * R) return forward;
+        const backward = traceDirection(seed, -1, 3.4 * R);
+        return [...backward.slice(1).reverse(), seed, ...forward.slice(1)];
+      };
+      // The discrete circular-turn model is invariant under quarter turns.
+      // Compute one representative per seed radius, rotate its actual points.
+      const lines: Vec3[][] = [];
+      for (const ratio of [0.82, 0.86, 0.88, 0.25, 0.55]) {
+        const line = sample({ x: ratio * R, y: 0, z: 0 });
+        for (const angle of [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]) {
+          const c = Math.cos(angle), s = Math.sin(angle);
+          lines.push(line.map(q => ({ x: c * q.x - s * q.y, y: s * q.x + c * q.y, z: q.z })));
+        }
+      }
+      lines.push(sample({ x: 0, y: 0, z: 0 }));
+      return lines.filter(line => line.length >= 2);
+    }
 
     return seeds.map((seed) => {
       const backward = traceDirection(seed, -1);
@@ -295,12 +321,39 @@ export function trace3dFieldLines(params: Magnetic3dParams): Vec3[][] {
         const mag = Math.hypot(b.x, b.y, b.z);
         return mag > 1e-14 ? [b.x / mag, b.y / mag, b.z / mag] : [0, 0, 0];
       });
-      p = { x: next[0]!, y: next[1]!, z: next[2]! };
+      const candidate = { x: next[0]!, y: next[1]!, z: next[2]! };
+      if (![candidate.x, candidate.y, candidate.z].every(Number.isFinite) || Math.hypot(candidate.x - p.x, candidate.y - p.y, candidate.z - p.z) < 1e-10) break;
+      p = candidate;
       pts.push(p);
       if (Math.hypot(p.x, p.y, p.z) > 3.2) break;
     }
     return pts;
   });
+}
+
+/** Only geometry/field parameters affect static display geometry. */
+export function magneticFieldGeometrySignature(params: Magnetic3dParams): string {
+  return JSON.stringify([params.geometryType, params.radiusR, params.solenoidTurns, params.currentI, params.uniformBz]);
+}
+
+// One bounded cache, shared by Canvas and WebGL; particle state never invalidates it.
+let displayFieldCache: { key: string; lines: readonly (readonly Vec3[])[] } | undefined;
+export function getMagneticDisplayFieldLines(params: Magnetic3dParams): readonly (readonly Vec3[])[] {
+  const key = magneticFieldGeometrySignature(params);
+  if (displayFieldCache?.key === key) return displayFieldCache.lines;
+  const lines = trace3dFieldLines(params, true).filter(line => line.length >= 2);
+  displayFieldCache = { key, lines };
+  return lines;
+}
+
+/** Keep the interleaved Biot–Savart segments of the two wires separate in the scene. */
+export function buildMagneticConductorPaths(params: Magnetic3dParams): WireSegment3D[][] {
+  const segments = buildConductorSegments(params);
+  if (params.geometryType === 'parallel-wires') return [segments.filter((_, i) => i % 2 === 0), segments.filter((_, i) => i % 2 === 1)];
+  const size = params.geometryType === 'single-loop' ? 96 : params.geometryType === 'helmholtz-coil' ? 72 : params.geometryType === 'finite-solenoid' ? 48 : 24;
+  const paths: WireSegment3D[][] = [];
+  for (let start = 0; start < segments.length; start += size) paths.push(segments.slice(start, start + size));
+  return paths;
 }
 
 export function createInitialState(params: Magnetic3dParams): Magnetic3dState {
