@@ -47,43 +47,169 @@ const paramSchema: readonly ParamFieldSpec<WaveOpticsParams>[] = [
 ];
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "wedge-fringe",
-  "title": "劈尖等厚干涉（近法线入射）",
-  "latex": "\\Delta x=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=wavelengthNm}{\\lambda}}}{2\\htmlClass{pf-live-var}{\\htmlData{param=refractiveIndexN2}{n}}\\tan \\htmlClass{pf-live-var}{\\htmlData{param=wedgeAngleDeg}{\\alpha}}}",
-  "bindings": [
-    {
-      "tokenKey": "wavelengthNm",
-      "paramKey": "wavelengthNm",
-      "label": "入射单色光波长 λ",
-      "unit": "nm",
-      "min": 400,
-      "max": 700,
-      "step": 5,
-      "precision": 1
-    },
-    {
-      "tokenKey": "refractiveIndexN2",
-      "paramKey": "refractiveIndexN2",
-      "label": "薄膜折射率 n₂",
-      "unit": "",
-      "min": 1,
-      "max": 1.8,
-      "step": 0.05,
-      "precision": 3
-    },
-    {
-      "tokenKey": "wedgeAngleDeg",
-      "paramKey": "wedgeAngleDeg",
-      "label": "劈尖夹角 α",
-      "unit": "°",
-      "min": 0.006,
-      "max": 0.03,
-      "step": 0.002,
-      "precision": 4
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "wedge-fringe",
+    "title": "劈尖等厚干涉（近法线入射）",
+    "latex": "\\Delta x=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=wavelengthNm}{\\lambda}}}{2\\htmlClass{pf-live-var}{\\htmlData{param=refractiveIndexN2}{n}}\\tan \\htmlClass{pf-live-var}{\\htmlData{param=wedgeAngleDeg}{\\alpha}}}",
+    "bindings": [
+      {
+        "tokenKey": "wavelengthNm",
+        "paramKey": "wavelengthNm",
+        "label": "入射单色光波长 λ",
+        "unit": "nm",
+        "min": 400,
+        "max": 700,
+        "step": 5,
+        "precision": 1
+      },
+      {
+        "tokenKey": "refractiveIndexN2",
+        "paramKey": "refractiveIndexN2",
+        "label": "薄膜折射率 n₂",
+        "unit": "",
+        "min": 1,
+        "max": 1.8,
+        "step": 0.05,
+        "precision": 3
+      },
+      {
+        "tokenKey": "wedgeAngleDeg",
+        "paramKey": "wedgeAngleDeg",
+        "label": "劈尖夹角 α",
+        "unit": "°",
+        "min": 0.006,
+        "max": 0.03,
+        "step": 0.002,
+        "precision": 4
+      }
+    ],
+    "when": {
+      "mode": [
+        "thin-film-wedge"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "newton-ring-spacing",
+    "title": "牛顿环相邻同类条纹半径平方差（薄膜近似）",
+    "latex": "r_{j+1}^2-r_j^2\\simeq\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=wavelengthNm}{\\lambda}}\\htmlClass{pf-live-var}{\\htmlData{param=lensRadiusR}{R}}}{\\htmlClass{pf-live-var}{\\htmlData{param=refractiveIndexN2}{n}}}",
+    "bindings": [
+      {
+        "tokenKey": "wavelengthNm",
+        "paramKey": "wavelengthNm",
+        "label": "入射单色光波长 λ",
+        "unit": "nm",
+        "min": 400,
+        "max": 700,
+        "step": 5,
+        "precision": 0
+      },
+      {
+        "tokenKey": "lensRadiusR",
+        "paramKey": "lensRadiusR",
+        "label": "牛顿环透镜曲率半径 R",
+        "unit": "m",
+        "min": 0.5,
+        "max": 5,
+        "step": 0.25,
+        "precision": 2
+      },
+      {
+        "tokenKey": "refractiveIndexN2",
+        "paramKey": "refractiveIndexN2",
+        "label": "薄膜折射率 n₂",
+        "unit": "",
+        "min": 1,
+        "max": 1.8,
+        "step": 0.05,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "newtons-rings"
+      ]
+    }
+  },
+  {
+    "id": "single-slit-minimum",
+    "title": "单缝远场衍射暗纹条件（m 为非零整数）",
+    "latex": "\\htmlClass{pf-live-var}{\\htmlData{param=slitWidthMicron}{a}}\\sin\\theta=m\\htmlClass{pf-live-var}{\\htmlData{param=wavelengthNm}{\\lambda}}",
+    "bindings": [
+      {
+        "tokenKey": "slitWidthMicron",
+        "paramKey": "slitWidthMicron",
+        "label": "单缝宽度 a",
+        "unit": "μm",
+        "min": 1,
+        "max": 12,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "wavelengthNm",
+        "paramKey": "wavelengthNm",
+        "label": "入射单色光波长 λ",
+        "unit": "nm",
+        "min": 400,
+        "max": 700,
+        "step": 5,
+        "precision": 0
+      }
+    ],
+    "when": {
+      "mode": [
+        "single-slit-grating"
+      ]
+    }
+  },
+  {
+    "id": "grating-principal-maximum",
+    "title": "多缝主极大条件（有效光栅常数 d≥a）",
+    "latex": "\\htmlClass{pf-live-var}{\\htmlData{param=gratingPitchMicron}{d}}\\sin\\theta=k\\htmlClass{pf-live-var}{\\htmlData{param=wavelengthNm}{\\lambda}}",
+    "bindings": [
+      {
+        "tokenKey": "gratingPitchMicron",
+        "paramKey": "gratingPitchMicron",
+        "label": "光栅常数 d",
+        "unit": "μm",
+        "min": 4,
+        "max": 30,
+        "step": 1,
+        "precision": 0
+      },
+      {
+        "tokenKey": "wavelengthNm",
+        "paramKey": "wavelengthNm",
+        "label": "入射单色光波长 λ",
+        "unit": "nm",
+        "min": 400,
+        "max": 700,
+        "step": 5,
+        "precision": 0
+      }
+    ],
+    "when": {
+      "mode": [
+        "single-slit-grating"
+      ],
+      "slitCountN": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    }
+  }
+];
 export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin<WaveOpticsParams, WaveOpticsState>({
   meta: {
     id: 'optics-wave-interference',
