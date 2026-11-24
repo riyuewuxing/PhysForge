@@ -5,12 +5,21 @@
 
 ---
 
-## 当前施工快照（2026-11-24，V3.0，未封板）
+## 当前施工快照（2026-11-24，V3.0，云端源码阶段结束，待本地验收）
 
-* **第五轮累计交付入口（最新）**：`handoff/v3-complete-source-r5`，基于 r4，新增 [#29](https://github.com/riyuewuxing/PhysForge/pull/29) @caa853c（S02 六器件共享示意几何、二维/三维/导出与 12 张成对视觉审计），[#30](https://github.com/riyuewuxing/PhysForge/pull/30) @c6fabbf（E04 真实杆长、阶梯引线示意、统一电流方向和分离的负载端子），[#31](https://github.com/riyuewuxing/PhysForge/pull/31) @fd35c31（B1 圆心/半径/速度/事件图层，M10 引擎点火与共转系诚实历史，S01 单位质量磁矩和逃逸状态，E10 固定容量尾迹网格）。新增几何、资源复用与边界回归测试；未运行。六旗舰源码收尾完成，下一轮仅做最终范围内的静态审查与交接，不扩张功能。
+* **最终累计源码入口（唯一最新交接）**：`handoff/v3-complete-source-r6`，从已核实的 r5 @37f678adf63ff8cccfb7dca5cfd2b749d1444ff1 增量创建。r5 保留不动。云端 Writer 停止新增功能；本地 Agent 接管测试、修复与实际验收。不得将本快照解释为正式封板、已合并或已发布。
+* **第六轮终审实证**：逐项读取累计差异清单的 70 个文件并进行限定关键词扫描（禁用类型/测试逃逸、eval、Math.random、常见运行时 CDN 地址等，未命中）；重点人工复核 StoryRunner、三态演说状态与 rAF、显示帧归属、双屏消息隔离、活公式、3D 切镜及销毁链、六旗舰课件和导出门禁。关键词扫描不等同于完整语义证明或运行时依赖图分析。
+* **本轮已提交的修复**：@054a96b 将单文件隔离和体积校验移至最终输出写入前，拒绝的导出不能覆盖上次合格文件；@780a687 让 BYOK JSON 请求的取消/超时机制覆盖整个响应体读取，探测与生成同样 trim 地址、生成也拒绝重定向；@9522ae6 增加响应头先到但响应体停滞的超时回归用例，以及生成地址空白、重定向策略断言。新增测试未执行。
+* **本地接手步骤**：在当前工作区不受影响的独立 worktree/分支中，从 `origin/handoff/v3-complete-source-r6` 开始；例如 `git fetch origin` 后 `git worktree add -b local/v3-acceptance ../PhysForge-v3-acceptance origin/handoff/v3-complete-source-r6`（确保目标目录和分支名尚不存在）。禁止 reset --hard 或覆盖本地未提交成果。
+* **本地必须补齐的新增验证**：运行 BYOK 单测并对照响应头已到/体停滞、非 JSON、HTTP 失败、重定向；在临时输出位置验证故意超预算或含禁用依赖的单文件不会替换原有合格成品。确认允许的真实服务商端点不依赖 HTTP 跳转。随后执行下列完整门禁，不因历史 CI 通过而跳过。
+* **最终状态**：源码交接完成不代表所有缺陷已排除。未运行最终累计版本 typecheck、测试、构建、真实浏览器截图、包体测量或真实 BYOK 请求；任何失败由本地 Agent 按原工程/物理门禁修复后复验。main、既有物理引擎、原物理测试阈值与依赖锁文件不在本轮修改范围内。所有待验收事项仍保留如下。
+
+### 第五轮交接历史（r5）
+
+* **第五轮累计交付入口（历史）**：`handoff/v3-complete-source-r5`，基于 r4，新增 [#29](https://github.com/riyuewuxing/PhysForge/pull/29) @caa853c（S02 六器件共享示意几何、二维/三维/导出与 12 张成对视觉审计），[#30](https://github.com/riyuewuxing/PhysForge/pull/30) @c6fabbf（E04 真实杆长、阶梯引线示意、统一电流方向和分离的负载端子），[#31](https://github.com/riyuewuxing/PhysForge/pull/31) @fd35c31（B1 圆心/半径/速度/事件图层，M10 引擎点火与共转系诚实历史，S01 单位质量磁矩和逃逸状态，E10 固定容量尾迹网格）。新增几何、资源复用与边界回归测试；未运行。六旗舰源码收尾完成；第六轮终审记录见上。
 * **历史累计入口保留**：r4 @464a483（#27/#28 上下文、显示帧及旧状态隔离）；r3 @50f20e4（#25/#26 六旗舰8课件30分镜、演说数值）；r2 @b50d847（#22–#24 17模型模式公式与空间坐标）；首轮 `handoff/v3-complete-source` @d91eba0（#2–#21 和独立 #1 BYOK 五文件，逐一 blob 核实）。详细记录见相应历史分支。累计分支仅供本地测试修复，不是 main 合并目标，不得重复合并 #1 或跳过原子 PR 门禁。
 * 云端写手按用户授权只推进源码，本地总控负责运行测试、修复、实际视觉验收和发布。main 最后核实仍为 `3a667f88219c504fced84212881c49080b3ae372`。
-* **本地首要行动**：保留当前工作区，执行 `git fetch origin`；在独立分支或 worktree 检出 `origin/handoff/v3-complete-source-r5`。按项目约定安装现有依赖，再执行 `pnpm typecheck`、`pnpm test`、`pnpm verify:packs`、`pnpm verify:scenes`、`pnpm verify:vault`、`pnpm build`、`pnpm test:e2e:subpath`、`pnpm audit:visual`、`pnpm export:release --v3-audit`；检查 /PhysForge/ 子路径、gzip 首屏、六旗舰单文件预算与截图。真实 BYOK 联调必须由本地用户提供 Key，不提交 Key。
+* **本地首要行动**：保留当前工作区，执行 `git fetch origin`；在独立分支或 worktree 检出 `origin/handoff/v3-complete-source-r6`。按项目约定安装现有依赖，再执行 `pnpm typecheck`、`pnpm test`、`pnpm verify:packs`、`pnpm verify:scenes`、`pnpm verify:vault`、`pnpm build`、`pnpm test:e2e:subpath`、`pnpm audit:visual`、`pnpm export:release --v3-audit`；检查 /PhysForge/ 子路径、gzip 首屏、六旗舰单文件预算与截图。真实 BYOK 联调必须由本地用户提供 Key，不提交 Key。
 * **重点验收/修复顺序**：类型与构建 → 分镜快速切换/暂停/定格时间/公式拖拽与状态一致性 → 双屏跨模型与断开重连 → 六旗舰实机画质、2D/3D 投影及资源释放 → 全部导出。E04 电流脉冲与不等宽引线仅为示意；S02 轨迹非 SI 轨迹且无真实 RF 相位；S01 反射不是永久约束证明；M10 共转系因缺少历史逐点时间而省略轨迹。E10 动态网格需核验性能和可见性。本轮未执行运行测试，新回归测试仅为已提交的待执行代码。禁止提前声称 3.0 已验收。
 
 

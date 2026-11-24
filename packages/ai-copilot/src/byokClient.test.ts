@@ -123,6 +123,24 @@ describe('BYOK client resilience', () => {
     await expect(probeByokConnection(config, 10, stalled)).rejects.toMatchObject({ code: 'TIMEOUT' });
   });
 
+  it('times out when headers arrive but the JSON body stalls', async () => {
+    const config = { baseUrl: 'https://example.test/v1', apiKey: 'unit-test-key', model: 'demo' };
+    const stalledBody: typeof fetch = async (_input, init) => {
+      const signal = init?.signal;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"data":'));
+          const abort = () => controller.error(new DOMException('Aborted', 'AbortError'));
+          if (signal?.aborted) abort();
+          else signal?.addEventListener('abort', abort, { once: true });
+        }
+      });
+      return new Response(stream);
+    };
+    await expect(probeByokConnection(config, 20, stalledBody))
+      .rejects.toMatchObject({ code: 'TIMEOUT' });
+  });
+
   it('injects the locally suggested schema and carries actual refinement feedback', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       choices: [{ message: { content: '{"schemaVersion":"2.0","modelId":"modern-photoelectric-compton","params":{}}' } }]
@@ -144,6 +162,7 @@ describe('BYOK client resilience', () => {
   it('routes the existing request function through the parser without persisting its key', async () => {
     const fetchMock: typeof fetch = async (input, init) => {
       expect(String(input)).toBe('https://api.example.test/v1/chat/completions');
+      expect(init?.redirect).toBe('error');
       expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer unit-test-key');
       return new Response(JSON.stringify({
         choices: [{ message: { content: 'SceneDSL:\n```json\n{"schemaVersion":"2.0","modelId":"mech-vertical-circular","params":{}}\n```' } }]
@@ -152,7 +171,7 @@ describe('BYOK client resilience', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const scene = await requestByokSceneCandidate(
-      { baseUrl: 'https://api.example.test/v1/', apiKey: 'unit-test-key', model: 'test-model' },
+      { baseUrl: '  https://api.example.test/v1/  ', apiKey: 'unit-test-key', model: 'test-model' },
       '竖直圆周运动'
     );
 
