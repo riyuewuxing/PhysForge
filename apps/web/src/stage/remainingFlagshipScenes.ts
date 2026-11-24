@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
 import type { EmDevicesParams, EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
+import { deviceDiagramPoint, getDeviceSchematic, deeOutline, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import { orbitDisplayXY } from '@physforge/simulations/astro-orbital-mechanics';
 import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
@@ -37,17 +38,29 @@ function bufferedTrail(group: THREE.Group, capacity: number, color: number) {
 }
 /** The S02 engine explicitly uses schematic, normalized particle positions; preserve the exact canvas map. */
 export function deviceDisplayPoint(x:number,y:number) {
-  return new THREE.Vector3(-0.25+0.7*x,0,-0.7*y);
+  const p=deviceDiagramPoint(x,y);
+  return new THREE.Vector3(p.x,0,-p.y);
 }
 export function orbitDisplayPoint(x:number,y:number,t:number,corotating:boolean) {
   const p = orbitDisplayXY(x,y,t,corotating);
   return new THREE.Vector3(p.x,0,-p.y);
 }
-function deeShape(side: -1|1) {
-  const shape=new THREE.Shape(), r=0.85;
-  const first=side===-1?Math.PI/2:-Math.PI/2, last=first+Math.PI;
-  shape.moveTo(0,Math.sin(first)*r); shape.absarc(0,0,r,first,last,false); shape.closePath();
-  return new THREE.ExtrudeGeometry(shape,{depth:0.13,bevelEnabled:false,curveSegments:48});
+function buildDevicePart(group:THREE.Group,part:DevicePart) {
+  const material=part.material==='copper'?brushedCopperMaterial():part.material==='glass'?dielectricGlassMaterial():anodizedRailMaterial();
+  if(part.kind==='dee'){
+    const shape=new THREE.Shape();
+    deeOutline(part).forEach((p,i)=>{if(i===0)shape.moveTo(p.x-part.x,p.y-part.y);else shape.lineTo(p.x-part.x,p.y-part.y);});
+    shape.closePath();
+    const object=mesh(group,part.id,new THREE.ExtrudeGeometry(shape,{depth:part.depth,bevelEnabled:false}),material);
+    object.rotation.x=-Math.PI/2;object.position.set(part.x,-part.depth-0.035,-part.y);
+    return;
+  }
+  if(part.kind==='tube'){
+    const object=mesh(group,part.id,new THREE.CylinderGeometry(part.height/2,part.height/2,part.width,48,1,true),material);
+    object.rotation.z=Math.PI/2;object.position.set(part.x,-0.035,-part.y);return;
+  }
+  const object=mesh(group,part.id,new THREE.BoxGeometry(part.width,part.depth,part.height),material);
+  object.position.set(part.x,-part.depth/2-0.035,-part.y);
 }
 function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
   const fixed=new THREE.Group(), moving=new THREE.Group();root.add(fixed,moving);
@@ -62,20 +75,21 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
     root.visible=layers.has('main');
     if(signature!==p.device) {
       signature=p.device;clear(fixed);
-      const base=mesh(fixed,'device-base',new THREE.BoxGeometry(3.15,0.09,1.95),obsidianStageFloorMaterial());base.position.set(-0.25,-0.23,0);
-      if(p.device==='cyclotron') {
-        for(const side of [-1,1] as const) {
-          const dee=mesh(fixed,side===-1?'dee-left':'dee-right',deeShape(side),brushedCopperMaterial());
-          dee.rotation.x=-Math.PI/2;dee.position.set(-0.25+side*0.04,-0.16,0);
-        }
-      } else {
-        // Device housing is schematic, exactly the bounds of the existing classroom diagram.
-        const enclosure=mesh(fixed,'device-housing',new THREE.BoxGeometry(2.4,0.32,1.2),dielectricGlassMaterial());
-        enclosure.position.set(-0.25,-0.02,0);
-        for(const sign of [-1,1]) {
-          const electrode=mesh(fixed,'electrode',new THREE.BoxGeometry(2.4,0.10,0.055),brushedCopperMaterial());
-          electrode.position.set(-0.25,-0.02,sign*0.6);
-        }
+      const base=mesh(fixed,'device-base',new THREE.BoxGeometry(3.15,0.09,2.65),obsidianStageFloorMaterial());base.position.set(-0.25,-0.52,0);
+      const schematic=getDeviceSchematic(p.device);
+      for(const part of schematic.parts)buildDevicePart(fixed,part);
+      // B points along +Y, i.e. out of the physical diagram plane (x,y)->(x,0,-y).
+      // These are direction markers, not a solved field distribution or a strength scale.
+      for(const [i,point] of schematic.fields.entries()){
+        const field=new THREE.ArrowHelper(new THREE.Vector3(0,1,0),new THREE.Vector3(point.x,-0.04,-point.y),0.28,0x38bdf8,0.07,0.045);
+        field.name='device-field-'+i;fixed.add(field);
+      }
+      for(const cue of schematic.cues){
+        const delta=new THREE.Vector3(cue.dx,0,-cue.dy),length=delta.length();
+        if(length<=0)continue;
+        const direction=new THREE.ArrowHelper(delta.normalize(),new THREE.Vector3(cue.x,0.10,-cue.y),length,
+          cue.kind==='electric'?0xfbbf24:0x4ade80,Math.min(0.13,length*0.25),0.07);
+        direction.name=cue.id;fixed.add(direction);
       }
       for(const x of [-1.65,1.28]) {
         const guide=mesh(fixed,'field-guide',new THREE.BoxGeometry(0.025,0.025,1.2),anodizedRailMaterial());
@@ -84,7 +98,7 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
     }
     marker.position.copy(deviceDisplayPoint(state.particlePos.x,state.particlePos.y));
     const material=marker.material as THREE.MeshStandardMaterial;
-    material.color.set(p.carrierType==='hole'?0xf43f5e:0x4ade80);
+    material.color.set(p.device==='hall-sensor'&&p.carrierType==='hole'?0xf43f5e:0x4ade80);
     material.emissive.copy(material.color);
     track.update(state.trail,deviceDisplayPoint);
     // Gap highlights only proximity of the engine's schematic particle, not an invented RF phase.
