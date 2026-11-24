@@ -160,6 +160,11 @@ interface TrackVisual {
   trail: THREE.Line;
   trailBuffer: THREE.BufferAttribute;
   circle: THREE.LineLoop;
+  center: THREE.Mesh;
+  radiusLine: THREE.Line;
+  velocity: THREE.ArrowHelper;
+  drift: THREE.ArrowHelper;
+  rotation: THREE.ArrowHelper;
   entry: THREE.Mesh;
   exit: THREE.Mesh;
 }
@@ -181,8 +186,18 @@ function trackVisual(track: ParticleTrack): TrackVisual {
   const exit = new THREE.Mesh(new THREE.RingGeometry(0.075, 0.1, 24), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
   entry.name = 'magnetic-entry-' + track.id; exit.name = 'magnetic-exit-' + track.id;
   entry.visible = exit.visible = false;
-  root.add(particle, trail, circle, entry, exit);
-  return { root, particle, trail, trailBuffer, circle, entry, exit };
+  const center=new THREE.Mesh(new THREE.SphereGeometry(0.025,12,8),magneticFluxMaterial(color.getHex()));
+  center.name='magnetic-circle-center-'+track.id;
+  const radiusLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),
+    new THREE.LineBasicMaterial({color,transparent:true,opacity:0.45}));
+  radiusLine.name='magnetic-radius-'+track.id;radiusLine.frustumCulled=false;
+  const arrow=(name:string,color:number)=>{
+    const a=new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),0.5,color,0.12,0.07);
+    a.name=name+'-'+track.id;a.visible=false;return a;
+  };
+  const velocity=arrow('magnetic-velocity',0x4ade80),drift=arrow('magnetic-drift',0xfbbf24),rotation=arrow('magnetic-rotation',0xf472b6);
+  root.add(particle,trail,circle,center,radiusLine,velocity,drift,rotation,entry,exit);
+  return {root,particle,trail,trailBuffer,circle,center,radiusLine,velocity,drift,rotation,entry,exit};
 }
 
 /** B1 field geometry follows exactly the engine's signed-distance region. Infinite regions are shown as a finite viewing window. */
@@ -240,13 +255,32 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
         visual.trailBuffer.needsUpdate = true;
         visual.trail.geometry.setDrawRange(0, points.length);
         visual.trail.visible = layers.has('trajectory') && points.length > 1;
-        visual.entry.visible = layers.has('trajectory') && track.hasEntered && Boolean(track.entryPoint);
-        visual.exit.visible = layers.has('trajectory') && track.hasExited && Boolean(track.exitPoint);
+        visual.entry.visible = layers.has('eventPins') && track.hasEntered && Boolean(track.entryPoint);
+        visual.exit.visible = layers.has('eventPins') && track.hasExited && Boolean(track.exitPoint);
         if (track.entryPoint) visual.entry.position.set(track.entryPoint.x, track.entryPoint.y, 0.025);
         if (track.exitPoint) visual.exit.position.set(track.exitPoint.x, track.exitPoint.y, 0.025);
         const orbit = layers.has('larmorCircle') ? displayLarmorCircleForTrack(track, params) : null;
-        visual.circle.visible = orbit !== null;
-        if (orbit) { visual.circle.position.set(orbit.center.x, orbit.center.y, 0); visual.circle.scale.setScalar(orbit.radius); }
+        visual.circle.visible=visual.center.visible=visual.radiusLine.visible=orbit!==null;
+        if(orbit){
+          visual.circle.position.set(orbit.center.x,orbit.center.y,0);visual.circle.scale.setScalar(orbit.radius);
+          visual.center.position.copy(visual.circle.position);
+          const buffer=visual.radiusLine.geometry.getAttribute('position');
+          buffer.setXYZ(0,orbit.center.x,orbit.center.y,0);buffer.setXYZ(1,pos.x,pos.y,0);buffer.needsUpdate=true;
+        }
+        const v=track.state.velocity;
+        const showVelocity=layers.has('velocityVector')&&(track.id===0||state.particles.length<=3);
+        const decomposition=layers.has('speedDecomposition')&&track.id===0&&params.mode==='crossed-eb'&&
+          params.charge!==0&&Math.abs(params.magneticFieldZ)>1e-6;
+        const vd=decomposition?params.electricFieldY/params.magneticFieldZ:0;
+        const rotX=v.x-vd,rotY=v.y;
+        const scale=Math.min(0.22,1.5/Math.max(Math.hypot(v.x,v.y),Math.abs(vd),Math.hypot(rotX,rotY),1e-6));
+        const setArrow=(arrow:THREE.ArrowHelper,x:number,y:number,show:boolean)=>{
+          const magnitude=Math.hypot(x,y),length=magnitude*scale;
+          arrow.visible=show&&length>1e-6;arrow.position.set(pos.x,pos.y,0.04);
+          if(arrow.visible){arrow.setDirection(new THREE.Vector3(x/magnitude,y/magnitude,0));
+            arrow.setLength(length,Math.min(0.12,length*0.3),Math.min(0.07,length*0.2));}
+        };
+        setArrow(visual.velocity,v.x,v.y,showVelocity);setArrow(visual.drift,vd,0,decomposition);setArrow(visual.rotation,rotX,rotY,decomposition);
       }
     },
     dispose: () => { disposeTree(root); tracks.clear(); }
