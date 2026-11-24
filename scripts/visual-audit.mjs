@@ -788,7 +788,7 @@ async function main() {
             trailPoints: Number(threeCanvas?.parentElement?.getAttribute('data-trail-points') ?? 0)
           };
         });
-        const readableVectorLabels = ['v', 'F洛', 'B'].every((text) =>
+        const readableVectorLabels = ['v', 'a洛', 'B'].every((text) =>
           presentation.worldVectorLabels.some((label) => label.text === text && label.visible)
         );
         if (presentation.topbarVisible || presentation.railVisible || presentation.panelVisible || presentation.scopeVisible || !presentation.threeCanvas || !presentation.axisWidgetVisible || !presentation.vectorLegendVisible || !presentation.velocityArrowVisible || !presentation.forceArrowVisible || presentation.formulaOverflows || !readableVectorLabels || !presentation.labelsDisjoint || presentation.trailPoints < 10 || Math.abs(presentation.particleRadius - 0.055 * 0.7) > 1e-6) {
