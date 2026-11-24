@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Stacked V3.1 candidates are tested against their explicitly named parent PR.
+    branches: [main, 'polish/v31-*']
 
 jobs:
   verify:

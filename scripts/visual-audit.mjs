@@ -617,6 +617,17 @@ async function main() {
     if (defaultPreset !== 'single-rod-battery-drive') {
       throw new Error(`Default E04 preset is ${defaultPreset}; expected single-rod-battery-drive.`);
     }
+    // Hero material regression: no transparent holes in the actual canvas.
+    const material = await page.getByTestId('simulation-canvas').evaluate(canvas => {
+      const ctx = canvas.getContext('2d');
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let alphaHoles = 0;
+      for (let i=3; i<pixels.length; i+=4) if (pixels[i] < 255) alphaHoles++;
+      const sample = (x,y) => Array.from(ctx.getImageData(Math.floor(canvas.width*x),Math.floor(canvas.height*y),1,1).data);
+      return {alphaHoles, center: sample(.46,.43), edge: sample(.99,.98)};
+    });
+    if (material.alphaHoles !== 0) throw new Error('Rail/canvas material erased '+material.alphaHoles+' pixels');
+    if (material.center[0] <= material.edge[0]) throw new Error('Hero background gradient missing');
     await page.screenshot({ path: path.join(OUT_DIR, 'E04_00_default.png') });
 
     const cases = [
@@ -643,7 +654,7 @@ async function main() {
       const layout = await readLayoutMetrics(page, testCase.scopeHidden, testCase.title, testCase.hideEnergyBars ?? false);
       if (testCase.id === 'em-induction-double-rod') {
         const initialChannel = (await page.getByTestId('scope-channel-a').textContent())?.trim();
-        if (initialChannel !== 'I-t') layout.issues.push(`Single-rod E04 default channel is ${initialChannel ?? 'missing'}, expected I-t`);
+        if (initialChannel !== 'I-t · A') layout.issues.push(`Single-rod E04 default channel is ${initialChannel ?? 'missing'}, expected I-t · A`);
       }
       await page.screenshot({ path: path.join(OUT_DIR, `${testCase.tag}_01_init.png`) });
       if (testCase.id === 'builder-circuit-mna') {
@@ -709,6 +720,18 @@ async function main() {
               forceArrowVisible: stage.getAttribute('data-force-arrow-visible') === 'true'
             }))
           : null;
+        if (testCase.id === 'em-induction-double-rod') {
+          const scope = page.getByTestId('floating-scope-dock');
+          if (await scope.getAttribute('data-scope-units') !== 'separate') throw new Error('E04 current and velocity must have independent unit axes');
+          const scopeCanvas = await scope.locator('canvas').first().boundingBox();
+          if (!scopeCanvas || scopeCanvas.height < 140) throw new Error('E04 instrument chart is clipped or too short');
+          if (await page.getByTestId('scope-empty').isVisible()) throw new Error('E04 running chart still marked empty');
+          if (!(await page.getByTestId('scope-channel-a').innerText()).includes('A') || !(await page.getByTestId('scope-channel-b').innerText()).includes('m/s')) throw new Error('E04 missing visible axis units');
+          for (const key of ['kineticEnergy','jouleHeat','sourceWork']) {
+            const value = await page.getByTestId('e04-energy-'+key).innerText();
+            if (!/^\d+\.\d{3} J$/.test(value) || parseFloat(value) <= 0) throw new Error('E04 missing measured energy in joules: '+key);
+          }
+        }
         await page.screenshot({ path: path.join(OUT_DIR, `${testCase.tag}_02_running.png`) });
 
         const timeAdvanced = beforeTime !== null && afterTime !== null && afterTime - beforeTime > 0.2;
@@ -846,6 +869,38 @@ async function main() {
         await page.screenshot({ path: path.join(OUT_DIR, 'B2_04_rc_no_handle.png') });
       }
 
+      if (testCase.id === 'em-induction-double-rod') {
+        // Real 1024x768 layout and projector-theme smoke; restore defaults for other models.
+        await page.setViewportSize({width:1024,height:768});
+        await page.waitForTimeout(300);
+        const small = await page.getByTestId('floating-scope-dock').boundingBox();
+        const inspector = await page.getByTestId('right-control-panel').boundingBox();
+        if (!small || !inspector || small.x + small.width > inspector.x || small.y + small.height > 768) throw new Error('E04 compact scope overlaps inspector or viewport');
+        await page.screenshot({path:path.join(OUT_DIR,'H1_E04_compact.png')});
+        await page.getByTestId('btn-tools-menu').click();
+        await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+        if (await page.getByTestId('tools-menu').isVisible()) await page.getByTestId('btn-tools-menu').click();
+        const contrast = await page.evaluate(() => {
+          const luminance = (rgb) => {
+            const channels = rgb.match(/[\d.]+/g)?.slice(0,3).map(Number) ?? [];
+            return channels.length === 3 ? channels.map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0) : 1;
+          };
+          const selectors=['[data-testid="topbar"] > div:first-child > div:first-child','[data-testid="param-value-batteryEmf"]','label[for="param-batteryEmf"]','[data-testid="preset-select"]','[data-testid="formula-card"] .pf-right-formula'];
+          return selectors.map(selector=>{
+            const el=document.querySelector(selector);
+            return {selector, ratio:el?1.05/(luminance(getComputedStyle(el).color)+.05):0};
+          });
+        });
+        if (contrast.some(c=>c.ratio<4.5)) throw new Error('E04 paper text contrast failed '+JSON.stringify(contrast));
+        if (!await page.getByTestId('scope-empty').isVisible()) throw new Error('E04 reset must show empty-series notice');
+        await page.screenshot({path:path.join(OUT_DIR,'H1_E04_projector.png')});
+        await page.getByTestId('btn-tools-menu').click();
+        await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+        if (await page.getByTestId('tools-menu').isVisible()) await page.getByTestId('btn-tools-menu').click();
+        await page.setViewportSize(VIEWPORT);
+      }
       report.push({ model: testCase.id, layout, runVerified, sliderVerified });
     }
 

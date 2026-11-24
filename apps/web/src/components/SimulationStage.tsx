@@ -131,6 +131,20 @@ interface PinchGesture {
 }
 
 const dotPatternCache = new WeakMap<CanvasRenderingContext2D, CanvasPattern>();
+const heroBackgroundCache = new WeakMap<CanvasRenderingContext2D, { width: number; height: number; dpr: number; gradient: CanvasGradient }>();
+
+// Rebuild only at viewport/DPR changes, never allocate a gradient per frame.
+function getHeroBackground(ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number): CanvasGradient {
+  const cached = heroBackgroundCache.get(ctx);
+  if (cached?.width === width && cached.height === height && cached.dpr === dpr) return cached.gradient;
+  const cx = width * 0.46, cy = height * 0.42;
+  const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(1, Math.hypot(width, height) * 0.62));
+  gradient.addColorStop(0, '#14191f');
+  gradient.addColorStop(0.57, '#0e1217');
+  gradient.addColorStop(1, '#080b10');
+  heroBackgroundCache.set(ctx, { width, height, dpr, gradient });
+  return gradient;
+}
 
 function getDotPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
   const cached = dotPatternCache.get(ctx);
@@ -140,7 +154,7 @@ function getDotPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
   tile.height = 24;
   const tileContext = tile.getContext('2d');
   if (!tileContext) return null;
-  tileContext.fillStyle = 'rgba(148, 163, 184, 0.14)';
+  tileContext.fillStyle = 'rgba(177, 188, 204, 0.13)';
   tileContext.beginPath();
   tileContext.arc(1, 1, 0.8, 0, Math.PI * 2);
   tileContext.fill();
@@ -454,7 +468,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
 
     // 清空背景（高对比投影白底或黑板深蓝）
-    ctx.fillStyle = currentTheme === 'projector' ? '#ffffff' : '#0b0f17';
+    ctx.fillStyle = currentTheme === 'projector' ? '#ffffff' : getHeroBackground(ctx, baseVp.width, baseVp.height, baseVp.dpr);
     ctx.fillRect(0, 0, baseVp.width, baseVp.height);
     if (currentTheme === 'chalkboard') {
       const dotPattern = getDotPattern(ctx);
@@ -620,6 +634,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       seriesB[i] = chB ? (s.observables[chB] ?? 0) : 0;
     }
     plot.setData([ts, seriesA, seriesB]);
+    // Update only the instrument DOM, not React state on every animation frame.
+    if (uplotWrapRef.current) uplotWrapRef.current.dataset.sampleCount = String(snaps.length);
     lastPlotSyncMsRef.current = now;
   };
 
@@ -1034,12 +1050,23 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     [channels, channelB]
   );
 
+  const heroScope = plugin.meta.id === 'em-induction-double-rod';
+  const splitScopeUnits = heroScope && !!specA && !!specB && specA.unit !== specB.unit;
+  // Same semantic channel colors on paper, with sufficient contrast on white.
+  const paperColors: Readonly<Record<string, string>> = {
+    '#38bdf8': '#0369a1', '#fbbf24': '#92400e', '#f472b6': '#9d174d',
+    '#4ade80': '#166534', '#fb7185': '#be123c'
+  };
+  const scopeColor = (color: string) => theme === 'projector' && heroScope ? paperColors[color] ?? '#334155' : color;
+  const scopeColorA = scopeColor(specA?.color ?? '#38bdf8');
+  const scopeColorB = scopeColor(specB?.color ?? '#f472b6');
+
   useEffect(() => {
     const wrap = uplotWrapRef.current;
     if (!wrap || oscilloscopeCollapsed || presentationMode) return;
 
-    const width = Math.max(300, wrap.clientWidth);
-    const height = 84;
+    const width = Math.max(1, wrap.clientWidth);
+    const height = heroScope ? (wrap.parentElement?.clientHeight || 152) : 84;
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.16)';
 
@@ -1053,41 +1080,52 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       legend: { show: false },
       scales: {
         x: { time: false },
-        y: { auto: true }
+        y: { auto: true },
+        ...(splitScopeUnits ? { y2: { auto: true } } : {})
       },
       axes: [
         {
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
-          values: (_u, splits) => splits.map((v) => `${v.toFixed(1)}s`)
+          values: (_u, splits) => splits.map((v) => `${v.toFixed(1)}s`),
+          ...(heroScope ? { size: 30 } : {})
         },
         {
-          stroke: textColor,
-          grid: { stroke: gridColor, width: 1 }
-        }
+          stroke: heroScope ? scopeColorA : textColor,
+          grid: { stroke: gridColor, width: 1 },
+          ...(heroScope ? { size: 54, values: (_u: uPlot, splits: number[]) => splits.map(v => Number(v.toPrecision(3)).toString()) } : {})
+        },
+        ...(splitScopeUnits ? [{
+          scale: 'y2', side: 1 as const, stroke: scopeColorB, size: 54,
+          grid: { show: false },
+          values: (_u: uPlot, splits: number[]) => splits.map(v => Number(v.toPrecision(3)).toString())
+        }] : [])
       ],
       series: [
         { label: '时间 t (s)' },
         {
           label: specA ? `${specA.label} (${specA.unit})` : '通道 A',
-          stroke: specA?.color ?? '#38bdf8',
+          stroke: scopeColorA,
           width: 2.2,
           fill: (plot) => {
             const gradient = plot.ctx.createLinearGradient(0, plot.bbox.top, 0, plot.bbox.top + plot.bbox.height);
-            gradient.addColorStop(0, 'rgba(56, 189, 248, 0.30)');
-            gradient.addColorStop(1, 'rgba(56, 189, 248, 0.01)');
+            const color = heroScope ? scopeColorA : '#38bdf8';
+            gradient.addColorStop(0, color + '40');
+            gradient.addColorStop(1, color + '02');
             return gradient;
           }
         },
         {
           label: specB ? `${specB.label} (${specB.unit})` : '通道 B',
-          stroke: specB?.color ?? '#f472b6',
+          ...(splitScopeUnits ? { scale: 'y2' } : {}),
+          stroke: scopeColorB,
           width: 2.0,
           dash: channelA === channelB ? [4, 4] : undefined,
           fill: (plot) => {
             const gradient = plot.ctx.createLinearGradient(0, plot.bbox.top, 0, plot.bbox.top + plot.bbox.height);
-            gradient.addColorStop(0, 'rgba(251, 146, 60, 0.22)');
-            gradient.addColorStop(1, 'rgba(251, 146, 60, 0.01)');
+            const color = heroScope ? scopeColorB : '#fb923c';
+            gradient.addColorStop(0, color + '32');
+            gradient.addColorStop(1, color + '02');
             return gradient;
           }
         }
@@ -1114,18 +1152,19 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const ro = new ResizeObserver(() => {
       if (!uplotWrapRef.current) return;
       plot.setSize({
-        width: Math.max(280, uplotWrapRef.current.clientWidth),
-        height: 84
+        width: Math.max(1, uplotWrapRef.current.clientWidth),
+        height: heroScope ? (uplotWrapRef.current.parentElement?.clientHeight || 152) : 84
       });
     });
     ro.observe(wrap);
+    if (heroScope && wrap.parentElement) ro.observe(wrap.parentElement);
 
     return () => {
       ro.disconnect();
       plot.destroy();
       uplotInstanceRef.current = null;
     };
-  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode]);
+  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits]);
 
   return (
     <div className="relative flex flex-1 min-h-0">
@@ -1446,7 +1485,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       </div>
 
       {!presentationMode && !oscilloscopeCollapsed && (
-        <div data-testid="floating-scope-dock" className="pf-floating-glass pf-compact-scope absolute bottom-3 left-1/2 z-10 w-[min(410px,calc(100%-24px))] -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 px-3 pt-2 shadow-2xl">
+        <div data-testid="floating-scope-dock" data-scope-units={splitScopeUnits ? 'separate' : 'shared'} className={`pf-floating-glass pf-compact-scope absolute bottom-3 left-1/2 z-10 w-[min(410px,calc(100%-24px))] -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 px-3 pt-2 shadow-2xl ${heroScope ? 'pf-hero-scope' : ''}`}>
           <div className="mb-1 flex h-7 items-center justify-between gap-2 text-xs">
             <span className="shrink-0 font-semibold text-sky-200">示波器</span>
             <div className="flex min-w-0 items-center gap-1.5">
@@ -1454,27 +1493,29 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                 type="button"
                 data-testid="scope-channel-a"
                 aria-label="切换示波器通道 A"
-                title={`${specA?.label ?? '通道 A'} · 点击切换`}
+                title={`${specA?.label ?? '通道 A'} (${specA?.unit ?? ''}) · 点击切换`}
+                style={heroScope ? {color:scopeColorA, borderColor:scopeColorA, backgroundColor:scopeColorA+'20'} : undefined}
                 onClick={() => {
                   const index = channels.findIndex((channel) => channel.key === channelA);
                   setChannelA(channels[(index + 1) % Math.max(1, channels.length)]?.key ?? channelA);
                 }}
                 className="max-w-32 truncate rounded-full border border-sky-300/30 bg-sky-400/15 px-2.5 py-1 text-[10px] font-semibold text-sky-200 hover:bg-sky-400/25 cursor-pointer"
               >
-                {channelA === 'v1' ? 'v-t' : channelA === 'current' ? 'I-t' : `${specA?.label ?? 'A'}-t`}
+                {channelA === 'v1' ? 'v-t' : channelA === 'current' ? 'I-t' : `${specA?.label ?? 'A'}-t`}{heroScope && specA?.unit ? ` · ${specA.unit}` : ''}
               </button>
               <button
                 type="button"
                 data-testid="scope-channel-b"
                 aria-label="切换示波器通道 B"
-                title={`${specB?.label ?? '通道 B'} · 点击切换`}
+                title={`${specB?.label ?? '通道 B'} (${specB?.unit ?? ''}) · 点击切换`}
+                style={heroScope ? {color:scopeColorB, borderColor:scopeColorB, backgroundColor:scopeColorB+'20'} : undefined}
                 onClick={() => {
                   const index = channels.findIndex((channel) => channel.key === channelB);
                   setChannelB(channels[(index + 1) % Math.max(1, channels.length)]?.key ?? channelB);
                 }}
                 className="max-w-32 truncate rounded-full border border-amber-300/30 bg-amber-400/15 px-2.5 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-400/25 cursor-pointer"
               >
-                {channelB === 'v1' ? 'v-t' : channelB === 'current' ? 'I-t' : `${specB?.label ?? 'B'}-t`}
+                {channelB === 'v1' ? 'v-t' : channelB === 'current' ? 'I-t' : `${specB?.label ?? 'B'}-t`}{heroScope && specB?.unit ? ` · ${specB.unit}` : ''}
               </button>
             </div>
             {scrubTime !== null && (
@@ -1492,8 +1533,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               <ChevronDown className="h-4 w-4" />
             </button>
           </div>
-          <div className="relative h-[76px] overflow-hidden">
+          <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
+            {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽

@@ -110,6 +110,13 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
 
   const isCircuit = plugin.meta.id === 'builder-circuit-mna' || plugin.meta.id === 'circuit-dc-capacitor-mna';
   const emf = typeof params.emf === 'number' ? params.emf : 12;
+  const isInduction = plugin.meta.id === 'em-induction-double-rod';
+  const energyReadouts = [
+    { key: 'kineticEnergy', label: '总动能 Eₖ' },
+    { key: 'jouleHeat', label: '累计焦耳热 Q' },
+    ...(params.rodMode === 'single' && params.circuitLoad === 'capacitor' ? [{ key: 'capacitorEnergy', label: '电容储能 E꜀' }] : []),
+    ...(params.rodMode === 'single' && params.circuitLoad === 'battery' ? [{ key: 'sourceWork', label: '电源做功 W' }] : [])
+  ];
   const kineticEnergy = telemetry.observables.kineticEnergy;
   const dissipatedOrStoredEnergy = telemetry.observables.jouleHeat ?? telemetry.observables.capacitorEnergy;
   const hasEnergyMetrics = (typeof kineticEnergy === 'number' && Number.isFinite(kineticEnergy))
@@ -166,6 +173,16 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
             <div className="flex justify-between font-mono text-[10px] text-slate-400"><span>0V</span><span>电势分布</span><span>{emf.toFixed(0)}V</span></div>
             <div className="h-1.5 w-full rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400 shadow-[0_0_8px_rgba(56,189,248,0.4)]" />
           </div>
+        ) : isInduction ? (
+          <section data-testid="e04-energy-readouts" className="pf-energy-readouts space-y-2 pt-1">
+            {energyReadouts.map(({key,label}) => {
+              const value = telemetry.observables[key];
+              return <div key={key} className="flex justify-between gap-2 text-xs">
+                <span>{label}</span>
+                <span data-testid={`e04-energy-${key}`} className="tabular-nums font-medium">{typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(3)} J` : '—'}</span>
+              </div>;
+            })}
+          </section>
         ) : hasEnergyMetrics ? (
           <div className="space-y-2 pt-0.5">
             <div>

@@ -3,6 +3,7 @@ import type { ParamRecord, Viewport } from './index.js';
 import {
   createWorldMapper,
   drawGlowVectorArrow,
+  drawMetallicRail,
   getPixelsPerMeter,
   resolveInitialCameraTransform,
   resolveLabelBoxes,
@@ -89,6 +90,22 @@ describe('Canvas visual kit', () => {
       expect(label.y - label.height / 2).toBeGreaterThanOrEqual(0);
       expect(label.y + label.height / 2).toBeLessThanOrEqual(120);
     }
+  });
+
+  it('draws rail material without erasing the stage or circuit junctions', () => {
+    const addColorStop = vi.fn();
+    const ctx = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(),
+      lineTo: vi.fn(), quadraticCurveTo: vi.fn(), closePath: vi.fn(), fill: vi.fn(),
+      fillRect: vi.fn(), createLinearGradient: vi.fn(() => ({ addColorStop })),
+      globalCompositeOperation: 'source-over'
+    } as unknown as CanvasRenderingContext2D;
+    drawMetallicRail(ctx, 20, 60, 200, 8);
+    expect(ctx.globalCompositeOperation).toBe('source-over');
+    expect(ctx.fill).toHaveBeenCalledOnce();
+    expect(ctx.createLinearGradient).toHaveBeenCalledTimes(2);
+    expect(ctx.fillRect).toHaveBeenCalledWith(20, expect.any(Number), 180, expect.any(Number));
+    expect(ctx.restore).toHaveBeenCalledOnce();
   });
 
   it('ignores degenerate arrows and draws a finite arrow head for valid vectors', () => {
