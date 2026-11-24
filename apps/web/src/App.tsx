@@ -24,7 +24,7 @@ import {
   Undo2,
   Wrench,
 } from 'lucide-react';
-import type { ParamRecord, SimulationPluginV2 } from '@physforge/sim-sdk';
+import { isSimulationPluginV3, type ParamRecord, type SimulationPluginV2 } from '@physforge/sim-sdk';
 import { getStoryDecks, resolvePresentationHotkey, useClassroomStore } from './store/useClassroomStore.js';
 import { SimulationStage, type RecordedTelemetryFrame, type StoryNavigation } from './components/SimulationStage.js';
 import { LeftCatalogSidebar } from './components/LeftCatalogSidebar.js';
@@ -53,6 +53,8 @@ const LazyExportStudioDrawer = React.lazy(() =>
 const LazyAiCopilotDrawer = React.lazy(() =>
   import('./components/AiCopilotDrawer.js').then((m) => ({ default: m.AiCopilotDrawer }))
 );
+
+const LazyLiveFormulaCard = React.lazy(() => import('./presentation/LiveFormulaCard.js'));
 
 const LazyPresenterView = React.lazy(() => import('./presentation/PresenterView.js'));
 
@@ -93,6 +95,7 @@ const ClassroomApp: React.FC = () => {
 
   const plugin = store.loadedPlugin;
   const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
+  const liveFormulas = isSimulationPluginV3(plugin) ? plugin.liveFormulas ?? [] : [];
   const storyNavigationRef = useRef<StoryNavigation | null>(null);
   const decks = useMemo(() => getStoryDecks(plugin), [plugin]);
   const storyDeck = store.appMode === 'story' ? decks.find((deck) => deck.id === store.activeDeckId) : undefined;
@@ -731,9 +734,14 @@ const ClassroomApp: React.FC = () => {
                 <div className="truncate text-2xl font-semibold tracking-tight">{WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title}</div>
                 <div className="mt-1 text-xs tracking-wide text-slate-400">{store.appMode === 'story' ? '分镜讲课模式' : '全屏课堂演说模式'}</div>
               </div>
-              {store.telemetry.formulaItems.length > 0 && (
+              {(store.telemetry.formulaItems.length > 0 || liveFormulas.length > 0) && (
                 <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
-                  <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} />
+                  {liveFormulas.length ? <Suspense fallback={<KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} />}>
+                    <LazyLiveFormulaCard key={plugin.meta.id} specs={liveFormulas} params={store.params} schema={plugin.paramSchema}
+                      onBegin={(key) => store.beginLiveFormula(plugin.meta.id, key)}
+                      onChange={(key, value) => store.updateLiveFormula(plugin.meta.id, key, value)}
+                      onEnd={(key) => store.endLiveFormula(plugin.meta.id, key)} />
+                  </Suspense> : <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} />}
                 </div>
               )}
               <div data-testid="fullscreen-controls" className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/15 bg-slate-950/80 p-2 text-slate-100 shadow-2xl backdrop-blur-2xl">
