@@ -550,7 +550,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       resize: (nextWidth, nextHeight) => {
         const nextW = Math.max(320, nextWidth);
         const nextH = Math.max(240, nextHeight);
-        if (morph) morph.resize(nextW, nextH);
+        if (morph) {
+          if (morph.getMorphT() === 0 && !morph.isAnimating) morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
+          morph.resize(nextW, nextH);
+        }
         else { camera.aspect = nextW / nextH; camera.updateProjectionMatrix(); }
         renderer.setSize(nextW, nextH);
         cssRenderer.setSize(nextW, nextH);
