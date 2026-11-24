@@ -113,6 +113,16 @@ export const App: React.FC = () => {
       const target = e.target instanceof HTMLElement ? e.target : null;
       if (target?.closest('input, select, textarea, [contenteditable="true"]')) return;
       if (store.annotationOpen || commandPaletteOpen || teachingPackOpen || analysisLabOpen || exportStudioOpen || aiCopilotOpen) return;
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.shiftKey && e.key === 'F5') {
+        e.preventDefault();
+        store.setAppMode('story', decks[0]?.id);
+        return;
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'F11') {
+        e.preventDefault();
+        store.setAppMode(store.appMode === 'studio' ? 'stage' : 'studio');
+        return;
+      }
       if (store.appMode !== 'studio' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const command = resolvePresentationHotkey(store.appMode, e.key);
         if (command) {
@@ -171,7 +181,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [plugin, store.appMode, store.annotationOpen, commandPaletteOpen, teachingPackOpen, analysisLabOpen, exportStudioOpen, aiCopilotOpen, has3dView]);
+  }, [plugin, store.appMode, store.annotationOpen, commandPaletteOpen, teachingPackOpen, analysisLabOpen, exportStudioOpen, aiCopilotOpen, has3dView, decks]);
 
   const toggleMeasureTool = (tool: Exclude<MeasureToolKind, 'none'>) => {
     store.setMeasureTool(store.measureTool === tool ? 'none' : tool);
