@@ -42,33 +42,114 @@ const paramSchema: readonly ParamFieldSpec<ElectrostaticParams>[] = [
 ];
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "two-charge-potential",
-  "title": "两点电荷电势叠加（零势能参考在无穷远）",
-  "latex": "\\varphi=k\\left(\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q1MicroC}{q_1}}}{r_1}+\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q2MicroC}{q_2}}}{r_2}\\right)",
-  "bindings": [
-    {
-      "tokenKey": "q1MicroC",
-      "paramKey": "q1MicroC",
-      "label": "源电荷 q₁",
-      "unit": "μC",
-      "min": -5,
-      "max": 5,
-      "step": 0.5,
-      "precision": 2
-    },
-    {
-      "tokenKey": "q2MicroC",
-      "paramKey": "q2MicroC",
-      "label": "源电荷 q₂",
-      "unit": "μC",
-      "min": -5,
-      "max": 5,
-      "step": 0.5,
-      "precision": 2
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "two-charge-potential",
+    "title": "两点电荷电势叠加（零势能参考在无穷远）",
+    "latex": "\\varphi=k\\left(\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q1MicroC}{q_1}}}{r_1}+\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q2MicroC}{q_2}}}{r_2}\\right)",
+    "bindings": [
+      {
+        "tokenKey": "q1MicroC",
+        "paramKey": "q1MicroC",
+        "label": "源电荷 q₁",
+        "unit": "μC",
+        "min": -5,
+        "max": 5,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "q2MicroC",
+        "paramKey": "q2MicroC",
+        "label": "源电荷 q₂",
+        "unit": "μC",
+        "min": -5,
+        "max": 5,
+        "step": 0.5,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "dipole-point-charges"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "three-point-field",
+    "title": "匀强电场三点电势差的两个线性约束",
+    "latex": "\\begin{aligned}\\mathbf E\\cdot\\overrightarrow{AB}&=\\htmlClass{pf-live-var}{\\htmlData{param=phiA}{\\varphi_A}}-\\htmlClass{pf-live-var}{\\htmlData{param=phiB}{\\varphi_B}}\\\\\\mathbf E\\cdot\\overrightarrow{AC}&=\\varphi_A-\\htmlClass{pf-live-var}{\\htmlData{param=phiC}{\\varphi_C}}\\end{aligned}",
+    "bindings": [
+      {
+        "tokenKey": "phiA",
+        "paramKey": "phiA",
+        "label": "A点电势 φA",
+        "unit": "V",
+        "min": -10,
+        "max": 10,
+        "step": 1,
+        "precision": 1
+      },
+      {
+        "tokenKey": "phiB",
+        "paramKey": "phiB",
+        "label": "B点电势 φB",
+        "unit": "V",
+        "min": -10,
+        "max": 12,
+        "step": 1,
+        "precision": 1
+      },
+      {
+        "tokenKey": "phiC",
+        "paramKey": "phiC",
+        "label": "C点电势 φC",
+        "unit": "V",
+        "min": -10,
+        "max": 20,
+        "step": 1,
+        "precision": 1
+      }
+    ],
+    "when": {
+      "mode": [
+        "uniform-three-point"
+      ]
+    }
+  },
+  {
+    "id": "deflection-acceleration",
+    "title": "偏转极板内的横向加速度",
+    "latex": "a_y=\\htmlClass{pf-live-var}{\\htmlData{param=testChargeRatio}{\\frac qm}}\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=uDeflectV}{U_2}}}{d}",
+    "bindings": [
+      {
+        "tokenKey": "testChargeRatio",
+        "paramKey": "testChargeRatio",
+        "label": "试探荷质比 q/m",
+        "unit": "",
+        "min": -2,
+        "max": 2,
+        "step": 0.2,
+        "precision": 2
+      },
+      {
+        "tokenKey": "uDeflectV",
+        "paramKey": "uDeflectV",
+        "label": "偏转电压 U₂",
+        "unit": "V",
+        "min": -16,
+        "max": 16,
+        "step": 1,
+        "precision": 1
+      }
+    ],
+    "when": {
+      "mode": [
+        "deflection-tube"
+      ]
+    }
+  }
+];
 export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<ElectrostaticParams, ElectrostaticState>({
   meta: {
     id: 'em-electrostatic-field',
