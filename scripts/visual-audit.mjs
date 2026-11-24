@@ -525,6 +525,7 @@ async function auditV3StoryAndFormula(page, origin, screenshot) {
   await page.getByTestId('btn-exit-fullscreen-speech').click();
 
   url.searchParams.set('model', 'stse-em-devices-suite');
+  url.searchParams.set('preset', 'velocity-selector-spectrometer');
   await page.goto(url.toString(), { waitUntil: 'networkidle' });
   await page.waitForFunction(() => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === 'stse-em-devices-suite', null, { timeout: 20000 });
   const slider = page.getByTestId('param-slider-eFieldVPerM');

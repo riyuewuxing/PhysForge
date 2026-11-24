@@ -321,6 +321,8 @@ async function main() {
     await page.getByTestId('model-card-stse-em-devices-suite').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { state: 'detached', timeout: 15000 });
 
+    // Select the actual velocity-selector experiment before manipulating its law.
+    await page.getByTestId('preset-select').selectOption('velocity-selector-spectrometer');
     // Actual pointer gesture: formula token identity survives parameter changes.
     const fieldSlider = page.getByTestId('param-slider-eFieldVPerM');
     await fieldSlider.waitFor({ timeout: 15000 });

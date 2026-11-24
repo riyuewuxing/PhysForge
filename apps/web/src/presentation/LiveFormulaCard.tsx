@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { AnyParamFieldSpec, LiveFormulaSpec, ParamRecord } from '@physforge/sim-sdk';
-import { attachFormulaScrubber, renderInteractiveLatex } from './liveFormulaEngine.js';
+import { attachFormulaScrubber, formatLiveFormulaValue, renderInteractiveLatex } from './liveFormulaEngine.js';
 
 interface Props {
   specs: readonly LiveFormulaSpec[];
@@ -51,7 +51,7 @@ const FormulaTile: React.FC<Omit<Props, 'specs'> & { spec: LiveFormulaSpec }> = 
         if (!state.active || !state.binding) { node.hidden = true; return; }
         const binding = state.binding;
         const digits = Math.min(12, Math.max(0, binding.precision ?? 3));
-        text.textContent = `${binding.label}: ${state.value.toFixed(digits)} ${binding.unit} · ${state.gearLabel}`;
+        text.textContent = `${binding.label}: ${formatLiveFormulaValue(state.value, digits)} ${binding.unit} · ${state.gearLabel}`;
         const ratio = binding.max === binding.min ? 0 : (state.value - binding.min) / (binding.max - binding.min);
         fill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
         node.style.left = `${state.anchorX}px`;

@@ -43,40 +43,75 @@ const paramSchema: readonly ParamFieldSpec<AstroOrbitalParams>[] = [
 ];
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "hohmann-first-burn",
-  "title": "圆轨道霍曼转移第一次加速（κ=r₂/r₁）",
-  "latex": "\\frac{\\Delta v_1}{v_{c1}}=\\sqrt{\\frac{2\\htmlClass{pf-live-var}{\\htmlData{param=r2OverR1}{\\kappa}}}{1+\\htmlClass{pf-live-var}{\\htmlData{param=r2OverR1}{\\kappa}}}}-1",
-  "bindings": [
-    {
-      "tokenKey": "r2OverR1",
-      "paramKey": "r2OverR1",
-      "label": "霍曼目标半径比 r₂/r₁",
-      "unit": "",
-      "min": 1.2,
-      "max": 3.5,
-      "step": 0.1,
-      "precision": 2
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "hohmann-first-burn",
+    "title": "圆轨道霍曼转移第一次加速（κ=r₂/r₁）",
+    "latex": "\\frac{\\Delta v_1}{v_{c1}}=\\sqrt{\\frac{2\\htmlClass{pf-live-var}{\\htmlData{param=r2OverR1}{\\kappa}}}{1+\\htmlClass{pf-live-var}{\\htmlData{param=r2OverR1}{\\kappa}}}}-1",
+    "bindings": [
+      {
+        "tokenKey": "r2OverR1",
+        "paramKey": "r2OverR1",
+        "label": "霍曼目标半径比 r₂/r₁",
+        "unit": "",
+        "min": 1.2,
+        "max": 3.5,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "hohmann-transfer"
+      ]
     }
-  ]
-},
-{
-  "id": "circular-speed",
-  "title": "圆轨道速度（r₁=ηL₀，M 由尺度位形确定）",
-  "latex": "v_{c1}=\\sqrt{\\frac{GM}{\\htmlClass{pf-live-var}{\\htmlData{param=r1Ratio}{\\eta}}L_0}}",
-  "bindings": [
-    {
-      "tokenKey": "r1Ratio",
-      "paramKey": "r1Ratio",
-      "label": "近地点尺度比 r₁/L₀",
-      "unit": "",
-      "min": 0.5,
-      "max": 2,
-      "step": 0.1,
-      "precision": 2
+  },
+  {
+    "id": "circular-speed",
+    "title": "圆轨道速度（r₁=ηL₀，M 由尺度位形确定）",
+    "latex": "v_{c1}=\\sqrt{\\frac{GM}{\\htmlClass{pf-live-var}{\\htmlData{param=r1Ratio}{\\eta}}L_0}}",
+    "bindings": [
+      {
+        "tokenKey": "r1Ratio",
+        "paramKey": "r1Ratio",
+        "label": "近地点尺度比 r₁/L₀",
+        "unit": "",
+        "min": 0.5,
+        "max": 2,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "kepler-ellipse",
+        "hohmann-transfer"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "binary-barycenter",
+    "title": "双星质心距离（a 为两星间距）",
+    "latex": "\\begin{aligned}r_1&=\\htmlClass{pf-live-var}{\\htmlData{param=massRatioQ}{q}}a\\\\r_2&=(1-q)a\\end{aligned}",
+    "bindings": [
+      {
+        "tokenKey": "massRatioQ",
+        "paramKey": "massRatioQ",
+        "label": "双星次星质量比 q",
+        "unit": "",
+        "min": 0.01,
+        "max": 0.4,
+        "step": 0.01,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "binary-lagrange"
+      ]
+    }
+  }
+];
 export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<AstroOrbitalParams, AstroOrbitalState>({
   meta: {
     id: 'astro-orbital-mechanics',

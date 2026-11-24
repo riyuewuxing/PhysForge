@@ -1,4 +1,4 @@
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { magnetic3dPresets } from './presets.js';
 import {
   buildConductorSegments,
@@ -33,6 +33,99 @@ const paramSchema: readonly ParamFieldSpec<Magnetic3dParams>[] = [
   { key: 'vPerp', kind: 'number', label: '垂直初速度 v⊥', unit: 'm/s', min: 0, max: 3, step: 0.2, defaultValue: 1.2 },
   { key: 'vParallel', kind: 'number', label: '轴向初速度 v∥', unit: 'm/s', min: -2, max: 2, step: 0.2, defaultValue: 0.7 },
   { key: 'uniformBz', kind: 'number', label: '匀强模式磁感应强度 Bz', unit: 'T', min: 0.5, max: 4, step: 0.5, defaultValue: 2.0 }
+];
+
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "biot-savart-current",
+    "title": "稳恒电流元的毕奥—萨伐尔定律",
+    "latex": "d\\mathbf B=\\frac{\\mu_0 \\htmlClass{pf-live-var}{\\htmlData{param=currentI}{I}}}{4\\pi}\\frac{d\\boldsymbol\\ell\\times\\mathbf r}{r^3}",
+    "bindings": [
+      {
+        "tokenKey": "currentI",
+        "paramKey": "currentI",
+        "label": "线圈/导线电流 I",
+        "unit": "A",
+        "min": 0,
+        "max": 5,
+        "step": 0.5,
+        "precision": 1
+      }
+    ],
+    "when": {
+      "geometryType": [
+        "helmholtz-coil",
+        "single-loop",
+        "finite-solenoid",
+        "straight-wire",
+        "parallel-wires"
+      ]
+    }
+  },
+  {
+    "id": "uniform-gyro-frequency",
+    "title": "匀强场初始回旋角频率与垂直加速度",
+    "latex": "\\begin{aligned}\\omega_c&=\\htmlClass{pf-live-var}{\\htmlData{param=qOverM}{\\left|q/m\\right|}}\\htmlClass{pf-live-var}{\\htmlData{param=uniformBz}{B_z}}\\\\a_{\\perp,0}&=\\omega_c \\htmlClass{pf-live-var}{\\htmlData{param=vPerp}{v_\\perp}}\\end{aligned}",
+    "bindings": [
+      {
+        "tokenKey": "qOverM",
+        "paramKey": "qOverM",
+        "label": "试探粒子相对荷质比",
+        "unit": "",
+        "min": 0,
+        "max": 4,
+        "step": 0.2,
+        "precision": 1
+      },
+      {
+        "tokenKey": "uniformBz",
+        "paramKey": "uniformBz",
+        "label": "匀强模式磁感应强度 Bz",
+        "unit": "T",
+        "min": 0.5,
+        "max": 4,
+        "step": 0.5,
+        "precision": 1
+      },
+      {
+        "tokenKey": "vPerp",
+        "paramKey": "vPerp",
+        "label": "垂直初速度 v⊥",
+        "unit": "m/s",
+        "min": 0,
+        "max": 3,
+        "step": 0.2,
+        "precision": 1
+      }
+    ],
+    "when": {
+      "geometryType": [
+        "uniform-helix"
+      ]
+    }
+  },
+  {
+    "id": "uniform-parallel-velocity",
+    "title": "匀强磁场沿磁场方向匀速运动",
+    "latex": "z=z_0+\\htmlClass{pf-live-var}{\\htmlData{param=vParallel}{v_\\parallel}}t",
+    "bindings": [
+      {
+        "tokenKey": "vParallel",
+        "paramKey": "vParallel",
+        "label": "轴向初速度 v∥",
+        "unit": "m/s",
+        "min": -2,
+        "max": 2,
+        "step": 0.2,
+        "precision": 1
+      }
+    ],
+    "when": {
+      "geometryType": [
+        "uniform-helix"
+      ]
+    }
+  }
 ];
 
 export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Magnetic3dParams, Magnetic3dState>({
@@ -221,7 +314,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
       }
     ];
   }
-}), { spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
+}), { liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
   default3DAzimuthRad: 0.67, default3DPolarRad: 1.08 } });
 
 export default em3dMagneticFieldsPlugin;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { attachFormulaScrubber, clampAndQuantize, getScrubGear, renderInteractiveLatex, type ScrubVisualState } from './liveFormulaEngine.js';
+import { attachFormulaScrubber, clampAndQuantize, formatLiveFormulaValue, getScrubGear, renderInteractiveLatex, type ScrubVisualState } from './liveFormulaEngine.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 
 describe('live formula scrubber', () => {
@@ -16,6 +16,14 @@ describe('live formula scrubber', () => {
     expect(clampAndQuantize(2.2e-10, 0, 1e-9, 1e-10)).toBe(2e-10);
     expect(clampAndQuantize(100, -1, 1, 0.1)).toBe(1);
     expect(() => clampAndQuantize(NaN, 0, 1, 0.1)).toThrow();
+  });
+
+  it('formats nonzero microscopic and astronomical values without rounding them to zero', () => {
+    expect(formatLiveFormulaValue(1.602e-19, 3)).toBe('1.602e-19');
+    expect(formatLiveFormulaValue(2e24, 2)).toBe('2.00e+24');
+    expect(formatLiveFormulaValue(-0.002, 2)).toBe('-2.00e-3');
+    expect(formatLiveFormulaValue(1.5, 2)).toBe('1.50');
+    expect(formatLiveFormulaValue(0, 2)).toBe('0.00');
   });
 
   it('allows only the interactive KaTeX commands and not external links or images', () => {
@@ -80,7 +88,13 @@ describe('live formula scrubber', () => {
     event('dblclick', 0, 0);
     expect(changed).toHaveBeenLastCalledWith('magneticB', 2);
     expect(queued.size).toBe(0);
+    event('pointerdown', 0, 0);
+    event('pointermove', 4, 0);
+    const callsBeforeUnmount = changed.mock.calls.length;
     dispose();
+    expect(changed.mock.calls.length).toBe(callsBeforeUnmount);
+    expect(queued.size).toBe(0);
+    expect(token.captured).toBeNull();
     expect(container.listeners.size).toBe(0);
   });
 });
