@@ -32,7 +32,7 @@ import { RightControlPanel } from './components/RightControlPanel.js';
 import { TeachingPackDrawer } from './components/TeachingPackDrawer.js';
 import type { MeasureToolKind } from './stage/RulerToolboxOverlay.js';
 import { KatexFormulaCard } from './components/KatexFormulaCard.js';
-import { buildPresenterWindowUrl, PresenterSyncBridge, type StageSnapshotPayload } from './presentation/presenterSync.js';
+import { buildPresenterWindowUrl, PresenterSyncBridge, commandMatchesStage, type StageSnapshotPayload } from './presentation/presenterSync.js';
 
 const LazyExcalidrawOverlay = React.lazy(() =>
   import('./components/ExcalidrawOverlay.js').then((m) => ({ default: m.ExcalidrawOverlay }))
@@ -152,6 +152,11 @@ const ClassroomApp: React.FC = () => {
         if (cmd.type === 'CMD_REQUEST_SYNC') { bridge.broadcastSnapshot(snapshot(), true); return; }
         const state = useClassroomStore.getState();
         if (state.appMode === 'studio') return;
+        if (!commandMatchesStage(cmd, { modelId: state.loadedPlugin.meta.id,
+          deckId: state.appMode === 'story' ? state.activeDeckId : null })) {
+          bridge.broadcastSnapshot(snapshot(), true);
+          return;
+        }
         switch (cmd.type) {
           case 'CMD_NEXT_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.next(); break;
           case 'CMD_PREV_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.prev(); break;
