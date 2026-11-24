@@ -166,6 +166,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
                     type="button"
                     disabled={running || probing}
                     onClick={() => {
+                      if (baseUrl.trim().replace(/\/+$/, '') !== provider.baseUrl) setApiKey('');
                       setBaseUrl(provider.baseUrl);
                       setModelName(provider.model);
                       setProbeMsg('');
@@ -177,11 +178,11 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
                   </button>
                 ))}
               </div>
-              <div className="opacity-80">模板仅填充地址和推荐模型。切换服务商后，请先更换为该服务商的 API Key。</div>
+              <div className="opacity-80">模板仅填充地址和推荐模型。更改地址时清空旧 API Key，防止把密钥误发给其他服务商。</div>
               <input
                 value={baseUrl}
                 disabled={running || probing}
-                onChange={(e) => { setBaseUrl(e.target.value); setProbeMsg(''); }}
+                onChange={(e) => { setBaseUrl(e.target.value); setApiKey(''); setProbeMsg(''); }}
                 placeholder="OpenAI Compatible Base URL"
                 className="rounded-lg border px-2.5 py-1.5"
                 style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
