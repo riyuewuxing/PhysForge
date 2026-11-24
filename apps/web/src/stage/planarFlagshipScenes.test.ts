@@ -142,7 +142,7 @@ describe('flagship physical display alignment', () => {
     const params = resolvePluginParams<BoundedMagneticParams>(p.paramSchema, { mode: 'circular', family: 'single' });
     const state = p.engine.createInitialState(params);
     const track = state.particles[0]!;
-    const layers = new Set(['trajectory', 'fieldRegion']);
+    const layers = new Set(['trajectory', 'fieldRegion','eventPins']);
     driver?.sync(state, params, layers);
     const exit = scene.getObjectByName('magnetic-exit-' + track.id);
     expect(exit?.visible).toBe(false);
@@ -151,6 +151,8 @@ describe('flagship physical display alignment', () => {
     expect(entry?.visible).toBe(true);
     expect(exit?.visible).toBe(true);
     expect(exit?.position.x).toBe(1);
+    driver?.sync({ ...state, particles: [{ ...track, hasExited: true, exitPoint: { x: 1, y: 0 } }] },params,new Set(['trajectory']));
+    expect(exit?.visible).toBe(false);
     driver?.sync(state, params, new Set());
     expect(exit?.visible).toBe(false);
     driver?.dispose();
