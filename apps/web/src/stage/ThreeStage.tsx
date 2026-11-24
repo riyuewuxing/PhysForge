@@ -17,6 +17,7 @@ import {
 } from '@physforge/simulations/em-3d-magnetic-fields/engine';
 import {
   buildTokamakMirrorSegments,
+  computeMirrorLossConeDeg,
   traceTokamakMirrorLines,
   type TokamakMirrorParams,
   type TokamakMirrorState
@@ -711,6 +712,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     ? 0.055 * Math.max(0.2, typeof params.radiusR === 'number' ? params.radiusR : 1)
     : undefined;
 
+  const lossCone = plugin.meta.id === 'stse-tokamak-magnetic-mirror' && params.mode === 'magnetic-mirror'
+    ? computeMirrorLossConeDeg(params as TokamakMirrorParams) : undefined;
+  const coneRadius = 23;
+  const coneX = lossCone === undefined ? 0 : coneRadius * Math.cos(lossCone * Math.PI / 180);
+  const coneY = lossCone === undefined ? 0 : coneRadius * Math.sin(lossCone * Math.PI / 180);
   return (
     <div
       ref={containerRef}
@@ -724,6 +730,15 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-particle-radius={particleRadius}
       className="relative w-full h-full min-h-[260px] rounded-xl overflow-hidden"
     >
+      {lossCone !== undefined && <div data-testid="mirror-loss-cone" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200">
+        <div>速度空间逃逸锥 θc={lossCone.toFixed(1)}°</div>
+        <svg viewBox="0 0 104 60" width="104" height="60" aria-label="速度空间示意">
+          <path d={`M52 30 L${52 + coneX} ${30 - coneY} L${52 + coneX} ${30 + coneY} Z M52 30 L${52 - coneX} ${30 - coneY} L${52 - coneX} ${30 + coneY} Z`} fill="#fbbf2455" stroke="#fbbf24" />
+          <path d="M5 30 H99 M52 5 V55" stroke="#94a3b8" strokeWidth="1" />
+        </svg>
+      </div>}
+      {plugin.meta.id === 'stse-em-devices-suite' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">归一化原理示意 · 能量由物理内核计算</div>}
+      {plugin.meta.id === 'astro-orbital-mechanics' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">轨道使用 r/r₁ · 天体球体尺寸为示意</div>}
       {vectorsVisible && (
         <div data-testid="three-vector-legend" className={`pointer-events-none absolute ${presentationMode ? 'bottom-3 left-3' : 'left-3 top-3'} z-10 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-950/75 px-3 py-2 text-[11px] text-slate-200 shadow-lg backdrop-blur`}>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-amber-300" />v 速度</span>
