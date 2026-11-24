@@ -75,7 +75,7 @@ try {
     if (request.method() === 'OPTIONS') {
       await route.fulfill({ status: 204, headers: corsHeaders }); return;
     }
-    assert.equal(request.headers().authorization, 'Bearer ' + mockKey);
+    assert.equal((await request.allHeaders()).authorization, 'Bearer ' + mockKey);
     const respond = (json, status = 200) => route.fulfill({ status, headers: corsHeaders, json });
     if (url.pathname === '/models' && request.method() === 'GET') {
       gets++;
@@ -87,11 +87,14 @@ try {
       assert.equal(body.thinking.type, 'disabled');
       assert.equal(body.response_format.type, 'json_object');
       assert.ok(!JSON.stringify(body).includes(mockKey));
-      assert.ok(body.messages[0].content.includes('Schema ' + target));
+      if (posts === 1) assert.ok(body.messages[0].content.includes('Schema ' + target));
       assert.ok(body.messages[1].content.includes(prompt));
       if (mode === '401') { await respond({ error: mockKey }, 401); return; }
       const scene = posts === 1 ? { ...candidate, params: { fakeParam: 1 } } : candidate;
-      if (posts === 2) assert.ok(body.messages[1].content.includes('Unknown param'));
+      if (posts === 2) {
+        assert.ok(body.messages[1].content.includes('Unknown param'));
+        assert.ok(body.messages[1].content.includes('Schema ' + target));
+      }
       await respond({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(scene) } }] });
     } else { throw new Error('Unexpected fixture endpoint'); }
   });
@@ -105,6 +108,12 @@ try {
   await page.getByTestId('btn-save-byok').click();
   await page.getByTestId('btn-close-ai-copilot').click();
   await openDrawer(page);
+  assert.equal(await page.getByTestId('byok-api-key').inputValue(), mockKey);
+  await page.getByTestId('byok-enabled').uncheck();
+  await page.getByTestId('btn-close-ai-copilot').click();
+  await openDrawer(page);
+  assert.equal(await page.getByTestId('byok-enabled').isChecked(), false);
+  await page.getByTestId('byok-enabled').check();
   assert.equal(await page.getByTestId('byok-api-key').inputValue(), mockKey);
   await page.getByTestId('btn-test-byok-connection').click();
   await page.getByTestId('byok-model-list').waitFor();
@@ -121,6 +130,7 @@ try {
   assert.equal(posts, 2);
   await page.getByTestId('btn-apply-ai-scene').waitFor();
   assert.equal(await page.getByTestId('btn-apply-ai-scene').isEnabled(), true);
+  await page.getByTestId('btn-apply-ai-scene').scrollIntoViewIfNeeded();
   await shot(page, '04-candidate-refined-scene');
   await page.getByTestId('btn-apply-ai-scene').click();
   await page.waitForFunction(id => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === id, target);

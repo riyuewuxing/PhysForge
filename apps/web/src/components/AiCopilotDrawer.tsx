@@ -29,17 +29,18 @@ const SAMPLE_PROMPTS = [
 const BYOK_PROVIDERS = [
   { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' },
   { name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  { name: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen2.5-7B-Instruct' },
-  { name: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' }
+  { name: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V4-Flash' },
+  { name: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-4-hydrogen' }
 ] as const;
 
 // Explicitly saved configuration survives drawer remounts, not page reloads.
 // Never write credentials to browser storage, URLs, Vault, or logs.
 let sessionConfig: ByokConfig | null = null;
+let sessionOnlineEnabled = false;
 
 export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, onClose }) => {
   const [prompt, setPrompt] = useState<string>(SAMPLE_PROMPTS[0]);
-  const [useByok, setUseByok] = useState(() => sessionConfig !== null);
+  const [useByok, setUseByok] = useState(() => sessionOnlineEnabled && sessionConfig !== null);
   const [baseUrl, setBaseUrl] = useState(() => sessionConfig?.baseUrl ?? BYOK_PROVIDERS[0].baseUrl);
   const [apiKey, setApiKey] = useState(() => sessionConfig?.apiKey ?? '');
   const [modelName, setModelName] = useState(() => sessionConfig?.model ?? BYOK_PROVIDERS[0].model);
@@ -57,6 +58,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
   const invalidateResult = () => { setResult(null); setStatusMsg(''); };
   const clearKey = () => {
     sessionConfig = null;
+    sessionOnlineEnabled = false;
     setSaved(false);
     setApiKey('');
     setModels([]);
@@ -68,6 +70,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
     try {
       validateByokConfig(config);
       sessionConfig = { baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: modelName.trim() };
+      sessionOnlineEnabled = true;
       setSaved(true);
       setProbeMsg('配置已保存至本页面内存；刷新或关闭网页后清除。');
     } catch (error) {
@@ -190,7 +193,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
 
         <div className="rounded-xl border p-3 space-y-2" style={{ borderColor: 'var(--pf-border)' }}>
           <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-            <input data-testid="byok-enabled" type="checkbox" checked={useByok} disabled={running || probing} onChange={(e) => { setUseByok(e.target.checked); setProbeMsg(''); invalidateResult(); }} />
+            <input data-testid="byok-enabled" type="checkbox" checked={useByok} disabled={running || probing} onChange={(e) => { setUseByok(e.target.checked); sessionOnlineEnabled = e.target.checked; setProbeMsg(''); invalidateResult(); }} />
             <span>启用可选 BYOK 外部大模型 API（Generate-then-Refine 3 轮自修正；默认离线规则引擎）</span>
           </label>
           {useByok && (
@@ -261,7 +264,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
               {models.length > 0 && (
                 <select data-testid="byok-model-list" aria-label="服务商模型目录" value={models.includes(modelName) ? modelName : ''}
                   disabled={running || probing}
-                  onChange={e => { if (e.target.value) { setModelName(e.target.value); setSaved(false); sessionConfig = null; invalidateResult(); } }}
+                  onChange={e => { if (e.target.value) { setModelName(e.target.value); setSaved(false); sessionConfig = null; setProbeMsg(''); invalidateResult(); } }}
                   className="rounded-lg border px-2.5 py-1.5" style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}>
                   <option value="">从服务商目录选择模型</option>
                   {models.map(id => <option key={id} value={id}>{id}</option>)}

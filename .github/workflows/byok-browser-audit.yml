@@ -35,6 +35,12 @@ jobs:
             sleep 1
           done
           node scripts/byok-browser-audit.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: byok-specialist
+          path: artifacts/byok-audit/
+          retention-days: 7
       - name: Existing visual regression audit
         if: always()
         run: pnpm audit:visual
@@ -45,7 +51,5 @@ jobs:
         if: always()
         with:
           name: byok-browser-audit
-          path: |
-            artifacts/byok-audit/
-            artifacts/ui-audit/
+          path: artifacts/ui-audit/
           retention-days: 7

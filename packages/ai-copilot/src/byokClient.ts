@@ -290,7 +290,6 @@ export async function requestByokSceneCandidate(
         response_format: { type: 'json_object' },
         max_tokens: 2048
       } : {}),
-      temperature: 0.1,
       stream: false,
       messages: [
         { role: 'system', content: buildByokSystemPrompt(schemaHint) },
