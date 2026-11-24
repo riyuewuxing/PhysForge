@@ -42,6 +42,25 @@ describe('V3 tri-mode shell', () => {
       expect(resolvePresentationHotkey(mode, '1')).toBeNull();
     }
   });
+  it('coalesces an entire live formula gesture to one undo step', () => {
+    const get = useClassroomStore.getState;
+    const before = get();
+    const field = before.loadedPlugin.paramSchema.find((item) => item.kind === 'number' && item.max > item.min);
+    if (!field || field.kind !== 'number') throw new Error('No numeric field for gesture test');
+    const initial = before.params[field.key];
+    const last = initial === field.max ? field.min : field.max;
+    before.beginLiveFormula(before.selectedPluginId, field.key);
+    before.updateLiveFormula(before.selectedPluginId, field.key, (field.min + field.max) / 2);
+    before.updateLiveFormula(before.selectedPluginId, field.key, last);
+    before.endLiveFormula(before.selectedPluginId, field.key);
+    expect(get().params[field.key]).toBe(last);
+    get().undoParam();
+    expect(get().params[field.key]).toBe(initial);
+    get().redoParam();
+    expect(get().params[field.key]).toBe(last);
+    get().undoParam();
+    useClassroomStore.setState({ params: before.params, activePresetId: before.activePresetId, scrubTime: before.scrubTime });
+  });
   it('synchronizes story params without resetting physics or creating per-frame undo commands', () => {
     const get = useClassroomStore.getState;
     const before = get();
