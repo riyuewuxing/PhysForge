@@ -3,6 +3,7 @@ import type { InductionParams } from '../../../../simulations/em-induction-doubl
 import { describe, expect, it } from 'vitest';
 import { createWorldMapper, resolvePluginParams } from '@physforge/sim-sdk';
 import { emInductionDoubleRodPlugin, rodDisplayX } from '@physforge/simulations/em-induction-double-rod';
+import {inductionDiagramGeometry,inductionDiagramCurrent,inductionFieldPoints,inductionLoadDimensions} from '../../../../simulations/em-induction-double-rod/diagramGeometry.js';
 import { emBoundedMagneticFieldPlugin } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { createPlanarFlagshipScene, inductionDisplayPoint } from './planarFlagshipScenes.js';
@@ -81,6 +82,59 @@ describe('flagship physical display alignment', () => {
     expect(p.formatFormulas?.(state, params)[0]?.substitutedLatex).toContain('=3.00');
   });
 
+  it('matches both actual rod endpoints and connected unequal-width leads in the flattened view and export',()=>{
+    const p=emInductionDoubleRodPlugin,params=resolvePluginParams<InductionParams>(p.paramSchema,{rodMode:'double',railWidth:1.2,railWidth2:0.6});
+    const state=p.engine.createInitialState(params),g=inductionDiagramGeometry(state,params);
+    expect(g.schematicStep).toBe(true);
+    expect(g.rod1.end.y-g.rod1.start.y).toBeCloseTo(1.2);
+    expect(g.rod2.end.y-g.rod2.start.y).toBeCloseTo(0.6);
+    expect(g.rails).toHaveLength(6);
+    expect(g.rails[0]!.end).toEqual(g.rails[1]!.start);
+    expect(g.rails[1]!.end).toEqual(g.rails[2]!.start);
+    const scene=new THREE.Scene(),driver=createPlanarFlagshipScene(p.meta.id,scene)!;
+    driver.sync(state,params,new Set(['rods','railsAndField','currentFlow']));
+    const camera=new CameraMorphController(p.spatial3D,1280,720);camera.startMorphTo(1,0,0);
+    const mapper=createWorldMapper(alignedCanvasViewport(camera.get2DAlignMetrics()));
+    for(const [index,seg] of [g.rod1,g.rod2].entries()){
+      const rod=scene.getObjectByName('induction-rod-'+(index+1))!;
+      rod.updateMatrixWorld(true);
+      for(const [local,point] of [[0.5,seg.start],[-0.5,seg.end]] as const){
+        const q=camera.project3DToScreen(rod.localToWorld(new THREE.Vector3(0,0,local)));
+        const expected=mapper.toScreen(point.x,point.y);
+        expect(Math.hypot(q.x-expected.x,q.y-expected.y)).toBeLessThan(0.5);
+      }
+    }
+    const rail=scene.getObjectByName('induction-rail-1')!;
+    driver.sync({...state,x2:state.x2+0.1},params,new Set(['rods','railsAndField']));
+    expect(scene.getObjectByName('induction-rail-1')).toBe(rail);
+    const ir=p.exportDiagramIR?.(state,params);
+    expect(ir?.primitives.filter(item=>item.kind==='line')).toHaveLength(8);
+    expect(inductionFieldPoints({...params,magneticB:0})).toHaveLength(0);
+    driver.dispose();
+  });
+  it('shows battery and capacitor terminals without drawing a conductor through their gap',()=>{
+    const p=emInductionDoubleRodPlugin,scene=new THREE.Scene(),driver=createPlanarFlagshipScene(p.meta.id,scene)!;
+    const params=resolvePluginParams<InductionParams>(p.paramSchema,{rodMode:'single',circuitLoad:'battery',railWidth:0.5});
+    const state={...p.engine.createInitialState(params),current:2,qTotalIntegral:3};
+    expect(inductionDiagramCurrent(state,params)).toEqual({current:-2,charge:-3});
+    const layers=new Set(['rods','railsAndField','currentFlow']);
+    driver.sync(state,params,layers);
+    const {halfGap}=inductionLoadDimensions(params.railWidth);
+    const upper=scene.getObjectByName('load-upper-plate') as THREE.Mesh<THREE.BoxGeometry>;
+    const lower=scene.getObjectByName('load-lower-plate') as THREE.Mesh<THREE.BoxGeometry>;
+    expect(upper.position.z).toBeCloseTo(-halfGap);
+    expect(lower.position.z).toBeCloseTo(halfGap);
+    expect(upper.geometry.parameters.width).toBeGreaterThan(lower.geometry.parameters.width);
+    expect(scene.getObjectByName('load-resistor')).toBeUndefined();
+    driver.sync(state,{...params,circuitLoad:'capacitor'},layers);
+    const a=scene.getObjectByName('load-upper-plate') as THREE.Mesh<THREE.BoxGeometry>;
+    const b=scene.getObjectByName('load-lower-plate') as THREE.Mesh<THREE.BoxGeometry>;
+    expect(a.geometry.parameters.width).toBe(b.geometry.parameters.width);
+    driver.sync(state,{...params,circuitLoad:'resistor'},layers);
+    expect(scene.getObjectByName('load-upper-plate')).toBeUndefined();
+    expect(scene.getObjectByName('load-resistor')).toBeDefined();
+    driver.dispose();
+  });
   it('shows only boundary events reported by the particle engine', () => {
     const scene = new THREE.Scene();
     const driver = createPlanarFlagshipScene('builder-composite-em-field', scene);
