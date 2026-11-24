@@ -488,3 +488,6 @@ export function defineSimulationPlugin<TParams extends ParamRecord, TState>(
 }
 
 export * from './visualKit.js';
+
+export * from './v3Types.js';
+export * from './storyRunner.js';
