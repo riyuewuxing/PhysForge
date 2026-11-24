@@ -55,77 +55,334 @@ const paramSchema: readonly ParamFieldSpec<EmDevicesParams>[] = [
 ];
 
 
-const liveFormulas: readonly LiveFormulaSpec[] = [{
-  "id": "velocity-selector",
-  "title": "正交电磁速度选择器（电磁力平衡）",
-  "latex": "v_s=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=eFieldVPerM}{E}}}{\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}}",
-  "bindings": [
-    {
-      "tokenKey": "eFieldVPerM",
-      "paramKey": "eFieldVPerM",
-      "label": "电场强度 E",
-      "unit": "V/m",
-      "min": 10000,
-      "max": 500000,
-      "step": 10000,
-      "precision": 0
-    },
-    {
-      "tokenKey": "bFieldT",
-      "paramKey": "bFieldT",
-      "label": "主磁场 B",
-      "unit": "T",
-      "min": 0.2,
-      "max": 4,
-      "step": 0.1,
-      "precision": 2
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "velocity-selector",
+    "title": "正交电磁速度选择器（电磁力平衡）",
+    "latex": "v_s=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=eFieldVPerM}{E}}}{\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}}",
+    "bindings": [
+      {
+        "tokenKey": "eFieldVPerM",
+        "paramKey": "eFieldVPerM",
+        "label": "电场强度 E",
+        "unit": "V/m",
+        "min": 10000,
+        "max": 500000,
+        "step": 10000,
+        "precision": 0
+      },
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "velocity-selector"
+      ]
     }
-  ]
-},
-{
-  "id": "cyclotron-energy",
-  "title": "经典回旋加速器极限动能（非相对论）",
-  "latex": "E_{\\max}=\\frac{q^2 \\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}^2 \\htmlClass{pf-live-var}{\\htmlData{param=cyclotronRadiusM}{R}}^2}{2m}",
-  "bindings": [
-    {
-      "tokenKey": "bFieldT",
-      "paramKey": "bFieldT",
-      "label": "主磁场 B",
-      "unit": "T",
-      "min": 0.2,
-      "max": 4,
-      "step": 0.1,
-      "precision": 2
-    },
-    {
-      "tokenKey": "cyclotronRadiusM",
-      "paramKey": "cyclotronRadiusM",
-      "label": "D 形盒半径 R_max",
-      "unit": "m",
-      "min": 0.15,
-      "max": 1.2,
-      "step": 0.05,
-      "precision": 2
+  },
+  {
+    "id": "cyclotron-energy",
+    "title": "经典回旋加速器极限动能（非相对论）",
+    "latex": "E_{\\max}=\\frac{q^2 \\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}^2 \\htmlClass{pf-live-var}{\\htmlData{param=cyclotronRadiusM}{R}}^2}{2m}",
+    "bindings": [
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "cyclotronRadiusM",
+        "paramKey": "cyclotronRadiusM",
+        "label": "D 形盒半径 R_max",
+        "unit": "m",
+        "min": 0.15,
+        "max": 1.2,
+        "step": 0.05,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "cyclotron"
+      ]
     }
-  ]
-},
-{
-  "id": "cyclotron-gap-energy",
-  "title": "同步过狭缝的单次能量增量",
-  "latex": "\\Delta K=|q|\\htmlClass{pf-live-var}{\\htmlData{param=cyclotronVoltageV}{U}}",
-  "bindings": [
-    {
-      "tokenKey": "cyclotronVoltageV",
-      "paramKey": "cyclotronVoltageV",
-      "label": "加速高频电压 U",
-      "unit": "V",
-      "min": 5000,
-      "max": 60000,
-      "step": 5000,
-      "precision": 0
+  },
+  {
+    "id": "cyclotron-gap-energy",
+    "title": "同步过狭缝的单次能量增量",
+    "latex": "\\Delta K=|q|\\htmlClass{pf-live-var}{\\htmlData{param=cyclotronVoltageV}{U}}",
+    "bindings": [
+      {
+        "tokenKey": "cyclotronVoltageV",
+        "paramKey": "cyclotronVoltageV",
+        "label": "加速高频电压 U",
+        "unit": "V",
+        "min": 5000,
+        "max": 60000,
+        "step": 5000,
+        "precision": 0
+      }
+    ],
+    "when": {
+      "device": [
+        "cyclotron"
+      ]
     }
-  ]
-}];
+  },
+  {
+    "id": "spectrometer-radius",
+    "title": "质谱仪偏转磁场中的经典回旋半径",
+    "latex": "r=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=massKg}{m}}\\htmlClass{pf-live-var}{\\htmlData{param=particleSpeedMps}{v}}}{\\htmlClass{pf-live-var}{\\htmlData{param=chargeC}{q}}\\htmlClass{pf-live-var}{\\htmlData{param=bDeflectT}{B_2}}}",
+    "bindings": [
+      {
+        "tokenKey": "massKg",
+        "paramKey": "massKg",
+        "label": "粒子质量 m",
+        "unit": "kg",
+        "min": 1e-28,
+        "max": 1e-25,
+        "step": 1e-28,
+        "precision": 3
+      },
+      {
+        "tokenKey": "particleSpeedMps",
+        "paramKey": "particleSpeedMps",
+        "label": "入射/流速 v",
+        "unit": "m/s",
+        "min": 100,
+        "max": 400000,
+        "step": 500,
+        "precision": 0
+      },
+      {
+        "tokenKey": "chargeC",
+        "paramKey": "chargeC",
+        "label": "粒子电荷 q",
+        "unit": "C",
+        "min": 1e-20,
+        "max": 1e-18,
+        "step": 1e-20,
+        "precision": 3
+      },
+      {
+        "tokenKey": "bDeflectT",
+        "paramKey": "bDeflectT",
+        "label": "偏转磁场 B₂",
+        "unit": "T",
+        "min": 0.2,
+        "max": 2,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "mass-spectrometer"
+      ]
+    }
+  },
+  {
+    "id": "hall-voltage",
+    "title": "霍尔电压（载流子电荷 q_c=±e）",
+    "latex": "U_H=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=hallCurrentA}{I}}\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}}{\\htmlClass{pf-live-var}{\\htmlData{param=hallDensityPerM3}{n}}q_c\\htmlClass{pf-live-var}{\\htmlData{param=hallThicknessM}{d}}}",
+    "bindings": [
+      {
+        "tokenKey": "hallCurrentA",
+        "paramKey": "hallCurrentA",
+        "label": "霍尔控制电流 I",
+        "unit": "A",
+        "min": 0.5,
+        "max": 8,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "hallDensityPerM3",
+        "paramKey": "hallDensityPerM3",
+        "label": "载流子浓度 n",
+        "unit": "/m³",
+        "min": 1e+22,
+        "max": 1e+26,
+        "step": 1e+23,
+        "precision": 3
+      },
+      {
+        "tokenKey": "hallThicknessM",
+        "paramKey": "hallThicknessM",
+        "label": "元件厚度 d",
+        "unit": "m",
+        "min": 0.0002,
+        "max": 0.003,
+        "step": 0.0001,
+        "precision": 4
+      }
+    ],
+    "when": {
+      "device": [
+        "hall-sensor"
+      ]
+    }
+  },
+  {
+    "id": "mhd-emf",
+    "title": "磁流体发电机开路电动势",
+    "latex": "\\mathcal E=\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}\\htmlClass{pf-live-var}{\\htmlData{param=mhdDuctWidthM}{d}}\\htmlClass{pf-live-var}{\\htmlData{param=particleSpeedMps}{v}}",
+    "bindings": [
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mhdDuctWidthM",
+        "paramKey": "mhdDuctWidthM",
+        "label": "MHD 通道极间距 d",
+        "unit": "m",
+        "min": 0.1,
+        "max": 1,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "particleSpeedMps",
+        "paramKey": "particleSpeedMps",
+        "label": "入射/流速 v",
+        "unit": "m/s",
+        "min": 100,
+        "max": 400000,
+        "step": 500,
+        "precision": 0
+      }
+    ],
+    "when": {
+      "device": [
+        "mhd-generator"
+      ]
+    }
+  },
+  {
+    "id": "mhd-load-power",
+    "title": "磁流体发电机外负载功率与内阻",
+    "latex": "\\begin{aligned}r&=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=mhdPlasmaResOhmM}{\\rho}}\\htmlClass{pf-live-var}{\\htmlData{param=mhdDuctWidthM}{d}}}{\\htmlClass{pf-live-var}{\\htmlData{param=mhdDuctAreaM2}{S}}}\\\\P_R&=\\frac{\\mathcal E^2\\htmlClass{pf-live-var}{\\htmlData{param=mhdLoadOhm}{R}}}{(R+r)^2}\\end{aligned}",
+    "bindings": [
+      {
+        "tokenKey": "mhdPlasmaResOhmM",
+        "paramKey": "mhdPlasmaResOhmM",
+        "label": "等离子体电阻率 ρ",
+        "unit": "Ω·m",
+        "min": 0.05,
+        "max": 1,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mhdDuctWidthM",
+        "paramKey": "mhdDuctWidthM",
+        "label": "MHD 通道极间距 d",
+        "unit": "m",
+        "min": 0.1,
+        "max": 1,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mhdDuctAreaM2",
+        "paramKey": "mhdDuctAreaM2",
+        "label": "MHD 极板面积 S",
+        "unit": "m²",
+        "min": 0.02,
+        "max": 0.5,
+        "step": 0.02,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mhdLoadOhm",
+        "paramKey": "mhdLoadOhm",
+        "label": "外电路负载电阻 R",
+        "unit": "Ω",
+        "min": 0.1,
+        "max": 3,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "mhd-generator"
+      ]
+    }
+  },
+  {
+    "id": "flowmeter-rate",
+    "title": "电磁流量计的体积流量及感生电压",
+    "latex": "\\begin{aligned}Q&=\\frac{\\pi \\htmlClass{pf-live-var}{\\htmlData{param=flowDiameterM}{D}}^2 \\htmlClass{pf-live-var}{\\htmlData{param=particleSpeedMps}{v}}}{4}\\\\U&=\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}Dv\\end{aligned}",
+    "bindings": [
+      {
+        "tokenKey": "flowDiameterM",
+        "paramKey": "flowDiameterM",
+        "label": "流量计管径 D",
+        "unit": "m",
+        "min": 0.05,
+        "max": 0.6,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "particleSpeedMps",
+        "paramKey": "particleSpeedMps",
+        "label": "入射/流速 v",
+        "unit": "m/s",
+        "min": 100,
+        "max": 400000,
+        "step": 500,
+        "precision": 0
+      },
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "em-flowmeter"
+      ]
+    }
+  }
+];
 export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmDevicesParams, EmDevicesState>({
   meta: {
     id: 'stse-em-devices-suite',
@@ -321,22 +578,29 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     getOrigin: (state) => ({ x: -0.25 + state.particlePos.x * 0.7, y: state.particlePos.y * 0.7 }),
     getVelocity: (state) => ({ x: state.particleVel.x * 0.7, y: state.particleVel.y * 0.7 })
   }],
-  formatFormulas: (state, params) => [
-    {
-      id: 'em-devices-law',
-      label: '电磁科技器件核心公式',
-      latex:
-        params.device === 'hall-sensor'
-          ? 'U_H = \\frac{I B}{n q d}'
-          : params.device === 'mhd-generator'
-            ? 'P = \\left(\\frac{B d v}{R + r}\\right)^2 R'
-            : 'E_{km} = \\frac{q^2 B^2 R_{\\max}^2}{2m}',
-      substitutedLatex:
-        params.device === 'hall-sensor'
-          ? `U_H=${(state.hallVoltageV * 1000).toFixed(3)}\\text{ mV}`
-          : `P=${state.mhdOutputWatt.toFixed(1)}\\text{ W},\\; R_{\\text{int}}=${state.mhdInternalOhm.toFixed(2)}\\ \\Omega`
+  formatFormulas: (state, params) => {
+    const id = 'em-devices-law';
+    switch (params.device) {
+      case 'velocity-selector': return [{ id, label: '正交电磁场速度选择条件',
+        latex: 'v_s=E/B',
+        substitutedLatex: `v_s=${state.selectedSpeed.toExponential(3)}\\text{ m/s}` }];
+      case 'mass-spectrometer': return [{ id, label: '质谱仪偏转磁场回旋半径',
+        latex: 'r=\\frac{mv}{|q|B_2}',
+        substitutedLatex: `r=${state.spectrometerRadiusM.toExponential(3)}\\text{ m}` }];
+      case 'cyclotron': return [{ id, label: '经典回旋加速器极限动能与模型计算值',
+        latex: 'K_{\\max,\\text{经典}}=\\frac{q^2B^2R_{\\max}^2}{2m}',
+        substitutedLatex: `K_{\\text{经典}}=${state.cyclotronAnalyticalEnergyJ.toExponential(3)}\\text{ J},\\quad K_{\\text{模型}}=${state.cyclotronMaxEnergyJ.toExponential(3)}\\text{ J}` }];
+      case 'hall-sensor': return [{ id, label: '霍尔电势差（载流子电荷含符号）',
+        latex: 'U_H=\\frac{IB}{nq_cd}',
+        substitutedLatex: `U_H=${(state.hallVoltageV * 1000).toExponential(3)}\\text{ mV}` }];
+      case 'mhd-generator': return [{ id, label: '磁流体发电机输出功率',
+        latex: 'P_R=\\frac{(Bdv)^2R}{(R+r)^2},\\quad r=\\rho d/S',
+        substitutedLatex: `P_R=${state.mhdOutputWatt.toExponential(3)}\\text{ W},\\quad r=${state.mhdInternalOhm.toFixed(3)}\\ \\Omega` }];
+      case 'em-flowmeter': return [{ id, label: '电磁流量计体积流量与电压',
+        latex: 'Q=\\frac{\\pi D^2v}{4}=\\frac{\\pi DU}{4B}',
+        substitutedLatex: `Q=${state.flowRateM3ps.toExponential(3)}\\text{ m}^3/\\text{s},\\quad U=${state.flowVoltageV.toExponential(3)}\\text{ V}` }];
     }
-  ]
+  }
 }), { liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 3.4, sceneDepthRadius: 4, default3DAzimuthRad: 0.6, default3DPolarRad: 0.9 } });
 
 export default stseEmDevicesSuitePlugin;
