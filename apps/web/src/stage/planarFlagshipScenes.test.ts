@@ -142,7 +142,7 @@ describe('flagship physical display alignment', () => {
     const params = resolvePluginParams<BoundedMagneticParams>(p.paramSchema, { mode: 'circular', family: 'single' });
     const state = p.engine.createInitialState(params);
     const track = state.particles[0]!;
-    const layers = new Set(['trajectory', 'fieldRegion']);
+    const layers = new Set(['trajectory', 'fieldRegion','eventPins']);
     driver?.sync(state, params, layers);
     const exit = scene.getObjectByName('magnetic-exit-' + track.id);
     expect(exit?.visible).toBe(false);
@@ -151,11 +151,32 @@ describe('flagship physical display alignment', () => {
     expect(entry?.visible).toBe(true);
     expect(exit?.visible).toBe(true);
     expect(exit?.position.x).toBe(1);
+    driver?.sync({ ...state, particles: [{ ...track, hasExited: true, exitPoint: { x: 1, y: 0 } }] },params,new Set(['trajectory']));
+    expect(exit?.visible).toBe(false);
     driver?.sync(state, params, new Set());
     expect(exit?.visible).toBe(false);
     driver?.dispose();
   });
 
+  it('shows B1 drift-frame radius and consistent velocity components without a fake neutral-particle drift',()=>{
+    const p=emBoundedMagneticFieldPlugin,params=resolvePluginParams<BoundedMagneticParams>(p.paramSchema,{mode:'crossed-eb',family:'single',electricFieldY:2,magneticFieldZ:1,mass:2,charge:1});
+    const initial=p.engine.createInitialState(params),first=initial.particles[0]!;
+    const track={...first,state:{...first.state,velocity:{x:2,y:1,z:0}}};
+    const state={...initial,particles:[track]},scene=new THREE.Scene(),driver=createPlanarFlagshipScene('builder-composite-em-field',scene)!;
+    const layers=new Set(['larmorCircle','velocityVector','speedDecomposition']);
+    driver.sync(state,params,layers);
+    const center=scene.getObjectByName('magnetic-circle-center-'+track.id)!;
+    expect(center.visible).toBe(true);
+    expect(center.position.x).toBeCloseTo(track.state.position.x+2);
+    expect(scene.getObjectByName('magnetic-radius-'+track.id)?.visible).toBe(true);
+    const drift=scene.getObjectByName('magnetic-drift-'+track.id)!;
+    const rotation=scene.getObjectByName('magnetic-rotation-'+track.id)!;
+    expect(new THREE.Vector3(0,1,0).applyQuaternion(drift.quaternion).x).toBeCloseTo(1);
+    expect(new THREE.Vector3(0,1,0).applyQuaternion(rotation.quaternion).y).toBeCloseTo(1);
+    driver.sync(state,{...params,charge:0},layers);
+    expect(center.visible).toBe(false);expect(drift.visible).toBe(false);expect(rotation.visible).toBe(false);
+    driver.dispose();
+  });
   it('removes the owned Three scene graph on dispose', () => {
     const scene = new THREE.Scene();
     const driver = createPlanarFlagshipScene('em-induction-double-rod', scene);

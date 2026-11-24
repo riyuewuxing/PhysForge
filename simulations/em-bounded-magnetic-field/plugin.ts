@@ -746,7 +746,7 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
       if (
         activeLayers.has('speedDecomposition') &&
         track.id === 0 &&
-        params.mode === 'crossed-eb' &&
+        params.mode === 'crossed-eb' && params.charge !== 0 &&
         Math.abs(params.magneticFieldZ) > 1e-6
       ) {
         const vScale = 22;
@@ -768,6 +768,15 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
 
     // 5. 临界出入界钉点
     if (activeLayers.has('eventPins')) {
+      // Each track carries its own solver-reported entry/exit point; primary event labels remain below.
+      for(const track of state.particles){
+        for(const [position,exit] of [[track.hasEntered?track.entryPoint:undefined,false],[track.hasExited?track.exitPoint:undefined,true]] as const){
+          if(!position)continue;
+          const p=toScreen(position.x,position.y);
+          ctx.save();ctx.strokeStyle=track.color;ctx.lineWidth=2;
+          ctx.beginPath();ctx.arc(p.sx,p.sy,exit?7:5,0,Math.PI*2);ctx.stroke();ctx.restore();
+        }
+      }
       for (const ev of state.events) {
         if (!ev.position) continue;
         const s = toScreen(ev.position.x, ev.position.y);

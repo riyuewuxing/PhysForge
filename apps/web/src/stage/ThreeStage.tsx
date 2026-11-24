@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
+import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial } from './spatialMaterials.js';
@@ -293,6 +294,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const staticGroup = new THREE.Group();
     const trailGroup = new THREE.Group();
     scene.add(staticGroup, trailGroup);
+    const magneticTrail=isMag3d?new DynamicTubeTrail(301,.012,6):null;
+    if(magneticTrail){
+      const mesh=new THREE.Mesh(magneticTrail.geometry,magneticFluxMaterial(0x4ade80));
+      mesh.name='magnetic-particle-trail';mesh.frustumCulled=false;trailGroup.add(mesh);
+    }
     const fusionTrailGeometry = isTokamak3d ? new THREE.BufferGeometry() : null;
     const fusionTrailBuffer = fusionTrailGeometry ? new THREE.BufferAttribute(new Float32Array(261 * 3), 3).setUsage(THREE.DynamicDrawUsage) : null;
     if (fusionTrailGeometry && fusionTrailBuffer) {
@@ -332,7 +338,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const performanceGuard = new PerformanceGuard();
     let lastConfigSig = '';
-    let lastTrailToken = '';
+    let lastMagneticTrail:Magnetic3dState['trail']|null=null;
     let lastSyncedState: unknown;
     let rafId = 0;
     let dirty = true;
@@ -567,22 +573,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
         }
 
-        if (isMag3d) {
-          const trail = (state as Magnetic3dState).trail;
-          const lastPoint = trail[trail.length - 1];
-          const trailToken = lastPoint
-            ? `${trail.length}:${lastPoint.x.toPrecision(6)}:${lastPoint.y.toPrecision(6)}:${lastPoint.z.toPrecision(6)}`
-            : 'empty';
-          if (trailToken !== lastTrailToken) {
-            lastTrailToken = trailToken;
-            disposeGroupChildren(trailGroup);
-            if (trail.length > 1) {
-              const points = trail.map((point) => mapMagneticPoint(point));
-              const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
-              const geometry = new THREE.TubeGeometry(curve, Math.max(24, points.length), 0.012, 5, false);
-              const material = magneticFluxMaterial(0x4ade80);
-              trailGroup.add(new THREE.Mesh(geometry, material));
-            }
+        if(isMag3d&&magneticTrail){
+          const trail=(state as Magnetic3dState).trail;
+          if(trail!==lastMagneticTrail){
+            lastMagneticTrail=trail;magneticTrail.update(trail,magnetic3dDisplayPoint);
           }
         }
       } else {
@@ -772,7 +766,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         </svg>
       </div>}
       {plugin.meta.id === 'stse-em-devices-suite' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">归一化原理示意 · 蓝色箭头 B 垂直剖面 · 定量值见公式区</div>}
-      {plugin.meta.id === 'astro-orbital-mechanics' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">轨道使用 r/r₁ · 天体球体尺寸为示意</div>}
+      {plugin.meta.id === 'astro-orbital-mechanics' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">轨道使用归一化长度 · 天体尺寸为示意{params.mode === 'binary-lagrange' && activeLayers.has('corotatingView') ? ' · 共转系不绘制无逐点时刻的历史轨迹' : params.mode === 'hohmann-transfer' ? ' · 橙色标记为引擎记录的点火' : ''}</div>}
       {vectorsVisible && (
         <div data-testid="three-vector-legend" className={`pointer-events-none absolute ${presentationMode ? 'bottom-3 left-3' : 'left-3 top-3'} z-10 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-950/75 px-3 py-2 text-[11px] text-slate-200 shadow-lg backdrop-blur`}>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-amber-300" />v 速度</span>

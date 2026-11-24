@@ -196,7 +196,7 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
   telemetryChannels: [
     { key: 'z', label: '轴向位置 z', unit: 'm', color: '#38bdf8' },
     { key: 'bMagT', label: '所在处磁感应强度 |B|', unit: 'T', color: '#fbbf24' },
-    { key: 'muCurrent', label: '磁矩绝热不变量 μ', unit: 'J/T', color: '#4ade80' },
+    { key: 'muCurrent', label: '单位质量磁矩 μ/m', unit: 'J/(kg·T)', color: '#4ade80' },
     { key: 'maxMuRelDev', label: 'μ 最大相对波动', unit: '', color: '#f472b6' }
   ],
   sceneSerializer: {
@@ -288,7 +288,7 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
     const crit = computeMirrorLossConeDeg(params);
     ctx.fillText(
       params.mode === 'magnetic-mirror'
-        ? `θ=${params.pitchAngleDeg}° (逃逸锥角 θc=${crit.toFixed(1)}°) | 反射次数=${state.reflectionCount} | μ 波动 ${(state.maxMuRelDev * 100).toFixed(2)}% | ${state.escaped ? '已穿透泄漏' : '稳定磁瓶约束'}`
+        ? `θ=${params.pitchAngleDeg}° (逃逸锥角 θc=${crit.toFixed(1)}°) | 反射次数=${state.reflectionCount} | μ 波动 ${(state.maxMuRelDev * 100).toFixed(2)}% | ${state.escaped ? '已穿过磁喉' : state.reflectionCount > 0 ? '已记录反射，尚未穿过磁喉' : '尚未穿过磁喉'}`
         : `托卡马克螺旋约束 | R₀=${params.majorRadiusM.toFixed(1)}m | 安全因子 q=${params.safetyFactorQ}`,
       18,
       28
