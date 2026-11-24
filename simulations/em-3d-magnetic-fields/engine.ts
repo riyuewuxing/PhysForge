@@ -223,6 +223,41 @@ export function trace3dFieldLines(params: Magnetic3dParams, displaySampling = fa
   }
 
   const R = Math.max(0.2, params.radiusR);
+  if (displaySampling && (params.geometryType === 'straight-wire' || params.geometryType === 'parallel-wires')) {
+    // A finite axial straight segment has azimuthal B. Two parallel axial
+    // conductors have a planar superposition (Bz = 0), including the central null.
+    // Integrate actual ordered field tangents around each conductor and both.
+    const lines: Vec3[][] = [];
+    const h = Math.min(0.04, 0.025 * R);
+    for (const z of [-2, 0, 2]) {
+      const seeds = params.geometryType === 'straight-wire'
+        ? [0.45, 0.85, 1.3].map(r => ({ x: r * R, y: 0, z }))
+        : [
+          ...[-0.8, 0.8].flatMap(x => [0.35, 0.55].map(y => ({ x: x * R, y: y * R, z }))),
+          { x: 0, y: 1.45 * R, z }
+        ];
+      for (const seed of seeds) {
+        const line: Vec3[] = [seed];
+        let point = seed;
+        for (let i = 0; i < Math.ceil(24 * R / h); i++) {
+          const next = stepRK4([point.x, point.y, point.z], 0, h, (_t, xyz) => {
+            const field = evalBiotSavartB({ x: xyz[0]!, y: xyz[1]!, z: xyz[2]! }, params);
+            const magnitude = Math.hypot(field.x, field.y, field.z);
+            return magnitude > 1e-14 ? [field.x / magnitude, field.y / magnitude, field.z / magnitude] : [0, 0, 0];
+          });
+          const candidate = { x: next[0]!, y: next[1]!, z: next[2]! };
+          if (![candidate.x,candidate.y,candidate.z].every(Number.isFinite) ||
+              Math.hypot(candidate.x-point.x,candidate.y-point.y,candidate.z-point.z) < 1e-10) break;
+          line.push(candidate);
+          point = candidate;
+          if (i > 16 && Math.hypot(point.x-seed.x,point.y-seed.y,point.z-seed.z) <= 1.1*h) break;
+          if (Math.hypot(point.x,point.y) > 4*R) break;
+        }
+        if (line.length > 1) lines.push(line);
+      }
+    }
+    return lines;
+  }
   if (params.geometryType === 'finite-solenoid') {
     const seeds: Vec3[] = [];
     for (const radiusRatio of [0.82, 0.86, 0.88]) {
@@ -274,12 +309,14 @@ export function trace3dFieldLines(params: Magnetic3dParams, displaySampling = fa
         const backward = traceDirection(seed, -1, 3.4 * R);
         return [...backward.slice(1).reverse(), seed, ...forward.slice(1)];
       };
-      // The discrete circular-turn model is invariant under quarter turns.
-      // Compute one representative per seed radius, rotate its actual points.
+      // Each turn has 64 quadrature nodes: eighth turns preserve the sampled field.
+      // Add diagonal return planes without recomputing identical physical orbits.
       const lines: Vec3[][] = [];
       for (const ratio of [0.82, 0.86, 0.88, 0.25, 0.55]) {
         const line = sample({ x: ratio * R, y: 0, z: 0 });
-        for (const angle of [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]) {
+        const count = ratio >= 0.82 ? 8 : 4;
+        for (let azimuth = 0; azimuth < count; azimuth++) {
+          const angle = azimuth * 2 * Math.PI / count;
           const c = Math.cos(angle), s = Math.sin(angle);
           lines.push(line.map(q => ({ x: c * q.x - s * q.y, y: s * q.x + c * q.y, z: q.z })));
         }

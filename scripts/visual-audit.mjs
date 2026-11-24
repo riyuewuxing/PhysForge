@@ -852,7 +852,7 @@ async function main() {
         }
         await page.waitForFunction(() => {
           const stage = document.querySelector('[data-testid="three-stage-container"]');
-          return Number(stage?.getAttribute('data-field-line-count')) === 21 && Number(stage?.getAttribute('data-conductor-count')) === 10;
+          return Number(stage?.getAttribute('data-field-line-count')) === 33 && Number(stage?.getAttribute('data-conductor-count')) === 10;
         });
         await page.screenshot({ path: path.join(OUT_DIR, 'E10_04_fullscreen_3d.png') });
         const widget = page.locator('[data-magnetic-axis-widget]');
@@ -877,19 +877,22 @@ async function main() {
         });
         await page.screenshot({path:path.join(OUT_DIR,'H4_E10_zero_current.png')});
         await selectPreset(page,'finite-solenoid-3d');
-        await page.waitForFunction(() => document.querySelector('[data-testid="three-stage-container"]')?.dataset.fieldLineCount === '21');
+        await page.waitForFunction(() => document.querySelector('[data-testid="three-stage-container"]')?.dataset.fieldLineCount === '33');
         const vectors = page.getByLabel('速度、磁场与洛伦兹加速度',{exact:true});
         if (!await vectors.isVisible()) await page.getByText('更多参数与图层',{exact:false}).first().click();
         await vectors.uncheck();
         await page.waitForFunction(() => {
           const d = document.querySelector('[data-testid="three-stage-container"]')?.dataset;
-          return d?.renderedVelocityArrow === 'false' && d.renderedForceArrow === 'false' && d.renderedFieldArrow === 'false' && d.fieldLineCount === '21';
+          return d?.renderedVelocityArrow === 'false' && d.renderedForceArrow === 'false' && d.renderedFieldArrow === 'false' && d.fieldLineCount === '33';
         });
         await vectors.check();
         await page.waitForFunction(() => document.querySelector('[data-testid="three-stage-container"]')?.dataset.renderedVelocityArrow === 'true');
         await page.locator('#param-geometryType').selectOption('parallel-wires');
-        await page.waitForFunction(() => document.querySelector('[data-testid="three-stage-container"]')?.dataset.conductorCount === '2');
+        await page.waitForFunction(() => { const d=document.querySelector('[data-testid="three-stage-container"]')?.dataset; return d?.conductorCount==='2' && d.fieldLineCount==='15'; });
         await page.screenshot({path:path.join(OUT_DIR,'H4_E10_parallel_wires.png')});
+        await page.locator('#param-geometryType').selectOption('straight-wire');
+        await page.waitForFunction(() => { const d=document.querySelector('[data-testid="three-stage-container"]')?.dataset; return d?.conductorCount==='1' && d.fieldLineCount==='9'; });
+        await page.screenshot({path:path.join(OUT_DIR,'H4_E10_straight_wire.png')});
         await selectPreset(page,'finite-solenoid-3d');
       }
 

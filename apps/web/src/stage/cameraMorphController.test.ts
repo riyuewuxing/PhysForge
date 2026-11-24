@@ -3,10 +3,45 @@ import { describe, expect, it } from 'vitest';
 import { createWorldMapper, type Spatial3DFlattenSpec } from '@physforge/sim-sdk';
 import { CameraMorphController, alignedCanvasViewport, flattenPoint, liftPoint, project3DToScreen, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 
+import { magnetic3dDefaultVisibleHeight, magnetic3dDisplayPoint } from '@physforge/simulations/em-3d-magnetic-fields';
+import { buildMagneticConductorPaths, type Magnetic3dParams } from '@physforge/simulations/em-3d-magnetic-fields/engine';
+import { applyFluxEndpointFade } from './spatialMaterials.js';
+
 const spec = (flattenPlane: Spatial3DFlattenSpec['flattenPlane']): Spatial3DFlattenSpec => ({
   flattenPlane, defaultVisibleHeight: 8, sceneDepthRadius: 5, default3DAzimuthRad: 0.7, default3DPolarRad: 1.1
 });
 describe('3D perspective to orthographic morph', () => {
+  it('fits actual conductor projections at E10 default orbit, including finite wires', () => {
+    for(const [w,h] of [[1440,900],[1024,768]] as const) {
+      for(const geometryType of ['finite-solenoid','parallel-wires'] as const) {
+        const p:Magnetic3dParams={geometryType,radiusR:.7,currentI:2,solenoidTurns:10,qOverM:1.5,vPerp:.8,vParallel:.9,uniformBz:2};
+        const c=new CameraMorphController({...spec('xy'),defaultVisibleHeight:magnetic3dDefaultVisibleHeight(p,w/h),default3DAzimuthRad:.46,default3DPolarRad:1.3},w,h);
+        const points=buildMagneticConductorPaths(p).flatMap(path=>path.flatMap(segment=>[segment.a,segment.b])).map(v=>c.project3DToScreen(magnetic3dDisplayPoint(v)));
+        const minX=Math.min(...points.map(v=>v.x)),maxX=Math.max(...points.map(v=>v.x));
+        expect(minX).toBeGreaterThan(.1*w); expect(maxX).toBeLessThan(.9*w);
+        expect(points.every(v=>v.visible)).toBe(true);
+        if(geometryType==='finite-solenoid') expect((maxX-minX)/w).toBeGreaterThan(.32);
+      }
+    }
+  });
+
+  it('fades display-domain endpoints without changing positions or fading closed flux loops', () => {
+    const curve=new THREE.LineCurve3(new THREE.Vector3(-1,0,0),new THREE.Vector3(1,0,0));
+    const tube=new THREE.TubeGeometry(curve,20,.01,5,false);
+    const before=Array.from(tube.getAttribute('position').array);
+    applyFluxEndpointFade(tube,false);
+    const color=tube.getAttribute('color'),uv=tube.getAttribute('uv');
+    for(let i=0;i<uv.count;i++){
+      const u=uv.getX(i);
+      if(u===0||u===1) expect(color.getW(i)).toBe(0);
+      if(u>.2&&u<.8) expect(color.getW(i)).toBe(1);
+    }
+    expect(Array.from(tube.getAttribute('position').array)).toEqual(before);
+    applyFluxEndpointFade(tube,true);
+    expect(Array.from(tube.getAttribute('color').array).every(v=>v===1)).toBe(true);
+    tube.dispose();
+  });
+
   it('separates measured E10 vector labels even when their previous fixed spacing missed a CSS gap', () => {
     const input = [
       { x: 966.89, y: 444.58, width: 23.77, height: 28.39 },

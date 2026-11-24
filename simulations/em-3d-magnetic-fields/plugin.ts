@@ -17,6 +17,21 @@ export function magnetic3dDisplayPoint(p: { x: number; y: number; z: number }) {
   return { x: p.z, y: p.y, z: -p.x };
 }
 
+/** Default camera height fits the actual conductor dimensions, not particle state.
+ * Geometry changes can refit, but particle steps and ordinary orbit never do. */
+export function magnetic3dDefaultVisibleHeight(params: Magnetic3dParams, aspect: number): number {
+  const R = Math.max(0.2, params.radiusR);
+  const a = Math.max(0.6, Math.min(2.4, aspect));
+  switch (params.geometryType) {
+    case 'finite-solenoid': return Math.max(5 * R, 3.6 * R / (0.72 * a));
+    case 'straight-wire':
+    case 'parallel-wires': return Math.max(5.8, 9.2 / (0.68 * a));
+    case 'single-loop':
+    case 'helmholtz-coil': return Math.max(4.8 * R, 3.2 * R / (0.72 * a));
+    case 'uniform-helix': return Math.max(4.8, 4.5 / a);
+  }
+}
+
 const paramSchema: readonly ParamFieldSpec<Magnetic3dParams>[] = [
   {
     key: 'geometryType',

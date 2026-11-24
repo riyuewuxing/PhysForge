@@ -7,10 +7,10 @@ import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type Simulat
 import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
-import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow } from './spatialMaterials.js';
+import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
-import { magnetic3dDisplayPoint } from '@physforge/simulations/em-3d-magnetic-fields';
+import { magnetic3dDisplayPoint, magnetic3dDefaultVisibleHeight } from '@physforge/simulations/em-3d-magnetic-fields';
 import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
 import {
   buildMagneticConductorPaths,
@@ -127,8 +127,23 @@ function updateVectorArrow(
   arrow.position.copy(origin);
   arrow.setDirection(vector.clone().multiplyScalar(1 / magnitude));
   const length = Math.max(minLength, Math.min(maxLength, magnitude * lengthScale));
-  arrow.setLength(length, Math.min(0.22, length * 0.32), Math.min(0.13, length * 0.2));
+  const headLength = Math.min(0.22, length * 0.32);
+  arrow.setLength(length, headLength, Math.min(0.13, length * 0.2));
+  const shaft = arrow.getObjectByName('magnetic-vector-shaft');
+  if (shaft) {
+    const stem = Math.max(0.001, length-headLength);
+    shaft.scale.y = stem; shaft.position.y = stem/2;
+  }
   return length;
+}
+
+/** Solid arrow shaft in the same local +Y direction as ArrowHelper's cone. */
+function addMagneticVectorShaft(arrow: THREE.ArrowHelper, color: number): void {
+  arrow.line.visible=false;
+  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,1,10),
+    new THREE.MeshBasicMaterial({color,toneMapped:false}));
+  shaft.name='magnetic-vector-shaft'; arrow.add(shaft);
+  if (arrow.cone.material instanceof THREE.MeshBasicMaterial) arrow.cone.material.toneMapped=false;
 }
 
 class PerformanceGuard {
@@ -161,12 +176,12 @@ class PerformanceGuard {
 
 }
 
-function createRadialGrid(): THREE.Group {
+function createRadialGrid(magnetic = false): THREE.Group {
   const grid = new THREE.Group();
   const xLimit = 7;
-  const nearZ = -2;
+  const nearZ = magnetic ? -5 : -2;
   const farZ = 8;
-  for (let index = 0; index <= 16; index++) {
+  for (let index = 0; index <= (magnetic ? 21 : 16); index++) {
     const z = nearZ + index * 0.625;
     const points = [
       new THREE.Vector3(-xLimit, -0.025, z),
@@ -175,7 +190,7 @@ function createRadialGrid(): THREE.Group {
     const material = new THREE.LineBasicMaterial({
       color: 0x64748b,
       transparent: true,
-      opacity: 0.035 + 0.065 * Math.exp(-Math.abs(z) * 0.2)
+      opacity: (magnetic ? 0.055 : 0.035) + (magnetic ? 0.09 : 0.065) * Math.exp(-Math.abs(z) * 0.2)
     });
     grid.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
   }
@@ -188,7 +203,7 @@ function createRadialGrid(): THREE.Group {
     const material = new THREE.LineBasicMaterial({
       color: 0x475569,
       transparent: true,
-      opacity: 0.075
+      opacity: magnetic ? 0.13 : 0.075
     });
     grid.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
   }
@@ -262,11 +277,15 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const width = Math.max(320, container.clientWidth);
     const height = Math.max(240, container.clientHeight);
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#0b0f17');
+    const magneticBackdrop=isMag3d?createMagneticBackdrop():null;
+    scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
     scene.fog = new THREE.FogExp2('#0b0f17', 0.085);
 
     const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
-    const morph = spatial ? new CameraMorphController(spatial, width, height) : null;
+    const initialMagneticParams = isMag3d ? (getFrameParams?.() ?? params) as Magnetic3dParams : null;
+    let framedMagneticGeometry = initialMagneticParams?.geometryType;
+    const framedSpec = spatial && initialMagneticParams ? { ...spatial, defaultVisibleHeight: magnetic3dDefaultVisibleHeight(initialMagneticParams,width/height) } : spatial;
+    const morph = framedSpec ? new CameraMorphController(framedSpec, width, height) : null;
     const camera = morph?.perspCamera ?? new THREE.PerspectiveCamera(48, width / height, 0.1, 200);
     if (!morph) {
       camera.position.set(isMag3d ? 2.2 : 3.4, isMag3d ? 1.9 : 2.5, isMag3d ? 2.8 : 4.4);
@@ -317,11 +336,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     if (!morph || !initialViewport) controls.update();
     else controls.enabled = false;
 
-    const grid = createRadialGrid();
-    const ambient = new THREE.HemisphereLight(0xc7e7ff, 0x101826, 1.05);
-    const keyLight = new THREE.DirectionalLight(0xffe1b1, 3.1);
+    const grid = createRadialGrid(isMag3d);
+    const ambient = new THREE.HemisphereLight(0xc7e7ff, 0x101826, isMag3d ? 0.72 : 1.05);
+    const keyLight = new THREE.DirectionalLight(0xffe1b1, isMag3d ? 2.0 : 3.1);
     keyLight.position.set(3.5, 5, 4);
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 2.2);
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, isMag3d ? 1.45 : 2.2);
     rimLight.position.set(-4, 2, -3);
     scene.add(grid, ambient, keyLight, rimLight);
     const planarDriver = createPlanarFlagshipScene(plugin.meta.id, scene) ?? createRemainingFlagshipScene(plugin.meta.id, scene);
@@ -331,6 +350,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const trailGroup = new THREE.Group();
     scene.add(staticGroup, trailGroup);
     const magneticTrail=isMag3d?new DynamicTubeTrail(301,.012,6):null;
+    const magneticTrailHalo=isMag3d?new DynamicTubeTrail(301,.029,6):null;
+    if(magneticTrailHalo){
+      const mesh=new THREE.Mesh(magneticTrailHalo.geometry,new THREE.MeshBasicMaterial({color:0xff9b38,toneMapped:false,transparent:true,opacity:.20,depthWrite:false,blending:THREE.AdditiveBlending}));
+      mesh.name='magnetic-particle-trail-halo';mesh.frustumCulled=false;trailGroup.add(mesh);
+    }
     if(magneticTrail){
       const mesh=new THREE.Mesh(magneticTrail.geometry,new THREE.MeshBasicMaterial({ color: 0xffcb75, toneMapped: false }));
       mesh.name='magnetic-particle-trail';mesh.frustumCulled=false;trailGroup.add(mesh);
@@ -348,7 +372,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const sphereMat = new THREE.MeshStandardMaterial({
       color: isMag3d ? 0xffe8bd : 0x86efac,
       emissive: isMag3d ? 0xffb64f : 0x16a34a,
-      emissiveIntensity: 1.4,
+      emissiveIntensity: isMag3d ? 2.4 : 1.4,
       metalness: 0.2,
       roughness: 0.28
     });
@@ -364,6 +388,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     velocityArrow.name = 'particle-velocity-vector';
     lorentzForceArrow.name = 'particle-lorentz-force-vector';
     magneticFieldArrow.name = 'particle-magnetic-field-vector';
+    if (isMag3d) {
+      addMagneticVectorShaft(velocityArrow,0xffd36b);
+      addMagneticVectorShaft(lorentzForceArrow,0xfb7185);
+      addMagneticVectorShaft(magneticFieldArrow,0x54d7ed);
+    }
     velocityArrow.visible = false;
     lorentzForceArrow.visible = false;
     magneticFieldArrow.visible = false;
@@ -461,9 +490,18 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
         if (isMag3d) {
           const magneticParams = curParams as Magnetic3dParams;
-          const particleRadius = magneticParams.geometryType === 'finite-solenoid'
-            ? 0.055 * Math.max(0.2, magneticParams.radiusR)
-            : 0.12;
+          if (framedMagneticGeometry !== magneticParams.geometryType) {
+            framedMagneticGeometry = magneticParams.geometryType;
+            if (morph && morph.getMorphT() === 0 && !morph.isAnimating) {
+              morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
+              const aspect=(container.clientWidth || width)/(container.clientHeight || height);
+              controls.target.set(0,0,0);
+              morph.setFraming(controls.target,magnetic3dDefaultVisibleHeight(magneticParams,aspect));
+              controls.update();
+            }
+          }
+          const particleRadius = magneticParams.geometryType === 'uniform-helix'
+            ? 0.055 : Math.max(0.025, 0.055 * Math.max(0.2, magneticParams.radiusR));
           marker.scale.setScalar(particleRadius);
           const particleState = state as Magnetic3dState;
           const vectorsVisible = layers.has('handednessTriad');
@@ -557,6 +595,15 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               const radius = isMag3d ? Math.min(0.055, 0.063 * Math.max(0.2, magneticParams.radiusR)) : 0.026;
               const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), radius, isMag3d ? 14 : 10, closed);
               staticGroup.add(new THREE.Mesh(tubeGeo, isMag3d ? coilCopperMaterial() : brushedCopperMaterial()));
+              if (isMag3d && !closed) {
+                // The visual finite conductor is a solid cylinder, not an open pipe.
+                for (const [end, adjacent] of [[points[0]!,points[1]!],[points.at(-1)!,points.at(-2)!]]) {
+                  const cap=new THREE.Mesh(new THREE.CircleGeometry(radius,16),coilCopperMaterial());
+                  cap.position.copy(end);
+                  cap.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),end.clone().sub(adjacent).normalize());
+                  staticGroup.add(cap);
+                }
+              }
               renderedConductorCount++;
             }
           }
@@ -578,10 +625,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               if (isMag3d && closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
               const divisions = isMag3d ? Math.min(512, Math.max(32, points.length)) : Math.max(32, points.length * 2);
-              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d ? 0.0048 : 0.012, 5, closed);
-              staticGroup.add(new THREE.Mesh(geometry, isMag3d ? coilFluxCoreMaterial() : magneticFluxMaterial()));
+              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d ? 0.006 : 0.012, 5, closed);
+              if (isMag3d) applyFluxEndpointFade(geometry,closed);
+              staticGroup.add(new THREE.Mesh(geometry, isMag3d ? coilFluxCoreMaterial(true) : magneticFluxMaterial()));
               if (isMag3d) {
-                const haloGeometry = new THREE.TubeGeometry(curve, divisions, 0.014, 5, closed);
+                const haloGeometry = new THREE.TubeGeometry(curve, divisions, 0.024, 5, closed);
+                applyFluxEndpointFade(haloGeometry,closed);
                 staticGroup.add(new THREE.Mesh(haloGeometry, coilFluxHaloMaterial()));
                 // Tangent of an actual ordered field sample, not a decorative direction.
                 if (renderedFieldCount % 4 === 0) {
@@ -608,6 +657,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           const trail=(state as Magnetic3dState).trail;
           if(trail!==lastMagneticTrail){
             lastMagneticTrail=trail;magneticTrail.update(trail,magnetic3dDisplayPoint);
+            magneticTrailHalo?.update(trail,magnetic3dDisplayPoint);
           }
         }
       } else {
@@ -647,6 +697,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         sphereGeo.dispose();
         sphereMat.dispose();
         disposeObjectResources(grid);
+        magneticBackdrop?.dispose();
         environmentTarget.dispose();
         pmremGenerator.dispose();
         disposeObjectResources(roomEnvironment);

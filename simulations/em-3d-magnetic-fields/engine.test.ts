@@ -47,7 +47,7 @@ describe('em-3d-magnetic-fields Biot-Savart & 3D Boris invariants (E10)', () => 
   it('samples the bore and outer solenoid field with real tangent directions and caches independently of particle parameters', () => {
     const params = getPreset(2);
     const lines = getMagneticDisplayFieldLines(params);
-    expect(lines).toHaveLength(21);
+    expect(lines).toHaveLength(33);
     expect(getMagneticDisplayFieldLines({ ...params, qOverM: params.qOverM + 0.5, vPerp: 0 })).toBe(lines);
     for (const line of lines) {
       expect(line.length).toBeGreaterThan(1);
@@ -61,6 +61,30 @@ describe('em-3d-magnetic-fields Biot-Savart & 3D Boris invariants (E10)', () => 
     }
     expect(getMagneticDisplayFieldLines({ ...params, currentI: 0 })).not.toBe(lines);
   }, 15000);
+
+  it('traces closed planar field lines around straight and paired finite wires with real tangents', () => {
+    for (const geometryType of ['straight-wire','parallel-wires'] as const) {
+      const params={...getPreset(2),geometryType};
+      const lines=getMagneticDisplayFieldLines(params);
+      expect(lines).toHaveLength(geometryType==='straight-wire'?9:15);
+      for (const line of lines) {
+        const seed=line[0]!, end=line.at(-1)!;
+        expect(Math.hypot(end.x-seed.x,end.y-seed.y)).toBeLessThan(0.03*params.radiusR);
+        expect(line.length).toBeGreaterThan(30);
+        for (let i=1;i<line.length;i+=7) {
+          const a=line[i-1]!,b=line[i]!;
+          expect(b.z).toBeCloseTo(seed.z,10);
+          const B=evalBiotSavartB({x:(a.x+b.x)/2,y:(a.y+b.y)/2,z:seed.z},params);
+          const dx=b.x-a.x,dy=b.y-a.y;
+          expect((dx*B.x+dy*B.y)/(Math.hypot(dx,dy)*Math.hypot(B.x,B.y))).toBeGreaterThan(.995);
+        }
+      }
+      if(geometryType==='parallel-wires'){
+        const nullField=evalBiotSavartB({x:0,y:0,z:0},params);
+        expect(Math.hypot(nullField.x,nullField.y,nullField.z)).toBeLessThan(1e-12);
+      }
+    }
+  });
 
   it('keeps the two parallel conductors continuous and physically separate', () => {
     const paths = buildMagneticConductorPaths({ ...getPreset(2), geometryType: 'parallel-wires' });
