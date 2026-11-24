@@ -56,6 +56,15 @@ const paramSchema: readonly ParamFieldSpec<EmDevicesParams>[] = [
 ];
 
 
+/** KaTeX-friendly notation for microscopic and macroscopic SI readouts. */
+function scientificLatex(value: number): string {
+  if (!Number.isFinite(value)) return '\\text{未定义}';
+  if (value === 0) return '0';
+  const [mantissa, exponent] = value.toExponential(3).split('e');
+  if (mantissa === undefined || exponent === undefined) return '\\text{未定义}';
+  return Number(exponent) === 0 ? mantissa : `${mantissa}\\times10^{${Number(exponent)}}`;
+}
+
 const liveFormulas: readonly LiveFormulaSpec[] = [
   {
     "id": "velocity-selector",
@@ -496,11 +505,11 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ctx.font = 'bold 14px ui-sans-serif, system-ui';
     const summaryMap: Record<EmDevicesParams['device'], string> = {
       'velocity-selector': `速度选择器 v_sel = E/B = ${state.selectedSpeed.toFixed(0)} m/s`,
-      'mass-spectrometer': `质谱仪偏转半径 R = ${state.spectrometerRadiusM.toExponential(3)} m`,
+      'mass-spectrometer': `质谱仪偏转半径 R = ${scientificLatex(state.spectrometerRadiusM)} m`,
       'cyclotron': `回旋出射动能 E_km = ${(state.cyclotronMaxEnergyJ / 1.602176634e-13).toFixed(3)} MeV (解析相对差 ${state.cyclotronRelError.toExponential(2)})`,
       'hall-sensor': `霍尔电压 U_H = ${(state.hallVoltageV * 1000).toFixed(4)} mV (${params.carrierType === 'electron' ? '电子负极性' : '空穴正极性'})`,
       'mhd-generator': `MHD E=${state.mhdEmfV.toFixed(1)}V | r=${state.mhdInternalOhm.toFixed(2)}Ω | P=${state.mhdOutputWatt.toFixed(0)}W (峰值 ${state.mhdMaxPowerWatt.toFixed(0)}W)`,
-      'em-flowmeter': `电磁流量计 Q = ${state.flowRateM3ps.toExponential(3)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
+      'em-flowmeter': `电磁流量计 Q = ${scientificLatex(state.flowRateM3ps)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
     };
     ctx.fillText(summaryMap[params.device], 20, 30);
     ctx.restore();
@@ -584,22 +593,22 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     switch (params.device) {
       case 'velocity-selector': return [{ id, label: '正交电磁场速度选择条件',
         latex: 'v_s=E/B',
-        substitutedLatex: `v_s=${state.selectedSpeed.toExponential(3)}\\text{ m/s}` }];
+        substitutedLatex: `v_s=${scientificLatex(state.selectedSpeed)}\\text{ m/s}` }];
       case 'mass-spectrometer': return [{ id, label: '质谱仪偏转磁场回旋半径',
         latex: 'r=\\frac{mv}{|q|B_2}',
         substitutedLatex: `r=${state.spectrometerRadiusM.toExponential(3)}\\text{ m}` }];
       case 'cyclotron': return [{ id, label: '经典回旋加速器极限动能与模型计算值',
         latex: 'K_{\\max,\\text{经典}}=\\frac{q^2B^2R_{\\max}^2}{2m}',
-        substitutedLatex: `K_{\\text{经典}}=${state.cyclotronAnalyticalEnergyJ.toExponential(3)}\\text{ J},\\quad K_{\\text{模型}}=${state.cyclotronMaxEnergyJ.toExponential(3)}\\text{ J}` }];
+        substitutedLatex: `\\begin{aligned}K_{\\text{经典}}&=${scientificLatex(state.cyclotronAnalyticalEnergyJ)}\\text{ J},\\\\K_{\\text{模型}}&=${scientificLatex(state.cyclotronMaxEnergyJ)}\\text{ J}\\end{aligned}` }];
       case 'hall-sensor': return [{ id, label: '霍尔电势差（载流子电荷含符号）',
         latex: 'U_H=\\frac{IB}{nq_cd}',
-        substitutedLatex: `U_H=${(state.hallVoltageV * 1000).toExponential(3)}\\text{ mV}` }];
+        substitutedLatex: `U_H=${scientificLatex(state.hallVoltageV * 1000)}\\text{ mV}` }];
       case 'mhd-generator': return [{ id, label: '磁流体发电机输出功率',
         latex: 'P_R=\\frac{(Bdv)^2R}{(R+r)^2},\\quad r=\\rho d/S',
-        substitutedLatex: `P_R=${state.mhdOutputWatt.toExponential(3)}\\text{ W},\\quad r=${state.mhdInternalOhm.toFixed(3)}\\ \\Omega` }];
+        substitutedLatex: `\\begin{aligned}P_R&=${scientificLatex(state.mhdOutputWatt)}\\text{ W},\\\\r&=${state.mhdInternalOhm.toFixed(3)}\\ \\Omega\\end{aligned}` }];
       case 'em-flowmeter': return [{ id, label: '电磁流量计体积流量与电压',
         latex: 'Q=\\frac{\\pi D^2v}{4}=\\frac{\\pi DU}{4B}',
-        substitutedLatex: `Q=${state.flowRateM3ps.toExponential(3)}\\text{ m}^3/\\text{s},\\quad U=${state.flowVoltageV.toExponential(3)}\\text{ V}` }];
+        substitutedLatex: `\\begin{aligned}Q&=${state.flowRateM3ps.toExponential(3)}\\text{ m}^3/\\text{s},\\\\U&=${scientificLatex(state.flowVoltageV)}\\text{ V}\\end{aligned}` }];
     }
   }
 }), { storyDecks: emDevicesStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 3.4, sceneDepthRadius: 4, default3DAzimuthRad: 0.6, default3DPolarRad: 0.9 } });
