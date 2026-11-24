@@ -431,6 +431,92 @@ async function dragRangeTo(page, slider, target) {
   await page.waitForTimeout(250);
 }
 
+async function auditV3Morph(page, origin, screenshot) {
+  const cases = [
+    ['E10', 'em-3d-magnetic-fields'], ['E04', 'em-induction-double-rod'],
+    ['B1', 'builder-composite-em-field'], ['S02', 'stse-em-devices-suite'],
+    ['S01', 'stse-tokamak-magnetic-mirror'], ['M10', 'astro-orbital-mechanics']
+  ];
+  const report = [];
+  for (const [code, id] of cases) {
+    const url = new URL(origin);
+    url.searchParams.set('model', id);
+    await page.goto(url.toString(), { waitUntil: 'networkidle' });
+    await page.waitForFunction(modelId => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === modelId, id, { timeout: 20000 });
+    const enter = page.getByTestId('btn-fullscreen-speech');
+    if (await enter.isVisible()) await enter.click();
+    const toggle = page.getByTestId('btn-view-3d-fullscreen');
+    await toggle.waitFor({ state: 'visible' });
+    if ((await toggle.textContent())?.includes('3D 空间')) await toggle.click();
+    const spatial = page.getByTestId('three-stage-container');
+    await spatial.waitFor({ state: 'visible', timeout: 20000 });
+    await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0, null, { timeout: 15000 });
+    if (screenshot) await screenshot(code + '_3d');
+    // Capture a genuine intermediate frame, not just the button label.
+    await toggle.click();
+    await page.waitForFunction(() => {
+      const v = Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN');
+      return v > 0 && v < 1;
+    }, null, { timeout: 10000 });
+    await spatial.waitFor({ state: 'detached', timeout: 15000 });
+    await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
+    if (screenshot) await screenshot(code + '_flat');
+    await toggle.click();
+    await spatial.waitFor({ state: 'visible', timeout: 20000 });
+    await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0, null, { timeout: 15000 });
+    await toggle.click();
+    await spatial.waitFor({ state: 'detached', timeout: 15000 });
+    await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
+    report.push({ model: id, intermediateMorph: true, flatCanvas: true, roundTrip: true });
+  }
+  return report;
+}
+
+async function auditV3StoryAndFormula(page, origin, screenshot) {
+  const url = new URL(origin);
+  url.searchParams.set('model', 'em-induction-double-rod');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === 'em-induction-double-rod', null, { timeout: 20000 });
+  await page.getByTestId('btn-fullscreen-speech').click();
+  await page.getByTestId('btn-toggle-story').click();
+  await page.getByTestId('story-caption').waitFor({ state: 'visible' });
+  await page.getByTestId('btn-story-next').click();
+  await page.getByTestId('story-freeze-badge').waitFor({ state: 'visible', timeout: 45000 });
+  const freeze = await page.getByTestId('story-freeze-badge').textContent();
+  if (!freeze?.includes('接近共速')) throw new Error('Unexpected E04 physics freeze: ' + freeze);
+  if (await page.locator('[data-testid="fullscreen-controls"] [aria-label="运行"]').count() !== 1) throw new Error('Auto-freeze did not pause simulation');
+  if (screenshot) await screenshot('E04_story_freeze');
+  await page.getByTestId('btn-stage-blackout').click();
+  await page.getByTestId('story-blackout').waitFor({ state: 'visible' });
+  await page.getByRole('button', { name: /解除黑屏/ }).click();
+  await page.getByTestId('story-blackout').waitFor({ state: 'detached' });
+  await page.getByTestId('btn-exit-fullscreen-speech').click();
+
+  url.searchParams.set('model', 'stse-em-devices-suite');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === 'stse-em-devices-suite', null, { timeout: 20000 });
+  const slider = page.getByTestId('param-slider-eFieldVPerM');
+  const before = Number(await slider.inputValue());
+  await page.getByTestId('btn-fullscreen-speech').click();
+  const token = page.locator('[data-testid="live-formula-velocity-selector"] [data-param="eFieldVPerM"]').first();
+  await token.waitFor({ state: 'visible' });
+  await token.evaluate(node => { window.__PF_V3_AUDIT_TOKEN = node; });
+  const rect = await token.boundingBox();
+  if (!rect) throw new Error('Formula token missing bounds');
+  const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+  await page.mouse.move(x, y); await page.mouse.down();
+  try {
+    await page.mouse.move(x + (before > 300000 ? -60 : 60), y, { steps: 8 });
+    await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'visible' });
+    if (!await token.evaluate(node => node === window.__PF_V3_AUDIT_TOKEN)) throw new Error('KaTeX node identity changed during drag');
+    if (screenshot) await screenshot('S02_live_formula_drag');
+  } finally { await page.mouse.up(); }
+  await page.getByTestId('btn-exit-fullscreen-speech').click();
+  const after = Number(await slider.inputValue());
+  if (!Number.isFinite(after) || after === before) throw new Error('Formula drag did not change actual slider');
+  return { freeze, formulaBefore: before, formulaAfter: after, tokenIdentityPreserved: true };
+}
+
 async function main() {
   if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
     throw new Error('apps/web/dist/index.html is missing. Run `pnpm build` before the visual audit.');
@@ -702,7 +788,9 @@ async function main() {
 
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
-    const summary = { report, waveBCoordinateReport, waveCInteractionReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
+    const v3StoryFormulaReport = await auditV3StoryAndFormula(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
+    const summary = { report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
