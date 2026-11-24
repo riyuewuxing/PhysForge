@@ -14,6 +14,12 @@ import {
   type RefineLoopResult
 } from '@physforge/ai-copilot';
 
+import { AiVaultPanel } from './AiVaultPanel.js';
+import {
+  getActiveAiConfig, setActiveAiConfig, isAiOnlineEnabled, setAiOnlineEnabled, lockAiVault
+} from '../security/aiVaultSession.js';
+import type { AiVaultProfile } from '../security/aiVault.js';
+
 interface AiCopilotDrawerProps {
   onApplyScene: (modelId: string, presetId: string | undefined, params: ParamRecord) => void;
   onClose: () => void;
@@ -33,18 +39,14 @@ const BYOK_PROVIDERS = [
   { name: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-4-hydrogen' }
 ] as const;
 
-// Explicitly saved configuration survives drawer remounts, not page reloads.
-// Never write credentials to browser storage, URLs, Vault, or logs.
-let sessionConfig: ByokConfig | null = null;
-let sessionOnlineEnabled = false;
 
 export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, onClose }) => {
   const [prompt, setPrompt] = useState<string>(SAMPLE_PROMPTS[0]);
-  const [useByok, setUseByok] = useState(() => sessionOnlineEnabled && sessionConfig !== null);
-  const [baseUrl, setBaseUrl] = useState(() => sessionConfig?.baseUrl ?? BYOK_PROVIDERS[0].baseUrl);
-  const [apiKey, setApiKey] = useState(() => sessionConfig?.apiKey ?? '');
-  const [modelName, setModelName] = useState(() => sessionConfig?.model ?? BYOK_PROVIDERS[0].model);
-  const [saved, setSaved] = useState(() => sessionConfig !== null);
+  const [useByok, setUseByok] = useState(() => isAiOnlineEnabled() && getActiveAiConfig() !== null);
+  const [baseUrl, setBaseUrl] = useState(() => getActiveAiConfig()?.baseUrl ?? BYOK_PROVIDERS[0].baseUrl);
+  const [apiKey, setApiKey] = useState(() => getActiveAiConfig()?.apiKey ?? '');
+  const [modelName, setModelName] = useState(() => getActiveAiConfig()?.model ?? BYOK_PROVIDERS[0].model);
+  const [saved, setSaved] = useState(() => getActiveAiConfig() !== null);
   const [models, setModels] = useState<string[]>([]);
   const activeRequest = useRef<AbortController | null>(null);
   useEffect(() => () => activeRequest.current?.abort(), []);
@@ -57,24 +59,41 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
   }, [result]);
 
   const [probing, setProbing] = useState(false);
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const [vaultLockRevision, setVaultLockRevision] = useState(0);
+  const busy = running || probing || vaultBusy;
   const [probeMsg, setProbeMsg] = useState('');
 
   const invalidateResult = () => { setResult(null); setStatusMsg(''); };
   const clearKey = () => {
-    sessionConfig = null;
-    sessionOnlineEnabled = false;
+    setActiveAiConfig(null);
+    setAiOnlineEnabled(false);
     setSaved(false);
     setApiKey('');
     setModels([]);
     setProbeMsg('');
     invalidateResult();
   };
+  const clearAllKeys = () => {
+    lockAiVault();
+    clearKey();
+    setUseByok(false);
+    setVaultLockRevision(n => n + 1);
+  };
+  const activateVaultProfile = (profile: AiVaultProfile) => {
+    const config = { baseUrl: profile.baseUrl, apiKey: profile.apiKey, model: profile.model };
+    setActiveAiConfig(config);
+    setAiOnlineEnabled(true);
+    setBaseUrl(config.baseUrl); setApiKey(config.apiKey); setModelName(config.model);
+    setUseByok(true); setSaved(true); setModels([]); setProbeMsg('');
+    invalidateResult();
+  };
   const config = { baseUrl, apiKey, model: modelName };
   const handleSave = () => {
     try {
       validateByokConfig(config);
-      sessionConfig = { baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: modelName.trim() };
-      sessionOnlineEnabled = true;
+      setActiveAiConfig({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: modelName.trim() });
+      setAiOnlineEnabled(true);
       setSaved(true);
       setProbeMsg('配置已保存至本页面内存；刷新或关闭网页后清除。');
     } catch (error) {
@@ -174,7 +193,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
               <button
                 key={sp}
                 type="button"
-                disabled={running || probing}
+                disabled={busy}
                 onClick={() => { setPrompt(sp); invalidateResult(); }}
                 className="text-xs px-2.5 py-1 rounded-lg border cursor-pointer hover:opacity-90"
                 style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
@@ -186,7 +205,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
           <textarea
             data-testid="ai-prompt-input"
             value={prompt}
-            disabled={running || probing}
+            disabled={busy}
             onChange={(e) => { setPrompt(e.target.value); invalidateResult(); }}
             rows={3}
             className="w-full rounded-xl border p-3 text-sm"
@@ -195,12 +214,14 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
           />
         </div>
 
+        <AiVaultPanel busy={running || probing} onActivate={activateVaultProfile}
+          onLock={clearAllKeys} onBusy={setVaultBusy} lockRevision={vaultLockRevision} />
         <div className="rounded-xl border p-3 space-y-2" style={{ borderColor: 'var(--pf-border)' }}>
           <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-            <input data-testid="byok-enabled" type="checkbox" checked={useByok} disabled={running || probing} onChange={(e) => { setUseByok(e.target.checked); sessionOnlineEnabled = e.target.checked; setProbeMsg(''); invalidateResult(); }} />
+            <input data-testid="byok-enabled" type="checkbox" checked={useByok} disabled={busy} onChange={(e) => { setUseByok(e.target.checked); setAiOnlineEnabled(e.target.checked); setProbeMsg(''); invalidateResult(); }} />
             <span>启用可选 BYOK 外部大模型 API（Generate-then-Refine 3 轮自修正；默认离线规则引擎）</span>
           </label>
-          {!useByok && saved && <div className="flex items-center justify-between gap-2 text-xs opacity-80"><span>在线模式已关闭；本页内存仍保留已保存的密钥。</span><button type="button" data-testid="btn-clear-offline-byok" onClick={clearKey} disabled={running || probing} className="rounded-lg border px-2 py-1" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button></div>}
+          {!useByok && saved && <div className="flex items-center justify-between gap-2 text-xs opacity-80"><span>在线模式已关闭；本页内存仍保留已保存的密钥。</span><button type="button" data-testid="btn-clear-offline-byok" onClick={clearAllKeys} disabled={busy} className="rounded-lg border px-2 py-1" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button></div>}
           {useByok && (
             <div className="grid grid-cols-1 gap-2 pt-1 text-xs">
               <div className="flex flex-wrap gap-1.5">
@@ -208,11 +229,11 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
                   <button
                     key={provider.name}
                     type="button"
-                    disabled={running || probing}
+                    disabled={busy}
                     onClick={() => {
                       if (baseUrl.trim().replace(/\/+$/, '') !== provider.baseUrl) clearKey();
                       setSaved(false);
-                      sessionConfig = null;
+                      setActiveAiConfig(null);
                       invalidateResult();
                       setBaseUrl(provider.baseUrl);
                       setModelName(provider.model);
@@ -230,7 +251,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
                 data-testid="byok-base-url"
                 aria-label="API Base URL"
                 value={baseUrl}
-                disabled={running || probing}
+                disabled={busy}
                 onChange={(e) => { setBaseUrl(e.target.value); clearKey(); }}
                 placeholder="OpenAI Compatible Base URL"
                 className="rounded-lg border px-2.5 py-1.5"
@@ -242,8 +263,8 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
                 autoComplete="off"
                 type="password"
                 value={apiKey}
-                disabled={running || probing}
-                onChange={(e) => { setApiKey(e.target.value); setProbeMsg(''); setModels([]); setSaved(false); sessionConfig = null; invalidateResult(); }}
+                disabled={busy}
+                onChange={(e) => { setApiKey(e.target.value); setProbeMsg(''); setModels([]); setSaved(false); setActiveAiConfig(null); invalidateResult(); }}
                 placeholder="API Key（仅内存，随请求发送至所填服务商）"
                 className="rounded-lg border px-2.5 py-1.5"
                 style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
@@ -252,8 +273,8 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
                 data-testid="byok-model"
                 aria-label="模型名称"
                 value={modelName}
-                disabled={running || probing}
-                onChange={(e) => { setModelName(e.target.value); setProbeMsg(''); setSaved(false); sessionConfig = null; invalidateResult(); }}
+                disabled={busy}
+                onChange={(e) => { setModelName(e.target.value); setProbeMsg(''); setSaved(false); setActiveAiConfig(null); invalidateResult(); }}
                 placeholder="Model name"
                 className="rounded-lg border px-2.5 py-1.5"
                 style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
@@ -261,33 +282,33 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
 
               <div className="flex flex-wrap gap-1.5">
                 {baseUrl.trim().replace(/\/+$/, '') === BYOK_PROVIDERS[0].baseUrl && ['deepseek-flash', 'deepseek-v4-pro'].map(id => (
-                  <button key={id} type="button" disabled={running || probing}
-                    onClick={() => { setModelName(id); setSaved(false); sessionConfig = null; setProbeMsg(''); invalidateResult(); }}
+                  <button key={id} type="button" disabled={busy}
+                    onClick={() => { setModelName(id); setSaved(false); setActiveAiConfig(null); setProbeMsg(''); invalidateResult(); }}
                     className="rounded-lg border px-2 py-1" style={{ borderColor: 'var(--pf-border)' }}>{id}</button>
                 ))}
               </div>
               {models.length > 0 && (
                 <select data-testid="byok-model-list" aria-label="服务商模型目录" value={models.includes(modelName) ? modelName : ''}
-                  disabled={running || probing}
-                  onChange={e => { if (e.target.value) { setModelName(e.target.value); setSaved(false); sessionConfig = null; setProbeMsg(''); invalidateResult(); } }}
+                  disabled={busy}
+                  onChange={e => { if (e.target.value) { setModelName(e.target.value); setSaved(false); setActiveAiConfig(null); setProbeMsg(''); invalidateResult(); } }}
                   className="rounded-lg border px-2.5 py-1.5" style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}>
                   <option value="">从服务商目录选择模型</option>
                   {models.map(id => <option key={id} value={id}>{id}</option>)}
                 </select>
               )}
               <div className="flex flex-wrap gap-2">
-                <button type="button" data-testid="btn-save-byok" disabled={running || probing || !apiKey.trim()}
+                <button type="button" data-testid="btn-save-byok" disabled={busy || !apiKey.trim()}
                   onClick={handleSave} className="rounded-lg border px-2.5 py-1.5 disabled:opacity-50" style={{ borderColor: 'var(--pf-border)' }}>
                   {saved ? '本页面已保存' : '保存至本页面内存'}
                 </button>
-                <button type="button" data-testid="btn-clear-byok" disabled={running || probing}
-                  onClick={clearKey} className="rounded-lg border px-2.5 py-1.5 disabled:opacity-50" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button>
+                <button type="button" data-testid="btn-clear-byok" disabled={busy}
+                  onClick={clearAllKeys} className="rounded-lg border px-2.5 py-1.5 disabled:opacity-50" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button>
               </div>
-              <div className="opacity-80">保存仅在本次页面有效，刷新后需重新输入。测试模型目录不代表模型能生成；运行建模将发送题干及模型 Schema，最多 3 次付费请求。</div>
+              <div className="opacity-80">手动保存仅在本次页面有效；长期使用请导入上方加密保险库。测试模型目录不代表模型能生成；运行建模将发送题干及模型 Schema，最多 3 次付费请求。</div>
               <button
                 type="button"
                 data-testid="btn-test-byok-connection"
-                disabled={running || probing || !baseUrl.trim() || !apiKey.trim()}
+                disabled={busy || !baseUrl.trim() || !apiKey.trim()}
                 onClick={handleProbe}
                 className="rounded-lg border px-2.5 py-1.5 disabled:opacity-50"
                 style={{ borderColor: 'var(--pf-border)' }}
@@ -302,7 +323,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
         <button
           type="button"
           data-testid="btn-run-ai-copilot"
-          disabled={running || probing || !prompt.trim() || (useByok && (!apiKey.trim() || !baseUrl.trim() || !modelName.trim()))}
+          disabled={busy || !prompt.trim() || (useByok && (!apiKey.trim() || !baseUrl.trim() || !modelName.trim()))}
           onClick={handleRun}
           className="pf-touch-target inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-sm bg-sky-500 text-slate-950 cursor-pointer disabled:opacity-50"
         >
