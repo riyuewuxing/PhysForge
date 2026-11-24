@@ -97,6 +97,7 @@ const ClassroomApp: React.FC = () => {
   const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
   const liveFormulas = isSimulationPluginV3(plugin) ? plugin.liveFormulas ?? [] : [];
   const storyNavigationRef = useRef<StoryNavigation | null>(null);
+  const morphProgressRef = useRef(store.view3dEnabled ? 0 : 1);
   const decks = useMemo(() => getStoryDecks(plugin), [plugin]);
   const storyDeck = store.appMode === 'story' ? decks.find((deck) => deck.id === store.activeDeckId) : undefined;
   const has3dView =
@@ -134,7 +135,7 @@ const ClassroomApp: React.FC = () => {
       const beat = deck?.beats[state.storyBeatIndex];
       const observables = Object.fromEntries(Object.entries(state.telemetry.observables).filter(([, value]) => Number.isFinite(value)));
       return { modelId: p.meta.id, modelTitle: p.meta.title, appMode: state.appMode,
-        isPlaying: state.isPlaying, isBlackout: state.isBlackout, morphT: state.view3dEnabled ? 0 : 1,
+        isPlaying: state.isPlaying, isBlackout: state.isBlackout, morphT: morphProgressRef.current,
         simTime: state.telemetry.t, deckId: deck?.id ?? null, beatIndex: deck ? state.storyBeatIndex : -1,
         totalBeats: deck?.beats.length ?? 0, currentCaption: beat?.caption ?? '', speakerNotes: beat?.speakerNotes ?? '',
         nextBeatTitle: deck?.beats[state.storyBeatIndex + 1]?.title ?? null, observables, params: state.params,
@@ -726,6 +727,8 @@ const ClassroomApp: React.FC = () => {
             onStoryPlaying={store.setPlaying}
             onStoryFbd={(enabled) => { if (useClassroomStore.getState().autoFbdEnabled !== enabled) store.toggleAutoFbd(); }}
             onStoryFrame={store.setActiveFrameId}
+            onMorphProgress={(progress) => { morphProgressRef.current = progress; }}
+            onWebGLFallback={() => useClassroomStore.getState().setView3d(false)}
           />
 
           {store.fullscreenPresentation && (
