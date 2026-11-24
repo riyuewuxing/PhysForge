@@ -21,6 +21,23 @@ export function orbitDisplayXY(x: number, y: number, t: number, corotating: bool
   return { x: x * c - y * sin, y: x * sin + y * c };
 }
 
+/** Engine-reported Hohmann impulses only; no synthetic burn positions or timing. */
+export function orbitalBurnMarkers(state:AstroOrbitalState,params:AstroOrbitalParams){
+  if(params.mode!=='hohmann-transfer')return [];
+  return state.events.flatMap(event=>{
+    const index=event.id==='hohmann-burn-1'?1:event.id.startsWith('hohmann-burn-2-')?2:0;
+    const pos=event.position;
+    const deltaV=index===1?event.metrics?.deltaV1SI:event.metrics?.deltaV2SI;
+    if(!index||!pos||deltaV===undefined||!Number.isFinite(deltaV))return [];
+    const radius=Math.hypot(pos.x,pos.y);
+    if(radius<1e-10)return [];
+    return [{index,x:pos.x,y:pos.y,deltaV,dx:-pos.y/radius*Math.sign(deltaV),dy:pos.x/radius*Math.sign(deltaV)}];
+  });
+}
+export function orbitDisplayVelocity(state:AstroOrbitalState,corotating:boolean){
+  return orbitDisplayXY(state.vxNorm+(corotating?state.yNorm:0),state.vyNorm-(corotating?state.xNorm:0),state.tNorm,corotating);
+}
+
 const paramSchema: readonly ParamFieldSpec<AstroOrbitalParams>[] = [
   {
     key: 'mode',
@@ -193,7 +210,7 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
       getOrigin: (s, p, layers) => orbitDisplayXY(s.xNorm, s.yNorm, s.tNorm, p.mode === 'binary-lagrange' && (layers?.has('corotatingView') ?? false)),
       getVelocity: (s, p, layers) => {
         const rotating = p.mode === 'binary-lagrange' && (layers?.has('corotatingView') ?? false);
-        return orbitDisplayXY(s.vxNorm + (rotating ? s.yNorm : 0), s.vyNorm - (rotating ? s.xNorm : 0), s.tNorm, rotating);
+        return orbitDisplayVelocity(s,rotating);
       }
     }
   ],
@@ -234,38 +251,25 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     }),
     importScene: (dsl) => dsl.params as Partial<AstroOrbitalParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'circle', cx: 0, cy: 0, r: 0.24, fill: true },
-      {
-        kind: 'polyline',
-        points: state.trailNorm.map((p) => ({ x: p.x, y: p.y })),
-        dashed: true
-      },
-      { kind: 'circle', cx: state.xNorm, cy: state.yNorm, r: 0.1 },
-      {
-        kind: 'arrow',
-        x1: state.xNorm,
-        y1: state.yNorm,
-        x2: state.xNorm + state.vxNorm * 0.45,
-        y2: state.yNorm + state.vyNorm * 0.45,
-        label: 'v'
-      },
-      {
-        kind: 'mathLabel',
-        x: 2.8,
-        y: 2.3,
-        text: `r/r_1=${Math.hypot(state.xNorm, state.yNorm).toFixed(2)},\\; v_0/v_{\\text{circ}}=${params.v0Ratio.toFixed(2)}`,
-        align: 'end'
-      }
-    ];
-    return {
-      width: 720,
-      height: 460,
-      viewBox: { minX: -3.2, minY: -2.6, maxX: 3.2, maxY: 2.6 },
-      title: '天体轨道动力学配图',
-      primitives
-    };
+  exportDiagramIR: (state,params)=>{
+    // Export the inertial view: history points carry no individual time stamps.
+    const primitives:DiagramPrimitive[]=[];
+    if(params.mode==='binary-lagrange'){
+      const q=params.massRatioQ,c=Math.cos(state.tNorm),sin=Math.sin(state.tNorm);
+      primitives.push({kind:'circle',cx:-q*c,cy:-q*sin,r:0.13,fill:true},
+        {kind:'circle',cx:(1-q)*c,cy:(1-q)*sin,r:0.065,fill:true});
+    }else primitives.push({kind:'circle',cx:0,cy:0,r:0.13,fill:true});
+    if(params.mode==='hohmann-transfer')primitives.push({kind:'circle',cx:0,cy:0,r:1,dashed:true},
+      {kind:'circle',cx:0,cy:0,r:params.r2OverR1,dashed:true});
+    primitives.push({kind:'polyline',points:state.trailNorm,dashed:true},
+      {kind:'circle',cx:state.xNorm,cy:state.yNorm,r:0.05,fill:true},
+      {kind:'arrow',x1:state.xNorm,y1:state.yNorm,x2:state.xNorm+state.vxNorm*0.45,y2:state.yNorm+state.vyNorm*0.45,label:'v'});
+    for(const burn of orbitalBurnMarkers(state,params))primitives.push(
+      {kind:'circle',cx:burn.x,cy:burn.y,r:0.08},
+      {kind:'arrow',x1:burn.x,y1:burn.y,x2:burn.x+0.45*burn.dx,y2:burn.y+0.45*burn.dy,label:'Δv'+burn.index});
+    const extent=Math.max(2.8,params.mode==='hohmann-transfer'?params.r2OverR1+0.6:0,Math.hypot(state.xNorm,state.yNorm)+0.6);
+    return {width:720,height:460,viewBox:{minX:-extent,minY:-extent,maxX:extent,maxY:extent},
+      title:'天体轨道动力学配图（惯性系，归一化长度）',primitives};
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const baseExtent = params.mode === 'hohmann-transfer' ? params.r2OverR1 + 0.6 : 2.6;
@@ -348,7 +352,8 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
         ctx.setLineDash([]);
       }
 
-      if (state.trailNorm.length > 1) {
+      // Historical points do not include their own times: omit the trail in a true rotating view.
+      if (!useCorotating && state.trailNorm.length > 1) {
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -388,6 +393,23 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
       ctx.beginPath();
       ctx.arc(sat.px, sat.py, markerRadius(6), 0, Math.PI * 2);
       ctx.fill();
+      const drawArrow=(x:number,y:number,dx:number,dy:number,color:string,label:string)=>{
+        const a=m.toScreen(x,y),b=m.toScreen(x+dx,y+dy),angle=Math.atan2(b.y-a.y,b.x-a.x);
+        if(Math.hypot(dx,dy)<1e-8)return;
+        ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+        ctx.moveTo(b.x-8*Math.cos(angle-.45),b.y-8*Math.sin(angle-.45));ctx.lineTo(b.x,b.y);
+        ctx.lineTo(b.x-8*Math.cos(angle+.45),b.y-8*Math.sin(angle+.45));ctx.stroke();
+        ctx.font='12px sans-serif';ctx.fillText(label,b.x+4,b.y-4);
+      };
+      const v=orbitDisplayVelocity(state,useCorotating),position=orbitDisplayXY(state.xNorm,state.yNorm,state.tNorm,useCorotating);
+      drawArrow(position.x,position.y,v.x*.35,v.y*.35,'#4ade80','v');
+      for(const burn of orbitalBurnMarkers(state,params)){
+        const p=m.toScreen(burn.x,burn.y);ctx.strokeStyle='#fb923c';ctx.lineWidth=2;
+        ctx.beginPath();ctx.arc(p.x,p.y,markerRadius(8),0,Math.PI*2);ctx.stroke();
+        drawArrow(burn.x,burn.y,burn.dx*.45,burn.dy*.45,'#fb923c','Δv'+burn.index);
+      }
+      if(useCorotating){ctx.font='12px sans-serif';ctx.fillStyle='#94a3b8';ctx.fillText('共转系：历史轨迹缺少逐点时刻，故不绘制',18,28);}
+
     }
 
     ctx.restore();
@@ -403,6 +425,9 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     const items = [{ id: 'orbit-state', label: '归一化二体轨道状态',
       latex: 'r/r_1,\\quad v/v_{c1},\\quad e',
       substitutedLatex: `\\begin{aligned}r/r_1&=${(obs.rNorm ?? 0).toFixed(4)}\\\\v/v_{c1}&=${(obs.speedNorm ?? 0).toFixed(4)}\\\\e&=${(obs.eccentricity ?? 0).toFixed(4)}\\end{aligned}` }];
+    items.push({id:'orbit-integrals',label:'归一化比机械能与比角动量',
+      latex:'\\varepsilon=\\tfrac12v^2-1/r,\\quad h_z=xv_y-yv_x',
+      substitutedLatex: `\\begin{aligned}\\varepsilon&=${(obs.energyNorm??0).toFixed(5)}\\\\h_z&=${(obs.angularMomNorm??0).toFixed(5)}\\end{aligned}`});
     if (params.mode === 'hohmann-transfer') {
       const dv2 = state.hohmannPhase === 'circularized'
         ? `${(state.deltaV2SI / 1000).toFixed(3)}\\text{ km/s}` : '\\text{待点火}';
