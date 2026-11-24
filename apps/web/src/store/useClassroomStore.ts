@@ -408,11 +408,13 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
         : [...s.activeLayers, layerId]
     })),
 
-  setPlaying: (playing) => set({ isPlaying: playing, scrubTime: playing ? null : get().scrubTime }),
+  setPlaying: (playing) => set((s) => ({ isPlaying: playing, scrubTime: playing ? null : s.scrubTime,
+    autoFreezeBadge: playing ? null : s.autoFreezeBadge })),
   togglePlaying: () =>
     set((s) => ({
       isPlaying: !s.isPlaying,
-      scrubTime: !s.isPlaying ? null : s.scrubTime
+      scrubTime: !s.isPlaying ? null : s.scrubTime,
+      autoFreezeBadge: !s.isPlaying ? null : s.autoFreezeBadge
     })),
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   toggleStrobe: () => set((s) => ({ strobeEnabled: !s.strobeEnabled })),
