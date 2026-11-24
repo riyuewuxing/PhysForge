@@ -29,10 +29,12 @@ interface ThreeStageProps {
   readonly plugin: SimulationPluginV2<ParamRecord, unknown>;
   readonly simState: unknown;
   readonly simStateRef?: React.RefObject<unknown>;
+  readonly getFrameState?: () => unknown;
   readonly params: ParamRecord;
   readonly getFrameParams?: () => ParamRecord;
   readonly storyCameraCommandRef?: React.RefObject<StorySpatialCommand | null>;
   readonly activeLayers: ReadonlySet<string>;
+  readonly getFrameLayers?: () => ReadonlySet<string>;
   readonly presentationMode?: boolean;
   readonly morphTarget?: 0 | 1;
   readonly initialFlatViewport?: Viewport;
@@ -172,8 +174,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   plugin,
   simState,
   simStateRef,
+  getFrameState,
   params,
   activeLayers,
+  getFrameLayers,
   presentationMode = false,
   morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback
 }) => {
@@ -193,10 +197,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
+    // A null result from the owner-checked getter is intentional; never fall back to a previous model.
+    const readState = () => getFrameState ? getFrameState() : simStateRef ? simStateRef.current : latestStateRef.current;
+    const readLayers = () => getFrameLayers?.() ?? latestLayersRef.current;
     if (plugin.mountThreeScene) {
       const bridge = plugin.mountThreeScene(container);
       bridgeRef.current = bridge;
-      bridge.sync(simState, params, activeLayers);
+      const state = readState();
+      if (state !== null && state !== undefined) bridge.sync(state, getFrameParams?.() ?? params, readLayers());
 
       const ro = new ResizeObserver(() => {
         if (!containerRef.current) return;
@@ -423,7 +431,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       curParams: ParamRecord,
       layers: ReadonlySet<string>
     ) => {
-      if (!state) return;
+      if (state === null || state === undefined) return;
       if (planarDriver) { planarDriver.sync(state, curParams, layers); dirty = true; return; }
       if (isMag3d || isTokamak3d) {
         const magState = state as Magnetic3dState | TokamakMirrorState;
@@ -631,8 +639,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     resizeObserver.observe(container);
 
     let lastSyncedParams = getFrameParams?.() ?? latestParamsRef.current;
-    let lastSyncedLayers = latestLayersRef.current;
-    syncState(simStateRef?.current ?? latestStateRef.current, lastSyncedParams, lastSyncedLayers);
+    let lastSyncedLayers = readLayers();
+    syncState(readState(), lastSyncedParams, lastSyncedLayers);
 
     const renderLoop = (now: number) => {
       rafId = requestAnimationFrame(renderLoop);
@@ -674,10 +682,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         controls.update();
       }
 
-      const latestState = simStateRef?.current ?? latestStateRef.current;
+      const latestState = readState();
       const frameParams = getFrameParams?.() ?? latestParamsRef.current;
-      const frameLayers = latestLayersRef.current;
-      if (latestState && (latestState !== lastSyncedState || frameParams !== lastSyncedParams || frameLayers !== lastSyncedLayers)) {
+      const frameLayers = readLayers();
+      if (latestState !== null && latestState !== undefined && (latestState !== lastSyncedState || frameParams !== lastSyncedParams || frameLayers !== lastSyncedLayers)) {
         syncState(latestState, frameParams, frameLayers);
         lastSyncedState = latestState;
         lastSyncedParams = frameParams;
@@ -704,7 +712,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       lastRenderTime = now;
       dirty = false;
     };
-    lastSyncedState = simStateRef?.current ?? latestStateRef.current;
+    lastSyncedState = readState();
     rafId = requestAnimationFrame(renderLoop);
 
     return () => {
@@ -715,7 +723,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   }, [plugin]);
 
   useEffect(() => {
-    if (plugin.mountThreeScene) bridgeRef.current?.sync(simState, params, activeLayers);
+    if (plugin.mountThreeScene && simState !== null && simState !== undefined) bridgeRef.current?.sync(simState, params, activeLayers);
   }, [plugin, simState, params, activeLayers]);
 
   const magnetic3dState = plugin.meta.id === 'em-3d-magnetic-fields'
