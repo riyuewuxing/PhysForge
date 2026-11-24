@@ -1,3 +1,4 @@
+import { verticalCircularStoryDecks } from './storyDecks.js';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { verticalCircularPresets } from './presets.js';
@@ -28,7 +29,7 @@ const paramSchema: readonly ParamFieldSpec<VerticalCircularParams>[] = [
   { key: 'startAngleDeg', kind: 'number', label: '半球微扰起始角 θ₀', unit: '°', min: 0.5, max: 30, step: 0.5, defaultValue: 0.5 }
 ];
 
-export const mechVerticalCircularPlugin = defineSimulationPlugin<
+export const mechVerticalCircularPlugin = Object.assign(defineSimulationPlugin<
   VerticalCircularParams,
   VerticalCircularState
 >({
@@ -158,6 +159,6 @@ export const mechVerticalCircularPlugin = defineSimulationPlugin<
     ctx.fill();
     ctx.restore();
   }
-});
+}), { storyDecks: verticalCircularStoryDecks });
 
 export default mechVerticalCircularPlugin;

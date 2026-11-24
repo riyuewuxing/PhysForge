@@ -1,3 +1,4 @@
+import { inductionStoryDecks } from './storyDecks.js';
 import {
   createWorldMapper,
   defineSimulationPlugin,
@@ -193,7 +194,7 @@ const paramSchema: readonly ParamFieldSpec<InductionParams>[] = [
   }
 ];
 
-export const emInductionDoubleRodPlugin = defineSimulationPlugin<
+export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
   InductionParams,
   InductionState
 >({
@@ -565,6 +566,6 @@ export const emInductionDoubleRodPlugin = defineSimulationPlugin<
 
     resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
   }
-});
+}), { storyDecks: inductionStoryDecks });
 
 export default emInductionDoubleRodPlugin;

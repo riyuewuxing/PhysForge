@@ -1,3 +1,4 @@
+import { magneticStoryDecks } from './storyDecks.js';
 import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
   checkInvariants,
@@ -157,7 +158,7 @@ function drawArrow(
   ctx.restore();
 }
 
-export const emBoundedMagneticFieldPlugin = defineSimulationPlugin<
+export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin<
   BoundedMagneticParams,
   BoundedMagneticState
 >({
@@ -683,6 +684,6 @@ export const emBoundedMagneticFieldPlugin = defineSimulationPlugin<
       }
     }
   }
-});
+}), { storyDecks: magneticStoryDecks });
 
 export default emBoundedMagneticFieldPlugin;
