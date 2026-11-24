@@ -8,10 +8,13 @@
 
 ## 一、当前权威状态快照（Snapshot）
 
-* **最近更新时间**：`2026-11-24 16:05 +08:00`
+* **最近更新时间**：`2026-11-24 16:56 +08:00`
 * **Git 基线与工作区状态**：
-  * 远端仓库：`https://github.com/riyuewuxing/PhysForge` ｜ 当前分支：**`main`** ｜ Wave A–C 代码基线：**`b5e3ae4`**（`feat(v2.0.2): complete Wave A UI parity, Wave B 43-unit coordinates, and Wave C interaction coverage`，83 文件已提交，随本交接一并推送 `origin/main`）。
-  * **工作区状态**：仅剩两份交接日志待提交并推送，推送后工作区洁净。
+  * 远端仓库：`https://github.com/riyuewuxing/PhysForge` ｜ 当前分支：**`main`** ｜ 代码基线：**`b5e3ae4`**（V2.0.2 Wave A–C 全量代码，已合入）→ 上轮文档基线 **`211907b`**（本轮将同步推送 V3.0 顶层方案与写手施工单）。
+  * **协作新模式**：本地总控（Antigravity）负责拆单、拉取 PR 分支、本地全量门禁与多模态实机看图终审合入；云端写手（**GPT-6.2 Sol via GitHub PR**）负责在短分支（单 PR ≤ 12 文件）施工并过 CI。
+* **阶段里程碑现状**：
+  * **Wave A / B / C（V2.0.2）— 已验收封板并合入 `origin/main@211907b`**。
+  * **V3.0（Spatial Stage 空间演说引擎）— 施工方案已对齐落盘待派单**：已落盘 [V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md](file:///d:/project%20code/44-PhysForge/docs/v3-specs/V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md) 并重构 [V3_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V3_WRITER_CONSTRUCTION_PLAN.md)（收口为“37 单元壳层普惠 + 精选 6 旗舰 3D 压平切镜 + 零新增 npm 依赖 + Step 0 & Wave 1–4 原子 PR 路线”）。
 * **阶段里程碑现状**：
   * **Wave A（UI 1:1 视觉复刻与交互修复）— 已验收通过**：48px 顶栏/右三键/折叠左侧轨/272px 悬浮面板/渐变双曲线示波器/全屏 3D `RoomEnvironment` + 闭合磁感线 + `CSS2DRenderer` 矢量标签/E04·B3·B2·E10 标尺全部达标。
   * **Wave B（全仓 43 单元坐标系统一）— 已验收通过**：`PluginDefaultViewSpec` + `createWorldMapper`/`screenToWorld`/`resolveInitialCameraTransform` 落地，`43/43` 迁移对齐，`coordinate-alignment.test.ts` 全预设通过，实机六模型缩放/平移/复位全部通过。
@@ -23,17 +26,20 @@
   * 构建与单文件导出：`VITE_BASE_PATH=/PhysForge/` 构建成功，主入口 `index-LTu6VV9G.js` **`830.45 kB`（`gzip: 259.78 kB < 350 KB`）**；`modern-rutherford-bohr.html` 单文件导出 `2009.8 KB`。
   * 实机浏览器审计与看图：`visual-audit.mjs`（Wave A 4 场景 + Wave B 6 模型 + Wave C 3 交互场景，0 错误/0 外网请求）与 `e2e-subpath-and-export.mjs`（`directWebmBytes: 10458, pngBytes: 111632, drawerWebmBytes: 134308`）均 PASS；总控已多模态查验更新后的 `WaveC_Projectile_Frame.png`、`WaveC_Astro_FBD.png`、`WaveC_Rutherford_Handle.png` 及 `E04/B3/B2/E10` 截图，确认无重叠遮挡。
 * **遗留风险与环境避坑**：
-  * **在线 AI（BYOK）待检查联调**：用户明确要求推送 GitHub 后检查一下在线 AI（`@physforge/ai-copilot` / BYOK 真实服务商联调此前仅测离线与 mock 容错，未做真实在线端点实测）。
-  * **Wave C 物理边界记录**：`em-ac-generator-rms` 受力采用正方形线圈近似且 `coil-frame` 为平动中心；`thermo-piston-gas-laws` 仅对有活塞/水银柱几何的模式输出矢量（`multi-stroke-pump` 无机械活塞位置状态，按反作弊原则返回 `[]`）；`stse-gravity-assist-rendezvous`、`thermo-cycles-kinetic-md` 等未强凑力矢，全仓真实受力模型为 `30/43`（满足 `≥ 30` 门禁）。
-  * **Windows 工具链注意**：本机 Corepack `pnpm` 因 DNS 无法连接 `registry.npmjs.org` 会失败，需直接调用仓库本地二进制；PowerShell 5.1 不支持 `&&`/`||`；Playwright 脚本与 `.git/` 写入（`.git/index.lock`）需 `BypassSandbox: true`。
-  * **非阻塞告警**：Vite 仍有 `[INEFFECTIVE_DYNAMIC_IMPORT]`（`em-induction-double-rod`）与大延迟 chunk 告警。
+  * **Step 0 在线 AI（BYOK）真缺口已定位**：核查发现 [byokClient.ts](file:///d:/project%20code/44-PhysForge/packages/ai-copilot/src/byokClient.ts) `buildByokSystemPrompt()` 未附带模型 `paramSchema` 摘要，且 [refiner.ts](file:///d:/project%20code/44-PhysForge/packages/ai-copilot/src/refiner.ts) `auditSceneHeadless()` 静默忽略未知幻觉键，已纳入 **PR-0 (`fix/v3-step0-online-byok`)** 优先清零。
+  * **V3 实盘对齐硬约束**：`tsconfig.base.json` 启用了 `noUncheckedIndexedAccess: true` 且全仓要求相对路径带 `.js` 扩展名；`SimulationPluginV3` 必须保持 `<TParams, TState>` 泛型顺序并保留 Wave A–C 全部 `data-testid`。
+  * **Wave C 物理边界记录**：`em-ac-generator-rms` 受力采用正方形线圈近似；`thermo-piston-gas-laws` 多行程泵无机械活塞位置状态返回 `[]`；全仓真实受力模型为 `30/43`（满足 `≥ 30` 门禁）。
+  * **Windows 工具链注意**：Corepack `pnpm` 受 DNS 阻塞需直调本地 `node_modules` 二进制；PowerShell 5.1 不支持 `&&`/`||`；Playwright 与 `.git/index.lock` 写入需 `BypassSandbox: true`。
 * **新会话总控第一优先级动作**：
-  1. **检查与联调在线 AI（BYOK / `@physforge/ai-copilot`）**：审阅在线 AI 配置入口、提示词与前端交互链路，完成实机/实网可用性验证与必要的体验/稳定性修复；
-  2. 在线 AI 检查通过后，按用户指示开启 V3（[V3_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V3_WRITER_CONSTRUCTION_PLAN.md)）Wave 1 施工排期（当前仓库仍处于 V2.0.2，V3 尚未开工）。
+  1. 向 GitHub **GPT-6.2 Sol** 派发 **PR-0 (`fix/v3-step0-online-byok`)** 并待 CI 全绿后拉分支验收合入；
+  2. 按 [V3_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V3_WRITER_CONSTRUCTION_PLAN.md) 依次派发并验收 **PR-1A (`feat/v3-w1a-story-runner`) → PR-1B → PR-1C**。
 
 ---
 
 ## 二、会话增量记录
+
+### 2026-11-24 16:56 — V3.0 顶层方案与 GPT-6.2 Sol 原子 PR 施工单对齐同步
+* 落盘 [V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md](file:///d:/project%20code/44-PhysForge/docs/v3-specs/V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md)，并结合 `main@b5e3ae4` 实盘代码重构 [V3_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V3_WRITER_CONSTRUCTION_PLAN.md)，解决 `noUncheckedIndexedAccess` 守卫、ESM `.js` 导入、三态 `data-testid`/热键兼容性、60fps `rAF` 接线及 Step 0 BYOK `paramSchema` 缺失问题。
 
 ### 2026-11-24 15:54 — Wave C 零信任验收通过与三处总控直修
 * **Wave C 实盘核查与直修**：核验全仓 43 单元达成 **`getControlHandles` `43/43`**、**`getForceVectors` `30/43`**、**`referenceFrames` `28/43`**；多模态看图发现 `WaveC_Projectile_Frame.png` 中“随动参考系锁定”文字与左下角工具栏重叠，直修 [SimulationStage.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/components/SimulationStage.tsx) 移至左上角无遮挡带（避开 `AutoFbdBadge`）并补全 `latestRef.presentationMode`；同步修正 [AutoFbdOverlay.tsx](file:///d:/project%20code/44-PhysForge/apps/web/src/stage/AutoFbdOverlay.tsx) 微观 SI 受力阈值（`1e-9`→相对 `maxMag * 1e-6` 与科学计数显示）及 [wave-c-interaction.test.ts](file:///d:/project%20code/44-PhysForge/simulations/wave-c-interaction.test.ts) 43 模型遍历用例 20s 超时。

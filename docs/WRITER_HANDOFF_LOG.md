@@ -13,9 +13,9 @@
   * **在线 AI（BYOK）待检查联调**：`@physforge/ai-copilot` 真实在线服务商实网链路尚未联调检查；
   * **既有非阻塞告警**：Vite 存在 `[INEFFECTIVE_DYNAMIC_IMPORT]`（`em-induction-double-rod`）与大延迟 chunk 告警；
   * **Windows 避坑**：Corepack `pnpm` 受 DNS 阻塞需直调本地 `node_modules` 二进制；PowerShell 5.1 不支持 `&&`/`||`；Playwright 与 Git 写入需 `BypassSandbox: true`。
-* **下一会话任务（按用户最新指令）**：
-  1. **检查与联调在线 AI（BYOK / `@physforge/ai-copilot`）**：核查在线 AI 配置界面、请求契约、超时/错误处理与 SceneDSL 生成实网体验（仅做真实验证，不造假数据）；
-  2. 在线 AI 检查完毕并经总控确认后，再按 [V3_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V3_WRITER_CONSTRUCTION_PLAN.md) 启动 V3.0（Wave 1 起）。
+* **下一会话任务（按 [V3_WRITER_CONSTRUCTION_PLAN.md](file:///d:/project%20code/44-PhysForge/docs/V3_WRITER_CONSTRUCTION_PLAN.md) 原子 PR 派单执行）**：
+  1. **PR-0 (`fix/v3-step0-online-byok`)**：补齐 `byokClient.ts` Schema 摘要、`refiner.ts` 未知参数键拦截与 Schema 回馈、`AiCopilotDrawer.tsx` 提供商模板与连通性自检；
+  2. **PR-1A (`feat/v3-w1a-story-runner`) → PR-1B (`feat/v3-w1b-tri-mode-shell`) → PR-1C (`feat/v3-w1c-presenter-decks`)**：严格按 [V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md](file:///d:/project%20code/44-PhysForge/docs/v3-specs/V3_ARCHITECT_BLUEPRINT_AND_HARD_CORES.md) 与施工单单 PR ≤ 12 文件提分支 PR 过 CI 后交本地总控验收合入。
 
 ---
 
