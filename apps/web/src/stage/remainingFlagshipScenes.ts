@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
 import type { EmDevicesParams, EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
-import { orbitDisplayXY } from '@physforge/simulations/astro-orbital-mechanics';
+import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers } from '@physforge/simulations/astro-orbital-mechanics';
 import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
 
@@ -116,7 +116,9 @@ function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
   const secondary=mesh(moving,'secondary-star',new THREE.SphereGeometry(0.065,20,14),magneticFluxMaterial(0x60a5fa));
   const satellite=mesh(moving,'orbiting-body',new THREE.SphereGeometry(0.05,18,12),magneticFluxMaterial(0x4ade80));
   const trail=bufferedTrail(moving,421,0x38bdf8);
-  const contours=new THREE.Group();fixed.add(contours);
+  const contours=new THREE.Group(),burns=new THREE.Group();fixed.add(contours,burns);
+  const velocity=new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),0.5,0x4ade80,0.12,0.07);velocity.name='orbit-velocity';moving.add(velocity);
+  let burnEvents:AstroOrbitalState['events']|null=null,burnMode:AstroOrbitalParams['mode']|null=null;
   let signature='',sectorSignature:readonly unknown[]|null=null,sectorVisible=false;
   let corotating=false;
   return {sync(raw,rawParams,layers) {
@@ -147,7 +149,22 @@ function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
       const q=p.massRatioQ,c=Math.cos(s.tNorm),sin=Math.sin(s.tNorm);
       primary.position.copy(project(-q*c,-q*sin));secondary.position.copy(project((1-q)*c,(1-q)*sin));
     }else primary.position.set(0,0,0);
-    satellite.position.copy(project(s.xNorm,s.yNorm));trail.update(s.trailNorm,project);
+    satellite.position.copy(project(s.xNorm,s.yNorm));trail.update(corotating?[]:s.trailNorm,project);
+    const v=orbitDisplayVelocity(s,corotating),speed=Math.hypot(v.x,v.y);
+    velocity.visible=speed>1e-8;velocity.position.copy(satellite.position);
+    if(velocity.visible){velocity.setDirection(new THREE.Vector3(v.x/speed,0,-v.y/speed));const len=speed*.35;velocity.setLength(len,Math.min(.12,len*.3),Math.min(.07,len*.2));}
+    if(burnEvents!==s.events||burnMode!==p.mode){
+      burnEvents=s.events;burnMode=p.mode;clear(burns);
+      for(const burn of orbitalBurnMarkers(s,p)){
+        const dot=mesh(burns,'orbital-burn-'+burn.index,new THREE.TorusGeometry(.08,.016,8,24),magneticFluxMaterial(0xfb923c));
+        dot.rotation.x=-Math.PI/2;dot.position.set(burn.x,.025,-burn.y);
+        if(Math.hypot(burn.dx,burn.dy)>0){
+          const arrow=new THREE.ArrowHelper(new THREE.Vector3(burn.dx,0,-burn.dy),new THREE.Vector3(burn.x,.06,-burn.y),.45,0xfb923c,.12,.07);
+          arrow.name='orbital-impulse-'+burn.index;burns.add(arrow);
+        }
+      }
+    }
+    burns.visible=showOrbit;
     const showSectors=p.mode==='kepler-ellipse'&&layers.has('keplerSectors');
     if(sectorSignature!==s.sectors||showSectors!==sectorVisible){
       sectorSignature=s.sectors;sectorVisible=showSectors;
