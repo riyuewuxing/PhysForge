@@ -1,10 +1,24 @@
 import type { AnyParamFieldSpec, ParamRecord, ParamValue } from '@physforge/sim-sdk';
 
-export type PresenterCommand =
-  | { type: 'CMD_NEXT_BEAT' | 'CMD_PREV_BEAT' | 'CMD_TOGGLE_PLAY' | 'CMD_RESET_SIM' | 'CMD_TOGGLE_MORPH_2D' | 'CMD_TOGGLE_BLACKOUT' | 'CMD_REQUEST_SYNC' }
+type ScopedPresenterAction =
+  | { type: 'CMD_NEXT_BEAT' | 'CMD_PREV_BEAT' | 'CMD_TOGGLE_PLAY' | 'CMD_RESET_SIM' | 'CMD_TOGGLE_MORPH_2D' | 'CMD_TOGGLE_BLACKOUT' }
   | { type: 'CMD_GOTO_BEAT'; index: number }
-  | { type: 'CMD_SET_PARAM'; paramKey: string; value: ParamValue }
+  | { type: 'CMD_SET_PARAM'; paramKey: string; value: ParamValue };
+type UnscopedPresenterAction =
+  | { type: 'CMD_REQUEST_SYNC' }
   | { type: 'CMD_LASER_POINTER'; active: boolean; normX: number; normY: number };
+export type PresenterAction = ScopedPresenterAction | UnscopedPresenterAction;
+export interface PresenterScope { modelId: string; deckId: string | null }
+export type PresenterCommand = (ScopedPresenterAction & PresenterScope) | UnscopedPresenterAction;
+
+/** Attach the model/deck shown on the presenter, not whichever model happens to be on stage later. */
+export function scopePresenterAction(action: PresenterAction, scope: PresenterScope): PresenterCommand {
+  if (action.type === 'CMD_REQUEST_SYNC' || action.type === 'CMD_LASER_POINTER') return action;
+  return { ...action, modelId: scope.modelId, deckId: scope.deckId };
+}
+export function commandMatchesStage(command: PresenterCommand, scope: PresenterScope): boolean {
+  return !('modelId' in command) || (command.modelId === scope.modelId && command.deckId === scope.deckId);
+}
 
 export interface StageSnapshotPayload {
   modelId: string;
@@ -40,11 +54,13 @@ const norm = (v: unknown): v is number => finite(v) && v >= 0 && v <= 1;
 
 export function isPresenterCommand(value: unknown): value is PresenterCommand {
   if (!isRecord(value)) return false;
+  const scoped = typeof value.modelId === 'string' && value.modelId.length > 0 && nullableString(value.deckId);
   switch (value.type) {
     case 'CMD_NEXT_BEAT': case 'CMD_PREV_BEAT': case 'CMD_TOGGLE_PLAY': case 'CMD_RESET_SIM':
-    case 'CMD_TOGGLE_MORPH_2D': case 'CMD_TOGGLE_BLACKOUT': case 'CMD_REQUEST_SYNC': return true;
-    case 'CMD_GOTO_BEAT': return nonnegativeInteger(value.index);
-    case 'CMD_SET_PARAM': return typeof value.paramKey === 'string' && value.paramKey.length > 0 && paramValue(value.value);
+    case 'CMD_TOGGLE_MORPH_2D': case 'CMD_TOGGLE_BLACKOUT': return scoped;
+    case 'CMD_REQUEST_SYNC': return true;
+    case 'CMD_GOTO_BEAT': return scoped && nonnegativeInteger(value.index);
+    case 'CMD_SET_PARAM': return scoped && typeof value.paramKey === 'string' && value.paramKey.length > 0 && paramValue(value.value);
     case 'CMD_LASER_POINTER': return typeof value.active === 'boolean' && norm(value.normX) && norm(value.normY);
     default: return false;
   }
