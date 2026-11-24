@@ -34,9 +34,9 @@ describe('PresenterSyncBridge', () => {
     expect(isPresenterCommand(command)).toBe(true);
     expect(isPresenterCommand({ type: 'CMD_SET_PARAM', paramKey: 'speed', value: 2 })).toBe(false);
     expect(commandMatchesStage(command, snapshot)).toBe(true);
-    expect(commandMatchesStage(command, { modelId: 'other', deckId: 'deck' })).toBe(false);
-    expect(commandMatchesStage(command, { modelId: 'demo', deckId: null })).toBe(false);
-    expect(commandMatchesStage({ type: 'CMD_REQUEST_SYNC' }, { modelId: 'other', deckId: null })).toBe(true);
+    expect(commandMatchesStage(command, { modelId: 'other', deckId: 'deck', paramContextEpoch: 3 })).toBe(false);
+    expect(commandMatchesStage(command, { modelId: 'demo', deckId: null, paramContextEpoch: 3 })).toBe(false);
+    expect(commandMatchesStage({ type: 'CMD_REQUEST_SYNC' }, { modelId: 'other', deckId: null, paramContextEpoch: 3 })).toBe(true);
   });
   it('rejects parameter and replay commands from an old beat while permitting rapid navigation', () => {
     const previous = { ...snapshot, paramContextEpoch: 2 };
