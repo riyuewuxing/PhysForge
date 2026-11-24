@@ -502,6 +502,18 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
     await stage.waitFor({ state: 'visible', timeout: 20000 });
     await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0);
     await page.locator('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]').waitFor({ state: 'visible' });
+    if (device==='mass-spectrometer') {
+      const play=page.locator('[data-testid="btn-play-pause"]:visible');
+      await page.waitForFunction(()=>document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-beam-status')==='flying');
+      if((await play.getAttribute('aria-label'))==='运行')await play.click();
+      await page.waitForFunction(()=>['detected','missed'].includes(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-beam-status')??''),null,{timeout:15000});
+      const status=await stage.getAttribute('data-beam-status');
+      const t=Number(await stage.getAttribute('data-beam-physical-time'));
+      const x=Number(await stage.getAttribute('data-beam-x')),y=Number(await stage.getAttribute('data-beam-y'));
+      if(status!=='detected'||!(t>0)||Math.abs(x)>1e-6||!(y<0))throw new Error('S02 spectrometer physical detector event failed: '+JSON.stringify({status,t,x,y}));
+      if((await play.getAttribute('aria-label'))==='暂停')await play.click();
+      if(screenshot)await screenshot('S02_mass-spectrometer_detector');
+    }
     if (screenshot) await screenshot('S02_' + device + '_3d');
     await toggle.click();
     await stage.waitFor({state:'detached',timeout:15000});

@@ -1,4 +1,5 @@
 import type { EmDeviceKind } from './engine.js';
+import { RIGHT_X,SPECTROMETER_DEPTH,SPECTROMETER_SLIT_HALF } from './particleFlight.js';
 
 /** Display geometry only: all lengths are schematic normalized coordinates, not SI device dimensions. */
 export interface DevicePart {
@@ -45,22 +46,22 @@ export function deviceDiagramPoint(x: number, y: number) {
 export function getDeviceSchematic(device: EmDeviceKind): DeviceSchematic {
   switch (device) {
     case 'velocity-selector': return {
-      parts: [box('selector-chamber', -0.25, 0, 2.4, 1.2, 'glass', 0.32), ...plates('selector-plate', -0.25, 2.4, 0.6)],
+      parts: [box('selector-chamber', -0.25, 0, 2.1, 1.2, 'glass', 0.32), ...plates('selector-plate', -0.25, 2.1, 0.6),
+        box('selector-exit-upper',0.8,0.35,0.065,0.5,'rail'),box('selector-exit-lower',0.8,-0.35,0.065,0.5,'rail')],
       fields: fieldGrid([-1,-0.5,0,0.5], [-0.35,0,0.35]),
       cues: [{id:'selector-electric',x:-0.88,y:-0.43,dx:0,dy:0.86,kind:'electric',label:'E'}],
       labels: [{x:-0.25,y:0.79,text:'正交电磁场 · 正电荷'}]
     };
     case 'mass-spectrometer': return {
       parts: [
-        box('spectrometer-entry', -0.85, 0, 1.2, 1.2, 'glass', 0.26),
-        box('spectrometer-analyzer', 0.35, 0, 1.2, 1.2, 'glass', 0.32),
-        box('spectrometer-slit-upper', -0.25, 0.35, 0.065, 0.5, 'rail'),
-        box('spectrometer-slit-lower', -0.25,-0.35,0.065,0.5,'rail'),
-        box('spectrometer-collector', 0.91,-0.25,0.08,0.65,'copper')
+        box('spectrometer-entry', -0.775, 0, 1.05, 0.4, 'glass', 0.26),
+        box('spectrometer-analyzer', -0.25+0.35*RIGHT_X,-0.35*SPECTROMETER_DEPTH,0.7*RIGHT_X,0.7*SPECTROMETER_DEPTH,'glass',0.32),
+        box('spectrometer-slit-upper',-0.25,0.15,0.065,0.1,'rail'),
+        box('spectrometer-collector',-0.25,-0.35*(SPECTROMETER_DEPTH+SPECTROMETER_SLIT_HALF),0.065,0.7*(SPECTROMETER_DEPTH-SPECTROMETER_SLIT_HALF),'copper')
       ],
-      fields: fieldGrid([0.05,0.4,0.75],[-0.38,0,0.38]),
+      fields: fieldGrid([-0.03,0.3,0.62],[-0.23,-0.55,-0.88]),
       cues: [{id:'spectrometer-inlet',x:-1.37,y:0,dx:0.52,dy:0,kind:'flow',label:'v'}],
-      labels: [{x:-0.85,y:0.79,text:'入射区'}, {x:0.35,y:0.79,text:'偏转场 B₂'}]
+      labels: [{x:-0.85,y:0.38,text:'入射区'}, {x:0.35,y:0.38,text:'偏转场 B₂'}, {x:-0.77,y:-0.72,text:'探测板'}]
     };
     case 'cyclotron': return {
       parts: ([-1,1] as const).map(side => ({

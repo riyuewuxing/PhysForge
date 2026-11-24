@@ -1,4 +1,5 @@
 import type { InvariantReport, StepResult } from '@physforge/sim-sdk';
+import { advanceBeamFlight, beamDisplayVelocity, beamTrail, isBeamDevice, sampleBeamFlight, BEAM_LENGTH_M, type ParticleFlight } from './particleFlight.js';
 
 export type EmDeviceKind =
   | 'velocity-selector'
@@ -50,6 +51,7 @@ export interface EmDevicesState {
   readonly particlePos: { x: number; y: number };
   readonly particleVel: { x: number; y: number };
   readonly trail: readonly { x: number; y: number }[];
+  readonly flight: ParticleFlight | null;
 }
 
 export function computeHallVoltageV(params: EmDevicesParams): number {
@@ -136,7 +138,7 @@ export function computeCyclotronExitMetrics(params: EmDevicesParams): {
 
 export function solveAllDeviceMetrics(params: EmDevicesParams): Omit<
   EmDevicesState,
-  't' | 'particlePos' | 'particleVel' | 'trail'
+  't' | 'particlePos' | 'particleVel' | 'trail' | 'flight'
 > {
   const selectedSpeed = params.eFieldVPerM / Math.max(1e-6, params.bFieldT);
   const specRadius =
@@ -167,14 +169,16 @@ export function solveAllDeviceMetrics(params: EmDevicesParams): Omit<
 
 export function createInitialState(params: EmDevicesParams): EmDevicesState {
   const metrics = solveAllDeviceMetrics(params);
-  const pos0 = { x: -1.5, y: 0 };
-  const vel0 = { x: params.particleSpeedMps, y: 0 };
+  const flight=isBeamDevice(params)?sampleBeamFlight(params,0):null;
+  const pos0=flight?.position??{x:-1.5,y:0};
+  const vel0=flight?beamDisplayVelocity(flight):{x:1.2,y:0};
   return {
     t: 0,
     ...metrics,
     particlePos: pos0,
     particleVel: vel0,
-    trail: [pos0]
+    trail: [pos0],
+    flight
   };
 }
 
@@ -187,28 +191,20 @@ export function stepEmDevices(
   const metrics = solveAllDeviceMetrics(params);
   if (dt === 0) return { nextState: state, events: [] };
 
-  // Normalized visual + dynamical motion inside selector / spectrometer
-  const qmNorm = 1.0;
+  if(isBeamDevice(params)){
+    const previous=state.flight??sampleBeamFlight(params,0);
+    const {flight,events}=advanceBeamFlight(params,previous,dt,state.t);
+    return {nextState:{...state,...metrics,t:state.t+dt,flight,particlePos:flight.position,particleVel:beamDisplayVelocity(flight),
+      trail:flight===previous?state.trail:beamTrail(params,flight)},events};
+  }
+  // The other four devices retain their explicitly schematic animations.
   let { x, y } = state.particlePos;
   let { x: vx, y: vy } = state.particleVel;
   const substeps = 10;
   const h = dt / substeps;
-  const vSel = metrics.selectedSpeed;
-  const ratioMismatch = (params.particleSpeedMps - vSel) / Math.max(1, vSel);
 
   for (let i = 0; i < substeps; i++) {
-    if (params.device === 'velocity-selector' || params.device === 'mass-spectrometer') {
-      const ay = qmNorm * (params.device === 'velocity-selector' ? -ratioMismatch * 2.5 : x > 0 ? -1.8 : 0);
-      vy += ay * h;
-      x += (vx / Math.max(1, params.particleSpeedMps)) * 1.4 * h;
-      y += vy * h;
-      if (x > 1.8 || Math.abs(y) > 1.5) {
-        x = -1.5;
-        y = 0;
-        vx = params.particleSpeedMps;
-        vy = 0;
-      }
-    } else if (params.device === 'cyclotron') {
+    if (params.device === 'cyclotron') {
       const ang = (state.t + (i + 1) * h) * 6.0;
       const r = Math.min(1.3, 0.12 + 0.08 * ang);
       x = r * Math.cos(ang);
@@ -227,7 +223,8 @@ export function stepEmDevices(
       ...metrics,
       particlePos: nextPos,
       particleVel: { x: vx, y: vy },
-      trail
+      trail,
+      flight:null
     },
     events: []
   };
@@ -246,6 +243,13 @@ export function computeObservables(state: EmDevicesState): Record<string, number
 }
 
 export function checkInvariants(state: EmDevicesState, _init: EmDevicesState, params: EmDevicesParams): InvariantReport[] {
+  if(state.flight){
+    const f=state.flight,v2=f.velocityMps.x**2+f.velocityMps.y**2;
+    const initialK=0.5*params.massKg*params.particleSpeedMps**2,K=0.5*params.massKg*v2;
+    const work=params.device==='velocity-selector'?Math.abs(params.chargeC)*params.eFieldVPerM*f.position.y*BEAM_LENGTH_M:0;
+    const error=Math.abs(K-initialK-work)/Math.max(Math.abs(K),Math.abs(initialK),Math.abs(work),1e-40);
+    return [{name:params.device==='velocity-selector'?'电场功与动能变化一致':'磁场中速率守恒',measuredError:error,tolerance:1e-8,passed:error<1e-8}];
+  }
   const cycErr = params.relativisticDetune ? 0 : state.cyclotronRelError;
   return [
     {

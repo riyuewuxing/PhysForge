@@ -1,4 +1,5 @@
 import { emDevicesStoryDecks } from './storyDecks.js';
+import { flightReadout } from './particleFlight.js';
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline } from './deviceGeometry.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
@@ -444,7 +445,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     primitives.push({kind:'trajectory',points:state.trail.slice(-121).map(p=>deviceDiagramPoint(p.x,p.y)),strokeWidth:1.5});
     const position=deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
     primitives.push({kind:'circle',cx:position.x,cy:position.y,r:0.035,fill:true});
-    primitives.push({kind:'text',x:0,y:-1.38,text:'归一化原理示意（不按 SI 尺度）',align:'middle'});
+    primitives.push({kind:'text',x:0,y:-1.38,text:state.flight?flightReadout(state.flight):'归一化原理示意（不按 SI 尺度）',align:'middle'});
     return {
       width: 680, height: 400, viewBox: { minX: -2.2, minY: -1.6, maxX: 2.2, maxY: 1.6 },
       title: '现代电磁器件原理配图', primitives
@@ -538,7 +539,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ctx.textAlign = 'center';
     ctx.fillText(summaryMap[params.device], viewport.width * 0.5, 28);
     ctx.font='11px system-ui, sans-serif';ctx.fillStyle='#94a3b8';
-    ctx.fillText('归一化原理示意 · 轨迹不作为 SI 测量依据', viewport.width * 0.5, 46);
+    ctx.fillText(state.flight?flightReadout(state.flight):'归一化原理示意 · 轨迹不作为 SI 测量依据', viewport.width * 0.5, 46);
     ctx.restore();
   },
   getControlHandles: (_state, params) => {
@@ -571,17 +572,18 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ];
   },
   getForceVectors: (state, params) => {
-    if (params.device !== 'velocity-selector' && params.device !== 'mass-spectrometer') return [];
+    if (!state.flight || state.flight.status !== 'flying' || state.flight.region==='entry') return [];
     // chargeC is a positive particle charge; carrierType is specific to the Hall sensor.
     const charge = Math.abs(params.chargeC);
     const field = params.device === 'mass-spectrometer' ? params.bDeflectT : params.bFieldT;
     const origin = deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
-    const magneticForce = charge * params.particleSpeedMps * field;
+    const v=state.flight.velocityMps;
+    const magneticForce={x:charge*field*v.y,y:-charge*field*v.x};
     if (params.device === 'velocity-selector') {
       return [
         {
           id: 'selector-electric-force',
-          label: 'F电=qE（入射）',
+          label: 'F电=qE',
           origin,
           force: { x: 0, y: charge * params.eFieldVPerM },
           color: '#fbbf24',
@@ -590,9 +592,9 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
         },
         {
           id: 'selector-magnetic-force',
-          label: 'F洛=qv×B（入射）',
+          label: 'F洛=qv×B',
           origin,
-          force: { x: 0, y: -magneticForce },
+          force: magneticForce,
           color: '#38bdf8',
           category: 'magnetic',
           unit: 'N'
@@ -603,7 +605,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       id: 'spectrometer-magnetic-force',
       label: 'F洛=qv×B',
       origin,
-      force: { x: 0, y: -magneticForce },
+      force: magneticForce,
       color: '#38bdf8',
       category: 'magnetic',
       unit: 'N'

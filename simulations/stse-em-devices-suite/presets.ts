@@ -85,8 +85,8 @@ export const emDevicesPresets: readonly PresetSpec<EmDevicesParams>[] = [
   },
   {
     id: 'velocity-selector-spectrometer',
-    name: '速度选择器与同位素质谱仪联动',
-    description: '调节交叉场 E/B 筛选目标粒子速率，并在右侧匀强磁场区观察不同荷质比粒子的轨道分离',
+    name: '速度选择器与同位素质谱仪对照',
+    description: '调节交叉场 E/B 筛选目标粒子速率；切换质谱模块，在相同空间尺度观察给定入射速度下不同质荷比的实际偏转',
     curriculumNotes: '选择性必修二 第一章 · 速度选择器与阿斯顿质谱仪',
     params: {
       device: 'velocity-selector',
