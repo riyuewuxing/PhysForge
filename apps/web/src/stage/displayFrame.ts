@@ -23,12 +23,14 @@ export function closestDisplayFrame<T extends DisplayFrame>(frames: readonly T[]
 export function selectDisplayFrame(input: {
   modelId: string;
   ownerModelId: string | null;
+  resetNonce: number;
+  ownerResetNonce: number | null;
   currentState: unknown;
   currentTime: number;
   scrubTime: number | null;
   snapshots: readonly DisplayFrame[];
 }): DisplayFrame | null {
-  if (input.ownerModelId !== input.modelId) return null;
+  if (input.ownerModelId !== input.modelId || input.ownerResetNonce !== input.resetNonce) return null;
   if (input.scrubTime !== null) {
     const recorded = closestDisplayFrame(input.snapshots, input.scrubTime);
     if (recorded) return recorded;
