@@ -81,6 +81,50 @@ const liveFormulas: readonly LiveFormulaSpec[] = [{
       "precision": 2
     }
   ]
+},
+{
+  "id": "cyclotron-energy",
+  "title": "经典回旋加速器极限动能（非相对论）",
+  "latex": "E_{\\max}=\\frac{q^2 \\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}^2 \\htmlClass{pf-live-var}{\\htmlData{param=cyclotronRadiusM}{R}}^2}{2m}",
+  "bindings": [
+    {
+      "tokenKey": "bFieldT",
+      "paramKey": "bFieldT",
+      "label": "主磁场 B",
+      "unit": "T",
+      "min": 0.2,
+      "max": 4,
+      "step": 0.1,
+      "precision": 2
+    },
+    {
+      "tokenKey": "cyclotronRadiusM",
+      "paramKey": "cyclotronRadiusM",
+      "label": "D 形盒半径 R_max",
+      "unit": "m",
+      "min": 0.15,
+      "max": 1.2,
+      "step": 0.05,
+      "precision": 2
+    }
+  ]
+},
+{
+  "id": "cyclotron-gap-energy",
+  "title": "同步过狭缝的单次能量增量",
+  "latex": "\\Delta K=|q|\\htmlClass{pf-live-var}{\\htmlData{param=cyclotronVoltageV}{U}}",
+  "bindings": [
+    {
+      "tokenKey": "cyclotronVoltageV",
+      "paramKey": "cyclotronVoltageV",
+      "label": "加速高频电压 U",
+      "unit": "V",
+      "min": 5000,
+      "max": 60000,
+      "step": 5000,
+      "precision": 0
+    }
+  ]
 }];
 export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmDevicesParams, EmDevicesState>({
   meta: {
