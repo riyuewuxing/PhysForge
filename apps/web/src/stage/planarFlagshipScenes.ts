@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import type { ParamRecord } from '@physforge/sim-sdk';
 import type { InductionParams, InductionState } from '../../../../simulations/em-induction-double-rod/engine.js';
-import { getEffectiveL2 } from '../../../../simulations/em-induction-double-rod/engine.js';
-import { rodDisplayX } from '@physforge/simulations/em-induction-double-rod';
+import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints } from '../../../../simulations/em-induction-double-rod/diagramGeometry.js';
 import { fieldSignedDistance, type BoundedMagneticParams, type BoundedMagneticState, type ParticleTrack } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { displayLarmorCircleForTrack } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import { anodizedRailMaterial, brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
@@ -44,20 +43,6 @@ function updateSignedArrow(arrow: THREE.ArrowHelper, origin: THREE.Vector3, valu
   }
 }
 
-interface FlowSegment { start: THREE.Vector3; end: THREE.Vector3 }
-function inductionFlowSegments(x1: number, x2: number, l1: number, l2: number, double: boolean): FlowSegment[] {
-  const point = (x: number, z: number) => new THREE.Vector3(x, 0.12, z);
-  const segments: FlowSegment[] = [{ start: point(x1, l1 / 2), end: point(x1, -l1 / 2) }];
-  if (double) segments.push({ start: point(x2, -l2 / 2), end: point(x2, l2 / 2) });
-  // Equal-width rails form the displayed closed circuit. Unequal rails are schematic:
-  // do not draw a fictitious diagonal connection between the two rod widths.
-  if (!double || Math.abs(l1 - l2) < 1e-8) {
-    segments.push({ start: point(x2, l1 / 2), end: point(x1, l1 / 2) },
-      { start: point(x1, -l1 / 2), end: point(x2, -l1 / 2) });
-  }
-  return segments;
-}
-
 /** E04 uses actual engine rod positions; only the finite visible rail window follows rod 1. */
 function inductionDriver(root: THREE.Group): FlagshipSceneDriver {
   const fixed = new THREE.Group(), moving = new THREE.Group();
@@ -79,63 +64,73 @@ function inductionDriver(root: THREE.Group): FlagshipSceneDriver {
     return { direction, pulse };
   });
   moving.add(rod1, rod2);
+  // Stepped leads may move as rods move. Reuse six meshes instead of reallocating every frame.
+  const rails=Array.from({length:6},(_,i)=>{
+    const rail=new THREE.Mesh(new THREE.BoxGeometry(1,0.09,0.08),anodizedRailMaterial());
+    rail.name='induction-rail-'+i;moving.add(rail);return rail;
+  });
+  const axis=new THREE.Vector3(1,0,0);
   let signature = '';
   return {
     sync(raw, rawParams, layers) {
       const state = raw as InductionState, params = rawParams as InductionParams;
-      const l1 = params.railWidth, l2 = getEffectiveL2(params);
+      const geometry=inductionDiagramGeometry(state,params);
+      const {l1,l2,double}=geometry;
       const next = JSON.stringify([l1, l2, params.rodMode, params.magneticB, params.circuitLoad, layers.has('railsAndField')]);
       if (next !== signature) {
         signature = next; clear(fixed);
         if (layers.has('railsAndField')) {
-          const floor = new THREE.Mesh(new THREE.BoxGeometry(8, 0.045, Math.max(l1, l2) + 1.2), obsidianStageFloorMaterial());
+          const floor = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.045, Math.max(l1, l2) + 1.2), obsidianStageFloorMaterial());
           floor.position.y = -0.11; fixed.add(floor);
-          for (const width of new Set(params.rodMode === 'double' ? [l1, l2] : [l1])) {
-            for (const sign of [-1, 1]) {
-              const rail = new THREE.Mesh(new THREE.BoxGeometry(8, 0.09, 0.08), anodizedRailMaterial());
-              rail.position.set(0, -0.04, sign * width / 2); fixed.add(rail);
-            }
-          }
           if (params.rodMode === 'single') {
             const load = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.15, l1), brushedCopperMaterial());
-            load.position.set(-3.8, 0, 0); fixed.add(load);
+            load.name='induction-load-lead'; fixed.add(load);
             const label = params.circuitLoad === 'capacitor' ? 0x38bdf8 : params.circuitLoad === 'battery' ? 0x4ade80 : 0xfbbf24;
             const body = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, 0.3), magneticFluxMaterial(label));
-            body.position.copy(load.position); fixed.add(body);
+            body.name='induction-load-body'; fixed.add(body);
           }
-          if (Math.abs(params.magneticB) > 1e-9) {
-            for (let x = -3.5; x <= 3.5; x += 0.7) {
-              for (const z of [-l1 * 0.32, 0, l1 * 0.32]) {
-                const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.8, 8), magneticFluxMaterial());
-                tube.position.set(x, 0.3, z); fixed.add(tube);
-                fixed.add(new THREE.ArrowHelper(new THREE.Vector3(0, -Math.sign(params.magneticB), 0),
-                  new THREE.Vector3(x, Math.sign(params.magneticB) * 0.4 + 0.3, z), 0.8, 0x38bdf8, 0.12, 0.06));
-              }
-            }
+          for(const point of inductionFieldPoints(params)){
+            const z=-point.y;
+            const tube=new THREE.Mesh(new THREE.CylinderGeometry(0.013,0.013,0.8,8),magneticFluxMaterial());
+            tube.position.set(point.x,0.3,z);fixed.add(tube);
+            fixed.add(new THREE.ArrowHelper(new THREE.Vector3(0,-Math.sign(params.magneticB),0),
+              new THREE.Vector3(point.x,Math.sign(params.magneticB)*0.4+0.3,z),0.8,0x38bdf8,0.12,0.06));
           }
         }
+      }
+      for(const [i,rail] of rails.entries()){
+        const seg=geometry.rails[i];
+        rail.visible=Boolean(seg)&&layers.has('railsAndField');
+        if(!seg||!rail.visible)continue;
+        const a=new THREE.Vector3(seg.start.x,-0.04,-seg.start.y),b=new THREE.Vector3(seg.end.x,-0.04,-seg.end.y);
+        const delta=b.clone().sub(a),length=delta.length();
+        rail.visible=length>1e-8;
+        if(!rail.visible)continue;
+        rail.position.copy(a).lerp(b,0.5);rail.scale.x=length;rail.quaternion.setFromUnitVectors(axis,delta.normalize());
+      }
+      for(const name of ['induction-load-lead','induction-load-body']){
+        const load=fixed.getObjectByName(name);
+        if(load)load.position.set(geometry.x2,0,0);
       }
       rod1.visible = layers.has('rods');
       rod2.visible = rod1.visible && params.rodMode === 'double';
       rod1.position.copy(inductionDisplayPoint(state, state.x1)); rod1.scale.z = l1;
       rod2.position.copy(inductionDisplayPoint(state, state.x2)); rod2.scale.z = l2;
-      const double = params.rodMode === 'double';
-      const signConvention = !double && params.circuitLoad === 'battery' ? -1 : 1;
-      const signedCurrent = signConvention * state.current;
+      const {current:signedCurrent,charge:signedCharge}=inductionDiagramCurrent(state,params);
       const flowEnabled = layers.has('currentFlow') && Math.abs(signedCurrent) > 0.02;
-      const segments = inductionFlowSegments(rod1.position.x, double ? rod2.position.x : -3.8, l1, l2, double);
+      const segments=geometry.currentGuides.map(seg=>({start:new THREE.Vector3(seg.start.x,0.12,-seg.start.y),end:new THREE.Vector3(seg.end.x,0.12,-seg.end.y)}));
       for (let i = 0; i < flow.length; i++) {
         const visual = flow[i]!, segment = segments[i];
         const delta = segment ? segment.end.clone().sub(segment.start) : null;
         const length = delta?.length() ?? 0;
-        visual.direction.visible = visual.pulse.visible = flowEnabled && length > 0.08;
+        visual.direction.visible = visual.pulse.visible = flowEnabled && length > 0.08 && (i!==1||double);
         if (!visual.direction.visible || !segment || !delta) continue;
         const direction = delta.normalize().multiplyScalar(Math.sign(signedCurrent));
         const arrowLength = Math.min(0.65, length * 0.65);
         visual.direction.position.copy(segment.start).lerp(segment.end, 0.5).addScaledVector(direction, -arrowLength / 2);
         visual.direction.setDirection(direction);
         visual.direction.setLength(arrowLength, Math.min(0.14, arrowLength * 0.3), 0.07);
-        const phase = signConvention * state.qTotalIntegral * 0.35 + i * 0.23;
+        const phase = signedCharge * 0.35 + i * 0.23;
         visual.pulse.position.copy(segment.start).lerp(segment.end, phase - Math.floor(phase));
       }
       const f1 = -params.magneticB * l1 * signedCurrent;
