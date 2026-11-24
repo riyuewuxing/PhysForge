@@ -3,6 +3,8 @@ import type { InductionParams } from '../../../../simulations/em-induction-doubl
 import { describe, expect, it } from 'vitest';
 import { createWorldMapper, resolvePluginParams } from '@physforge/sim-sdk';
 import { emInductionDoubleRodPlugin, rodDisplayX } from '@physforge/simulations/em-induction-double-rod';
+import { emBoundedMagneticFieldPlugin } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
+import type { BoundedMagneticParams } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { createPlanarFlagshipScene, inductionDisplayPoint } from './planarFlagshipScenes.js';
 import { CameraMorphController, alignedCanvasViewport } from './cameraMorphController.js';
 
@@ -66,6 +68,37 @@ describe('flagship physical display alignment', () => {
     expect(new THREE.Vector3(0, 1, 0).applyQuaternion(f1!.quaternion).x).toBeCloseTo(1);
     expect(new THREE.Vector3(0, 1, 0).applyQuaternion(arrow!.quaternion).z).toBeCloseTo(1);
     expect(f2?.visible).toBe(false);
+    driver?.dispose();
+  });
+
+  it('uses both widths for the motional emf and force overlays', () => {
+    const p = emInductionDoubleRodPlugin;
+    const params = resolvePluginParams<InductionParams>(p.paramSchema, { rodMode: 'double', magneticB: 1, railWidth: 1, railWidth2: 0.5 });
+    const state = { ...p.engine.createInitialState(params), v1: 4, v2: 2, current: 2 };
+    const forces = p.getForceVectors?.(state, params);
+    expect(forces?.find(f => f.id === 'ampere-1')?.force.x).toBe(-2);
+    expect(forces?.find(f => f.id === 'ampere-2')?.force.x).toBe(1);
+    expect(p.formatFormulas?.(state, params)[0]?.substitutedLatex).toContain('=3.00');
+  });
+
+  it('shows only boundary events reported by the particle engine', () => {
+    const scene = new THREE.Scene();
+    const driver = createPlanarFlagshipScene('builder-composite-em-field', scene);
+    const p = emBoundedMagneticFieldPlugin;
+    const params = resolvePluginParams<BoundedMagneticParams>(p.paramSchema, { mode: 'circular', family: 'single' });
+    const state = p.engine.createInitialState(params);
+    const track = state.particles[0]!;
+    const layers = new Set(['trajectory', 'fieldRegion']);
+    driver?.sync(state, params, layers);
+    const exit = scene.getObjectByName('magnetic-exit-' + track.id);
+    expect(exit?.visible).toBe(false);
+    driver?.sync({ ...state, particles: [{ ...track, hasEntered: true, hasExited: true, entryPoint: { x: -1, y: 0 }, exitPoint: { x: 1, y: 0 } }] }, params, layers);
+    const entry = scene.getObjectByName('magnetic-entry-' + track.id);
+    expect(entry?.visible).toBe(true);
+    expect(exit?.visible).toBe(true);
+    expect(exit?.position.x).toBe(1);
+    driver?.sync(state, params, new Set());
+    expect(exit?.visible).toBe(false);
     driver?.dispose();
   });
 
