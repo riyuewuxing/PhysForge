@@ -32,6 +32,40 @@ export function project3DToScreen(world: WorldPoint3D, camera: THREE.Camera, wid
   };
 }
 
+export type ScreenLabelBox = { x: number; y: number; width: number; height: number };
+
+/** Separate measured CSS label rectangles in screen pixels; keep a margin for
+ * fractional-pixel rounding and font changes. Labels retain their own depth. */
+export function separateScreenLabelBoxes(boxes: readonly ScreenLabelBox[], margin = 8): ScreenLabelBox[] {
+  const result = boxes.map(box => ({ ...box }));
+  for (let iter = 0; iter < 16; iter++) {
+    let changed = false;
+    for (let i = 0; i < result.length; i++) for (let j = i+1; j < result.length; j++) {
+      const a = result[i]!, b = result[j]!;
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const gapX = (a.width+b.width)/2+margin-Math.abs(dx);
+      const gapY = (a.height+b.height)/2+margin-Math.abs(dy);
+      if (gapX <= 0 || gapY <= 0) continue;
+      changed = true;
+      if (gapX < gapY) {
+        const shift = Math.sign(dx || 1)*(gapX/2+0.5);
+        a.x-=shift; b.x+=shift;
+      } else {
+        const shift = Math.sign(dy || 1)*(gapY/2+0.5);
+        a.y-=shift; b.y+=shift;
+      }
+    }
+    if (!changed) break;
+  }
+  return result;
+}
+
+/** Unit direction in camera coordinates; +z points toward the viewer.
+ * The camera position/zoom do not change an orientation-only axis indicator. */
+export function projectCameraDirection(direction: THREE.Vector3, camera: THREE.Camera): THREE.Vector3 {
+  return direction.clone().normalize().applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()).invert());
+}
+
 /** Canvas +Y up is world +Y (XY) or world -Z (XZ viewed from +Y). */
 export function flattenPoint(world: WorldPoint3D, plane: Spatial3DFlattenSpec['flattenPlane']) {
   return { x: world.x, y: plane === 'xy' ? world.y : -(world.z ?? 0) };

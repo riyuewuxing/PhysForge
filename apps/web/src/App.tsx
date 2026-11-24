@@ -760,6 +760,7 @@ const ClassroomApp: React.FC = () => {
                       onBegin={(key) => store.beginLiveFormula(plugin.meta.id, key, store.paramContextEpoch)}
                       onChange={(key, value) => store.updateLiveFormula(plugin.meta.id, key, value, store.paramContextEpoch)}
                       onEnd={(key) => store.endLiveFormula(plugin.meta.id, key, store.paramContextEpoch)} />
+                    {plugin.meta.id === 'em-3d-magnetic-fields' && store.params.geometryType === 'finite-solenoid' && highlightedFormulaId !== 'local-helical-motion' && <KatexFormulaCard items={store.telemetry.formulaItems.filter(item => item.id === 'local-helical-motion')} compact showSubstituted={false} />}
                     {highlightedReadOnly.length > 0 && <KatexFormulaCard items={highlightedReadOnly} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
                   </Suspense> : <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
                   {!store.poeMasked && <StageFormulaReadouts key={plugin.meta.id} items={store.telemetry.formulaItems} />}

@@ -7,7 +7,7 @@ import {
   computeObservables,
   createInitialState,
   stepMagnetic3d,
-  trace3dFieldLines,
+  getMagneticDisplayFieldLines,
   type Magnetic3dParams,
   type Magnetic3dState
 } from './engine.js';
@@ -15,6 +15,21 @@ import {
 /** Proper rotation (determinant +1) preserving v × B and the existing side-view projection. */
 export function magnetic3dDisplayPoint(p: { x: number; y: number; z: number }) {
   return { x: p.z, y: p.y, z: -p.x };
+}
+
+/** Default camera height fits the actual conductor dimensions, not particle state.
+ * Geometry changes can refit, but particle steps and ordinary orbit never do. */
+export function magnetic3dDefaultVisibleHeight(params: Magnetic3dParams, aspect: number): number {
+  const R = Math.max(0.2, params.radiusR);
+  const a = Math.max(0.6, Math.min(2.4, aspect));
+  switch (params.geometryType) {
+    case 'finite-solenoid': return Math.max(5 * R, 3.6 * R / (0.72 * a));
+    case 'straight-wire':
+    case 'parallel-wires': return Math.max(5.8, 9.2 / (0.68 * a));
+    case 'single-loop':
+    case 'helmholtz-coil': return Math.max(4.8 * R, 3.2 * R / (0.72 * a));
+    case 'uniform-helix': return Math.max(4.8, 4.5 / a);
+  }
 }
 
 const paramSchema: readonly ParamFieldSpec<Magnetic3dParams>[] = [
@@ -213,7 +228,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     }
 
     if (activeLayers.has('fieldLines3d')) {
-      const lines = trace3dFieldLines(params);
+      const lines = getMagneticDisplayFieldLines(params);
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
       ctx.lineWidth = 1.4;
       for (const pts of lines) {
@@ -303,7 +318,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     }
 
     if (state.trail.length > 1) {
-      ctx.strokeStyle = '#4ade80';
+      ctx.strokeStyle = '#f4b44f';
       ctx.lineWidth = 2.2;
       ctx.beginPath();
       const t0 = project3D(state.trail[0]!);
@@ -315,7 +330,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
       ctx.stroke();
     }
     const sp = project3D(state.position);
-    ctx.fillStyle = '#4ade80';
+    ctx.fillStyle = '#f4b44f';
     ctx.beginPath();
     ctx.arc(sp.x, sp.y, m.len(0.03), 0, Math.PI * 2);
     ctx.fill();
@@ -405,6 +420,6 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     return [currentField];
   }
 }), { storyDecks: magnetic3dStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
-  default3DAzimuthRad: 0.67, default3DPolarRad: 1.08 } });
+  default3DAzimuthRad: 0.46, default3DPolarRad: 1.30 } });
 
 export default em3dMagneticFieldsPlugin;

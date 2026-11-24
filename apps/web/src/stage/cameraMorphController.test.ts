@@ -1,12 +1,79 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { createWorldMapper, type Spatial3DFlattenSpec } from '@physforge/sim-sdk';
-import { CameraMorphController, alignedCanvasViewport, flattenPoint, liftPoint, project3DToScreen } from './cameraMorphController.js';
+import { CameraMorphController, alignedCanvasViewport, flattenPoint, liftPoint, project3DToScreen, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
+
+import { magnetic3dDefaultVisibleHeight, magnetic3dDisplayPoint } from '@physforge/simulations/em-3d-magnetic-fields';
+import { buildMagneticConductorPaths, type Magnetic3dParams } from '@physforge/simulations/em-3d-magnetic-fields/engine';
+import { applyFluxEndpointFade } from './spatialMaterials.js';
 
 const spec = (flattenPlane: Spatial3DFlattenSpec['flattenPlane']): Spatial3DFlattenSpec => ({
   flattenPlane, defaultVisibleHeight: 8, sceneDepthRadius: 5, default3DAzimuthRad: 0.7, default3DPolarRad: 1.1
 });
 describe('3D perspective to orthographic morph', () => {
+  it('fits actual conductor projections at E10 default orbit, including finite wires', () => {
+    for(const [w,h] of [[1440,900],[1024,768]] as const) {
+      for(const geometryType of ['finite-solenoid','parallel-wires'] as const) {
+        const p:Magnetic3dParams={geometryType,radiusR:.7,currentI:2,solenoidTurns:10,qOverM:1.5,vPerp:.8,vParallel:.9,uniformBz:2};
+        const c=new CameraMorphController({...spec('xy'),defaultVisibleHeight:magnetic3dDefaultVisibleHeight(p,w/h),default3DAzimuthRad:.46,default3DPolarRad:1.3},w,h);
+        const points=buildMagneticConductorPaths(p).flatMap(path=>path.flatMap(segment=>[segment.a,segment.b])).map(v=>c.project3DToScreen(magnetic3dDisplayPoint(v)));
+        const minX=Math.min(...points.map(v=>v.x)),maxX=Math.max(...points.map(v=>v.x));
+        expect(minX).toBeGreaterThan(.1*w); expect(maxX).toBeLessThan(.9*w);
+        expect(points.every(v=>v.visible)).toBe(true);
+        if(geometryType==='finite-solenoid') expect((maxX-minX)/w).toBeGreaterThan(.32);
+      }
+    }
+  });
+
+  it('fades display-domain endpoints without changing positions or fading closed flux loops', () => {
+    const curve=new THREE.LineCurve3(new THREE.Vector3(-1,0,0),new THREE.Vector3(1,0,0));
+    const tube=new THREE.TubeGeometry(curve,20,.01,5,false);
+    const before=Array.from(tube.getAttribute('position').array);
+    applyFluxEndpointFade(tube,false);
+    const color=tube.getAttribute('color'),uv=tube.getAttribute('uv');
+    for(let i=0;i<uv.count;i++){
+      const u=uv.getX(i);
+      if(u===0||u===1) expect(color.getW(i)).toBe(0);
+      if(u>.2&&u<.8) expect(color.getW(i)).toBe(1);
+    }
+    expect(Array.from(tube.getAttribute('position').array)).toEqual(before);
+    applyFluxEndpointFade(tube,true);
+    expect(Array.from(tube.getAttribute('color').array).every(v=>v===1)).toBe(true);
+    tube.dispose();
+  });
+
+  it('separates measured E10 vector labels even when their previous fixed spacing missed a CSS gap', () => {
+    const input = [
+      { x: 966.89, y: 444.58, width: 23.77, height: 28.39 },
+      { x: 962.28, y: 415.65, width: 28.69, height: 28.39 },
+      { x: 963, y: 416, width: 47, height: 28.39 }
+    ];
+    const before = JSON.stringify(input);
+    const result = separateScreenLabelBoxes(input);
+    expect(JSON.stringify(input)).toBe(before);
+    for (let i=0;i<result.length;i++) for (let j=i+1;j<result.length;j++) {
+      const a=result[i]!, b=result[j]!;
+      const gapX=Math.abs(a.x-b.x)-(a.width+b.width)/2;
+      const gapY=Math.abs(a.y-b.y)-(a.height+b.height)/2;
+      expect(Math.max(gapX,gapY)).toBeGreaterThan(6);
+    }
+  });
+
+  it('projects physical axis directions into camera coordinates, preserving depth sign and ignoring translation', () => {
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(4, 8, 2);
+    const direction = new THREE.Vector3(0, 0, -1);
+    expect(projectCameraDirection(direction, camera).toArray()).toEqual([0,0,-1]);
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0,1,0), Math.PI/2);
+    const projected = projectCameraDirection(direction, camera);
+    expect(projected.x).toBeCloseTo(1, 10);
+    expect(projected.y).toBeCloseTo(0, 10);
+    expect(projected.z).toBeCloseTo(0, 10);
+    const towardViewer = projectCameraDirection(new THREE.Vector3(1,0,0), camera);
+    expect(towardViewer.z).toBeCloseTo(1, 10);
+    expect(towardViewer.length()).toBeCloseTo(1, 10);
+  });
+
   it.each(['xy', 'xz'] as const)('aligns offset, resized %s plane against real 2D mapper within 0.5 CSS px', plane => {
     const c = new CameraMorphController(spec(plane), 1440, 900);
     c.setFraming(liftPoint(0.8, -0.3, plane, 0.6), 7);
