@@ -31,7 +31,7 @@ import { LeftCatalogSidebar } from './components/LeftCatalogSidebar.js';
 import { RightControlPanel } from './components/RightControlPanel.js';
 import { TeachingPackDrawer } from './components/TeachingPackDrawer.js';
 import type { MeasureToolKind } from './stage/RulerToolboxOverlay.js';
-import { KatexFormulaCard } from './components/KatexFormulaCard.js';
+import { KatexFormulaCard, StageFormulaReadouts } from './components/KatexFormulaCard.js';
 import { buildPresenterWindowUrl, PresenterSyncBridge, commandMatchesStage, type StageSnapshotPayload } from './presentation/presenterSync.js';
 
 const LazyExcalidrawOverlay = React.lazy(() =>
@@ -748,7 +748,7 @@ const ClassroomApp: React.FC = () => {
                 <div className="mt-1 text-xs tracking-wide text-slate-400">{store.appMode === 'story' ? '分镜讲课模式' : '全屏课堂演说模式'}</div>
               </div>
               {(store.telemetry.formulaItems.length > 0 || liveFormulas.length > 0) && (
-                <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
+                <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
                   {liveFormulas.length ? <Suspense fallback={<KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}>
                     <LazyLiveFormulaCard key={plugin.meta.id} specs={liveFormulas} params={store.params} schema={plugin.paramSchema} highlightedId={highlightedFormulaId}
                       onBegin={(key) => store.beginLiveFormula(plugin.meta.id, key)}
@@ -756,6 +756,7 @@ const ClassroomApp: React.FC = () => {
                       onEnd={(key) => store.endLiveFormula(plugin.meta.id, key)} />
                     {highlightedReadOnly.length > 0 && <KatexFormulaCard items={highlightedReadOnly} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
                   </Suspense> : <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
+                  {!store.poeMasked && <StageFormulaReadouts key={plugin.meta.id} items={store.telemetry.formulaItems} />}
                 </div>
               )}
               <div data-testid="fullscreen-controls" className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/15 bg-slate-950/80 p-2 text-slate-100 shadow-2xl backdrop-blur-2xl">

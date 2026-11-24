@@ -220,6 +220,12 @@ export const mechVerticalCircularPlugin = Object.assign(defineSimulationPlugin<
       { kind: 'arrow', x1: state.x, y1: state.y, x2: state.x, y2: state.y - 0.7, label: 'mg' }
     ] as DiagramPrimitive[]
   }),
+  formatFormulas: (state, params) => [{
+    id: 'radial-reaction-state', label: state.derailed ? '脱离轨道后的运动状态' : '实际约束力与速率',
+    latex: state.derailed ? '\\mathbf a=\\mathbf g' : params.trackMode === 'outer-dome'
+      ? 'N=m(g\\cos\\theta-v^2/R)' : 'F_r=m(v^2/R-g\\cos\\theta)',
+    substitutedLatex: `\\begin{aligned}v&=${Math.hypot(state.vx, state.vy).toFixed(3)}\\text{ m/s}\\\\${params.trackMode === 'light-rod' ? 'F_r' : 'N'}&=${(state.derailed ? 0 : state.normalForceN).toFixed(3)}\\text{ N}\\end{aligned}`
+  }],
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
     const toScr = (wx: number, wy: number) => {

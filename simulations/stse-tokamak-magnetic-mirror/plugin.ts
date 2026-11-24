@@ -345,14 +345,20 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
     getOrigin: (state, params) => fusionDisplayPoint(state.position, params.mode),
     getVelocity: (state, params) => fusionDisplayPoint(state.velocity, params.mode)
   }],
-  formatFormulas: (state, params) => [
-    {
-      id: 'magnetic-mirror-mu',
-      label: '无散磁镜与磁矩绝热不变量',
-      latex: '\\nabla\\cdot\\mathbf{B}=0,\\quad \\mu=\\frac{mv_\\perp^2}{2B},\\quad \\sin\\theta_c=\\frac{1}{\\sqrt{R_m}}',
-      substitutedLatex: `|B|=${Math.hypot(state.bField.x, state.bField.y, state.bField.z).toFixed(2)}\\text{ T},\\; \\theta_c=${computeMirrorLossConeDeg(params).toFixed(1)}^\\circ,\\; \\Delta\\mu/\\mu=${(state.maxMuRelDev * 100).toFixed(2)}\\%`
-    }
-  ]
+  formatFormulas: (state, params) => {
+    const b = Math.hypot(state.bField.x, state.bField.y, state.bField.z);
+    const speed = Math.hypot(state.velocity.x, state.velocity.y, state.velocity.z);
+    if (params.mode === 'tokamak') return [{
+      id: 'tokamak-field', label: '环向磁场与粒子状态',
+      latex: 'B_\\phi=B_0 R_0/R',
+      substitutedLatex: `\\begin{aligned}|B|&=${b.toFixed(3)}\\text{ T}\\\\v&=${speed.toFixed(3)}\\text{ m/s}\\end{aligned}`
+    }];
+    return [{
+      id: 'magnetic-mirror-mu', label: '轴线磁镜与绝热近似',
+      latex: '\\begin{aligned}R_m&=1+(z_c/L)^2\\\\\\sin\\theta_c&=1/\\sqrt{R_m}\\end{aligned}',
+      substitutedLatex: `\\begin{aligned}\\theta_c&=${computeMirrorLossConeDeg(params).toFixed(2)}^\\circ\\\\z&=${state.position.z.toFixed(3)}\\text{ m}\\\\N_{\\rm ref}&=${state.reflectionCount}\\\\\\Delta\\mu/\\mu&=${(state.maxMuRelDev * 100).toFixed(2)}\\%\\end{aligned}`
+    }];
+  }
 }), { storyDecks: fusionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 6.5, sceneDepthRadius: 5, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
 
 export default stseTokamakMagneticMirrorPlugin;

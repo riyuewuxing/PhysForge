@@ -394,21 +394,26 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
   },
   formatFormulas: (state, params) => {
     const obs = computeObservables(state, params);
-    const items = [
-      {
-        id: 'orbit-state',
-        label: '无量纲尺度归一流 (ScaleContext)',
-        latex: 'r/r_1, \\quad v/v_{\\text{circ}}, \\quad e',
-        substitutedLatex: `r/r_1=${(obs.rNorm ?? 0).toFixed(4)},\\; v/v_{\\text{circ}}=${(obs.speedNorm ?? 0).toFixed(4)},\\; e=${(obs.eccentricity ?? 0).toFixed(4)}`
-      }
-    ];
+    if (params.mode === 'binary-lagrange') {
+      const display = orbitDisplayXY(state.xNorm, state.yNorm, state.tNorm, true);
+      return [{ id: 'binary-state', label: '共转系试探粒子位置（双星间距为长度单位）',
+        latex: 'r_1/a=q,\\quad r_2/a=1-q',
+        substitutedLatex: `\\begin{aligned}x_{\\rm rot}/a&=${display.x.toFixed(3)}\\\\y_{\\rm rot}/a&=${display.y.toFixed(3)}\\\\q&=${params.massRatioQ.toFixed(3)}\\end{aligned}` }];
+    }
+    const items = [{ id: 'orbit-state', label: '归一化二体轨道状态',
+      latex: 'r/r_1,\\quad v/v_{c1},\\quad e',
+      substitutedLatex: `\\begin{aligned}r/r_1&=${(obs.rNorm ?? 0).toFixed(4)}\\\\v/v_{c1}&=${(obs.speedNorm ?? 0).toFixed(4)}\\\\e&=${(obs.eccentricity ?? 0).toFixed(4)}\\end{aligned}` }];
     if (params.mode === 'hohmann-transfer') {
-      items.push({
-        id: 'hohmann-dv',
-        label: '霍曼转移双脉冲速度增量',
-        latex: '\\Delta v_1 = \\sqrt{\\frac{GM}{r_1}}\\left(\\sqrt{\\frac{2r_2}{r_1+r_2}}-1\\right)',
-        substitutedLatex: `\\Delta v_1=${(state.deltaV1SI / 1000).toFixed(3)}\\text{ km/s},\\; \\Delta v_2=${(state.deltaV2SI / 1000).toFixed(3)}\\text{ km/s}`
-      });
+      const dv2 = state.hohmannPhase === 'circularized'
+        ? `${(state.deltaV2SI / 1000).toFixed(3)}\\text{ km/s}` : '\\text{待点火}';
+      items.push({ id: 'hohmann-dv', label: '霍曼转移实际脉冲速度增量',
+        latex: '\\Delta v_1=\\sqrt{GM/r_1}\\left(\\sqrt{2r_2/(r_1+r_2)}-1\\right)',
+        substitutedLatex: `\\begin{aligned}\\Delta v_1&=${(state.deltaV1SI / 1000).toFixed(3)}\\text{ km/s}\\\\\\Delta v_2&=${dv2}\\end{aligned}` });
+    } else if (state.sectors.length >= 2) {
+      const previous = state.sectors[state.sectors.length - 2], last = state.sectors[state.sectors.length - 1];
+      if (previous && last) items.push({ id: 'kepler-area', label: '最近两个完整等时区间的数值扫过面积',
+        latex: '\\Delta A=\\frac12|\\mathbf r\\times\\mathbf v|\\Delta t',
+        substitutedLatex: `\\begin{aligned}A_{n-1}/r_1^2&=${previous.areaDimless.toFixed(5)}\\\\A_n/r_1^2&=${last.areaDimless.toFixed(5)}\\end{aligned}` });
     }
     return items;
   }

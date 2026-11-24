@@ -16,6 +16,27 @@ function renderLatex(latex: string): string {
   });
 }
 
+/** Numeric values are a separate subtree. Updating telemetry cannot replace live scrub tokens. */
+const StageReadoutLine = React.memo(({ id, latex }: { id: string; latex: string }) => {
+  const html = useMemo(() => renderLatex(latex), [latex]);
+  return <div data-readout-id={id} className="overflow-x-auto py-0.5 text-xs text-emerald-300"
+    dangerouslySetInnerHTML={{ __html: html }} />;
+});
+export const StageFormulaReadouts: React.FC<{ items: readonly FormulaDisplayItem[] }> = ({ items }) => {
+  const [expanded, setExpanded] = React.useState(true);
+  const results = items.filter(item => Boolean(item.substitutedLatex));
+  if (!results.length) return null;
+  return <section className="mt-2 border-t border-white/10 pt-2" data-testid="stage-formula-readouts">
+    <button type="button" className="mb-1 flex w-full items-center justify-between text-xs text-slate-300"
+      data-testid="btn-stage-readouts" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+      <span>实时数值</span><span aria-hidden="true">{expanded ? '−' : '+'}</span>
+    </button>
+    {expanded && <div className="max-h-[24vh] space-y-1 overflow-y-auto text-center" data-testid="stage-formula-values">
+      {results.map(item => <StageReadoutLine key={item.id} id={item.id} latex={item.substitutedLatex!} />)}
+    </div>}
+  </section>;
+};
+
 export const KatexFormulaCard: React.FC<KatexFormulaCardProps> = ({
   items,
   compact = false,

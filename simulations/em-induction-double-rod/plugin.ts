@@ -589,7 +589,12 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         substitutedLatex: double
           ? `\\begin{aligned}\\mathcal{E}_{\\rm mot}&=${emf.toFixed(2)}\\text{ V},\\quad I=${state.current.toFixed(2)}\\text{ A}\\\\ |F_{\\text{安},1}|&=${force1.toFixed(2)}\\text{ N},\\quad |F_{\\text{安},2}|=${force2.toFixed(2)}\\text{ N}\\end{aligned}`
           : `\\begin{aligned}\\mathcal{E}_{\\rm mot}&=${emf.toFixed(2)}\\text{ V}\\\\ I&=${state.current.toFixed(2)}\\text{ A},\\quad |F_{\\text{安}}|=${force1.toFixed(2)}\\text{ N}\\end{aligned}`
-      }
+      },
+      ...(double ? [{
+        id: 'double-rod-energy-state', label: '两杆速度、总动能和累计焦耳热',
+        latex: 'K=\\tfrac12m_1v_1^2+\\tfrac12m_2v_2^2',
+        substitutedLatex: `\\begin{aligned}v_1&=${state.v1.toFixed(3)}\\text{ m/s}\\\\v_2&=${state.v2.toFixed(3)}\\text{ m/s}\\\\K&=${(0.5 * params.mass1 * state.v1 ** 2 + 0.5 * params.mass2 * state.v2 ** 2).toFixed(3)}\\text{ J}\\\\Q&=${state.jouleHeat.toFixed(3)}\\text{ J}\\end{aligned}`
+      }] : [])
     ];
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
