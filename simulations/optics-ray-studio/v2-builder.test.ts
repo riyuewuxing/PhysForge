@@ -1,9 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { resolvePluginParams } from '@physforge/sim-sdk';
+import { createWorldMapper, resolveInitialCameraTransform, resolvePluginParams } from '@physforge/sim-sdk';
 import { opticsRayStudioPlugin } from './plugin.js';
 import { createInitialState, type OpticsParams } from './engine.js';
 
 describe('B3 builder-optics-ray V2 verification', () => {
+  it('fits real interface rays in the desktop workbench without distorting angles', () => {
+    for(const angle of [0,35,41,50,85]) {
+      const params=resolvePluginParams<OpticsParams>(opticsRayStudioPlugin.paramSchema,{sceneMode:'tir-interface',n1:1.5,n2:1,incidentAngleDeg:angle,animateSweep:false});
+      const state=createInitialState(params);
+      for(const [width,height] of [[976,720],[1392,852]] as const) {
+        const m=createWorldMapper({width,height,dpr:1,...resolveInitialCameraTransform(opticsRayStudioPlugin,params,width,height)});
+        for(const r of state.rays) for(const point of [r.from,r.to]) {
+          const s=m.toScreen(point.x,point.y);
+          expect(s.x).toBeGreaterThan(12);expect(s.x).toBeLessThan(width-280-12);
+          expect(s.y).toBeGreaterThan(12);expect(s.y).toBeLessThan(height-12);
+        }
+      }
+      const ir=opticsRayStudioPlugin.exportDiagramIR?.(state,params);
+      expect(ir?.primitives.filter(p=>p.kind==='arcAngle')).toHaveLength(state.isTotalInternalReflection?1:2);
+      if(state.isTotalInternalReflection)expect(opticsRayStudioPlugin.formatFormulas?.(state,params)[0]?.latex).not.toContain('sin\\\\theta_2');
+    }
+  });
+
   it('satisfies critical angle < 0.01 deg, parallel slab shift < 1e-6, and thin-lens formula < 1e-5', () => {
     // 1) Critical angle arcsin(1.0 / 1.5)
     const tirParams = resolvePluginParams<OpticsParams>(opticsRayStudioPlugin.paramSchema, {

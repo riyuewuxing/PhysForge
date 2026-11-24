@@ -850,6 +850,30 @@ async function main() {
         await page.screenshot({ path: path.join(OUT_DIR, 'E10_04_fullscreen_3d.png') });
       }
 
+      if (testCase.id === 'builder-optics-ray') {
+        await selectPreset(page,'tir-water-air');
+        await page.waitForFunction(()=>{
+          const r=parseFloat(document.querySelector('[data-testid="b3-interface-R"]')?.textContent??'');
+          const t=parseFloat(document.querySelector('[data-testid="b3-interface-T"]')?.textContent??'');
+          return r>0&&r<100&&Math.abs(r+t-100)<.11;
+        });
+        await page.screenshot({path:path.join(OUT_DIR,'H2_B3_below_critical.png')});
+        await dragRangeTo(page,page.getByTestId('param-slider-incidentAngleDeg'),50);
+        await page.waitForFunction(()=>document.querySelector('[data-testid="b3-interface-R"]')?.textContent==='100.0%'&&document.querySelector('[data-testid="b3-interface-T"]')?.textContent==='0.0%');
+        await page.screenshot({path:path.join(OUT_DIR,'H2_B3_total_reflection.png')});
+        await selectPreset(page,'tir-water-air');
+        await dragRangeTo(page,page.getByTestId('param-slider-n2'),1.5);
+        await page.waitForFunction(()=>document.querySelector('[data-testid="b3-interface-R"]')?.textContent==='0.0%'&&document.querySelector('[data-testid="b3-interface-T"]')?.textContent==='100.0%');
+        await page.screenshot({path:path.join(OUT_DIR,'H2_B3_matched_indices.png')});
+        await selectPreset(page,'tir-water-air');
+        await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+        if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+        await page.screenshot({path:path.join(OUT_DIR,'H2_B3_projector.png')});
+        await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+        if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+      }
       if (testCase.id === 'builder-circuit-mna') {
         const selectedPreset = await selectPreset(page, 'rc-charging-curve');
         await page.waitForTimeout(250);
