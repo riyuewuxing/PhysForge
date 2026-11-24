@@ -330,6 +330,9 @@ async function main() {
     await page.getByTestId('btn-fullscreen-speech').click();
     const fieldToken = page.locator('[data-testid="live-formula-velocity-selector"] [data-param="eFieldVPerM"]').first();
     await fieldToken.waitFor({ timeout: 15000 });
+    const formulaReadout = page.locator('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]');
+    await formulaReadout.waitFor({ state: 'visible', timeout: 15000 });
+    const beforeReadout = await formulaReadout.textContent();
     await fieldToken.evaluate(node => { window.__PF_TEST_TOKEN = node; });
     const tokenBox = await fieldToken.boundingBox();
     if (!tokenBox) throw new Error('Live formula token not visible');
@@ -341,6 +344,12 @@ async function main() {
     if (!await fieldToken.evaluate(node => node === window.__PF_TEST_TOKEN)) throw new Error('Live formula token was replaced during pointer capture');
     await page.mouse.up();
     await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'detached' });
+    await page.waitForFunction(before => document.querySelector('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]')?.textContent !== before, beforeReadout);
+    if (!await fieldToken.evaluate(node => node === window.__PF_TEST_TOKEN)) throw new Error('Numeric readout replaced the interactive token');
+    await page.getByTestId('btn-stage-readouts').click();
+    await page.getByTestId('stage-formula-values').waitFor({ state: 'detached' });
+    await page.getByTestId('btn-stage-readouts').click();
+    await formulaReadout.waitFor({ state: 'visible' });
     await page.getByTestId('btn-exit-fullscreen-speech').click();
     await fieldSlider.waitFor({ timeout: 15000 });
     const afterField = Number(await fieldSlider.inputValue());
