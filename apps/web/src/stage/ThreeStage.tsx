@@ -5,9 +5,10 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
 import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
-import { brushedCopperMaterial, magneticFluxMaterial } from './spatialMaterials.js';
+import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
+import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
 import {
   buildConductorSegments,
   trace3dFieldLines,
@@ -280,6 +281,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const staticGroup = new THREE.Group();
     const trailGroup = new THREE.Group();
     scene.add(staticGroup, trailGroup);
+    const fusionTrailGeometry = isTokamak3d ? new THREE.BufferGeometry() : null;
+    const fusionTrailBuffer = fusionTrailGeometry ? new THREE.BufferAttribute(new Float32Array(261 * 3), 3).setUsage(THREE.DynamicDrawUsage) : null;
+    if (fusionTrailGeometry && fusionTrailBuffer) {
+      fusionTrailGeometry.setAttribute('position', fusionTrailBuffer);
+      fusionTrailGeometry.setDrawRange(0, 0);
+      const line = new THREE.Line(fusionTrailGeometry, new THREE.LineBasicMaterial({ color: 0x4ade80 }));
+      line.frustumCulled = false; line.name = 'fusion-particle-trail'; trailGroup.add(line);
+    }
 
     const sphereGeo = new THREE.SphereGeometry(1, 20, 20);
     const sphereMat = new THREE.MeshStandardMaterial({
@@ -414,7 +423,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (planarDriver) { planarDriver.sync(state, curParams, layers); dirty = true; return; }
       if (isMag3d || isTokamak3d) {
         const magState = state as Magnetic3dState | TokamakMirrorState;
-        const position = mapPhysicalPoint(magState.position, isMag3d);
+        const fusionParams = curParams as TokamakMirrorParams;
+        const project = (point: { x: number; y: number; z: number }) => {
+          if (isMag3d) return mapPhysicalPoint(point, true);
+          const p = fusionDisplayPoint(point, fusionParams.mode);
+          return new THREE.Vector3(p.x, p.y, p.z);
+        };
+        const position = project(magState.position);
         marker.position.copy(position);
 
         if (isMag3d) {
@@ -463,7 +478,15 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
           separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
         } else {
-          marker.scale.setScalar(0.12);
+          marker.scale.setScalar(0.055);
+          const fusion = state as TokamakMirrorState;
+          sphereMat.color.set(fusion.escaped ? 0xf87171 : 0x4ade80);
+          sphereMat.emissive.set(fusion.escaped ? 0x7f1d1d : 0x14532d);
+          if (fusionTrailGeometry && fusionTrailBuffer) {
+            const count = Math.min(261, fusion.trail.length), start = fusion.trail.length - count;
+            for (let i = 0; i < count; i++) { const p = project(fusion.trail[start + i]!); fusionTrailBuffer.setXYZ(i, p.x, p.y, p.z); }
+            fusionTrailBuffer.needsUpdate = true; fusionTrailGeometry.setDrawRange(0, count);
+          }
           velocityArrow.visible = false;
           lorentzForceArrow.visible = false;
           magneticFieldArrow.visible = false;
@@ -493,15 +516,16 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
                   : magneticParams.geometryType === 'helmholtz-coil' ? 72
                     : magneticParams.geometryType === 'finite-solenoid' ? 48
                       : magneticParams.geometryType === 'straight-wire' ? 24 : 0
-                : 0;
+                : fusionParams.mode === 'tokamak' ? 24 : 32;
               const segmentGroupSize = pointsPerConductor || segments.length;
               for (let start = 0; start < segments.length; start += segmentGroupSize) {
                 const group = segments.slice(start, start + segmentGroupSize);
                 if (group.length === 0) continue;
                 const points = [group[0]!.a, ...group.map((segment) => segment.b)].map(
-                  (point) => mapPhysicalPoint(point, isMag3d)
+                  project
                 );
-                const closed = pointsPerConductor > 24;
+                const closed = isTokamak3d || pointsPerConductor > 24;
+                if (closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
                 const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
                 const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), 0.026, 10, closed);
                 const conductorMat = brushedCopperMaterial();
@@ -510,13 +534,18 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             }
           }
 
+          if (isTokamak3d && layers.has('conductors') && fusionParams.mode === 'tokamak') {
+            const chamber = new THREE.Mesh(new THREE.TorusGeometry(fusionParams.majorRadiusM, 0.55, 24, 96), dielectricGlassMaterial());
+            chamber.name = 'tokamak-vacuum-chamber';
+            staticGroup.add(chamber);
+          }
           if (layers.has('fieldLines3d')) {
             const lines = isMag3d
               ? trace3dFieldLines(curParams as Magnetic3dParams)
               : traceTokamakMirrorLines(curParams as TokamakMirrorParams);
             for (const line of lines) {
               if (line.length < 2) continue;
-              const points = line.map((point) => mapPhysicalPoint(point, isMag3d));
+              const points = line.map(project);
               const closed = points[0]!.distanceTo(points[points.length - 1]!) < 0.06;
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
               const geometry = new THREE.TubeGeometry(curve, Math.max(32, points.length * 2), 0.012, 5, closed);
