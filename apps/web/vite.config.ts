@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, transformWithEsbuild, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -99,12 +100,33 @@ function excalidrawOfflineAssetsPlugin(): Plugin {
   };
 }
 
+/** Produce a self-contained offline tool using the exact same crypto module as the app. */
+function aiVaultOfflineToolPlugin(): Plugin {
+  return {
+    name: 'physforge-ai-vault-offline-tool',
+    async generateBundle() {
+      const root = path.resolve(__dirname, 'src/security');
+      const sourcePath = path.join(root, 'aiVault.ts');
+      const core = await transformWithEsbuild(fs.readFileSync(sourcePath, 'utf8'), sourcePath, {
+        loader: 'ts', format: 'esm', target: 'es2022'
+      });
+      const script = core.code + '\n' + fs.readFileSync(path.join(root, 'aiVaultTool.js'), 'utf8');
+      if (/<\/script/i.test(script)) throw new Error('Unsafe offline script delimiter');
+      const hash = createHash('sha256').update(script).digest('base64');
+      const template = fs.readFileSync(path.join(root, 'aiVaultTool.html'), 'utf8');
+      this.emitFile({ type: 'asset', fileName: 'ai-vault.html',
+        source: template.replace('__SCRIPT_HASH__', hash).replace('__SCRIPT__', () => script) });
+    }
+  };
+}
+
 export default defineConfig({
   base: normalizedBasePath,
   plugins: [
     react(),
     tailwindcss(),
     excalidrawOfflineAssetsPlugin(),
+    aiVaultOfflineToolPlugin(),
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {

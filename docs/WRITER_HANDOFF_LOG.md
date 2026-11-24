@@ -11,12 +11,17 @@
 * **最终门禁实证（总控终审复跑）**：18 项 TypeScript（11 `tsconfig.json` + 7 `tsconfig.build.json`）及 7 个 workspace 包构建全过；Vitest **77 文件 / 425 用例通过**；6 教研包/20 题、10 场景、43 单元 Vault 校验全过；`/PhysForge/` 主入口 `index-CD681VWE.js` **271.43 kB gzip**（`< 350 KB`、零重型泄漏）；6 旗舰离线单文件导出 `2009.2–2022.5 KB`；`visual-audit.mjs`（0 错误/0 外网请求）与 `e2e-subpath-and-export.mjs`（direct WebM `53801 B`、PNG `121883 B`、drawer WebM `128015 B`）全通过，实机截图多模态核验达标；`git diff --check` 通过。
 * **如实未测与延后事项（Online AI / BYOK）**：
   * `@physforge/ai-copilot` 已合入 PR-0 的 Schema 感知提示、未知参数键拦截与自修正反馈、前端提供商模板与连通性探测，离线单测（`byokClient.test.ts` 12/12、`ai-copilot.test.ts` 5/5）全绿；
-  * **但尚未在浏览器中使用真实外部大模型 API Key 进行实网在线联调（已按用户明确指示暂缓，留待用户日后决定启用时再单独实测）**。
+  * **2026-11-24 已完成真实 DeepSeek 公网认证及生成（run 45418033898）；正式密钥保险库另行施工，不使用真实正式 Key。**
 * **既有非阻塞告警与环境备注**：Vite 构建仍有 `[INEFFECTIVE_DYNAMIC_IMPORT]`（`em-induction-double-rod`）与大延迟 chunk 提示；Windows 本机 Corepack 受 DNS 阻塞需直调 `node_modules` 二进制，Playwright 与 Git 写入需 `BypassSandbox: true`。
 
 ---
 
 ## 会话增量记录
+
+### 云端真实联调与 AI 密钥保险库候选（2026-11-24）
+
+* 用户已确认 Edge 连通；独立云端 runner 从仓库 Actions Secret DEEPSEEK 运行正式 Pages Chromium，entry index-D38kBbdg.js，run 45418033898 PASS：GET /models 200，POST /chat/completions 200（1 次），实际光电效应参数和载入 PASS；artifact 14931063542 两图实审，400 nm / 2.36 eV / 0.740 V。真实测试 workflow 留在 audit/deepseek-real-smoke 分支，仅 push 触发，未改 main，不在普通 PR/部署中注入 Key。
+* 新候选 feat/ai-encrypted-vault：独立离线 HTML 加密工具 + 工作台同源密文导入/缓存/解锁，AES-256-GCM + PBKDF2-SHA256 600000、随机盐和 IV；多供应商统一内存配置，拒绝明文额外字段和异常 KDF；默认不发布任何个人密文、密码或 Key。需通过全部门禁与实际看图，真实正式保险库由用户自行生成。跨标签页只共享密文，必须重新输入主密码；无静默自动解锁。之前 fix/byok-persistent-settings 未验收分支保留、不合并。
 
 ### [2026-11-24 23:06 +09:00] 云端 Turn 2：预设标识与公网验收
 

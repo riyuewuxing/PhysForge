@@ -5,6 +5,10 @@ on:
     paths:
       - 'packages/ai-copilot/**'
       - 'apps/web/src/components/AiCopilotDrawer.tsx'
+      - 'apps/web/src/components/AiVaultPanel.tsx'
+      - 'apps/web/src/security/**'
+      - 'apps/web/vite.config.ts'
+      - 'scripts/ai-vault-browser-audit.mjs'
       - 'scripts/byok-browser-audit.mjs'
       - '.github/workflows/byok-browser-audit.yml'
 permissions:
@@ -38,6 +42,7 @@ jobs:
           done
           curl -fsS http://127.0.0.1:4173/PhysForge/ > /dev/null || { cat /tmp/byok-preview.log; exit 1; }
           node scripts/byok-browser-audit.mjs
+          node scripts/ai-vault-browser-audit.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

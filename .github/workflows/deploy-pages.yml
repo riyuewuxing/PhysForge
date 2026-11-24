@@ -73,7 +73,9 @@ jobs:
         env:
           PHYSFORGE_VERIFY_DEPLOYMENT: '1'
           PHYSFORGE_EXPECTED_ENTRY: ${{ needs.build.outputs.entry }}
-        run: node scripts/byok-browser-audit.mjs
+        run: |
+          node scripts/byok-browser-audit.mjs
+          node scripts/ai-vault-browser-audit.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
