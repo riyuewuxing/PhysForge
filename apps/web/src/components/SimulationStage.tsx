@@ -747,7 +747,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             storyCallbacksRef.current.onStoryView3d?.(false);
             return;
           }
-          if (showThreeRef.current) storyCallbacksRef.current.onStoryView3d?.(false);
+          storyCallbacksRef.current.onStoryView3d?.(false);
           storyCameraTweenRef.current = { from: cameraToStoryView(cameraRef.current, viewportRef.current, baseScaleRef.current),
             to: view, start: now, duration };
           advanceStoryCamera2D(now);
@@ -1116,7 +1116,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               simState={simStateRef.current}
               simStateRef={simStateRef}
               params={params}
-              storyParamsRef={storyParamsRef}
+              getFrameParams={() => latestRef.current.params}
               storyCameraCommandRef={storySpatialCommandRef}
               activeLayers={threeLayers}
               presentationMode={presentationMode}
