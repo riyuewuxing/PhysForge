@@ -338,10 +338,14 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
 
   updateParamsBatch: (patch, label = '画布参数调整') => {
     const cur = get();
-    if (liveFormulaGesture) get().endLiveFormula(liveFormulaGesture.modelId, liveFormulaGesture.key, liveFormulaGesture.epoch);
     const plugin = cur.loadedPlugin;
     const merged = { ...cur.params, ...patch };
     const resolved = resolvePluginParams(plugin.paramSchema, merged);
+    const changed = plugin.paramSchema.filter(field => resolved[field.key] !== cur.params[field.key]);
+    if (!changed.length) return;
+    const interruptedGesture = liveFormulaGesture !== null;
+    if (liveFormulaGesture) get().endLiveFormula(liveFormulaGesture.modelId, liveFormulaGesture.key, liveFormulaGesture.epoch);
+    const contextChanged = interruptedGesture || changed.some(field => field.kind !== 'number');
     paramCommandStack.push({
       modelId: plugin.meta.id,
       label,
@@ -353,6 +357,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
       params: resolved,
       scrubTime: null,
       autoFreezeBadge: null,
+      paramContextEpoch: s.paramContextEpoch + (contextChanged ? 1 : 0),
       ...(Object.prototype.hasOwnProperty.call(patch, 'topology')
         ? { oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, resolved) }
         : {}),
