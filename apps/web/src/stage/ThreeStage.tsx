@@ -7,6 +7,7 @@ import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type Simulat
 import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
 import { brushedCopperMaterial, magneticFluxMaterial } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
+import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
 import {
   buildConductorSegments,
   trace3dFieldLines,
@@ -273,7 +274,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const rimLight = new THREE.DirectionalLight(0x38bdf8, 2.2);
     rimLight.position.set(-4, 2, -3);
     scene.add(grid, ambient, keyLight, rimLight);
-    const planarDriver = createPlanarFlagshipScene(plugin.meta.id, scene);
+    const planarDriver = createPlanarFlagshipScene(plugin.meta.id, scene) ?? createRemainingFlagshipScene(plugin.meta.id, scene);
     if (planarDriver) grid.visible = false;
 
     const staticGroup = new THREE.Group();
