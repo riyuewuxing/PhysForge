@@ -5,7 +5,19 @@ import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 
 const out = 'artifacts/byok-audit';
-const preview = 'http://127.0.0.1:4173/PhysForge/';
+const verifyLive = process.env.PHYSFORGE_VERIFY_DEPLOYMENT === '1';
+const preview = verifyLive ? 'https://riyuewuxing.github.io/PhysForge/' : 'http://127.0.0.1:4173/PhysForge/';
+const offlineTool = path.resolve(out, 'physforge-ai-vault.html');
+await fs.mkdir(out, {recursive:true});
+if (verifyLive) {
+  const response = await fetch(new URL('ai-vault.html', preview), { cache:'no-store', redirect:'error', signal:AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error('Published offline tool unavailable');
+  const html = await response.text();
+  if (!html.includes('PhysForge AI 密钥保险库') || !html.includes('connect-src')) throw new Error('Wrong published offline tool');
+  await fs.writeFile(offlineTool, html);
+} else {
+  await fs.copyFile('apps/web/dist/ai-vault.html', offlineTool);
+}
 const password = 'fixture-only-vault-password-2026';
 const key = 'fixture-vault-deepseek-not-real';
 const secondKey = 'fixture-vault-openai-not-real';
@@ -17,7 +29,7 @@ try {
   let requests = 0;
   await offline.route(/^https?:\/\//, route => { requests++; return route.abort(); });
   const tool = await offline.newPage();
-  await tool.goto(pathToFileURL(path.resolve('apps/web/dist/ai-vault.html')).href);
+  await tool.goto(pathToFileURL(offlineTool).href);
   await tool.locator('[data-field=apiKey]').first().fill(key);
   await tool.locator('#add').click();
   await tool.getByLabel('供应商模板').nth(1).selectOption('OpenAI');
