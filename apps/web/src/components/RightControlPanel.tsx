@@ -111,6 +111,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   const isCircuit = plugin.meta.id === 'builder-circuit-mna' || plugin.meta.id === 'circuit-dc-capacitor-mna';
   const emf = typeof params.emf === 'number' ? params.emf : 12;
   const isInduction = plugin.meta.id === 'em-induction-double-rod';
+  const isOpticalInterface = plugin.meta.id === 'builder-optics-ray' && params.sceneMode === 'tir-interface';
   const energyReadouts = [
     { key: 'kineticEnergy', label: '总动能 Eₖ' },
     { key: 'jouleHeat', label: '累计焦耳热 Q' },
@@ -180,6 +181,18 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
               return <div key={key} className="flex justify-between gap-2 text-xs">
                 <span>{label}</span>
                 <span data-testid={`e04-energy-${key}`} className="tabular-nums font-medium">{typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(3)} J` : '—'}</span>
+              </div>;
+            })}
+          </section>
+        ) : isOpticalInterface ? (
+          <section data-testid="b3-interface-power" className="space-y-2 pt-0.5" style={{color:'var(--pf-text-muted)'}}>
+            <div className="text-[11px]">非偏振光 · 界面功率分配</div>
+            {([{key:'interfaceReflectance',label:'反射率 R',color:'#e8ba76'},{key:'interfaceTransmittance',label:'透射率 T',color:'#38bdf8'}] as const).map(({key,label,color})=>{
+              const value=telemetry.observables[key],valid=typeof value==='number'&&Number.isFinite(value);
+              const percent=valid?Math.max(0,Math.min(100,value*100)):0;
+              return <div key={key}>
+                <div className="mb-1 flex justify-between text-xs"><span>{label}</span><span data-testid={key==='interfaceReflectance'?'b3-interface-R':'b3-interface-T'} className="tabular-nums" style={{color:'var(--pf-text)'}}>{valid?percent.toFixed(1)+'%':'—'}</span></div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full" style={{background:'var(--pf-border)'}}><div className="h-full rounded-full" style={{width:percent+'%',background:color}}/></div>
               </div>;
             })}
           </section>

@@ -122,6 +122,8 @@ export interface TelemetryChannelSpec {
  * 主画布视口与坐标映射信息
  */
 export interface Viewport {
+  /** Optional presentation palette, never a physics-engine parameter. */
+  theme?: 'chalkboard' | 'projector';
   width: number;
   height: number;
   dpr: number;

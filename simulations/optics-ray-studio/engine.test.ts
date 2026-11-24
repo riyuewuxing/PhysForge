@@ -4,6 +4,7 @@ import {
   checkInvariants,
   computeObservables,
   createInitialState,
+  fresnelPowerUnpolarized,
   stepOptics,
   type OpticsParams
 } from './engine.js';
@@ -23,6 +24,27 @@ const baseParams: OpticsParams = {
 };
 
 describe('optics-ray-studio engine', () => {
+  it('uses physical unpolarized Fresnel power fractions, including matched indices and TIR', () => {
+    expect(fresnelPowerUnpolarized(1,1.5,0).R).toBeCloseTo(.04,12);
+    expect(fresnelPowerUnpolarized(1.5,1.5,60)).toEqual({R:0,T:1});
+    expect(fresnelPowerUnpolarized(1.5,1,45)).toEqual({R:1,T:0});
+    const theta=degToRad(35), ci=Math.cos(theta), ct=Math.sqrt(1-(1.5*Math.sin(theta))**2);
+    // Independent transmitted-power expression using electric-field
+    // coefficients and the normal Poynting-flux factor.
+    const ts=2*1.5*ci/(1.5*ci+ct), tp=2*1.5*ci/(ci+1.5*ct);
+    const expectedT=ct/(1.5*ci)*(ts*ts+tp*tp)/2;
+    const state=createInitialState({...baseParams,incidentAngleDeg:35});
+    expect(state.interfaceTransmittance).toBeCloseTo(expectedT,12);
+    expect(state.interfaceReflectance).toBeCloseTo(1-expectedT,12);
+    expect(state.rays.find(r=>r.label==='折射光')?.intensity).toBeCloseTo(expectedT,12);
+    expect(state.rays.find(r=>r.label==='反射光')?.intensity).toBeCloseTo(1-expectedT,12);
+    const matched=createInitialState({...baseParams,n2:1.5});
+    expect(matched.rays.some(r=>r.label==='反射光')).toBe(false);
+    const crit=createInitialState({...baseParams,incidentAngleDeg:Math.asin(2/3)*180/Math.PI});
+    expect(crit.interfaceTransmittance).toBe(0);
+    expect(crit.rays.some(r=>r.label==='折射光')).toBe(false);
+  });
+
   it('satisfies Snell law and triggers exact critical angle total internal reflection', () => {
     // n1=1.5, n2=1.0 -> critical angle arcsin(2/3) ≈ 41.8103°
     const belowCrit = createInitialState({ ...baseParams, incidentAngleDeg: 30 });

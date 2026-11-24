@@ -484,7 +484,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     if (drawState !== null) {
       const layerSet = readDisplayedLayers();
-      p.renderCanvas(ctx, drawState, pm, vp, layerSet);
+      p.renderCanvas(ctx, drawState, pm, { ...vp, theme: currentTheme }, layerSet);
 
       // 壳层统一 Strobe 频闪打点叠加
       if (strobe && !masked && snapshotsRef.current.length > 2) {
