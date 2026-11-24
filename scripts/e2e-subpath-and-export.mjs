@@ -280,6 +280,33 @@ async function main() {
     await page.getByTestId('model-card-stse-em-devices-suite').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { state: 'detached', timeout: 15000 });
 
+    // Actual pointer gesture: formula token identity survives parameter changes.
+    const fieldSlider = page.getByTestId('param-slider-eFieldVPerM');
+    await fieldSlider.waitFor({ timeout: 15000 });
+    const beforeField = Number(await fieldSlider.inputValue());
+    await page.getByTestId('btn-fullscreen-speech').click();
+    const fieldToken = page.locator('[data-testid="live-formula-velocity-selector"] [data-param="eFieldVPerM"]').first();
+    await fieldToken.waitFor({ timeout: 15000 });
+    await fieldToken.evaluate(node => { window.__PF_TEST_TOKEN = node; });
+    const tokenBox = await fieldToken.boundingBox();
+    if (!tokenBox) throw new Error('Live formula token not visible');
+    const x = tokenBox.x + tokenBox.width / 2, y = tokenBox.y + tokenBox.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + (beforeField > 300000 ? -60 : 60), y, { steps: 6 });
+    await page.getByTestId('live-formula-hud').waitFor({ state: 'visible' });
+    if (!await fieldToken.evaluate(node => node === window.__PF_TEST_TOKEN)) throw new Error('Live formula token was replaced during pointer capture');
+    await page.mouse.up();
+    await page.getByTestId('live-formula-hud').waitFor({ state: 'hidden' });
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+    await fieldSlider.waitFor({ timeout: 15000 });
+    const afterField = Number(await fieldSlider.inputValue());
+    if (!Number.isFinite(afterField) || afterField === beforeField) throw new Error('Live formula did not update actual model parameter');
+    await page.getByTestId('btn-fullscreen-speech').click();
+    await fieldToken.dblclick();
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+    if (Number(await fieldSlider.inputValue()) !== 200000) throw new Error('Live formula double click did not restore schema default');
+
     // Presenter is a second page in the same origin/profile. It must not mount another simulation.
     await page.getByTestId('btn-fullscreen-speech').click();
     await page.getByTestId('btn-toggle-story').click();
