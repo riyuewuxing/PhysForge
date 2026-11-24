@@ -1,3 +1,4 @@
+import { emDevicesStoryDecks } from './storyDecks.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { emDevicesPresets } from './presets.js';
@@ -601,6 +602,6 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
         substitutedLatex: `Q=${state.flowRateM3ps.toExponential(3)}\\text{ m}^3/\\text{s},\\quad U=${state.flowVoltageV.toExponential(3)}\\text{ V}` }];
     }
   }
-}), { liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 3.4, sceneDepthRadius: 4, default3DAzimuthRad: 0.6, default3DPolarRad: 0.9 } });
+}), { storyDecks: emDevicesStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 3.4, sceneDepthRadius: 4, default3DAzimuthRad: 0.6, default3DPolarRad: 0.9 } });
 
 export default stseEmDevicesSuitePlugin;

@@ -1,3 +1,4 @@
+import { orbitalStoryDecks } from './storyDecks.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { astroOrbitalPresets } from './presets.js';
@@ -411,6 +412,6 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     }
     return items;
   }
-}), { liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 8.5, sceneDepthRadius: 8, default3DAzimuthRad: 0.5, default3DPolarRad: 0.92 } });
+}), { storyDecks: orbitalStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 8.5, sceneDepthRadius: 8, default3DAzimuthRad: 0.5, default3DPolarRad: 0.92 } });
 
 export default astroOrbitalMechanicsPlugin;
