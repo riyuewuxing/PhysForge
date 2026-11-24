@@ -43,3 +43,10 @@ export function inductionDiagramGeometry(state:Pick<InductionState,'x1'|'x2'>,p:
   return {x1,x2,l1,l2,double,minX,maxX,rod1:segment(bottom1,top1),rod2:segment(bottom2,top2),
     rails,currentGuides,schematicStep:double&&Math.abs(l1-l2)>1e-10};
 }
+
+/** Finite display window of a uniform field; B=0 has no markers. */
+export function inductionFieldPoints(p:InductionParams):readonly RodDiagramPoint[]{
+  if(Math.abs(p.magneticB)<1e-9)return [];
+  const halfWidth=Math.max(p.railWidth,p.rodMode==='double'?getEffectiveL2(p):p.railWidth)*0.32;
+  return Array.from({length:7},(_,i)=>(i-3)*0.6).flatMap(x=>[-halfWidth,0,halfWidth].map(y=>point(x,y)));
+}
