@@ -1,6 +1,6 @@
 import { emDevicesStoryDecks } from './storyDecks.js';
 import { flightReadout } from './particleFlight.js';
-import { cyclotronReadout, CYCL_DISPLAY_RADIUS } from './cyclotronFlight.js';
+import { cyclotronReadout, cyclotronHistory, CYCL_DISPLAY_RADIUS } from './cyclotronFlight.js';
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline } from './deviceGeometry.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
@@ -419,11 +419,11 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
   ],
   telemetryChannels: [
     { key: 'selectedSpeed', label: '选择速度 E/B', unit: 'm/s', color: '#38bdf8' },
-    { key:'cyclotronEnergyJ', label:'回旋粒子当前动能', unit:'J', color:'#fbbf24' },
-    { key:'cyclotronPhaseSlipRad', label:'过缝相位差', unit:'rad', color:'#c084fc' },
     { key: 'hallVoltageMv', label: '霍尔电压 U_H', unit: 'mV', color: '#f59e0b' },
     { key: 'mhdOutputWatt', label: 'MHD 输出功率', unit: 'W', color: '#4ade80' },
-    { key: 'flowVoltageMv', label: '流量计感生电压', unit: 'mV', color: '#a855f7' }
+    { key: 'flowVoltageMv', label: '流量计感生电压', unit: 'mV', color: '#a855f7' },
+    { key:'cyclotronEnergyJ', label:'回旋粒子当前动能', unit:'J', color:'#fbbf24' },
+    { key:'cyclotronPhaseSlipRad', label:'过缝相位差', unit:'rad', color:'#c084fc' }
   ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
@@ -445,6 +445,11 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     for (const p of diagram.fields) primitives.push({kind:'fieldMarker',x:p.x,y:p.y,symbol:'dot',radius:0.04});
     for (const cue of diagram.cues) primitives.push({kind:'arrow',x1:cue.x,y1:cue.y,x2:cue.x+cue.dx,y2:cue.y+cue.dy,label:cue.label});
     for (const label of diagram.labels) primitives.push({kind:'text',...label,align:'middle'});
+    if(state.cyclotron){
+      const history=cyclotronHistory(params,state.cyclotron);
+      for(const arc of history)primitives.push({kind:'trajectory',points:arc.points.map(v=>deviceDiagramPoint(v.x,v.y)),strokeWidth:0.6});
+      if(history.length)primitives.push({kind:'text',x:-0.25,y:-1.08,text:'细线：抽样历史圆弧；粗线：最近实际轨迹',align:'middle'});
+    }
     primitives.push({kind:'trajectory',points:state.trail.slice(-121).map(p=>deviceDiagramPoint(p.x,p.y)),strokeWidth:1.5});
     if(state.cyclotron){
       const sign=Math.sign(state.cyclotron.rfVoltageV);
@@ -516,6 +521,14 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       if(Math.abs(state.cyclotron.rfVoltageV)>1e-6){
         ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineTo(b.x-sign*7,b.y-4);ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-sign*7,b.y+4);ctx.stroke();
       }
+    }
+    if(state.cyclotron){
+      const history=cyclotronHistory(params,state.cyclotron);
+      ctx.strokeStyle='rgba(251,191,36,0.46)';ctx.lineWidth=1.2;
+      for(const arc of history){
+        ctx.beginPath();arc.points.forEach((v,i)=>{const w=deviceDiagramPoint(v.x,v.y),q=m.toScreen(w.x,w.y);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);});ctx.stroke();
+      }
+      if(history.length){const q=m.toScreen(-0.25,-1.08);ctx.textAlign='center';ctx.fillStyle='#cbd5e1';ctx.font='11px system-ui, sans-serif';ctx.fillText('浅色：抽样历史圆弧 · 亮色：最近实际轨迹',q.x,q.y);ctx.textAlign='left';}
     }
     // Draw particle trail & head
     if (state.trail.length > 1) {

@@ -3,7 +3,7 @@ import { stepBorisPusher } from '@physforge/physics-core';
 import { describe, expect, it } from 'vitest';
 import { stseEmDevicesSuitePlugin } from './plugin.js';
 import { emDevicesPresets } from './presets.js';
-import { getCyclotronPlan,sampleCyclotron,C_LIGHT,CYCL_DISPLAY_RADIUS } from './cyclotronFlight.js';
+import { getCyclotronPlan,sampleCyclotron,cyclotronHistory,C_LIGHT,CYCL_DISPLAY_RADIUS } from './cyclotronFlight.js';
 import { BEAM_LENGTH_M,RIGHT_X,SELECTOR_HALF_GAP,beamScale,sampleBeamFlight } from './particleFlight.js';
 import {
   computeCyclotronExitMetrics,
@@ -119,6 +119,25 @@ describe('stse-em-devices-suite physics invariants (S02)', () => {
       expect(Math.hypot(numeric.velocity.x-exact.velocityMps.x,numeric.velocity.y-exact.velocityMps.y)/a.speedMps).toBeLessThan(1e-5);
       expect(Math.sign(f.rfVoltageV)).toBe(a.direction);
     }
+  });
+  it('samples bounded historical arcs without fabricating connecting trajectories',()=>{
+    const p=getPreset(0),plan=getCyclotronPlan(p),f=sampleCyclotron(p,plan.endTau*plan.physicalUnitS),history=cyclotronHistory(p,f);
+    expect(history.length).toBe(12);
+    expect(history).toBe(cyclotronHistory(p,f));
+    expect(history[0]?.gapCount).toBe(1);
+    for(const path of history){
+      const a=plan.arcs[path.gapCount-1]!;
+      expect(a.gapCount).toBeLessThanOrEqual(f.arcIndex-7);
+      expect(path.points).toHaveLength(25);
+      for(const v of path.points){
+        const x=v.x*.7/CYCL_DISPLAY_RADIUS,y=v.y*.7/CYCL_DISPLAY_RADIUS;
+        expect(Math.hypot(x,y-a.y0+a.direction*a.radius)).toBeCloseTo(a.radius,10);
+        expect(Math.hypot(x,y)).toBeLessThanOrEqual(1+1e-9);
+      }
+    }
+    const state=stepEmDevices(createInitialState(p),p,100).nextState;
+    const ir=stseEmDevicesSuitePlugin.exportDiagramIR!(state,p);
+    expect(ir?.primitives.filter(x=>x.kind==='trajectory')).toHaveLength(history.length+1);
   });
   it('computes relativistic half periods after each actual kick and terminates on loss of accelerating phase',()=>{
     const p={...getPreset(0),bFieldT:3.5,cyclotronRadiusM:1,relativisticDetune:true},plan=getCyclotronPlan(p);

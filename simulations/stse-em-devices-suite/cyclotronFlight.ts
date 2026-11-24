@@ -115,6 +115,28 @@ export function cyclotronTrail(p:EmDevicesParams,f:CyclotronFlight):Point[]{
   points[points.length-1]=f.position;
   return points.slice(-TAIL_POINTS);
 }
+// Representative completed historical arcs (pairs preserve both sides).
+// Never join non-adjacent arcs; the continuous bright tail remains separate.
+export interface CyclotronHistoryArc{readonly gapCount:number;readonly points:readonly Point[]}
+let historyCache:{plan:CyclotronPlan;signature:string;paths:readonly CyclotronHistoryArc[]}|null=null;
+export function cyclotronHistory(p:EmDevicesParams,f:CyclotronFlight):readonly CyclotronHistoryArc[]{
+  const plan=getCyclotronPlan(p),last=f.arcIndex-8;
+  if(last<0)return [];
+  const indices=new Set<number>();
+  const pairs=Math.min(6,Math.ceil((last+1)/2));
+  for(let i=0;i<pairs;i++){
+    const first=pairs===1?0:Math.floor((last-1)*i/(pairs-1)/2)*2;
+    indices.add(first);
+    if(first+1<=last)indices.add(first+1);
+  }
+  const selected=[...indices].sort((a,b)=>a-b),signature=selected.join(',');
+  if(historyCache?.plan===plan&&historyCache.signature===signature)return historyCache.paths;
+  const paths=selected.map(i=>{
+    const a=plan.arcs[i]!;
+    return {gapCount:a.gapCount,points:Array.from({length:25},(_,j)=>project(arcPoint(a,a.endAngle*j/24)))};
+  });
+  historyCache={plan,signature,paths};return paths;
+}
 export function advanceCyclotron(p:EmDevicesParams,prev:CyclotronFlight,dt:number,displayTime:number):{flight:CyclotronFlight;events:PhysicsEvent[]}{
   if(prev.status!=='running'||dt===0)return {flight:prev,events:[]};
   const flight=sampleCyclotron(p,prev.physicalTimeS+dt*prev.timeUnitS);

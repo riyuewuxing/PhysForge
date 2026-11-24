@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
 import type { EmDevicesParams, EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
+import { cyclotronHistory,type CyclotronHistoryArc } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers } from '@physforge/simulations/astro-orbital-mechanics';
 import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
@@ -74,6 +75,11 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
   const glow=createParticleGlow();
   glow.sprite.scale.set(.24,.24,1);marker.add(glow.sprite);
   let lastCyclTrail:EmDevicesState['trail']|null=null;
+  let lastHistory:readonly CyclotronHistoryArc[]|null=null;
+  const historyGeometry=new THREE.BufferGeometry(),historyPositions=new THREE.BufferAttribute(new Float32Array(12*24*2*3),3).setUsage(THREE.DynamicDrawUsage);
+  historyGeometry.setAttribute('position',historyPositions);historyGeometry.setDrawRange(0,0);
+  const historyLine=new THREE.LineSegments(historyGeometry,new THREE.LineBasicMaterial({color:0xfbbf24,transparent:true,opacity:.48,depthWrite:false}));
+  historyLine.name='cyclotron-history-sampled-arcs';historyLine.frustumCulled=false;moving.add(historyLine);
   const gap=mesh(moving,'accelerating-gap',new THREE.BoxGeometry(0.045,0.035,1.55),magneticFluxMaterial(0xfbbf24));
   gap.position.set(-0.25,-0.025,0);
   const rf=new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(-0.38,.06,-.95),.26,0xfbbf24,.065,.045);
@@ -112,11 +118,15 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
     material.color.set(isCyclotron?0xffd369:p.device==='hall-sensor'&&p.carrierType==='hole'?0xf43f5e:0x4ade80);
     material.emissive.copy(material.color);material.emissiveIntensity=isCyclotron?1.5:.55;material.opacity=isCyclotron?1:.72;
     glow.sprite.visible=isCyclotron;
-    cyclTrack.visible=isCyclotron;cyclTrackHalo.visible=isCyclotron;
+    cyclTrack.visible=isCyclotron;cyclTrackHalo.visible=isCyclotron;historyLine.visible=isCyclotron;
     if(isCyclotron){
       track.trail.visible=false;
       if(lastCyclTrail!==state.trail){lastCyclTrail=state.trail;const pts=state.trail.map(v=>deviceDisplayPoint(v.x,v.y));cyclTrail.update(pts,v=>v);cyclHalo.update(pts,v=>v);}
-    }else{lastCyclTrail=null;track.update(state.trail,deviceDisplayPoint);}
+      const history=cyclotronHistory(p,state.cyclotron!);
+      if(history!==lastHistory){lastHistory=history;let n=0;for(const arc of history)for(let i=1;i<arc.points.length;i++){
+        for(const v of [arc.points[i-1]!,arc.points[i]!]){const w=deviceDisplayPoint(v.x,v.y);historyPositions.setXYZ(n++,w.x,w.y,w.z);}
+      }historyPositions.needsUpdate=true;historyGeometry.setDrawRange(0,n);}
+    }else{lastCyclTrail=null;lastHistory=null;track.update(state.trail,deviceDisplayPoint);}
     const f=state.cyclotron;
     gap.visible=!!f&&Math.abs(state.particlePos.x*0.7)<=0.04;
     rf.visible=!!f&&Math.abs(f.rfVoltageV)>1e-6;
