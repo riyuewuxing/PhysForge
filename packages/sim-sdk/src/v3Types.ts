@@ -1,4 +1,4 @@
-import type { ParamRecord, SimulationPlugin, SimulationPluginV2 } from './index.js';
+import type { ParamRecord, ParamValue, SimulationPlugin, SimulationPluginV2 } from './index.js';
 
 export interface LiveFormulaVarBinding {
   /** 对应 KaTeX 中 \htmlData{param=xxx}{...} 的标识 */
@@ -26,6 +26,20 @@ export interface LiveFormulaSpec {
    */
   latex: string;
   bindings: LiveFormulaVarBinding[];
+  /** Optional conjunction of exact parameter values. Only show a law in the physical modes in which it applies. */
+  when?: Readonly<Record<string, readonly ParamValue[]>>;
+}
+
+/** Declarative conditions keep model plugins independent of DOM and prevent invalid-mode controls. */
+export function isLiveFormulaApplicable(spec: LiveFormulaSpec, params: ParamRecord): boolean {
+  return Object.entries(spec.when ?? {}).every(([key, allowed]) => {
+    const value = params[key];
+    return value !== undefined && allowed.includes(value);
+  });
+}
+
+export function selectLiveFormulas(specs: readonly LiveFormulaSpec[] | undefined, params: ParamRecord): readonly LiveFormulaSpec[] {
+  return (specs ?? []).filter(spec => isLiveFormulaApplicable(spec, params));
 }
 
 export interface StoryCameraKeyframe {
