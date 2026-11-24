@@ -412,6 +412,14 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         category: 'magnetic',
         color: '#fb7185'
       },
+      ...(params.rodMode === 'double' ? [{
+        id: 'ampere-2',
+        label: 'F安₂',
+        origin: { x: rodDisplayX(state, state.x2), y: 0 },
+        force: { x: params.magneticB * getEffectiveL2(params) * state.current, y: 0 },
+        category: 'magnetic' as const,
+        color: '#f472b6'
+      }] : []),
       {
         id: 'ext-1',
         label: 'F外',
@@ -466,15 +474,22 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     };
   },
   formatFormulas: (state, params) => {
-    const BL = params.magneticB * params.railWidth;
-    const emf =
-      params.rodMode === 'double' ? BL * (state.v1 - state.v2) : BL * state.v1;
+    const BL1 = params.magneticB * params.railWidth;
+    const BL2 = params.magneticB * getEffectiveL2(params);
+    const double = params.rodMode === 'double';
+    const emf = double ? BL1 * state.v1 - BL2 * state.v2 : BL1 * state.v1;
+    const force1 = Math.abs(BL1 * state.current);
+    const force2 = Math.abs(BL2 * state.current);
     return [
       {
         id: 'faraday-emf',
         label: '动生感应电动势与安培力',
-        latex: `\\begin{aligned}\\mathcal{E} &= BL${params.rodMode === 'double' ? '\\Delta v' : 'v'} \\\\ F_{\\text{安}} &= BIL\\end{aligned}`,
-        substitutedLatex: `\\begin{aligned}\\mathcal{E} &= ${emf.toFixed(2)}\\text{ V} \\\\ I &= ${state.current.toFixed(2)}\\text{ A},\\quad F_{\\text{安}} = ${(BL * Math.abs(state.current)).toFixed(2)}\\text{ N}\\end{aligned}`
+        latex: double
+          ? '\\begin{aligned}\\mathcal{E}_{\\rm mot}&=B(L_1v_1-L_2v_2)\\\\ |F_{\\text{安},1}|&=|BIL_1|,\\quad |F_{\\text{安},2}|=|BIL_2|\\end{aligned}'
+          : '\\begin{aligned}\\mathcal{E}_{\\rm mot}&=BLv\\\\ |F_{\\text{安}}|&=|BIL|\\end{aligned}',
+        substitutedLatex: double
+          ? `\\begin{aligned}\\mathcal{E}_{\\rm mot}&=${emf.toFixed(2)}\\text{ V},\\quad I=${state.current.toFixed(2)}\\text{ A}\\\\ |F_{\\text{安},1}|&=${force1.toFixed(2)}\\text{ N},\\quad |F_{\\text{安},2}|=${force2.toFixed(2)}\\text{ N}\\end{aligned}`
+          : `\\begin{aligned}\\mathcal{E}_{\\rm mot}&=${emf.toFixed(2)}\\text{ V}\\\\ I&=${state.current.toFixed(2)}\\text{ A},\\quad |F_{\\text{安}}|=${force1.toFixed(2)}\\text{ N}\\end{aligned}`
       }
     ];
   },
@@ -589,6 +604,16 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
           color: '#fb7185',
           font: forceLabelFont
         });
+      }
+      if (params.rodMode === 'double') {
+        const x2 = toX(state.x2);
+        const force2 = params.magneticB * getEffectiveL2(params) * state.current;
+        if (Math.abs(force2) > 0.05) {
+          const length = Math.max(-120, Math.min(120, force2 * 24));
+          const forceY = railMidY - 14;
+          drawGlowVectorArrow(ctx, x2 - 6 * Math.sign(length), forceY, x2 + length, forceY, '#f472b6', 4.5, 14);
+          labels.push({ id: 'ampere-force-2', x: x2 + length * 0.5, y: forceY - 24, text: `F安₂ = ${Math.abs(force2).toFixed(2)} N`, color: '#f472b6' });
+        }
       }
       if (Math.abs(params.externalForce) > 0.05) {
         const length = Math.max(-100, Math.min(100, params.externalForce * 16));
