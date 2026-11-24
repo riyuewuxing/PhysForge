@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {describe,it,expect} from 'vitest';
 import {createWorldMapper,resolvePluginParams} from '@physforge/sim-sdk';
 import {stseEmDevicesSuitePlugin} from '@physforge/simulations/stse-em-devices-suite';
-import {astroOrbitalMechanicsPlugin,orbitDisplayXY} from '@physforge/simulations/astro-orbital-mechanics';
+import {astroOrbitalMechanicsPlugin,orbitDisplayXY,orbitalBurnMarkers,orbitDisplayVelocity} from '@physforge/simulations/astro-orbital-mechanics';
 import {magnetic3dDisplayPoint} from '@physforge/simulations/em-3d-magnetic-fields';
 import type {EmDevicesParams} from '../../../../simulations/stse-em-devices-suite/engine.js';
 import {deviceDiagramPoint,getDeviceSchematic,deeOutline} from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
@@ -74,6 +74,29 @@ describe('remaining planar flagship projections',()=>{
     expect(forces[1]!.force.y).toBeLessThan(0);
     expect(forces[0]!.force.y+forces[1]!.force.y).toBeCloseTo(0,20);
     expect(p.getForceVectors!(state,{...params,carrierType:'hole'})).toEqual(forces);
+  });
+  it('M10 renders only actual burn events and does not fake a rotating-frame trail',()=>{
+    const p=astroOrbitalMechanicsPlugin,params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'hohmann-transfer'});
+    const scene=new THREE.Scene(),driver=createRemainingFlagshipScene(p.meta.id,scene)!;
+    const initial=p.engine.createInitialState(params);
+    driver.sync(initial,params,new Set(['orbit']));
+    expect(scene.getObjectByName('orbital-burn-1')).toBeDefined();
+    expect(scene.getObjectByName('orbital-burn-2')).toBeUndefined();
+    const event={id:'hohmann-burn-2-test',time:1,label:'burn',position:{x:-2.4,y:0},metrics:{deltaV2SI:1000}};
+    const next={...initial,events:[...initial.events,event]};
+    const marker=orbitalBurnMarkers(next,params).find(burn=>burn.index===2)!;
+    expect(marker.x).toBe(-2.4);expect(marker.dy).toBeCloseTo(-1);
+    driver.sync(next,params,new Set(['orbit']));
+    expect(scene.getObjectByName('orbital-burn-2')?.position.x).toBe(-2.4);
+    const binary=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'binary-lagrange'});
+    const state={...p.engine.createInitialState(binary),tNorm:.5,trailNorm:[{x:1,y:0},{x:1,y:.1}]};
+    driver.sync(state,binary,new Set(['orbit','corotatingView']));
+    expect(scene.getObjectByName('orbital-burn-1')).toBeUndefined();
+    expect(scene.getObjectByName('engine-trail')?.visible).toBe(false);
+    const v=orbitDisplayVelocity(state,true);
+    const expected=orbitDisplayXY(state.vxNorm+state.yNorm,state.vyNorm-state.xNorm,state.tNorm,true);
+    expect(v).toEqual(expected);
+    driver.dispose();
   });
   it('M10 co-rotating mode uses the same projection as the 2D view',()=>{
     const p=astroOrbitalMechanicsPlugin,params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'binary-lagrange'});
