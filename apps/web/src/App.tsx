@@ -32,6 +32,7 @@ import { RightControlPanel } from './components/RightControlPanel.js';
 import { TeachingPackDrawer } from './components/TeachingPackDrawer.js';
 import type { MeasureToolKind } from './stage/RulerToolboxOverlay.js';
 import { KatexFormulaCard } from './components/KatexFormulaCard.js';
+import { buildPresenterWindowUrl, PresenterSyncBridge, type StageSnapshotPayload } from './presentation/presenterSync.js';
 
 const LazyExcalidrawOverlay = React.lazy(() =>
   import('./components/ExcalidrawOverlay.js').then((m) => ({ default: m.ExcalidrawOverlay }))
@@ -53,6 +54,8 @@ const LazyAiCopilotDrawer = React.lazy(() =>
   import('./components/AiCopilotDrawer.js').then((m) => ({ default: m.AiCopilotDrawer }))
 );
 
+const LazyPresenterView = React.lazy(() => import('./presentation/PresenterView.js'));
+
 const LazyStoryStageHud = React.lazy(() => import('./presentation/StoryStageHud.js').then((m) => ({ default: m.StoryStageHud })));
 
 const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
@@ -65,7 +68,7 @@ const WORKBENCH_TITLES: Readonly<Record<string, string>> = {
   'em-3d-magnetic-fields': '3D空间电磁场·螺旋轨迹'
 };
 
-export const App: React.FC = () => {
+const ClassroomApp: React.FC = () => {
   const store = useClassroomStore();
   const simCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const snapshotsGetterRef = useRef<() => readonly RecordedTelemetryFrame[]>(() => []);
@@ -76,6 +79,10 @@ export const App: React.FC = () => {
   const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [labFrames, setLabFrames] = useState<readonly RecordedTelemetryFrame[]>([]);
+  const [presenterSession, setPresenterSession] = useState(() => new URLSearchParams(window.location.search).get('session'));
+  const [presenterError, setPresenterError] = useState<string | null>(null);
+  const [laserPointer, setLaserPointer] = useState<{ x: number; y: number } | null>(null);
+  const laserLastAtRef = useRef(-Infinity);
 
   const handleRegisterSnapshotsGetter = useCallback(
     (getter: () => readonly RecordedTelemetryFrame[]) => {
@@ -101,6 +108,78 @@ export const App: React.FC = () => {
       void store.applyExternalState(modelId, search.get('preset') ?? undefined);
     }
   }, [store.applyExternalState]);
+
+  const openPresenter = () => {
+    if (typeof BroadcastChannel === 'undefined') { setPresenterError('当前浏览器不支持双屏通信'); return; }
+    const session = presenterSession ?? Array.from(crypto.getRandomValues(new Uint32Array(4)), (n) => n.toString(16).padStart(8, '0')).join('');
+    const url = new URL(window.location.href);
+    url.searchParams.set('session', session);
+    window.history.replaceState(null, '', url);
+    setPresenterSession(session);
+    const popup = window.open(buildPresenterWindowUrl(session, plugin.meta.id), `physforge-presenter-${session}`, 'popup,width=1100,height=800');
+    setPresenterError(popup ? null : '副屏窗口被浏览器拦截，请允许弹窗或使用手动打开链接');
+  };
+
+  useEffect(() => {
+    if (!presenterSession) return;
+    let bridge: PresenterSyncBridge;
+    const snapshot = (): StageSnapshotPayload => {
+      const state = useClassroomStore.getState();
+      const p = state.loadedPlugin;
+      const v2 = p as SimulationPluginV2<ParamRecord, unknown>;
+      const deck = state.appMode === 'story' ? getStoryDecks(p).find((d) => d.id === state.activeDeckId) : undefined;
+      const beat = deck?.beats[state.storyBeatIndex];
+      const observables = Object.fromEntries(Object.entries(state.telemetry.observables).filter(([, value]) => Number.isFinite(value)));
+      return { modelId: p.meta.id, modelTitle: p.meta.title, appMode: state.appMode,
+        isPlaying: state.isPlaying, isBlackout: state.isBlackout, morphT: state.view3dEnabled ? 0 : 1,
+        simTime: state.telemetry.t, deckId: deck?.id ?? null, beatIndex: deck ? state.storyBeatIndex : -1,
+        totalBeats: deck?.beats.length ?? 0, currentCaption: beat?.caption ?? '', speakerNotes: beat?.speakerNotes ?? '',
+        nextBeatTitle: deck?.beats[state.storyBeatIndex + 1]?.title ?? null, observables, params: state.params,
+        paramSchema: p.paramSchema, canMorph: v2.renderMode === 'three3d' || v2.renderMode === 'hybrid' || Boolean(v2.mountThreeScene),
+        freezeBadge: state.autoFreezeBadge };
+    };
+    try {
+      bridge = new PresenterSyncBridge(presenterSession, 'stage', (envelope) => {
+        if (envelope.sender !== 'presenter') return;
+        const cmd = envelope.msg;
+        if (cmd.type === 'CMD_REQUEST_SYNC') { bridge.broadcastSnapshot(snapshot(), true); return; }
+        const state = useClassroomStore.getState();
+        if (state.appMode === 'studio') return;
+        switch (cmd.type) {
+          case 'CMD_NEXT_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.next(); break;
+          case 'CMD_PREV_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.prev(); break;
+          case 'CMD_GOTO_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.goTo(cmd.index); break;
+          case 'CMD_TOGGLE_PLAY': state.togglePlaying(); break;
+          case 'CMD_RESET_SIM': state.triggerReset(); break;
+          case 'CMD_TOGGLE_MORPH_2D': if (snapshot().canMorph) state.toggleView3d(); break;
+          case 'CMD_TOGGLE_BLACKOUT': state.toggleBlackout(); break;
+          case 'CMD_SET_PARAM': {
+            const field = state.loadedPlugin.paramSchema.find((item) => item.key === cmd.paramKey);
+            if (!field) break;
+            if (field.kind === 'number' && typeof cmd.value === 'number' && cmd.value >= field.min && cmd.value <= field.max ||
+                field.kind === 'boolean' && typeof cmd.value === 'boolean' ||
+                field.kind === 'select' && typeof cmd.value === 'string' && field.options.some((option) => option.value === cmd.value)) {
+              state.updateParam(cmd.paramKey, cmd.value);
+            }
+            break;
+          }
+          case 'CMD_LASER_POINTER':
+            laserLastAtRef.current = performance.now();
+            setLaserPointer(cmd.active ? { x: cmd.normX, y: cmd.normY } : null);
+            break;
+        }
+      });
+    } catch {
+      setPresenterError('双屏通信通道创建失败');
+      return;
+    }
+    const timer = window.setInterval(() => {
+      bridge.broadcastSnapshot(snapshot());
+      if (performance.now() - laserLastAtRef.current > 2000) setLaserPointer((current) => current ? null : current);
+    }, 1000 / 15);
+    bridge.broadcastSnapshot(snapshot(), true);
+    return () => { window.clearInterval(timer); bridge.close(); setLaserPointer(null); };
+  }, [presenterSession]);
 
   // 同步文档主题属性
   useEffect(() => {
@@ -671,9 +750,11 @@ export const App: React.FC = () => {
                   {store.appMode === 'story' ? '自由演说' : '分镜讲课'}
                 </button>
                 <button type="button" data-testid="btn-stage-blackout" onClick={store.toggleBlackout} className="rounded-full px-3 py-2 text-xs hover:bg-white/10">黑屏</button>
-                <button type="button" data-testid="btn-presenter" disabled title="副屏同步将在 PR-1C 接入" className="rounded-full px-3 py-2 text-xs opacity-40">副屏</button>
+                <button type="button" data-testid="btn-presenter" onClick={openPresenter} className="rounded-full px-3 py-2 text-xs hover:bg-white/10">副屏</button>
                 <button type="button" data-testid="btn-exit-fullscreen-speech" onClick={store.toggleFullscreenPresentation} className="rounded-full border border-white/10 px-3 py-2 text-xs hover:bg-white/10">退出全屏</button>
               </div>
+              {laserPointer && !store.isBlackout && <div data-testid="stage-laser-pointer" aria-hidden="true" className="pointer-events-none absolute z-40 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_14px_5px_rgba(239,68,68,0.7)]" style={{ left: `${laserPointer.x * 100}%`, top: `${laserPointer.y * 100}%` }} />}
+              {presenterError && <div role="status" className="absolute left-1/2 top-14 z-30 -translate-x-1/2 rounded-xl bg-slate-950 p-3 text-xs text-amber-300">{presenterError} {presenterSession && <a className="underline" href={buildPresenterWindowUrl(presenterSession, plugin.meta.id)} target="_blank" rel="noreferrer">手动打开副屏</a>}</div>}
               <Suspense fallback={null}>
                 <LazyStoryStageHud deck={storyDeck} index={store.storyBeatIndex} blackout={store.isBlackout}
                   freezeBadge={store.autoFreezeBadge} onPrev={() => storyNavigationRef.current?.prev()}
@@ -809,6 +890,16 @@ export const App: React.FC = () => {
       )}
     </div>
   );
+};
+
+export const App: React.FC = () => {
+  const query = new URLSearchParams(window.location.search);
+  if (query.get('mode') === 'presenter') {
+    return <Suspense fallback={<div className="grid h-screen place-items-center bg-slate-950 text-sky-300">正在加载教师副屏…</div>}>
+      <LazyPresenterView sessionId={query.get('session') ?? ''} />
+    </Suspense>;
+  }
+  return <ClassroomApp />;
 };
 
 export default App;
