@@ -3,7 +3,7 @@ import { buildPresenterWindowUrl, isPresenterCommand, parseSyncEnvelope, Present
 
 const snapshot: StageSnapshotPayload = {
   modelId: 'demo', modelTitle: 'Demo', appMode: 'story', isPlaying: false, isBlackout: false,
-  morphT: 1, simTime: 0, deckId: 'deck', beatIndex: 0, totalBeats: 2,
+  morphT: 1, simTime: 0, deckId: 'deck', beatIndex: 0, paramContextEpoch: 3, totalBeats: 2,
   currentCaption: 'first', speakerNotes: 'private', nextBeatTitle: 'next', observables: { x: 1 },
   params: { speed: 1 }, paramSchema: [], canMorph: false, freezeBadge: null
 };
@@ -20,7 +20,7 @@ describe('PresenterSyncBridge', () => {
     }
   });
   it('rejects malformed, out-of-session and same-role messages', () => {
-    const envelope = { sessionId: 's', sender: 'presenter', ts: 1, msg: { type: 'CMD_NEXT_BEAT', modelId: 'demo', deckId: 'deck' } };
+    const envelope = { sessionId: 's', sender: 'presenter', ts: 1, msg: { type: 'CMD_NEXT_BEAT', modelId: 'demo', deckId: 'deck', paramContextEpoch: 3 } };
     expect(parseSyncEnvelope(envelope, 's', 'stage')).toEqual(envelope);
     expect(parseSyncEnvelope(envelope, 'other', 'stage')).toBeNull();
     expect(parseSyncEnvelope(envelope, 's', 'presenter')).toBeNull();
@@ -37,6 +37,15 @@ describe('PresenterSyncBridge', () => {
     expect(commandMatchesStage(command, { modelId: 'other', deckId: 'deck' })).toBe(false);
     expect(commandMatchesStage(command, { modelId: 'demo', deckId: null })).toBe(false);
     expect(commandMatchesStage({ type: 'CMD_REQUEST_SYNC' }, { modelId: 'other', deckId: null })).toBe(true);
+  });
+  it('rejects parameter and replay commands from an old beat while permitting rapid navigation', () => {
+    const previous = { ...snapshot, paramContextEpoch: 2 };
+    const change = scopePresenterAction({ type: 'CMD_SET_PARAM', paramKey: 'speed', value: 2 }, previous);
+    expect(commandMatchesStage(change, snapshot)).toBe(false);
+    expect(commandMatchesStage(scopePresenterAction({ type: 'CMD_RESET_SIM' }, previous), snapshot)).toBe(false);
+    expect(commandMatchesStage(scopePresenterAction({ type: 'CMD_NEXT_BEAT' }, previous), snapshot)).toBe(true);
+    expect(commandMatchesStage(scopePresenterAction({ type: 'CMD_SET_PARAM', paramKey: 'speed', value: 2 }, snapshot), snapshot)).toBe(true);
+    expect(isPresenterCommand({ type: 'CMD_SET_PARAM', modelId: 'demo', deckId: 'deck', paramKey: 'speed', value: 2 })).toBe(false);
   });
   it('exchanges real BroadcastChannel messages, throttles snapshots, and closes the channel', async () => {
     const session = crypto.randomUUID();
