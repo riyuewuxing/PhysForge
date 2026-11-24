@@ -1,4 +1,5 @@
 import React, { useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { AnyParamFieldSpec, LiveFormulaSpec, ParamRecord } from '@physforge/sim-sdk';
 import { attachFormulaScrubber, renderInteractiveLatex } from './liveFormulaEngine.js';
 
@@ -16,6 +17,7 @@ const FormulaTile: React.FC<Omit<Props, 'specs'> & { spec: LiveFormulaSpec }> = 
   const latest = useRef(props);
   latest.current = props;
   const markup = useRef<HTMLDivElement | null>(null);
+  const lastLatex = useRef<string | null>(null);
   const hud = useRef<HTMLDivElement | null>(null);
   const hudText = useRef<HTMLDivElement | null>(null);
   const bar = useRef<HTMLDivElement | null>(null);
@@ -24,7 +26,10 @@ const FormulaTile: React.FC<Omit<Props, 'specs'> & { spec: LiveFormulaSpec }> = 
     const container = markup.current;
     if (!container) return;
     // Exactly one DOM write per immutable formula spec, independent of params/telemetry updates.
-    container.innerHTML = renderInteractiveLatex(spec.latex);
+    if (lastLatex.current !== spec.latex) {
+      container.innerHTML = renderInteractiveLatex(spec.latex);
+      lastLatex.current = spec.latex;
+    }
     return attachFormulaScrubber(container, spec, {
       getParamValue: (key) => {
         const value = latest.current.params[key];
@@ -58,10 +63,10 @@ const FormulaTile: React.FC<Omit<Props, 'specs'> & { spec: LiveFormulaSpec }> = 
   return <div className="pf-live-formula-tile">
     {spec.title && <div className="mb-1 text-xs text-slate-400">{spec.title}</div>}
     <div ref={markup} data-testid={`live-formula-${spec.id}`} className="pf-live-formula-markup" />
-    <div ref={hud} hidden className="pf-live-formula-hud" data-testid="live-formula-hud" aria-hidden="true">
+    {createPortal(<div ref={hud} hidden className="pf-live-formula-hud" data-testid="live-formula-hud" aria-hidden="true">
       <div ref={hudText} className="whitespace-nowrap" />
       <div className="mt-1 h-1 overflow-hidden rounded bg-slate-600"><div ref={bar} className="h-full rounded bg-sky-400" /></div>
-    </div>
+    </div>, document.body)}
   </div>;
 };
 
