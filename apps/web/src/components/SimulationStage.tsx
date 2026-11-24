@@ -3,7 +3,10 @@ import uPlot from 'uplot';
 import { ChevronDown, ChevronUp, Crosshair, MoveDiagonal2, RotateCcw, Ruler } from 'lucide-react';
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
+import { resolvePluginParams } from '@physforge/sim-sdk';
 import type {
+  StoryDeck,
+  StoryRunner,
   ControlHandle,
   ParamRecord,
   ParamValue,
@@ -13,6 +16,7 @@ import type {
 } from '@physforge/sim-sdk';
 import {
   DEFAULT_CAMERA_TRANSFORM,
+  clampZoomScale,
   getPixelsPerMeter,
   panViewport,
   resolveInitialCameraTransform,
@@ -55,6 +59,12 @@ export interface RecordedTelemetryFrame {
   observables: Record<string, number>;
 }
 
+export interface StoryNavigation {
+  next: () => boolean;
+  prev: () => boolean;
+  goTo: (index: number) => boolean;
+}
+
 interface SimulationStageProps {
   plugin: AnySimulationPlugin;
   params: ParamRecord;
@@ -84,6 +94,14 @@ interface SimulationStageProps {
   onScrubTime: (t: number | null) => void;
   onTogglePoeMask: () => void;
   onTelemetryUpdate: (summary: TelemetrySummary) => void;
+  storyDeck?: StoryDeck;
+  storyNavigationRef?: React.RefObject<StoryNavigation | null>;
+  onStoryParams?: (modelId: string, params: ParamRecord) => void;
+  onStoryBeat?: (index: number) => void;
+  onStoryFreeze?: (badge: string) => void;
+  onStoryPlaying?: (playing: boolean) => void;
+  onStoryFbd?: (enabled: boolean) => void;
+  onStoryFrame?: (frame: string) => void;
 }
 
 const FIXED_DT = 1 / 240; // 240 Hz 物理固定步长
@@ -163,7 +181,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   onRegisterSnapshotsGetter,
   onScrubTime,
   onTogglePoeMask,
-  onTelemetryUpdate
+  onTelemetryUpdate,
+  storyDeck, storyNavigationRef, onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = canvasRefExternal ?? internalCanvasRef;
@@ -240,6 +259,24 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchGestureRef = useRef<PinchGesture | null>(null);
 
+  const storyRunnerRef = useRef<StoryRunner | null>(null);
+  const storyParamsRef = useRef<ParamRecord | null>(null);
+  const storyOwnerRef = useRef<StoryDeck | undefined>(undefined);
+  const lastPropsParamsRef = useRef(params);
+  const publishedStoryParamsRef = useRef<ParamRecord | null>(null);
+  const storyDirtyRef = useRef(false);
+  const storyLastSyncRef = useRef(-Infinity);
+  const storyCallbacksRef = useRef({ onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame });
+  storyCallbacksRef.current = { onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame };
+  if (params !== lastPropsParamsRef.current) {
+    lastPropsParamsRef.current = params;
+    if (storyParamsRef.current && params !== publishedStoryParamsRef.current) {
+      storyParamsRef.current = params;
+      storyDirtyRef.current = false;
+    }
+  }
+  const imperativeParams = storyDeck && storyOwnerRef.current === storyDeck ? storyParamsRef.current ?? params : params;
+
   // 最新 props ref 供 rAF 与 uPlot hook 无闭包陈旧值访问
   const latestRef = useRef({
     plugin,
@@ -264,7 +301,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   });
   latestRef.current = {
     plugin,
-    params,
+    params: imperativeParams,
     activeLayers,
     isPlaying,
     playbackSpeed,
@@ -358,7 +395,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       scrub !== null
         ? findClosestSnapshot(snapshotsRef.current, scrub)
         : snapshotsRef.current[snapshotsRef.current.length - 1] ?? null;
-    const drawState = frame ? frame.state : simStateRef.current;
+    const drawState = storyRunnerRef.current && scrub === null ? simStateRef.current : frame ? frame.state : simStateRef.current;
     const { effectiveVp: vp, frameOrigin } = computeEffectiveViewport(baseVp, drawState);
 
     if (drawState !== null) {
@@ -532,7 +569,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const activeSnap =
       scrub !== null
         ? findClosestSnapshot(snaps, scrub)
-        : snaps[snaps.length - 1] ?? null;
+        : storyRunnerRef.current && simStateRef.current !== null
+          ? { t: simulationTimeRef.current, state: simStateRef.current, observables: p.engine.computeObservables(simStateRef.current, pm) }
+          : snaps[snaps.length - 1] ?? null;
 
     if (!activeSnap || initialStateRef.current === null) return;
     const invariants = p.engine.checkInvariants
@@ -549,10 +588,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     });
   };
 
-  // 初始化 / 重置引擎状态
-  useEffect(() => {
-    const init = plugin.engine.createInitialState(params);
-    const obs0 = plugin.engine.computeObservables(init, params);
+  // 初始化 / 重置引擎状态（分镜复位复用同一入口）。
+  const resetEngine = () => {
+    const { plugin: p, params: pm } = latestRef.current;
+    const init = p.engine.createInitialState(pm);
+    const obs0 = p.engine.computeObservables(init, pm);
     simStateRef.current = init;
     initialStateRef.current = init;
     eventsRef.current = [];
@@ -565,7 +605,107 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     renderFrameToCanvas();
     syncUPlotData(true);
     emitTelemetrySummary(true);
-  }, [plugin.meta.id, resetNonce]);
+  };
+  useEffect(() => { resetEngine(); }, [plugin.meta.id, resetNonce]);
+
+  const flushStoryParams = (modelId: string, nowMs: number, force = false) => {
+    if (!storyDirtyRef.current || !storyParamsRef.current) return;
+    if (!force && nowMs - storyLastSyncRef.current < 1000 / 15) return;
+    const current = storyParamsRef.current;
+    publishedStoryParamsRef.current = current;
+    storyCallbacksRef.current.onStoryParams?.(modelId, current);
+    storyDirtyRef.current = false;
+    storyLastSyncRef.current = nowMs;
+  };
+
+  useEffect(() => {
+    if (!storyDeck || storyDeck.modelId !== plugin.meta.id) return;
+    let disposed = false;
+    storyOwnerRef.current = storyDeck;
+    storyParamsRef.current = latestRef.current.params;
+    storyLastSyncRef.current = -Infinity;
+    const navigate = (action: (runner: StoryRunner, now: number) => boolean) => {
+      const runner = storyRunnerRef.current;
+      if (!runner || disposed) return false;
+      const now = performance.now();
+      const changed = action(runner, now);
+      if (changed) {
+        flushStoryParams(storyDeck.modelId, now, true);
+        renderFrameToCanvas();
+        emitTelemetrySummary(true);
+      }
+      return changed;
+    };
+    void import('../presentation/StoryStageHud.js').then(({ createStoryRunner }) => {
+      if (disposed) return;
+      const runner = createStoryRunner(storyDeck, {
+        getCurrentParams: () => latestRef.current.params,
+        applyParamsImperative: (patch) => {
+          const { plugin: p, params: pm } = latestRef.current;
+          if (p.meta.id !== storyDeck.modelId) return;
+          const merged: ParamRecord = { ...pm };
+          for (const [key, value] of Object.entries(patch)) {
+            if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') merged[key] = value;
+          }
+          const resolved = resolvePluginParams(p.paramSchema, merged);
+          storyParamsRef.current = resolved;
+          latestRef.current.params = resolved;
+          latestRef.current.scrubTime = null;
+          storyDirtyRef.current = true;
+        },
+        controlSimulation: (action) => {
+          const playing = action === 'play' || action === 'reset-play';
+          latestRef.current.isPlaying = playing;
+          latestRef.current.scrubTime = null;
+          storyCallbacksRef.current.onStoryPlaying?.(playing);
+          if (action === 'reset-play' || action === 'reset-pause') resetEngine();
+        },
+        applyCameraKeyframe: (camera) => {
+          const view = camera.view2D;
+          if (!view || !Number.isFinite(view.centerX) || !Number.isFinite(view.centerY) || !Number.isFinite(view.zoom)) return;
+          const vp = viewportRef.current;
+          const scale = clampZoomScale(baseScaleRef.current * view.zoom);
+          const ppm = getPixelsPerMeter({ ...vp, scale });
+          const next = { scale, offsetX: vp.width * 0.05 - view.centerX * ppm, offsetY: view.centerY * ppm };
+          cameraRef.current = next;
+          viewportRef.current = { ...vp, ...next };
+          userTransformedViewRef.current = true;
+          setZoomPercent(Math.round(100 * scale / baseScaleRef.current));
+          setOverlayViewport(viewportRef.current);
+        },
+        applyLayerOverrides: (overrides) => {
+          if (overrides.showFbd !== undefined) {
+            latestRef.current.autoFbdEnabled = overrides.showFbd;
+            storyCallbacksRef.current.onStoryFbd?.(overrides.showFbd);
+          }
+          if (overrides.referenceFrameId !== undefined) {
+            latestRef.current.activeFrameId = overrides.referenceFrameId;
+            storyCallbacksRef.current.onStoryFrame?.(overrides.referenceFrameId);
+          }
+        },
+        onBeatChanged: (index) => storyCallbacksRef.current.onStoryBeat?.(index),
+        onAutoFreezeTriggered: (badge) => storyCallbacksRef.current.onStoryFreeze?.(badge)
+      });
+      storyRunnerRef.current = runner;
+      if (storyNavigationRef) storyNavigationRef.current = {
+        next: () => navigate((r, now) => r.next(now)),
+        prev: () => navigate((r, now) => r.prev(now)),
+        goTo: (index) => navigate((r, now) => r.goTo(index, now))
+      };
+      navigate((r, now) => r.next(now));
+    }).catch(() => {
+      if (!disposed) storyCallbacksRef.current.onStoryFreeze?.('分镜模块加载失败，请重新进入分镜模式');
+    });
+    return () => {
+      disposed = true;
+      if (latestRef.current.plugin.meta.id === storyDeck.modelId) flushStoryParams(storyDeck.modelId, performance.now(), true);
+      storyRunnerRef.current = null;
+      storyOwnerRef.current = undefined;
+      storyParamsRef.current = null;
+      storyDirtyRef.current = false;
+      if (storyNavigationRef) storyNavigationRef.current = null;
+    };
+  }, [storyDeck, plugin.meta.id, storyNavigationRef]);
 
   useEffect(() => {
     if (isPlaying) {
@@ -694,6 +834,17 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     const loop = (nowMs: number) => {
       rafId = requestAnimationFrame(loop);
+      const runner = storyRunnerRef.current;
+      if (runner) {
+        const current = latestRef.current;
+        const observables = simStateRef.current === null ? undefined : current.plugin.engine.computeObservables(simStateRef.current, current.params);
+        runner.tick(nowMs, observables);
+        if (storyDirtyRef.current) {
+          renderFrameToCanvas();
+          emitTelemetrySummary(false);
+          flushStoryParams(current.plugin.meta.id, nowMs);
+        }
+      }
       const { isPlaying: playing, playbackSpeed: speed, plugin: p, params: pm } = latestRef.current;
       if (!playing) {
         lastFrameMsRef.current = null;
