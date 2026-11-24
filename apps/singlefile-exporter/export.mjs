@@ -212,7 +212,14 @@ async function main() {
     throw new Error(`Singlefile bundle ${finalOutPath} must not include mathjs!`);
   }
 
-  const sizeKb = (Buffer.byteLength(html, 'utf8') / 1024).toFixed(1);
+  const bytes = Buffer.byteLength(html, 'utf8');
+  // V3 flagship slices remain lightweight and strictly 2D; unrelated models retain their own constraints.
+  const flagship = ['em-3d-magnetic-fields', 'em-induction-double-rod', 'builder-composite-em-field',
+    'stse-em-devices-suite', 'stse-tokamak-magnetic-mirror', 'astro-orbital-mechanics'];
+  if (flagship.some(id => isSameModelGroup(model, id)) && bytes >= 2_500_000) {
+    throw new Error(`V3 flagship singlefile exceeds 2.5 MB: ${finalOutPath} (${bytes} bytes)`);
+  }
+  const sizeKb = (bytes / 1024).toFixed(1);
   console.log(`Exported singlefile HTML for "${model}" -> ${finalOutPath} (${sizeKb} KB)`);
 }
 
