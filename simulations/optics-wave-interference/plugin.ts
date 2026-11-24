@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { waveOpticsPresets } from './presets.js';
 import {
@@ -45,7 +46,45 @@ const paramSchema: readonly ParamFieldSpec<WaveOpticsParams>[] = [
   { key: 'halfWaveLoss', kind: 'boolean', label: '计入界面反射半波损失', defaultValue: true }
 ];
 
-export const opticsWaveInterferencePlugin = defineSimulationPlugin<WaveOpticsParams, WaveOpticsState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "wedge-fringe",
+  "title": "劈尖等厚干涉（近法线入射）",
+  "latex": "\\Delta x=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=wavelengthNm}{\\lambda}}}{2\\htmlClass{pf-live-var}{\\htmlData{param=refractiveIndexN2}{n}}\\tan \\htmlClass{pf-live-var}{\\htmlData{param=wedgeAngleDeg}{\\alpha}}}",
+  "bindings": [
+    {
+      "tokenKey": "wavelengthNm",
+      "paramKey": "wavelengthNm",
+      "label": "入射单色光波长 λ",
+      "unit": "nm",
+      "min": 400,
+      "max": 700,
+      "step": 5,
+      "precision": 1
+    },
+    {
+      "tokenKey": "refractiveIndexN2",
+      "paramKey": "refractiveIndexN2",
+      "label": "薄膜折射率 n₂",
+      "unit": "",
+      "min": 1,
+      "max": 1.8,
+      "step": 0.05,
+      "precision": 3
+    },
+    {
+      "tokenKey": "wedgeAngleDeg",
+      "paramKey": "wedgeAngleDeg",
+      "label": "劈尖夹角 α",
+      "unit": "°",
+      "min": 0.006,
+      "max": 0.03,
+      "step": 0.002,
+      "precision": 4
+    }
+  ]
+}];
+export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin<WaveOpticsParams, WaveOpticsState>({
   meta: {
     id: 'optics-wave-interference',
     title: '光的波动性进阶：劈尖、牛顿环与光栅缺级 (O01)',
@@ -251,6 +290,6 @@ export const opticsWaveInterferencePlugin = defineSimulationPlugin<WaveOpticsPar
       substitutedLatex: `\\lambda=${params.wavelengthNm}\\text{ nm},\\; \\Delta x=${state.wedgeFringeSpacingMm.toFixed(3)}\\text{ mm},\\; r_1=${state.newtonFirstDarkMm.toFixed(3)}\\text{ mm}`
     }
   ]
-});
+}), { liveFormulas });
 
 export default opticsWaveInterferencePlugin;
