@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { astroOrbitalPresets } from './presets.js';
 import {
@@ -41,7 +42,25 @@ const paramSchema: readonly ParamFieldSpec<AstroOrbitalParams>[] = [
   { key: 'simSpeed', kind: 'number', label: '仿真倍率', unit: 'x', min: 0.5, max: 4, step: 0.5, defaultValue: 1 }
 ];
 
-export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalParams, AstroOrbitalState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "hohmann-first-burn",
+  "title": "圆轨道霍曼转移第一次加速（κ=r₂/r₁）",
+  "latex": "\\frac{\\Delta v_1}{v_{c1}}=\\sqrt{\\frac{2\\htmlClass{pf-live-var}{\\htmlData{param=r2OverR1}{\\kappa}}}{1+\\htmlClass{pf-live-var}{\\htmlData{param=r2OverR1}{\\kappa}}}}-1",
+  "bindings": [
+    {
+      "tokenKey": "r2OverR1",
+      "paramKey": "r2OverR1",
+      "label": "霍曼目标半径比 r₂/r₁",
+      "unit": "",
+      "min": 1.2,
+      "max": 3.5,
+      "step": 0.1,
+      "precision": 2
+    }
+  ]
+}];
+export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<AstroOrbitalParams, AstroOrbitalState>({
   meta: {
     id: 'astro-orbital-mechanics',
     title: '万有引力、霍曼转移与拉格朗日点 (M10)',
@@ -330,6 +349,6 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     }
     return items;
   }
-});
+}), { liveFormulas });
 
 export default astroOrbitalMechanicsPlugin;
