@@ -1,6 +1,7 @@
 import { resolvePluginParams, type InvariantReport, type SceneDSL } from '@physforge/sim-sdk';
 import { loadSimulationById, type AnySimulationPlugin } from '@physforge/simulations/catalog';
 import { normalizeToSceneDsl } from './sceneSchema.js';
+import { formatModelSchemaHint } from './byokClient.js';
 
 export interface SceneAuditResult {
   readonly passed: boolean;
@@ -46,9 +47,15 @@ export async function auditSceneHeadless(
     };
   }
 
+  // Reject hallucinated keys before resolving defaults or invoking the engine.
+  const allowedKeys = new Set(plugin.paramSchema.map((field) => field.key));
+  for (const key of Object.keys(scene.params)) {
+    if (!allowedKeys.has(key)) errors.push(`Unknown param "${key}" for model "${scene.modelId}".`);
+  }
+
   // Validate supplied params against declared paramSchema (type & bounds)
   for (const field of plugin.paramSchema) {
-    if (field.key in scene.params) {
+    if (Object.prototype.hasOwnProperty.call(scene.params, field.key)) {
       const val = scene.params[field.key];
       if (field.kind === 'number') {
         if (typeof val !== 'number' || !Number.isFinite(val)) {
@@ -73,6 +80,7 @@ export async function auditSceneHeadless(
     }
   }
   if (errors.length > 0) {
+    errors.push(formatModelSchemaHint(scene.modelId, plugin.paramSchema));
     return { passed: false, scene, errors, invariants: [], finalObservables: {} };
   }
 
