@@ -188,8 +188,6 @@ async function main() {
         ? path.resolve(repoRoot, out)
         : path.resolve(process.cwd(), out)
     : path.join(distDir, `${model}.html`);
-  fs.mkdirSync(path.dirname(finalOutPath), { recursive: true });
-  fs.writeFileSync(finalOutPath, html, 'utf8');
   fs.rmSync(tempOutDir, { recursive: true, force: true });
 
   // 严格安全与轻量化自检
@@ -229,6 +227,9 @@ async function main() {
   if (flagship.some(id => isSameModelGroup(model, id)) && bytes >= 2_500_000) {
     throw new Error(`V3 flagship singlefile exceeds 2.5 MB: ${finalOutPath} (${bytes} bytes)`);
   }
+  // Publish only after every isolation and size gate succeeds; a rejected build must not overwrite a previous valid export.
+  fs.mkdirSync(path.dirname(finalOutPath), { recursive: true });
+  fs.writeFileSync(finalOutPath, html, 'utf8');
   const sizeKb = (bytes / 1024).toFixed(1);
   console.log(`Exported singlefile HTML for "${model}" -> ${finalOutPath} (${sizeKb} KB)`);
 }
