@@ -40,6 +40,14 @@ function getDefaultScopeChannels(
   params: ParamRecord,
   channels: ReadonlyArray<{ key: string }>
 ): [string, string] {
+  if (modelId === 'modern-photoelectric-compton') {
+    const preferred = params.mode === 'compton'
+      ? ['deltaLambdaPm', 'electronKineticKev']
+      : ['currentMa', 'stoppingVoltageV'];
+    const a = channels.find(c => c.key === preferred[0])?.key;
+    const b = channels.find(c => c.key === preferred[1])?.key;
+    if (a && b) return [a, b];
+  }
   const singleRodE04 = modelId === 'em-induction-double-rod' && params.rodMode === 'single';
   const defaultA = singleRodE04
     ? channels.find((channel) => channel.key === 'current')?.key
@@ -205,12 +213,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const [channelA, setChannelA] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[0]);
   const [channelB, setChannelB] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[1]);
 
-  // 当模型切换时同步默认示波器双通道
+  // 当模型或相关实验模式切换时同步默认示波器双通道
   useEffect(() => {
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -557,7 +565,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             ctx.fillText(h.label, labelX + 7, labelY - 2);
             ctx.textBaseline = 'alphabetic';
           } else if (showHandle) {
-            ctx.fillText(h.label, sPos.x + 10, sPos.y + 4);
+            // Keep the sampled voltage annotation off the I-U curve and axis.
+            const isPhotoelectricSample = plugin.meta.id === 'modern-photoelectric-compton' && h.id === 'anode-voltage-point';
+            ctx.fillText(h.label, sPos.x + 10, sPos.y + (isPhotoelectricSample ? -12 : 4));
           }
         }
         ctx.restore();

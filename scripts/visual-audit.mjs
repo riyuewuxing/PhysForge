@@ -849,6 +849,65 @@ async function main() {
       report.push({ model: testCase.id, layout, runVerified, sliderVerified });
     }
 
+    // V3.1 targeted N01: the actual displayed symbolic formula, mode-specific
+    // controls and visual changes are checked on three real browser presets.
+    const n01Url = new URL(origin);
+    n01Url.searchParams.set('model','modern-photoelectric-compton');
+    await page.goto(n01Url.toString(), {waitUntil:'networkidle'});
+    await page.waitForFunction(() => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === 'modern-photoelectric-compton');
+    await selectPreset(page,'photoelectric-sodium-violet');
+    const n01Formula = page.getByTestId('formula-card');
+    const n01Toggle = page.getByTestId('btn-toggle-formula-values');
+    if ((await n01Toggle.innerText()).trim() !== '显示数值') throw new Error('Formula toggle is not explicit');
+    const uSlider = page.getByTestId('param-slider-anodeVoltageV');
+    if (!await uSlider.isVisible()) throw new Error('Applied voltage slider not visible in photoelectric mode');
+    await page.waitForFunction(() => document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('光电流'));
+    await page.screenshot({path:path.join(OUT_DIR,'N01_01_photoelectric.png')});
+    const beforeVoltage = await uSlider.inputValue();
+    const beforeVoltagePixels = await canvasFingerprint(page);
+    await dragRangeTo(page,uSlider,2);
+    if (await uSlider.inputValue() === beforeVoltage) throw new Error('Photoelectric voltage did not change');
+    const afterVoltagePixels = await canvasFingerprint(page);
+    if (!beforeVoltagePixels || !afterVoltagePixels || beforeVoltagePixels.hash===afterVoltagePixels.hash) throw new Error('Photoelectric canvas did not respond to applied voltage');
+    await n01Toggle.click();
+    if (!await n01Toggle.getAttribute('aria-pressed') || await n01Toggle.getAttribute('aria-pressed')!=='true') throw new Error('Formula value toggle did not activate');
+    await page.screenshot({path:path.join(OUT_DIR,'N01_02_voltage_and_values.png')});
+    await selectPreset(page,'photoelectric-red-below-cutoff');
+    if (!(await n01Formula.innerText()).includes('I') || (await n01Formula.innerText()).includes('U_c')) throw new Error('Below threshold formula missing I=0 or shows stopping voltage');
+    await page.screenshot({path:path.join(OUT_DIR,'N01_03_below_threshold.png')});
+    await selectPreset(page,'compton-molybdenum-90deg');
+    const angleSlider=page.getByTestId('param-slider-scatterAngleDeg');
+    if (!await angleSlider.isVisible()) throw new Error('Compton scatter angle control not visible');
+    await page.waitForFunction(() => document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('康普顿波长差')
+      && document.querySelector('[data-testid="scope-channel-b"]')?.textContent?.includes('反冲电子动能'));
+    if (!(await page.getByTestId('param-value-xrayWavelengthNm').innerText()).includes('0.071')) throw new Error('Incident X-ray wavelength lost slider precision');
+    await page.screenshot({path:path.join(OUT_DIR,'N01_04_compton.png')});
+    const angleBefore=await angleSlider.inputValue();
+    await dragRangeTo(page,angleSlider,135);
+    if (await angleSlider.inputValue()===angleBefore) throw new Error('Compton angle slider not responsive');
+    await page.screenshot({path:path.join(OUT_DIR,'N01_05_compton_angle.png')});
+    // Direct drag from the signed scattered momentum endpoint (physical p is
+    // ~10^-23 kg m/s, not a value that may be clamped to a generic 10^-9).
+    await selectPreset(page,'compton-molybdenum-90deg');
+    const handlePoint=await page.evaluate(() => {
+      const canvas=document.querySelector('[data-testid="simulation-canvas"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return null;
+      const rect=canvas.getBoundingClientRect();
+      const ppm=Math.min(rect.width,rect.height)*0.24;
+      const ratio=0.071/(0.071+0.00242631024);
+      const cx=rect.left+rect.width*0.40-0.8*ppm;
+      const cy=rect.top+rect.height*0.5;
+      const r=0.95*ratio*ppm;
+      return { x:cx, y:cy-r, tx:cx+r/Math.sqrt(2), ty:cy-r/Math.sqrt(2) };
+    });
+    if (!handlePoint) throw new Error('Compton canvas missing');
+    await page.mouse.move(handlePoint.x,handlePoint.y);
+    await page.mouse.down();
+    await page.mouse.move(handlePoint.tx,handlePoint.ty,{steps:10});
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    if (Math.abs(Number(await angleSlider.inputValue())-45)>5) throw new Error('Compton canvas handle does not follow momentum endpoint');
+    await page.screenshot({path:path.join(OUT_DIR,'N01_06_compton_direct_drag.png')});
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));

@@ -1,0 +1,41 @@
+name: V3.1 visual and export audit
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'simulations/**'
+      - 'apps/web/src/components/RightControlPanel.tsx'
+      - 'scripts/visual-audit.mjs'
+      - '.github/workflows/v31-polish-audit.yml'
+permissions:
+  contents: read
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: git diff --check HEAD^1 HEAD
+      - run: pnpm build
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: pnpm audit:visual
+      - run: pnpm export:release --v3-audit
+        if: always()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v31-polish-visual
+          path: artifacts/ui-audit/
+          retention-days: 7

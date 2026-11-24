@@ -18,6 +18,12 @@
 
 ## 会话增量记录
 
+### V3.1 第一批实质施工（2026-11-25）
+
+* 基线 main 30a8787，合并后 CI 45420909500 已成功。用户已授权 V3.1，AI 保险库真实联调未测仍记为未闭环，不阻塞物理精品化。
+* E04：初始视口按右侧控制台可用宽度构图，保留真实几何/引擎；负载标签移到导轨下方。N01：区分 U_AK 与 Uc，标出有量纲伏安轴/遏止点，阈频条件公式，饱和电流与曲线同源，康普顿反冲电子符号及黑白配图统一向量；公式按钮改明确文字，N01 按模式展示核心滑块。
+* 原子候选最多12文件，不涉及 AI、引擎积分器或3D生命周期。新增 E04 默认视口单测、N01 物理与表现契约测试、真实 N01 五图交互探针；最终门禁、实际看图和状态以 PR 核验评论为准。
+
 ### 云端真实联调与 AI 密钥保险库候选（2026-11-24）
 
 * 用户已确认 Edge 连通；独立云端 runner 从仓库 Actions Secret DEEPSEEK 运行正式 Pages Chromium，entry index-D38kBbdg.js，run 45418033898 PASS：GET /models 200，POST /chat/completions 200（1 次），实际光电效应参数和载入 PASS；artifact 14931063542 两图实审，400 nm / 2.36 eV / 0.740 V。真实测试 workflow 留在 audit/deepseek-real-smoke 分支，仅 push 触发，未改 main，不在普通 PR/部署中注入 Key。
@@ -45,9 +51,6 @@
 
 * 保持在 `v3-review` 分支，保留总控 7 个文件直修改动，完成 L1（B1 `z=±0.22` 磁域边界环/线框与初速度矢量）、L2（M10 解析开普勒轨道与恒星晕环）、L3（E10 对称磁感线种子与 2D 线圈 `⊙/⊗` 截面符号及切线箭头）并补齐 3 组回归断言；Vitest 77 文件 / 425 用例与浏览器实测全绿。
 
-### [2026-11-24] V3.0 云端全栈施工（GPT-6.2 Sol `handoff/v3-complete-source-r6@9a49b91`）
-
-* 交付 PR-0（BYOK Schema 感知）、Wave 1–2（`StoryRunner`、三态演说壳、双屏 `PresenterSyncBridge`、活公式拖拽与 15 模型绑定）、Wave 3–4（`CameraMorphController`、5 套 PBR 材质与 6 旗舰 3D/压平对齐及 8 套 `StoryDeck`），本地总控直修 5 项回归/重叠/超时问题后由 Luna 接力完成 L1–L3。
 
 ---
 

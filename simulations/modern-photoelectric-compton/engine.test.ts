@@ -1,6 +1,6 @@
 import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
-import { modernPhotoelectricComptonPlugin } from './plugin.js';
+import { comptonMomentumVectors, modernPhotoelectricComptonPlugin } from './plugin.js';
 import { photoelectricComptonPresets } from './presets.js';
 import {
   E_CHARGE,
@@ -18,6 +18,46 @@ function getPreset(idx: number): PhotoelectricComptonParams {
 }
 
 describe('modern-photoelectric-compton physics invariants (N01)', () => {
+  it('distinguishes applied voltage from stopping voltage and uses the correct threshold formula', () => {
+    const p = {...getPreset(0), wavelengthNm:400, anodeVoltageV:0};
+    const s = createInitialState(p);
+    expect(s.photoelectric.stoppingVoltageV).toBeCloseTo(0.7396, 3);
+    expect(modernPhotoelectricComptonPlugin.getControlHandles?.(s,p)[0]?.label).toBe('U_AK=0.0 V');
+    expect(computePhotocurrentMa(-s.photoelectric.stoppingVoltageV,s.photoelectric,p.intensityRel)).toBe(0);
+    const below = getPreset(1);
+    const st = createInitialState(below);
+    const formula = modernPhotoelectricComptonPlugin.formatFormulas?.(st,below)[0];
+    expect(formula?.latex).toContain('I=0');
+    expect(formula?.latex).not.toContain('U_c');
+    expect(formula?.substitutedLatex).not.toContain('U_c');
+  });
+  it('reports the same saturation asymptote as the plotted response; intensity does not move the stopping point', () => {
+    const a = solvePhotoelectric({...getPreset(0), intensityRel:1});
+    const b = solvePhotoelectric({...getPreset(0), intensityRel:3});
+    expect(computePhotocurrentMa(100,a,1)).toBeCloseTo(a.saturationCurrentMa,10);
+    expect(b.saturationCurrentMa/a.saturationCurrentMa).toBeCloseTo(3,10);
+    expect(b.stoppingVoltageV).toBe(a.stoppingVoltageV);
+  });
+  it('uses signed, common-scale momentum vectors in the diagram and keeps Compton axes out of the I–U plot', () => {
+    for (const angle of [10,30,90,135,180]) {
+      const p = {...getPreset(2), scatterAngleDeg:angle};
+      const s = createInitialState(p);
+      const v = comptonMomentumVectors(s.compton,angle);
+      expect(v.recoil.y).toBeLessThanOrEqual(1e-12);
+      expect(v.scattered.y+v.recoil.y).toBeCloseTo(0,9);
+      expect(v.scattered.x+v.recoil.x).toBeCloseTo(v.incident.x,9);
+      const handle = modernPhotoelectricComptonPlugin.getControlHandles?.(s,p)[0];
+      expect(handle?.position.x).toBeCloseTo(-0.8+v.scattered.x,12);
+      expect(handle?.position.y).toBeCloseTo(v.scattered.y,12);
+      expect(handle?.onDrag({x:-0.8,y:1}).scatterAngleDeg).toBe(90);
+      const ir = modernPhotoelectricComptonPlugin.exportDiagramIR?.(s,p);
+      const arrows = ir?.primitives.filter(q=>q.kind==='arrow') ?? [];
+      expect(arrows).toHaveLength(3);
+      expect(arrows.find(q=>q.label==='pe')?.y2).toBeLessThanOrEqual(1e-12);
+      expect(arrows.find(q=>q.label==='U_AK (V)')).toBeUndefined();
+    }
+  });
+
   it('matches cutoff frequency ν0 = W0/h and Einstein stopping voltage e*Uc = hν - W0 within < 1e-10', () => {
     for (const metal of ['Cs', 'Na', 'Zn', 'Pt'] as const) {
       const params: PhotoelectricComptonParams = { ...getPreset(0), cathodeMetal: metal, wavelengthNm: 200 };

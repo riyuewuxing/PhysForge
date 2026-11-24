@@ -39,7 +39,9 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   const [showLiveSubstituted, setShowLiveSubstituted] = useState(false);
 
   const { coreFields, extraFields } = useMemo(() => {
-    const preferred = CONTEXT_CORE_KEYS[plugin.meta.id];
+    const preferred = plugin.meta.id === 'modern-photoelectric-compton'
+      ? params.mode === 'compton' ? ['xrayWavelengthNm', 'scatterAngleDeg'] : ['wavelengthNm', 'intensityRel', 'anodeVoltageV']
+      : CONTEXT_CORE_KEYS[plugin.meta.id];
     const numericFields = plugin.paramSchema.filter((field) => field.kind === 'number');
     const core = preferred
       ? preferred.flatMap((key) => {
@@ -52,7 +54,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       coreFields: core,
       extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key))
     };
-  }, [plugin]);
+  }, [plugin, params.mode]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
@@ -68,7 +70,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
           <div className="flex items-baseline justify-between gap-2 text-[11px] font-medium">
             <label htmlFor={`param-${field.key}`} className="min-w-0 truncate text-slate-300">{shortLabel}</label>
             <span data-testid={`param-value-${field.key}`} className="shrink-0 font-mono tabular-nums text-slate-100">
-              {numberValue.toFixed(Math.min(Math.max(decimals, 1), 2))} {field.unit ?? ''}
+              {numberValue.toFixed(Math.min(Math.max(decimals, 1), field.key === 'xrayWavelengthNm' ? 3 : 2))} {field.unit ?? ''}
             </span>
           </div>
           <input
@@ -149,11 +151,12 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
             type="button"
             data-testid="btn-toggle-formula-values"
             aria-label={showLiveSubstituted ? '隐藏代入数值' : '显示代入数值'}
+            aria-pressed={showLiveSubstituted}
             onClick={() => setShowLiveSubstituted((shown) => !shown)}
             title={showLiveSubstituted ? '切换纯符号公式' : '显示实时代入数值'}
             className="absolute right-2 top-1.5 rounded px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-white/10 hover:text-sky-300 cursor-pointer"
           >
-            {showLiveSubstituted ? '符号' : '123'}
+            {showLiveSubstituted ? '仅符号' : '显示数值'}
           </button>
           <KatexFormulaCard items={telemetry.formulaItems} compact showSubstituted={showLiveSubstituted} />
         </section>

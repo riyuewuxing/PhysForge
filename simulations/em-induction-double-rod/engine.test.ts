@@ -1,6 +1,7 @@
-import { resolvePluginParams } from '@physforge/sim-sdk';
+import { createWorldMapper, resolveInitialCameraTransform, resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { emInductionDoubleRodPlugin } from './plugin.js';
+import { inductionDiagramGeometry, inductionLoadDimensions } from './diagramGeometry.js';
 import {
   checkInvariants,
   computeObservables,
@@ -28,6 +29,25 @@ const baseParams: InductionParams = {
 };
 
 describe('em-induction-double-rod engine', () => {
+  it('fits every initial circuit preset in the unobscured desktop viewport', () => {
+    for (const preset of emInductionDoubleRodPlugin.presets) {
+      const params = resolvePluginParams(emInductionDoubleRodPlugin.paramSchema, preset.params);
+      const state = createInitialState(params);
+      const g = inductionDiagramGeometry(state, params);
+      for (const [width, height] of [[976, 720], [1232, 752], [1392, 852]] as const) {
+        const camera = resolveInitialCameraTransform(emInductionDoubleRodPlugin, params, width, height);
+        const m = createWorldMapper({ width, height, dpr: 1, ...camera });
+        expect(m.toX(g.minX)).toBeGreaterThan(16);
+        expect(m.toX(g.maxX)).toBeLessThan(width - 280 - 16);
+        if (!g.double) {
+          const { halfPlateWidth } = inductionLoadDimensions(g.l1);
+          expect(m.toX(g.x2 - halfPlateWidth)).toBeGreaterThan(16);
+          expect(m.toX(g.x2 + halfPlateWidth)).toBeLessThan(width - 280 - 16);
+        }
+      }
+    }
+  });
+
   it('uses the benchmark resistance value without changing the physical total resistance', () => {
     const preset = emInductionDoubleRodPlugin.presets.find((item) => item.id === 'single-rod-battery-drive');
     const params = resolvePluginParams(emInductionDoubleRodPlugin.paramSchema, preset?.params);
