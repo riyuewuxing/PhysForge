@@ -344,7 +344,10 @@ async function main() {
     if (!await fieldToken.evaluate(node => node === window.__PF_TEST_TOKEN)) throw new Error('Live formula token was replaced during pointer capture');
     await page.mouse.up();
     await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'detached' });
-    await page.waitForFunction(before => document.querySelector('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]')?.textContent !== before, beforeReadout);
+    await page.waitForFunction(before => {
+      const text = document.querySelector('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]')?.textContent;
+      return typeof text === 'string' && text.length > 0 && text !== before;
+    }, beforeReadout);
     if (!await fieldToken.evaluate(node => node === window.__PF_TEST_TOKEN)) throw new Error('Numeric readout replaced the interactive token');
     await page.getByTestId('btn-stage-readouts').click();
     await page.getByTestId('stage-formula-values').waitFor({ state: 'detached' });
