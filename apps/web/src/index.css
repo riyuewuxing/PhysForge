@@ -400,3 +400,32 @@ input[type="range"].pf-slider::-moz-range-thumb {
 }
 @media (max-height: 720px) { .pf-hero-scope-chart { height: 110px; } }
 [data-theme="projector"] .pf-hero-scope .text-sky-200 { color: #075985; }
+
+/* Instrument ticks use numeric labels; units stay in the channel headers.
+   A single sample is not a time series: show an honest empty-state instead
+   of uPlot's fallback 0–100 axes. Keep the actual canvas in the layout. */
+.pf-hero-scope { padding-bottom: 7px; }
+.pf-scope-empty { display: none; }
+.pf-hero-scope [data-sample-count="0"], .pf-hero-scope [data-sample-count="1"] { visibility: hidden; }
+.pf-hero-scope [data-sample-count="0"] + .pf-scope-empty,
+.pf-hero-scope [data-sample-count="1"] + .pf-scope-empty { display: grid; }
+/* Explicit paper-mode contrast for utility-colored foregrounds, not a
+   blanket canvas/filter inversion (would destroy physical color semantics). */
+[data-theme="projector"] [data-testid="topbar"] > div:first-child > div:first-child,
+[data-theme="projector"] [data-testid="topbar"] [data-testid="btn-step"],
+[data-theme="projector"] [data-testid="topbar"] [data-testid="btn-reset"],
+[data-theme="projector"] [data-testid="topbar"] select,
+[data-theme="projector"] [data-testid="right-control-panel"] label,
+[data-theme="projector"] [data-testid="right-control-panel"] [data-testid^="param-value-"],
+[data-theme="projector"] [data-testid="right-control-panel"] select,
+[data-theme="projector"] [data-testid="right-control-panel"] summary,
+[data-theme="projector"] [data-testid="right-control-panel"] .pf-right-formula { color: var(--pf-text); }
+[data-theme="projector"] [data-testid="topbar"] > div:first-child > div:nth-child(2),
+[data-theme="projector"] [data-testid="btn-toggle-formula-values"] { color: var(--pf-text-muted); }
+[data-theme="projector"] [data-testid="right-control-panel"] > div > div:first-child,
+[data-theme="projector"] [data-testid="right-control-panel"] details,
+[data-theme="projector"] [data-testid="right-control-panel"] details select,
+[data-theme="projector"] [data-testid="right-control-panel"] details label,
+[data-theme="projector"] [data-testid="formula-card"] { background: #f1f5f9; border-color: var(--pf-border); }
+[data-theme="projector"] [data-testid="right-control-panel"] option { background: #fff; color: #0f172a; }
+[data-theme="projector"] [data-testid="formula-card"] [class*="text-emerald-"] { color: #166534; }

@@ -725,6 +725,8 @@ async function main() {
           if (await scope.getAttribute('data-scope-units') !== 'separate') throw new Error('E04 current and velocity must have independent unit axes');
           const scopeCanvas = await scope.locator('canvas').first().boundingBox();
           if (!scopeCanvas || scopeCanvas.height < 140) throw new Error('E04 instrument chart is clipped or too short');
+          if (await page.getByTestId('scope-empty').isVisible()) throw new Error('E04 running chart still marked empty');
+          if (!(await page.getByTestId('scope-channel-a').innerText()).includes('A') || !(await page.getByTestId('scope-channel-b').innerText()).includes('m/s')) throw new Error('E04 missing visible axis units');
           for (const key of ['kineticEnergy','jouleHeat','sourceWork']) {
             const value = await page.getByTestId('e04-energy-'+key).innerText();
             if (!/^\d+\.\d{3} J$/.test(value) || parseFloat(value) <= 0) throw new Error('E04 missing measured energy in joules: '+key);
@@ -879,6 +881,19 @@ async function main() {
         await page.getByTestId('btn-theme').click();
         await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
         if (await page.getByTestId('tools-menu').isVisible()) await page.getByTestId('btn-tools-menu').click();
+        const contrast = await page.evaluate(() => {
+          const luminance = (rgb) => {
+            const channels = rgb.match(/[\d.]+/g)?.slice(0,3).map(Number) ?? [];
+            return channels.length === 3 ? channels.map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0) : 1;
+          };
+          const selectors=['[data-testid="topbar"] > div:first-child > div:first-child','[data-testid="param-value-batteryEmf"]','label[for="param-batteryEmf"]','[data-testid="preset-select"]','[data-testid="formula-card"] .pf-right-formula'];
+          return selectors.map(selector=>{
+            const el=document.querySelector(selector);
+            return {selector, ratio:el?1.05/(luminance(getComputedStyle(el).color)+.05):0};
+          });
+        });
+        if (contrast.some(c=>c.ratio<4.5)) throw new Error('E04 paper text contrast failed '+JSON.stringify(contrast));
+        if (!await page.getByTestId('scope-empty').isVisible()) throw new Error('E04 reset must show empty-series notice');
         await page.screenshot({path:path.join(OUT_DIR,'H1_E04_projector.png')});
         await page.getByTestId('btn-tools-menu').click();
         await page.getByTestId('btn-theme').click();
