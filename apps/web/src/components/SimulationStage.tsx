@@ -262,6 +262,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const storyRunnerRef = useRef<StoryRunner | null>(null);
   const storyParamsRef = useRef<ParamRecord | null>(null);
   const storyOwnerRef = useRef<StoryDeck | undefined>(undefined);
+  const requestedStoryDeckRef = useRef(storyDeck);
+  requestedStoryDeckRef.current = storyDeck;
   const lastPropsParamsRef = useRef(params);
   const publishedStoryParamsRef = useRef<ParamRecord | null>(null);
   const storyDirtyRef = useRef(false);
@@ -835,12 +837,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const loop = (nowMs: number) => {
       rafId = requestAnimationFrame(loop);
       const runner = storyRunnerRef.current;
-      if (runner) {
+      if (runner && requestedStoryDeckRef.current === storyOwnerRef.current && storyOwnerRef.current?.modelId === latestRef.current.plugin.meta.id) {
         const current = latestRef.current;
         const observables = simStateRef.current === null ? undefined : current.plugin.engine.computeObservables(simStateRef.current, current.params);
         runner.tick(nowMs, observables);
         if (storyDirtyRef.current) {
-          renderFrameToCanvas();
+          if (!latestRef.current.isPlaying) renderFrameToCanvas();
           emitTelemetrySummary(false);
           flushStoryParams(current.plugin.meta.id, nowMs);
         }
