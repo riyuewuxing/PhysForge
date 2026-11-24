@@ -64,7 +64,12 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
         "step": 0.1,
         "precision": 2
       }
-    ]
+    ],
+    "when": {
+      "mode": [
+        "magnetic-mirror"
+      ]
+    }
   },
   {
     "id": "mirror-pitch",
@@ -91,7 +96,76 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
         "step": 2,
         "precision": 0
       }
-    ]
+    ],
+    "when": {
+      "mode": [
+        "magnetic-mirror"
+      ]
+    }
+  },
+  {
+    "id": "mirror-axial-field",
+    "title": "磁镜轴线上的磁场（模型位形）",
+    "latex": "B_z(z)=\\htmlClass{pf-live-var}{\\htmlData{param=b0Tesla}{B_0}}\\left(1+\\frac{z^2}{\\htmlClass{pf-live-var}{\\htmlData{param=mirrorLengthM}{L}}^2}\\right)",
+    "bindings": [
+      {
+        "tokenKey": "b0Tesla",
+        "paramKey": "b0Tesla",
+        "label": "中心磁场 B₀",
+        "unit": "T",
+        "min": 0.5,
+        "max": 5,
+        "step": 0.2,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mirrorLengthM",
+        "paramKey": "mirrorLengthM",
+        "label": "磁镜特征长度 L",
+        "unit": "m",
+        "min": 0.6,
+        "max": 2.4,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "magnetic-mirror"
+      ]
+    }
+  },
+  {
+    "id": "tokamak-toroidal-field",
+    "title": "托卡马克环向磁场分量（R 为柱坐标半径）",
+    "latex": "B_\\phi=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=b0Tesla}{B_0}}\\htmlClass{pf-live-var}{\\htmlData{param=majorRadiusM}{R_0}}}{R}",
+    "bindings": [
+      {
+        "tokenKey": "b0Tesla",
+        "paramKey": "b0Tesla",
+        "label": "中心磁场 B₀",
+        "unit": "T",
+        "min": 0.5,
+        "max": 5,
+        "step": 0.2,
+        "precision": 2
+      },
+      {
+        "tokenKey": "majorRadiusM",
+        "paramKey": "majorRadiusM",
+        "label": "托卡马克大半径 R₀",
+        "unit": "m",
+        "min": 1,
+        "max": 2.2,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "tokamak"
+      ]
+    }
   }
 ];
 
