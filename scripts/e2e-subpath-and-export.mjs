@@ -317,6 +317,18 @@ async function main() {
     await page.getByTestId('rail-btn-catalog').click();
     await page.getByTestId('model-card-stse-tokamak-magnetic-mirror').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { timeout: 15000 });
+    // Switch directly between two differently shaped 3D engine states, without reloading the page.
+    await page.getByTestId('rail-btn-catalog').click();
+    await page.getByTestId('model-card-em-3d-magnetic-fields').click();
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('[data-testid="app-shell"]');
+      const stage = document.querySelector('[data-testid="three-stage-container"]');
+      const time = stage?.getAttribute('data-sim-time');
+      const speed = stage?.getAttribute('data-speed');
+      return shell?.getAttribute('data-model-id') === 'em-3d-magnetic-fields' &&
+        time !== null && time !== undefined && Number(time) === 0 &&
+        speed !== null && speed !== undefined && Number.isFinite(Number(speed)) && Number(speed) > 0;
+    }, null, { timeout: 20000 });
     await page.getByTestId('rail-btn-catalog').click();
     await page.getByTestId('model-card-stse-em-devices-suite').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { state: 'detached', timeout: 15000 });
@@ -381,6 +393,29 @@ async function main() {
     const originalBeat = await page.getByTestId('story-progress').textContent();
     await presenter.getByTestId('presenter-next').click();
     await page.waitForFunction((old) => document.querySelector('[data-testid="story-progress"]')?.textContent !== old, originalBeat);
+    // S02 second beat is the light isotope comparison. Replay must restore its authored mass,
+    // not merely reset time with the manually altered parameters.
+    await presenter.waitForFunction(() => document.querySelector('[data-testid="presenter-beat"]')?.textContent?.startsWith('2/5'));
+    const massSlider = presenter.locator('label').filter({ hasText: '粒子质量 m' }).locator('input[type="range"]');
+    await massSlider.waitFor({ state: 'visible' });
+    const originalMass = Number(await massSlider.inputValue());
+    const spectrumReadout = page.locator('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]');
+    await spectrumReadout.waitFor({ state: 'visible' });
+    const originalSpectrum = await spectrumReadout.textContent();
+    await massSlider.focus();
+    await massSlider.press('End');
+    await page.waitForFunction(before => {
+      const result = document.querySelector('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]')?.textContent;
+      return typeof result === 'string' && result.length > 0 && result !== before;
+    }, originalSpectrum);
+    await page.getByTestId('fullscreen-controls').getByTestId('btn-reset').click();
+    await page.waitForFunction(before => document.querySelector('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]')?.textContent === before, originalSpectrum);
+    if (await page.getByTestId('story-progress').textContent() !== '2/5') throw new Error('Story replay changed beat');
+    await presenter.waitForFunction(before => {
+      const label = [...document.querySelectorAll('label')].find(node => node.textContent?.includes('粒子质量 m'));
+      const slider = label?.querySelector('input[type="range"]');
+      return slider && Math.abs(Number(slider.value) - before) <= 1e-28;
+    }, originalMass);
     await presenter.getByTestId('presenter-blackout').click();
     await page.getByTestId('story-blackout').waitFor({ timeout: 5000 });
     await presenter.getByTestId('presenter-blackout').click();
