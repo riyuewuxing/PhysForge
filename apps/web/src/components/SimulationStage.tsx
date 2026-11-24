@@ -275,6 +275,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (storyParamsRef.current && params !== publishedStoryParamsRef.current) {
       storyParamsRef.current = params;
       storyDirtyRef.current = false;
+      storyRunnerRef.current?.cancelTween();
     }
   }
   const imperativeParams = storyDeck && storyOwnerRef.current === storyDeck ? storyParamsRef.current ?? params : params;
