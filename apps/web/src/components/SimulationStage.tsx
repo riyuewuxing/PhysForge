@@ -302,6 +302,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const hoveredHandleIdRef = useRef<string | null>(null);
   const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchGestureRef = useRef<PinchGesture | null>(null);
+  useEffect(() => {
+    dragModeRef.current = null;
+    activePointersRef.current.clear();
+    pinchGestureRef.current = null;
+    hoveredHandleIdRef.current = null;
+  }, [plugin.meta.id, storyDeck, showThree]);
 
   const storyRunnerRef = useRef<StoryRunner | null>(null);
   const storyParamsRef = useRef<ParamRecord | null>(null);
@@ -1183,10 +1189,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                 }
               }
               const v2 = plugin as SimulationPluginV2<ParamRecord, unknown>;
-              const state = simStateRef.current;
+              const state = readDisplayedFrame(plugin.meta.id)?.state ?? null;
               const { effectiveVp } = computeEffectiveViewport(viewportRef.current, state);
-              if (state !== null && v2.getControlHandles && e.button === 0) {
-                const handles = v2.getControlHandles(state, params);
+              if (state !== null && !latestRef.current.poeMasked && v2.getControlHandles && e.button === 0) {
+                const handles = v2.getControlHandles(state, latestRef.current.params);
                 for (const h of handles) {
                   const hs = worldToScreen(h.position.x, h.position.y, effectiveVp);
                   if (Math.hypot(hs.x - sx, hs.y - sy) <= 14) {
@@ -1245,11 +1251,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (!mode) {
                 if (e.pointerType === 'touch') return;
                 const v2 = plugin as SimulationPluginV2<ParamRecord, unknown>;
-                const state = simStateRef.current;
+                const state = readDisplayedFrame(plugin.meta.id)?.state ?? null;
                 const { effectiveVp } = computeEffectiveViewport(viewportRef.current, state);
                 let nearestId: string | null = null;
-                if (state !== null && v2.getControlHandles) {
-                  nearestId = v2.getControlHandles(state, params)
+                if (state !== null && !latestRef.current.poeMasked && v2.getControlHandles) {
+                  nearestId = v2.getControlHandles(state, latestRef.current.params)
                     .find((handle) => {
                       const handleScreen = worldToScreen(handle.position.x, handle.position.y, effectiveVp);
                       return Math.hypot(handleScreen.x - sx, handleScreen.y - sy) <= 14;
@@ -1263,10 +1269,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                 return;
               }
               if (mode.kind === 'handle') {
-                const { effectiveVp } = computeEffectiveViewport(
-                  viewportRef.current,
-                  simStateRef.current
-                );
+                const frame = readDisplayedFrame(plugin.meta.id);
+                if (!frame || latestRef.current.poeMasked) return;
+                const { effectiveVp } = computeEffectiveViewport(viewportRef.current, frame.state);
                 const world = screenToWorld(sx, sy, effectiveVp);
                 onUpdateParamsBatch(mode.handle.onDrag(world), `拖拽手柄 ${mode.handle.label}`);
               } else {
