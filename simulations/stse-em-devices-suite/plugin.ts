@@ -473,8 +473,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ctx.beginPath();
     ctx.moveTo(bRailTop.x, bRailTop.y);
     ctx.lineTo(bRailBottom.x, bRailBottom.y);
-    ctx.moveTo(eRailTop.x, eRailTop.y);
-    ctx.lineTo(eRailBottom.x, eRailBottom.y);
+    if(params.device==='velocity-selector'){ctx.moveTo(eRailTop.x,eRailTop.y);ctx.lineTo(eRailBottom.x,eRailBottom.y);}
     ctx.stroke();
 
     // All hardware outlines share the same normalized footprint as the spatial stage and exported diagram.
@@ -520,8 +519,9 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     }
     // Draw particle trail & head
     if (state.trail.length > 1) {
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2.4;
+      ctx.strokeStyle = state.cyclotron?'#ffd37a':'#38bdf8';
+      ctx.lineWidth = state.cyclotron?2.8:2.4;
+      if(state.cyclotron){ctx.shadowColor='#f59e0b';ctx.shadowBlur=5;}
       ctx.beginPath();
       state.trail.forEach((p, idx) => {
         const world = deviceDiagramPoint(p.x,p.y);
@@ -531,9 +531,9 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
         if (idx === 0) ctx.moveTo(sx, sy);
         else ctx.lineTo(sx, sy);
       });
-      ctx.stroke();
+      ctx.stroke();ctx.shadowBlur=0;
     }
-    ctx.fillStyle = params.device === 'hall-sensor' && params.carrierType === 'hole' ? '#f43f5e' : '#4ade80';
+    ctx.fillStyle = state.cyclotron?'#fff1c7':params.device === 'hall-sensor' && params.carrierType === 'hole' ? '#f43f5e' : '#4ade80';
     ctx.beginPath();
     const world = deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
     const particle = m.toScreen(world.x,world.y);

@@ -1,4 +1,5 @@
 import { resolvePluginParams } from '@physforge/sim-sdk';
+import { stepBorisPusher } from '@physforge/physics-core';
 import { describe, expect, it } from 'vitest';
 import { stseEmDevicesSuitePlugin } from './plugin.js';
 import { emDevicesPresets } from './presets.js';
@@ -103,6 +104,21 @@ describe('stse-em-devices-suite physics invariants (S02)', () => {
     expect(checkInvariants(s,initial,p).every(x=>x.passed)).toBe(true);
     expect(stepEmDevices(s,p,1).events).toHaveLength(0);
     expect(stepEmDevices(s,p,1).nextState.particlePos).toEqual(s.particlePos);
+  });
+  it('matches independent Boris integration for each side and is right-continuous at exact gap crossings',()=>{
+    const p={...getPreset(0),bFieldT:0.6,cyclotronRadiusM:0.15},plan=getCyclotronPlan(p);
+    const L=p.cyclotronRadiusM*0.7/CYCL_DISPLAY_RADIUS;
+    for(const a of plan.arcs.slice(0,4)){
+      const t0=a.startTau*plan.physicalUnitS,f=sampleCyclotron(p,t0);
+      expect(f.gapCount).toBe(a.gapCount);
+      let numeric={position:{x:f.position.x*L,y:f.position.y*L,z:0},velocity:{...f.velocityMps,z:0},t:t0};
+      const delta=Math.PI*plan.physicalUnitS/3,h=delta/2000;
+      for(let i=0;i<2000;i++)numeric=stepBorisPusher(numeric,()=>({E:{x:0,y:0,z:0},B:{x:0,y:0,z:p.bFieldT}}),p.chargeC,p.massKg,h);
+      const exact=sampleCyclotron(p,t0+delta);
+      expect(Math.hypot(numeric.position.x-exact.position.x*L,numeric.position.y-exact.position.y*L)/(a.radius*p.cyclotronRadiusM)).toBeLessThan(1e-5);
+      expect(Math.hypot(numeric.velocity.x-exact.velocityMps.x,numeric.velocity.y-exact.velocityMps.y)/a.speedMps).toBeLessThan(1e-5);
+      expect(Math.sign(f.rfVoltageV)).toBe(a.direction);
+    }
   });
   it('computes relativistic half periods after each actual kick and terminates on loss of accelerating phase',()=>{
     const p={...getPreset(0),bFieldT:3.5,cyclotronRadiusM:1,relativisticDetune:true},plan=getCyclotronPlan(p);

@@ -78,19 +78,19 @@ export function getCyclotronPlan(p:EmDevicesParams):CyclotronPlan{
     physicalUnitS:scale.timeUnit,radiusM:R,endTau:tau,completedHalfTurns};
   cached={key,plan};return plan;
 }
-function arcIndexAt(plan:CyclotronPlan,tau:number):number{
+function arcIndexAt(plan:CyclotronPlan,timeS:number):number{
   let lo=0,hi=plan.arcs.length-1;
-  while(lo<hi){const mid=(lo+hi+1)>>1;if(plan.arcs[mid]!.startTau<=tau)lo=mid;else hi=mid-1;}
+  while(lo<hi){const mid=(lo+hi+1)>>1;if(plan.arcs[mid]!.startTau*plan.physicalUnitS<=timeS)lo=mid;else hi=mid-1;}
   return lo;
 }
 export function sampleCyclotron(p:EmDevicesParams,physicalTimeS:number):CyclotronFlight{
   const plan=getCyclotronPlan(p);
   const tau=Math.min(plan.endTau,Math.max(0,physicalTimeS/plan.physicalUnitS));
   const terminal=physicalTimeS>=plan.endTau*plan.physicalUnitS;
-  const index=arcIndexAt(plan,tau),a=plan.arcs[index];
+  const index=arcIndexAt(plan,Math.min(physicalTimeS,plan.endTau*plan.physicalUnitS)),a=plan.arcs[index];
   if(!a)return {status:'inactive',physicalTimeS:0,timeUnitS:plan.timeUnitS,position:{x:0,y:0},velocityMps:{x:0,y:0},
     energyJ:0,radiusM:0,phaseSlip:0,gapCount:0,totalWorkJ:0,rfVoltageV:0,arcIndex:0};
-  const angle=Math.min(a.endAngle,Math.max(0,(tau-a.startTau)/a.gamma));
+  const angle=Math.min(a.endAngle,Math.max(0,(Math.min(physicalTimeS,plan.endTau*plan.physicalUnitS)-a.startTau*plan.physicalUnitS)/(plan.physicalUnitS*a.gamma)));
   const terminalSlip=plan.status==='detuned'&&terminal?tau-plan.arcs.length*Math.PI:a.phaseSlip;
   return {status:terminal?plan.status:'running',physicalTimeS:tau*plan.physicalUnitS,timeUnitS:plan.timeUnitS,
     position:project(arcPoint(a,angle)),velocityMps:{x:a.direction*a.speedMps*Math.cos(angle),y:-a.direction*a.speedMps*Math.sin(angle)},

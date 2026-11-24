@@ -156,7 +156,7 @@ export function stepEmDevices(
   if(isBeamDevice(params)){
     const previous=state.flight??sampleBeamFlight(params,0);
     const {flight,events}=advanceBeamFlight(params,previous,dt,state.t);
-    return {nextState:{...state,...metrics,t:state.t+dt,flight,particlePos:flight.position,particleVel:beamDisplayVelocity(flight),
+    return {nextState:{...state,...metrics,t:state.t+dt,flight,cyclotron:null,particlePos:flight.position,particleVel:beamDisplayVelocity(flight),
       trail:flight===previous?state.trail:beamTrail(params,flight)},events};
   }
   if(params.device==='cyclotron'){

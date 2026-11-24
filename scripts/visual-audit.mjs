@@ -495,6 +495,7 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
     await deviceSelect.waitFor({state:'attached'});
     if (!await deviceSelect.isVisible()) await page.getByText('更多参数与图层',{exact:false}).first().click();
     await deviceSelect.selectOption(device);
+    if(device==='cyclotron')await selectPreset(page,'cyclotron-classic-vs-rel');
     await page.getByTestId('btn-fullscreen-speech').click();
     const toggle = page.getByTestId('btn-view-3d-fullscreen');
     if ((await toggle.textContent())?.includes('3D 空间')) await toggle.click();
@@ -525,6 +526,8 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
       if(screenshot)await screenshot('S02_cyclotron_running');
       await page.waitForFunction(()=>['wall','detuned','limit'].includes(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-cyclotron-status')??''),null,{timeout:20000});
       if(await stage.getAttribute('data-cyclotron-status')!=='wall')throw new Error('S02 classic cyclotron did not reach outer wall');
+      const gaps=Number(await stage.getAttribute('data-cyclotron-gaps')),energy=Number(await stage.getAttribute('data-cyclotron-energy'));
+      if(gaps!==829||Math.abs(energy/(1.602176634e-19*25000)-gaps)>1e-6)throw new Error('S02 classic cyclotron independent work/gap count mismatch: '+JSON.stringify({gaps,energy}));
       if((await play.getAttribute('aria-label'))==='暂停')await play.click();
       if(screenshot)await screenshot('S02_cyclotron_wall');
     }
@@ -534,6 +537,36 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
     await page.getByTestId('simulation-canvas').waitFor({state:'visible'});
     if (screenshot) await screenshot('S02_' + device + '_flat');
     report.push({device,spatial:true,flat:true});
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+  }
+  // Run actual relativistic and low-turn presets through the same stage.
+  for(const preset of ['cyclotron-classic-vs-rel','cyclotron-gap-classroom']){
+    const relativistic=preset==='cyclotron-classic-vs-rel';
+    await selectPreset(page,preset);
+    if(relativistic){
+      const checkbox=page.getByLabel('启用相对论质速失谐',{exact:true});
+      if(!await checkbox.isVisible())await page.getByText('更多参数与图层',{exact:false}).first().click();
+      await checkbox.check();
+    }
+    await page.getByTestId('btn-fullscreen-speech').click();
+    const toggle=page.getByTestId('btn-view-3d-fullscreen');
+    if((await toggle.textContent())?.includes('3D 空间'))await toggle.click();
+    const stage=page.getByTestId('three-stage-container');
+    await stage.waitFor({state:'visible',timeout:20000});
+    await page.waitForFunction(()=>document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-cyclotron-status')==='running');
+    const play=page.locator('[data-testid="btn-play-pause"]:visible');
+    if((await play.getAttribute('aria-label'))==='运行')await play.click();
+    const expected=relativistic?'detuned':'wall';
+    await page.waitForFunction(status=>document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-cyclotron-status')===status,expected,{timeout:20000});
+    const state=await stage.evaluate(el=>({gaps:Number(el.dataset.cyclotronGaps),energy:Number(el.dataset.cyclotronEnergy),phase:Number(el.dataset.cyclotronPhase),time:Number(el.dataset.cyclotronTime)}));
+    const energyMeV=state.energy/1.602176634e-13;
+    if(relativistic?(state.gaps!==203||state.phase<Math.PI/2||Math.abs(energyMeV-3.86433944)>1e-5):(state.gaps!==11||Math.abs(energyMeV-.275)>1e-6))throw new Error('S02 cyclotron preset independent oracle failed '+JSON.stringify({preset,state,energyMeV}));
+    if((await play.getAttribute('aria-label'))==='暂停')await play.click();
+    if(screenshot)await screenshot(relativistic?'S02_cyclotron_detuned':'S02_cyclotron_low_energy');
+    await toggle.click();
+    await stage.waitFor({state:'detached',timeout:15000});
+    if(screenshot)await screenshot(relativistic?'S02_cyclotron_detuned_flat':'S02_cyclotron_low_energy_flat');
+    report.push({device:'cyclotron',preset,status:expected,...state});
     await page.getByTestId('btn-exit-fullscreen-speech').click();
   }
   return report;

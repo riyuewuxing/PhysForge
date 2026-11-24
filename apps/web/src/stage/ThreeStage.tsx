@@ -281,7 +281,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const width = Math.max(320, container.clientWidth);
     const height = Math.max(240, container.clientHeight);
     const scene = new THREE.Scene();
-    const magneticBackdrop=isMag3d?createMagneticBackdrop():null;
+    const isDeviceStage=plugin.meta.id==='stse-em-devices-suite';
+    const magneticBackdrop=isMag3d||isDeviceStage?createMagneticBackdrop():null;
     scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
     scene.fog = new THREE.FogExp2('#0b0f17', 0.085);
 
@@ -341,10 +342,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     else controls.enabled = false;
 
     const grid = createRadialGrid(isMag3d);
-    const ambient = new THREE.HemisphereLight(0xc7e7ff, 0x101826, isMag3d ? 0.72 : 1.05);
-    const keyLight = new THREE.DirectionalLight(0xffe1b1, isMag3d ? 2.0 : 3.1);
+    const ambient = new THREE.HemisphereLight(0xc7e7ff, 0x101826, isMag3d||isDeviceStage ? 0.72 : 1.05);
+    const keyLight = new THREE.DirectionalLight(0xffe1b1, isMag3d||isDeviceStage ? 2.0 : 3.1);
     keyLight.position.set(3.5, 5, 4);
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, isMag3d ? 1.45 : 2.2);
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, isMag3d||isDeviceStage ? 1.45 : 2.2);
     rimLight.position.set(-4, 2, -3);
     scene.add(grid, ambient, keyLight, rimLight);
     const planarDriver = createPlanarFlagshipScene(plugin.meta.id, scene) ?? createRemainingFlagshipScene(plugin.meta.id, scene);

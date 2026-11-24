@@ -4,7 +4,8 @@ import type { EmDevicesParams, EmDevicesState } from '../../../../simulations/st
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers } from '@physforge/simulations/astro-orbital-mechanics';
 import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
-import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
+import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial, coilCopperMaterial, createParticleGlow } from './spatialMaterials.js';
+import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 
 function dispose(root: THREE.Object3D) {
   const geometry = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
@@ -46,12 +47,12 @@ export function orbitDisplayPoint(x:number,y:number,t:number,corotating:boolean)
   return new THREE.Vector3(p.x,0,-p.y);
 }
 function buildDevicePart(group:THREE.Group,part:DevicePart) {
-  const material=part.material==='copper'?brushedCopperMaterial():part.material==='glass'?dielectricGlassMaterial():anodizedRailMaterial();
+  const material=part.kind==='dee'?coilCopperMaterial():part.material==='copper'?brushedCopperMaterial():part.material==='glass'?dielectricGlassMaterial():anodizedRailMaterial();
   if(part.kind==='dee'){
     const shape=new THREE.Shape();
     deeOutline(part).forEach((p,i)=>{if(i===0)shape.moveTo(p.x-part.x,p.y-part.y);else shape.lineTo(p.x-part.x,p.y-part.y);});
     shape.closePath();
-    const object=mesh(group,part.id,new THREE.ExtrudeGeometry(shape,{depth:part.depth,bevelEnabled:false}),material);
+    const object=mesh(group,part.id,new THREE.ExtrudeGeometry(shape,{depth:part.depth,bevelEnabled:true,bevelThickness:0.014,bevelSize:0.008,bevelOffset:-0.008,bevelSegments:3}),material);
     object.rotation.x=-Math.PI/2;object.position.set(part.x,-part.depth-0.035,-part.y);
     return;
   }
@@ -66,6 +67,13 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
   const fixed=new THREE.Group(), moving=new THREE.Group();root.add(fixed,moving);
   const marker=mesh(moving,'device-particle',new THREE.SphereGeometry(0.035,16,12),magneticFluxMaterial(0x4ade80));
   const track=bufferedTrail(moving,121,0x38bdf8);
+  const cyclTrail=new DynamicTubeTrail(121,.009,6),cyclHalo=new DynamicTubeTrail(121,.023,6);
+  const cyclTrack=mesh(moving,'cyclotron-trajectory',cyclTrail.geometry,new THREE.MeshBasicMaterial({color:0xffcd74,toneMapped:false}));
+  const cyclTrackHalo=mesh(moving,'cyclotron-trajectory-glow',cyclHalo.geometry,new THREE.MeshBasicMaterial({color:0xffa540,toneMapped:false,transparent:true,opacity:.20,depthWrite:false,blending:THREE.AdditiveBlending}));
+  cyclTrack.frustumCulled=false;cyclTrackHalo.frustumCulled=false;
+  const glow=createParticleGlow();
+  glow.sprite.scale.set(.24,.24,1);marker.add(glow.sprite);
+  let lastCyclTrail:EmDevicesState['trail']|null=null;
   const gap=mesh(moving,'accelerating-gap',new THREE.BoxGeometry(0.045,0.035,1.55),magneticFluxMaterial(0xfbbf24));
   gap.position.set(-0.25,-0.025,0);
   const rf=new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(-0.38,.06,-.95),.26,0xfbbf24,.065,.045);
@@ -77,7 +85,7 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
     root.visible=layers.has('main');
     if(signature!==p.device) {
       signature=p.device;clear(fixed);
-      const base=mesh(fixed,'device-base',new THREE.BoxGeometry(3.15,0.09,2.65),obsidianStageFloorMaterial());base.position.set(-0.25,-0.52,0);
+      const base=mesh(fixed,'device-base',p.device==='cyclotron'?new THREE.CylinderGeometry(.99,1.05,.08,96):new THREE.BoxGeometry(3.15,.09,2.65),obsidianStageFloorMaterial());base.position.set(-0.25,p.device==='cyclotron'?-0.23:-0.52,0);
       const schematic=getDeviceSchematic(p.device);
       for(const part of schematic.parts)buildDevicePart(fixed,part);
       // B points along +Y, i.e. out of the physical diagram plane (x,y)->(x,0,-y).
@@ -93,21 +101,27 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
           cue.kind==='electric'?0xfbbf24:0x4ade80,Math.min(0.13,length*0.25),0.07);
         direction.name=cue.id;fixed.add(direction);
       }
-      for(const x of [-1.65,1.28]) {
+      for(const x of p.device==='cyclotron'?[]:[-1.65,1.28]) {
         const guide=mesh(fixed,'field-guide',new THREE.BoxGeometry(0.025,0.025,1.2),anodizedRailMaterial());
         guide.position.set(x,0,0);
       }
     }
     marker.position.copy(deviceDisplayPoint(state.particlePos.x,state.particlePos.y));
     const material=marker.material as THREE.MeshStandardMaterial;
-    material.color.set(p.device==='hall-sensor'&&p.carrierType==='hole'?0xf43f5e:0x4ade80);
-    material.emissive.copy(material.color);
-    track.update(state.trail,deviceDisplayPoint);
+    const isCyclotron=!!state.cyclotron;
+    material.color.set(isCyclotron?0xffd369:p.device==='hall-sensor'&&p.carrierType==='hole'?0xf43f5e:0x4ade80);
+    material.emissive.copy(material.color);material.emissiveIntensity=isCyclotron?1.5:.55;material.opacity=isCyclotron?1:.72;
+    glow.sprite.visible=isCyclotron;
+    cyclTrack.visible=isCyclotron;cyclTrackHalo.visible=isCyclotron;
+    if(isCyclotron){
+      track.trail.visible=false;
+      if(lastCyclTrail!==state.trail){lastCyclTrail=state.trail;const pts=state.trail.map(v=>deviceDisplayPoint(v.x,v.y));cyclTrail.update(pts,v=>v);cyclHalo.update(pts,v=>v);}
+    }else{lastCyclTrail=null;track.update(state.trail,deviceDisplayPoint);}
     const f=state.cyclotron;
     gap.visible=!!f&&Math.abs(state.particlePos.x*0.7)<=0.04;
     rf.visible=!!f&&Math.abs(f.rfVoltageV)>1e-6;
     if(f&&rf.visible){const sign=Math.sign(f.rfVoltageV);rf.position.set(-0.25-sign*.13,.06,-.95);rf.setDirection(new THREE.Vector3(sign,0,0));}
-  },dispose(){dispose(root);}};
+  },dispose(){marker.remove(glow.sprite);glow.material.dispose();glow.texture.dispose();dispose(root);}};
 }
 function ring(group:THREE.Group,name:string,radius:number,color:number) {
   const points=Array.from({length:128},(_,i)=>new THREE.Vector3(radius*Math.cos(i*Math.PI/64),0,-radius*Math.sin(i*Math.PI/64)));
