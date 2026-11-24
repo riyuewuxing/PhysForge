@@ -280,6 +280,32 @@ async function main() {
     await page.getByTestId('model-card-stse-em-devices-suite').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { state: 'detached', timeout: 15000 });
 
+    // Presenter is a second page in the same origin/profile. It must not mount another simulation.
+    await page.getByTestId('btn-fullscreen-speech').click();
+    await page.getByTestId('btn-toggle-story').click();
+    await page.getByTestId('story-caption').waitFor({ timeout: 15000 });
+    const presenterPopup = page.waitForEvent('popup');
+    await page.getByTestId('btn-presenter').click();
+    const presenter = await presenterPopup;
+    presenter.on('pageerror', (error) => pageErrors.push(error.message));
+    presenter.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+    presenter.on('response', (response) => { if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`); });
+    presenter.on('request', (request) => { if (/^https?:/.test(request.url()) && !request.url().startsWith(origin + basePrefix)) externalRequests.push(request.url()); });
+    await presenter.getByTestId('presenter-view').waitFor({ timeout: 15000 });
+    await presenter.waitForFunction(() => document.querySelector('[data-testid="presenter-connection"]')?.textContent === '主屏已连接');
+    if (new URL(presenter.url()).pathname !== basePrefix || await presenter.getByTestId('simulation-canvas').count() || await presenter.getByTestId('three-stage-container').count()) {
+      throw new Error('Presenter path incorrect or second simulation mounted');
+    }
+    const originalBeat = await page.getByTestId('story-progress').textContent();
+    await presenter.getByTestId('presenter-next').click();
+    await page.waitForFunction((old) => document.querySelector('[data-testid="story-progress"]')?.textContent !== old, originalBeat);
+    await presenter.getByTestId('presenter-blackout').click();
+    await page.getByTestId('story-blackout').waitFor({ timeout: 5000 });
+    await presenter.getByTestId('presenter-blackout').click();
+    await page.getByTestId('story-blackout').waitFor({ state: 'detached', timeout: 5000 });
+    await presenter.close();
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+
     if (consoleErrors.length || pageErrors.length || failedResponses.length || externalRequests.length) {
       throw new Error(JSON.stringify({ consoleErrors, pageErrors, failedResponses, externalRequests }, null, 2));
     }
