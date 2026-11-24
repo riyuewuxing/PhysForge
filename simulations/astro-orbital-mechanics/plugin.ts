@@ -59,6 +59,23 @@ const liveFormulas: readonly LiveFormulaSpec[] = [{
       "precision": 2
     }
   ]
+},
+{
+  "id": "circular-speed",
+  "title": "圆轨道速度（r₁=ηL₀，M 由尺度位形确定）",
+  "latex": "v_{c1}=\\sqrt{\\frac{GM}{\\htmlClass{pf-live-var}{\\htmlData{param=r1Ratio}{\\eta}}L_0}}",
+  "bindings": [
+    {
+      "tokenKey": "r1Ratio",
+      "paramKey": "r1Ratio",
+      "label": "近地点尺度比 r₁/L₀",
+      "unit": "",
+      "min": 0.5,
+      "max": 2,
+      "step": 0.1,
+      "precision": 2
+    }
+  ]
 }];
 export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<AstroOrbitalParams, AstroOrbitalState>({
   meta: {
