@@ -34,6 +34,16 @@ export function clampAndQuantize(raw: number, min: number, max: number, step: nu
   return Math.max(min, Math.min(max, Number(snapped.toPrecision(15))));
 }
 
+/** Preserve scientific magnitudes in the HUD rather than displaying nonzero SI values as 0.00. */
+export function formatLiveFormulaValue(value: number, precision = 3): string {
+  if (!Number.isFinite(value)) return '—';
+  const digits = Math.min(12, Math.max(0, Math.trunc(precision)));
+  const magnitude = Math.abs(value);
+  return magnitude !== 0 && (magnitude < Math.pow(10, -digits) || magnitude >= 1e7)
+    ? value.toExponential(Math.max(2, digits))
+    : value.toFixed(digits);
+}
+
 export interface FormulaScrubberHooks {
   getParamValue: (key: string) => number;
   getDefaultValue: (key: string) => number;
@@ -112,12 +122,13 @@ export function attachFormulaScrubber(container: HTMLElement, spec: LiveFormulaS
     if (dx !== 0) schedule(binding.paramKey, value);
     show(binding, element, value, gear.label);
   };
-  const end = (pointerId: number) => {
+  const end = (pointerId: number, commitPending = true) => {
     if (!active || active.pointerId !== pointerId) return;
     const { element, binding } = active;
     if (raf) cancelAnimationFrame(raf);
     raf = 0;
-    flush(performance.now()); // Do not lose a final event waiting for the next frame.
+    if (commitPending) flush(performance.now()); // Preserve final pointer-up input.
+    else pending = null; // Unmount/mode switch must not mutate a now-hidden experiment.
     active = null;
     if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
     element.classList.remove('pf-live-var--dragging');
@@ -140,7 +151,7 @@ export function attachFormulaScrubber(container: HTMLElement, spec: LiveFormulaS
   container.addEventListener('lostpointercapture', onPointerEnd);
   container.addEventListener('dblclick', onDoubleClick);
   return () => {
-    if (active) end(active.pointerId);
+    if (active) end(active.pointerId, false);
     if (raf) cancelAnimationFrame(raf);
     pending = null;
     container.removeEventListener('pointerdown', onPointerDown);
