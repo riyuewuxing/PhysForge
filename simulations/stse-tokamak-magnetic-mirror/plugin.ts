@@ -1,3 +1,4 @@
+import { fusionStoryDecks } from './storyDecks.js';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { tokamakMirrorPresets } from './presets.js';
 import {
@@ -352,6 +353,6 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
       substitutedLatex: `|B|=${Math.hypot(state.bField.x, state.bField.y, state.bField.z).toFixed(2)}\\text{ T},\\; \\theta_c=${computeMirrorLossConeDeg(params).toFixed(1)}^\\circ,\\; \\Delta\\mu/\\mu=${(state.maxMuRelDev * 100).toFixed(2)}\\%`
     }
   ]
-}), { liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 6.5, sceneDepthRadius: 5, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
+}), { storyDecks: fusionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 6.5, sceneDepthRadius: 5, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
 
 export default stseTokamakMagneticMirrorPlugin;
