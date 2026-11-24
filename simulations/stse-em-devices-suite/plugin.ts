@@ -1,3 +1,6 @@
+import { emDevicesStoryDecks } from './storyDecks.js';
+import { deviceDiagramPoint, getDeviceSchematic, deeOutline } from './deviceGeometry.js';
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { emDevicesPresets } from './presets.js';
 import {
@@ -53,7 +56,345 @@ const paramSchema: readonly ParamFieldSpec<EmDevicesParams>[] = [
   { key: 'flowDiameterM', kind: 'number', label: '流量计管径 D', unit: 'm', defaultValue: 0.2, min: 0.05, max: 0.6, step: 0.05 }
 ];
 
-export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, EmDevicesState>({
+
+/** KaTeX-friendly notation for microscopic and macroscopic SI readouts. */
+function scientificLatex(value: number): string {
+  if (!Number.isFinite(value)) return '\\text{未定义}';
+  if (value === 0) return '0';
+  const [mantissa, exponent] = value.toExponential(3).split('e');
+  if (mantissa === undefined || exponent === undefined) return '\\text{未定义}';
+  return Number(exponent) === 0 ? mantissa : `${mantissa}\\times10^{${Number(exponent)}}`;
+}
+
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "velocity-selector",
+    "title": "正交电磁速度选择器（电磁力平衡）",
+    "latex": "v_s=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=eFieldVPerM}{E}}}{\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}}",
+    "bindings": [
+      {
+        "tokenKey": "eFieldVPerM",
+        "paramKey": "eFieldVPerM",
+        "label": "电场强度 E",
+        "unit": "V/m",
+        "min": 10000,
+        "max": 500000,
+        "step": 10000,
+        "precision": 0
+      },
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "velocity-selector"
+      ]
+    }
+  },
+  {
+    "id": "cyclotron-energy",
+    "title": "经典回旋加速器极限动能（非相对论）",
+    "latex": "E_{\\max}=\\frac{q^2 \\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}^2 \\htmlClass{pf-live-var}{\\htmlData{param=cyclotronRadiusM}{R}}^2}{2m}",
+    "bindings": [
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "cyclotronRadiusM",
+        "paramKey": "cyclotronRadiusM",
+        "label": "D 形盒半径 R_max",
+        "unit": "m",
+        "min": 0.15,
+        "max": 1.2,
+        "step": 0.05,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "cyclotron"
+      ]
+    }
+  },
+  {
+    "id": "cyclotron-gap-energy",
+    "title": "同步过狭缝的单次能量增量",
+    "latex": "\\Delta K=|q|\\htmlClass{pf-live-var}{\\htmlData{param=cyclotronVoltageV}{U}}",
+    "bindings": [
+      {
+        "tokenKey": "cyclotronVoltageV",
+        "paramKey": "cyclotronVoltageV",
+        "label": "加速高频电压 U",
+        "unit": "V",
+        "min": 5000,
+        "max": 60000,
+        "step": 5000,
+        "precision": 0
+      }
+    ],
+    "when": {
+      "device": [
+        "cyclotron"
+      ]
+    }
+  },
+  {
+    "id": "spectrometer-radius",
+    "title": "质谱仪偏转磁场中的经典回旋半径",
+    "latex": "r=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=massKg}{m}}\\htmlClass{pf-live-var}{\\htmlData{param=particleSpeedMps}{v}}}{\\htmlClass{pf-live-var}{\\htmlData{param=chargeC}{q}}\\htmlClass{pf-live-var}{\\htmlData{param=bDeflectT}{B_2}}}",
+    "bindings": [
+      {
+        "tokenKey": "massKg",
+        "paramKey": "massKg",
+        "label": "粒子质量 m",
+        "unit": "kg",
+        "min": 1e-28,
+        "max": 1e-25,
+        "step": 1e-28,
+        "precision": 3
+      },
+      {
+        "tokenKey": "particleSpeedMps",
+        "paramKey": "particleSpeedMps",
+        "label": "入射/流速 v",
+        "unit": "m/s",
+        "min": 100,
+        "max": 400000,
+        "step": 500,
+        "precision": 0
+      },
+      {
+        "tokenKey": "chargeC",
+        "paramKey": "chargeC",
+        "label": "粒子电荷 q",
+        "unit": "C",
+        "min": 1e-20,
+        "max": 1e-18,
+        "step": 1e-20,
+        "precision": 3
+      },
+      {
+        "tokenKey": "bDeflectT",
+        "paramKey": "bDeflectT",
+        "label": "偏转磁场 B₂",
+        "unit": "T",
+        "min": 0.2,
+        "max": 2,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "mass-spectrometer"
+      ]
+    }
+  },
+  {
+    "id": "hall-voltage",
+    "title": "霍尔电压（载流子电荷 q_c=±e）",
+    "latex": "U_H=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=hallCurrentA}{I}}\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}}{\\htmlClass{pf-live-var}{\\htmlData{param=hallDensityPerM3}{n}}q_c\\htmlClass{pf-live-var}{\\htmlData{param=hallThicknessM}{d}}}",
+    "bindings": [
+      {
+        "tokenKey": "hallCurrentA",
+        "paramKey": "hallCurrentA",
+        "label": "霍尔控制电流 I",
+        "unit": "A",
+        "min": 0.5,
+        "max": 8,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "hallDensityPerM3",
+        "paramKey": "hallDensityPerM3",
+        "label": "载流子浓度 n",
+        "unit": "/m³",
+        "min": 1e+22,
+        "max": 1e+26,
+        "step": 1e+23,
+        "precision": 3
+      },
+      {
+        "tokenKey": "hallThicknessM",
+        "paramKey": "hallThicknessM",
+        "label": "元件厚度 d",
+        "unit": "m",
+        "min": 0.0002,
+        "max": 0.003,
+        "step": 0.0001,
+        "precision": 4
+      }
+    ],
+    "when": {
+      "device": [
+        "hall-sensor"
+      ]
+    }
+  },
+  {
+    "id": "mhd-emf",
+    "title": "磁流体发电机开路电动势",
+    "latex": "\\mathcal E=\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}\\htmlClass{pf-live-var}{\\htmlData{param=mhdDuctWidthM}{d}}\\htmlClass{pf-live-var}{\\htmlData{param=particleSpeedMps}{v}}",
+    "bindings": [
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mhdDuctWidthM",
+        "paramKey": "mhdDuctWidthM",
+        "label": "MHD 通道极间距 d",
+        "unit": "m",
+        "min": 0.1,
+        "max": 1,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "particleSpeedMps",
+        "paramKey": "particleSpeedMps",
+        "label": "入射/流速 v",
+        "unit": "m/s",
+        "min": 100,
+        "max": 400000,
+        "step": 500,
+        "precision": 0
+      }
+    ],
+    "when": {
+      "device": [
+        "mhd-generator"
+      ]
+    }
+  },
+  {
+    "id": "mhd-load-power",
+    "title": "磁流体发电机外负载功率与内阻",
+    "latex": "\\begin{aligned}r&=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=mhdPlasmaResOhmM}{\\rho}}\\htmlClass{pf-live-var}{\\htmlData{param=mhdDuctWidthM}{d}}}{\\htmlClass{pf-live-var}{\\htmlData{param=mhdDuctAreaM2}{S}}}\\\\P_R&=\\frac{\\mathcal E^2\\htmlClass{pf-live-var}{\\htmlData{param=mhdLoadOhm}{R}}}{(R+r)^2}\\end{aligned}",
+    "bindings": [
+      {
+        "tokenKey": "mhdPlasmaResOhmM",
+        "paramKey": "mhdPlasmaResOhmM",
+        "label": "等离子体电阻率 ρ",
+        "unit": "Ω·m",
+        "min": 0.05,
+        "max": 1,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mhdDuctWidthM",
+        "paramKey": "mhdDuctWidthM",
+        "label": "MHD 通道极间距 d",
+        "unit": "m",
+        "min": 0.1,
+        "max": 1,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mhdDuctAreaM2",
+        "paramKey": "mhdDuctAreaM2",
+        "label": "MHD 极板面积 S",
+        "unit": "m²",
+        "min": 0.02,
+        "max": 0.5,
+        "step": 0.02,
+        "precision": 2
+      },
+      {
+        "tokenKey": "mhdLoadOhm",
+        "paramKey": "mhdLoadOhm",
+        "label": "外电路负载电阻 R",
+        "unit": "Ω",
+        "min": 0.1,
+        "max": 3,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "mhd-generator"
+      ]
+    }
+  },
+  {
+    "id": "flowmeter-rate",
+    "title": "电磁流量计的体积流量及感生电压",
+    "latex": "\\begin{aligned}Q&=\\frac{\\pi \\htmlClass{pf-live-var}{\\htmlData{param=flowDiameterM}{D}}^2 \\htmlClass{pf-live-var}{\\htmlData{param=particleSpeedMps}{v}}}{4}\\\\U&=\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}Dv\\end{aligned}",
+    "bindings": [
+      {
+        "tokenKey": "flowDiameterM",
+        "paramKey": "flowDiameterM",
+        "label": "流量计管径 D",
+        "unit": "m",
+        "min": 0.05,
+        "max": 0.6,
+        "step": 0.05,
+        "precision": 2
+      },
+      {
+        "tokenKey": "particleSpeedMps",
+        "paramKey": "particleSpeedMps",
+        "label": "入射/流速 v",
+        "unit": "m/s",
+        "min": 100,
+        "max": 400000,
+        "step": 500,
+        "precision": 0
+      },
+      {
+        "tokenKey": "bFieldT",
+        "paramKey": "bFieldT",
+        "label": "主磁场 B",
+        "unit": "T",
+        "min": 0.2,
+        "max": 4,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "device": [
+        "em-flowmeter"
+      ]
+    }
+  }
+];
+export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmDevicesParams, EmDevicesState>({
   meta: {
     id: 'stse-em-devices-suite',
     title: '现代电磁科技器件集成台 (S02)',
@@ -62,6 +403,7 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
     difficulty: '高三一轮',
     version: '2.0.0'
   },
+  renderMode: 'hybrid',
   paramSchema,
   presets: emDevicesPresets,
   engine: {
@@ -89,26 +431,30 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
     importScene: (dsl) => dsl.params as Partial<EmDevicesParams>
   },
   exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'rect', x: -1.6, y: -1.0, width: 3.2, height: 2.0 },
-      { kind: 'fieldMarker', x: -0.8, y: 0.5, symbol: 'cross', radius: 0.12 },
-      { kind: 'trajectory', points: state.trail.slice(-30).map((p) => ({ x: p.x, y: p.y })), strokeWidth: 1.5 },
-      { kind: 'mathLabel', x: 0, y: 1.25, text: `\\text{Device: }${params.device}`, align: 'middle' }
-    ];
+    const diagram = getDeviceSchematic(params.device);
+    const primitives: DiagramPrimitive[] = [];
+    for (const part of diagram.parts) {
+      if (part.kind === 'dee') primitives.push({ kind:'polyline', points:deeOutline(part), closed:true });
+      else primitives.push({ kind:'rect', x:part.x-part.width/2, y:part.y-part.height/2,
+        width:part.width,height:part.height, hatch:part.material==='rail' });
+    }
+    for (const p of diagram.fields) primitives.push({kind:'fieldMarker',x:p.x,y:p.y,symbol:'dot',radius:0.04});
+    for (const cue of diagram.cues) primitives.push({kind:'arrow',x1:cue.x,y1:cue.y,x2:cue.x+cue.dx,y2:cue.y+cue.dy,label:cue.label});
+    for (const label of diagram.labels) primitives.push({kind:'text',...label,align:'middle'});
+    primitives.push({kind:'trajectory',points:state.trail.slice(-121).map(p=>deviceDiagramPoint(p.x,p.y)),strokeWidth:1.5});
+    const position=deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
+    primitives.push({kind:'circle',cx:position.x,cy:position.y,r:0.035,fill:true});
+    primitives.push({kind:'text',x:0,y:-1.38,text:'归一化原理示意（不按 SI 尺度）',align:'middle'});
     return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.2, minY: -1.5, maxX: 2.2, maxY: 1.5 },
-      title: '现代电磁器件原理配图',
-      primitives
+      width: 680, height: 400, viewBox: { minX: -2.2, minY: -1.6, maxX: 2.2, maxY: 1.6 },
+      title: '现代电磁器件原理配图', primitives
     };
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     if (!activeLayers.has('main')) return;
     ctx.save();
     const m = createWorldMapper(viewport);
-    const center = m.toScreen(-0.25, 0);
-    const scale = m.len(0.85);
+    const diagram = getDeviceSchematic(params.device);
 
     ctx.strokeStyle = 'rgba(148,163,184,0.35)';
     ctx.lineWidth = 1;
@@ -123,22 +469,39 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
     ctx.lineTo(eRailBottom.x, eRailBottom.y);
     ctx.stroke();
 
-    // Draw device schematic box
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 2.5;
-    if (params.device === 'cyclotron') {
+    // All hardware outlines share the same normalized footprint as the spatial stage and exported diagram.
+    for (const part of diagram.parts) {
+      ctx.strokeStyle = part.material==='copper'?'#d97706':part.material==='glass'?'#64748b':'#94a3b8';
+      ctx.fillStyle = part.material==='copper'?'rgba(217,119,6,0.18)':part.material==='glass'?'rgba(56,189,248,0.035)':'rgba(148,163,184,0.12)';
+      ctx.lineWidth=2;
       ctx.beginPath();
-      ctx.arc(center.x - m.len(0.04), center.y, scale, Math.PI / 2, (3 * Math.PI) / 2);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(center.x + m.len(0.04), center.y, scale, -Math.PI / 2, Math.PI / 2);
-      ctx.closePath();
-      ctx.stroke();
-    } else {
-      const topLeft = m.toScreen(-1.45, 0.6);
-      ctx.strokeRect(topLeft.x, topLeft.y, m.len(2.4), m.len(1.2));
+      if (part.kind==='dee') {
+        deeOutline(part).forEach((p,i)=>{const q=m.toScreen(p.x,p.y);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);});
+        ctx.closePath();
+      } else {
+        const corner=m.toScreen(part.x-part.width/2,part.y+part.height/2);
+        ctx.rect(corner.x,corner.y,m.len(part.width),m.len(part.height));
+      }
+      ctx.fill();ctx.stroke();
     }
+    for (const field of diagram.fields) {
+      const point=m.toScreen(field.x,field.y),radius=Math.max(3,m.len(0.045));
+      ctx.strokeStyle='#38bdf8';ctx.fillStyle='#38bdf8';ctx.lineWidth=1.25;
+      ctx.beginPath();ctx.arc(point.x,point.y,radius,0,Math.PI*2);ctx.stroke();
+      ctx.beginPath();ctx.arc(point.x,point.y,1.5,0,Math.PI*2);ctx.fill();
+    }
+    for (const cue of diagram.cues) {
+      const a=m.toScreen(cue.x,cue.y),b=m.toScreen(cue.x+cue.dx,cue.y+cue.dy);
+      const angle=Math.atan2(b.y-a.y,b.x-a.x),size=8;
+      ctx.strokeStyle=cue.kind==='electric'?'#fbbf24':'#4ade80';ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+      ctx.moveTo(b.x-size*Math.cos(angle-.45),b.y-size*Math.sin(angle-.45));ctx.lineTo(b.x,b.y);
+      ctx.lineTo(b.x-size*Math.cos(angle+.45),b.y-size*Math.sin(angle+.45));ctx.stroke();
+      ctx.font='600 12px system-ui, sans-serif';ctx.fillText(cue.label,(a.x+b.x)/2+6,(a.y+b.y)/2-8);
+    }
+    ctx.fillStyle='#94a3b8';ctx.font='12px system-ui, sans-serif';ctx.textAlign='center';
+    for (const label of diagram.labels) { const p=m.toScreen(label.x,label.y);ctx.fillText(label.text,p.x,p.y); }
+    ctx.textAlign='left';
 
     // Draw particle trail & head
     if (state.trail.length > 1) {
@@ -146,7 +509,8 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
       ctx.lineWidth = 2.4;
       ctx.beginPath();
       state.trail.forEach((p, idx) => {
-        const point = m.toScreen(-0.25 + p.x * 0.7, p.y * 0.7);
+        const world = deviceDiagramPoint(p.x,p.y);
+        const point = m.toScreen(world.x,world.y);
         const sx = point.x;
         const sy = point.y;
         if (idx === 0) ctx.moveTo(sx, sy);
@@ -154,9 +518,10 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
       });
       ctx.stroke();
     }
-    ctx.fillStyle = params.carrierType === 'hole' ? '#f43f5e' : '#4ade80';
+    ctx.fillStyle = params.device === 'hall-sensor' && params.carrierType === 'hole' ? '#f43f5e' : '#4ade80';
     ctx.beginPath();
-    const particle = m.toScreen(-0.25 + state.particlePos.x * 0.7, state.particlePos.y * 0.7);
+    const world = deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
+    const particle = m.toScreen(world.x,world.y);
     ctx.arc(particle.x, particle.y, m.len(0.03), 0, Math.PI * 2);
     ctx.fill();
 
@@ -171,6 +536,8 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
       'em-flowmeter': `电磁流量计 Q = ${state.flowRateM3ps.toExponential(3)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
     };
     ctx.fillText(summaryMap[params.device], 20, 30);
+    ctx.font='11px system-ui, sans-serif';ctx.fillStyle='#94a3b8';
+    ctx.fillText('归一化原理示意 · 轨迹不作为 SI 测量依据',20,48);
     ctx.restore();
   },
   getControlHandles: (_state, params) => {
@@ -204,16 +571,16 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
   },
   getForceVectors: (state, params) => {
     if (params.device !== 'velocity-selector' && params.device !== 'mass-spectrometer') return [];
-    const chargeSign = params.carrierType === 'hole' ? 1 : -1;
-    const charge = chargeSign * Math.abs(params.chargeC);
+    // chargeC is a positive particle charge; carrierType is specific to the Hall sensor.
+    const charge = Math.abs(params.chargeC);
     const field = params.device === 'mass-spectrometer' ? params.bDeflectT : params.bFieldT;
-    const origin = { x: -0.25 + state.particlePos.x * 0.7, y: state.particlePos.y * 0.7 };
+    const origin = deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
     const magneticForce = charge * params.particleSpeedMps * field;
     if (params.device === 'velocity-selector') {
       return [
         {
           id: 'selector-electric-force',
-          label: 'F电=qE',
+          label: 'F电=qE（入射）',
           origin,
           force: { x: 0, y: charge * params.eFieldVPerM },
           color: '#fbbf24',
@@ -222,7 +589,7 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
         },
         {
           id: 'selector-magnetic-force',
-          label: 'F洛=qv×B',
+          label: 'F洛=qv×B（入射）',
           origin,
           force: { x: 0, y: -magneticForce },
           color: '#38bdf8',
@@ -247,22 +614,29 @@ export const stseEmDevicesSuitePlugin = defineSimulationPlugin<EmDevicesParams, 
     getOrigin: (state) => ({ x: -0.25 + state.particlePos.x * 0.7, y: state.particlePos.y * 0.7 }),
     getVelocity: (state) => ({ x: state.particleVel.x * 0.7, y: state.particleVel.y * 0.7 })
   }],
-  formatFormulas: (state, params) => [
-    {
-      id: 'em-devices-law',
-      label: '电磁科技器件核心公式',
-      latex:
-        params.device === 'hall-sensor'
-          ? 'U_H = \\frac{I B}{n q d}'
-          : params.device === 'mhd-generator'
-            ? 'P = \\left(\\frac{B d v}{R + r}\\right)^2 R'
-            : 'E_{km} = \\frac{q^2 B^2 R_{\\max}^2}{2m}',
-      substitutedLatex:
-        params.device === 'hall-sensor'
-          ? `U_H=${(state.hallVoltageV * 1000).toFixed(3)}\\text{ mV}`
-          : `P=${state.mhdOutputWatt.toFixed(1)}\\text{ W},\\; R_{\\text{int}}=${state.mhdInternalOhm.toFixed(2)}\\ \\Omega`
+  formatFormulas: (state, params) => {
+    const id = 'em-devices-law';
+    switch (params.device) {
+      case 'velocity-selector': return [{ id, label: '正交电磁场速度选择条件',
+        latex: 'v_s=E/B',
+        substitutedLatex: `v_s=${scientificLatex(state.selectedSpeed)}\\text{ m/s}` }];
+      case 'mass-spectrometer': return [{ id, label: '质谱仪偏转磁场回旋半径',
+        latex: 'r=\\frac{mv}{|q|B_2}',
+        substitutedLatex: `r=${scientificLatex(state.spectrometerRadiusM)}\\text{ m}` }];
+      case 'cyclotron': return [{ id, label: '经典回旋加速器极限动能与模型计算值',
+        latex: 'K_{\\max,\\text{经典}}=\\frac{q^2B^2R_{\\max}^2}{2m}',
+        substitutedLatex: `\\begin{aligned}K_{\\text{经典}}&=${scientificLatex(state.cyclotronAnalyticalEnergyJ)}\\text{ J},\\\\K_{\\text{模型}}&=${scientificLatex(state.cyclotronMaxEnergyJ)}\\text{ J}\\end{aligned}` }];
+      case 'hall-sensor': return [{ id, label: '霍尔电势差（载流子电荷含符号）',
+        latex: 'U_H=\\frac{IB}{nq_cd}',
+        substitutedLatex: `U_H=${scientificLatex(state.hallVoltageV * 1000)}\\text{ mV}` }];
+      case 'mhd-generator': return [{ id, label: '磁流体发电机输出功率',
+        latex: 'P_R=\\frac{(Bdv)^2R}{(R+r)^2},\\quad r=\\rho d/S',
+        substitutedLatex: `\\begin{aligned}P_R&=${scientificLatex(state.mhdOutputWatt)}\\text{ W},\\\\r&=${state.mhdInternalOhm.toFixed(3)}\\ \\Omega\\end{aligned}` }];
+      case 'em-flowmeter': return [{ id, label: '电磁流量计体积流量与电压',
+        latex: 'Q=\\frac{\\pi D^2v}{4}=\\frac{\\pi DU}{4B}',
+        substitutedLatex: `\\begin{aligned}Q&=${scientificLatex(state.flowRateM3ps)}\\text{ m}^3/\\text{s},\\\\U&=${scientificLatex(state.flowVoltageV)}\\text{ V}\\end{aligned}` }];
     }
-  ]
-});
+  }
+}), { storyDecks: emDevicesStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 3.4, sceneDepthRadius: 4, default3DAzimuthRad: 0.6, default3DPolarRad: 0.9 } });
 
 export default stseEmDevicesSuitePlugin;

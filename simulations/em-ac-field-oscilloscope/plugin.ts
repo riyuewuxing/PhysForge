@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { acScopePresets } from './presets.js';
@@ -36,7 +37,88 @@ const paramSchema: readonly ParamFieldSpec<AcScopeParams>[] = [
   { key: 'initialAngleDeg', kind: 'number', label: '初始摆角 θ₀', unit: '°', min: -60, max: 60, step: 5, defaultValue: -10 }
 ];
 
-export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams, AcScopeState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "period-frequency",
+    "title": "交变场周期与角频率",
+    "latex": "\\omega=\\frac{2\\pi}{\\htmlClass{pf-live-var}{\\htmlData{param=periodT}{T}}}",
+    "bindings": [
+      {
+        "tokenKey": "periodT",
+        "paramKey": "periodT",
+        "label": "交变周期 T",
+        "unit": "s",
+        "min": 0.6,
+        "max": 4,
+        "step": 0.2,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "ac-square-wave",
+        "ac-sine-wave",
+        "oscilloscope-lissajous"
+      ]
+    }
+  },
+  {
+    "id": "lissajous-frequency-ratio",
+    "title": "李萨如图两轴角频率比",
+    "latex": "\\omega_y=\\htmlClass{pf-live-var}{\\htmlData{param=freqRatioYOverX}{\\kappa}}\\omega_x",
+    "bindings": [
+      {
+        "tokenKey": "freqRatioYOverX",
+        "paramKey": "freqRatioYOverX",
+        "label": "示波器频率比 fy/fx",
+        "unit": "",
+        "min": 0.5,
+        "max": 4,
+        "step": 0.5,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "oscilloscope-lissajous"
+      ]
+    }
+  },
+  {
+    "id": "effective-gravity",
+    "title": "重力与电场力合成的等效重力加速度",
+    "latex": "g_{\\rm eff}=\\sqrt{\\htmlClass{pf-live-var}{\\htmlData{param=eqFieldAccelX}{a_x}}^2+(\\htmlClass{pf-live-var}{\\htmlData{param=eqFieldAccelY}{a_y}}-g)^2}",
+    "bindings": [
+      {
+        "tokenKey": "eqFieldAccelX",
+        "paramKey": "eqFieldAccelX",
+        "label": "等效电场水平加速度 qEx/m",
+        "unit": "m/s²",
+        "min": -15,
+        "max": 15,
+        "step": 0.5,
+        "precision": 2
+      },
+      {
+        "tokenKey": "eqFieldAccelY",
+        "paramKey": "eqFieldAccelY",
+        "label": "等效电场竖直加速度 qEy/m",
+        "unit": "m/s²",
+        "min": -8,
+        "max": 12,
+        "step": 0.5,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "equivalent-gravity"
+      ]
+    }
+  }
+];
+export const emAcFieldOscilloscopePlugin = Object.assign(defineSimulationPlugin<AcScopeParams, AcScopeState>({
   meta: {
     id: 'em-ac-field-oscilloscope',
     title: '交变电场、示波管与等效重力场 (E03)',
@@ -255,6 +337,6 @@ export const emAcFieldOscilloscopePlugin = defineSimulationPlugin<AcScopeParams,
       }
     ];
   }
-});
+}), { liveFormulas });
 
 export default emAcFieldOscilloscopePlugin;

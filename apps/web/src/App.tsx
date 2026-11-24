@@ -24,14 +24,15 @@ import {
   Undo2,
   Wrench,
 } from 'lucide-react';
-import type { ParamRecord, SimulationPluginV2 } from '@physforge/sim-sdk';
-import { useClassroomStore } from './store/useClassroomStore.js';
-import { SimulationStage, type RecordedTelemetryFrame } from './components/SimulationStage.js';
+import { isSimulationPluginV3, selectLiveFormulas, type ParamRecord, type SimulationPluginV2 } from '@physforge/sim-sdk';
+import { getStoryDecks, resolvePresentationHotkey, useClassroomStore } from './store/useClassroomStore.js';
+import { SimulationStage, type RecordedTelemetryFrame, type StoryNavigation } from './components/SimulationStage.js';
 import { LeftCatalogSidebar } from './components/LeftCatalogSidebar.js';
 import { RightControlPanel } from './components/RightControlPanel.js';
 import { TeachingPackDrawer } from './components/TeachingPackDrawer.js';
 import type { MeasureToolKind } from './stage/RulerToolboxOverlay.js';
-import { KatexFormulaCard } from './components/KatexFormulaCard.js';
+import { KatexFormulaCard, StageFormulaReadouts } from './components/KatexFormulaCard.js';
+import { buildPresenterWindowUrl, PresenterSyncBridge, commandMatchesStage, type StageSnapshotPayload } from './presentation/presenterSync.js';
 
 const LazyExcalidrawOverlay = React.lazy(() =>
   import('./components/ExcalidrawOverlay.js').then((m) => ({ default: m.ExcalidrawOverlay }))
@@ -53,6 +54,12 @@ const LazyAiCopilotDrawer = React.lazy(() =>
   import('./components/AiCopilotDrawer.js').then((m) => ({ default: m.AiCopilotDrawer }))
 );
 
+const LazyLiveFormulaCard = React.lazy(() => import('./presentation/LiveFormulaCard.js'));
+
+const LazyPresenterView = React.lazy(() => import('./presentation/PresenterView.js'));
+
+const LazyStoryStageHud = React.lazy(() => import('./presentation/StoryStageHud.js').then((m) => ({ default: m.StoryStageHud })));
+
 const SPEED_OPTIONS = [0.1, 0.25, 0.5, 1, 2] as const;
 const WORKBENCH_TITLES: Readonly<Record<string, string>> = {
   'em-induction-double-rod': '电磁感应·单杆切割',
@@ -63,7 +70,7 @@ const WORKBENCH_TITLES: Readonly<Record<string, string>> = {
   'em-3d-magnetic-fields': '3D空间电磁场·螺旋轨迹'
 };
 
-export const App: React.FC = () => {
+const ClassroomApp: React.FC = () => {
   const store = useClassroomStore();
   const simCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const snapshotsGetterRef = useRef<() => readonly RecordedTelemetryFrame[]>(() => []);
@@ -74,6 +81,10 @@ export const App: React.FC = () => {
   const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [labFrames, setLabFrames] = useState<readonly RecordedTelemetryFrame[]>([]);
+  const [presenterSession, setPresenterSession] = useState(() => new URLSearchParams(window.location.search).get('session'));
+  const [presenterError, setPresenterError] = useState<string | null>(null);
+  const [laserPointer, setLaserPointer] = useState<{ x: number; y: number } | null>(null);
+  const laserLastAtRef = useRef(-Infinity);
 
   const handleRegisterSnapshotsGetter = useCallback(
     (getter: () => readonly RecordedTelemetryFrame[]) => {
@@ -84,6 +95,24 @@ export const App: React.FC = () => {
 
   const plugin = store.loadedPlugin;
   const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
+  const liveFormulas = selectLiveFormulas(isSimulationPluginV3(plugin) ? plugin.liveFormulas : undefined, store.params);
+  const storyNavigationRef = useRef<StoryNavigation | null>(null);
+  const morphProgressRef = useRef(store.view3dEnabled ? 0 : 1);
+  const decks = useMemo(() => getStoryDecks(plugin), [plugin]);
+  const storyDeck = store.appMode === 'story' ? decks.find((deck) => deck.id === store.activeDeckId) : undefined;
+  const resetPresentation = () => {
+    const state = useClassroomStore.getState();
+    if (state.appMode === 'story' && state.storyBeatIndex >= 0 &&
+        storyNavigationRef.current?.goTo(state.storyBeatIndex)) return;
+    state.triggerReset();
+  };
+  const highlightedFormulaId = storyDeck?.beats[store.storyBeatIndex]?.layerOverrides?.highlightFormulaId;
+  const highlightedReadOnly = highlightedFormulaId && !liveFormulas.some((spec) => spec.id === highlightedFormulaId)
+    ? store.telemetry.formulaItems.filter((item) => item.id === highlightedFormulaId) : [];
+  const has3dView =
+    v2Plugin.renderMode === 'three3d' ||
+    v2Plugin.renderMode === 'hybrid' ||
+    Boolean(v2Plugin.mountThreeScene);
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
@@ -93,6 +122,83 @@ export const App: React.FC = () => {
     }
   }, [store.applyExternalState]);
 
+  const openPresenter = () => {
+    if (typeof BroadcastChannel === 'undefined') { setPresenterError('当前浏览器不支持双屏通信'); return; }
+    const session = presenterSession ?? Array.from(crypto.getRandomValues(new Uint32Array(4)), (n) => n.toString(16).padStart(8, '0')).join('');
+    const url = new URL(window.location.href);
+    url.searchParams.set('session', session);
+    window.history.replaceState(null, '', url);
+    setPresenterSession(session);
+    const popup = window.open(buildPresenterWindowUrl(session, plugin.meta.id), `physforge-presenter-${session}`, 'popup,width=1100,height=800');
+    setPresenterError(popup ? null : '副屏窗口被浏览器拦截，请允许弹窗或使用手动打开链接');
+  };
+
+  useEffect(() => {
+    if (!presenterSession) return;
+    let bridge: PresenterSyncBridge;
+    const snapshot = (): StageSnapshotPayload => {
+      const state = useClassroomStore.getState();
+      const p = state.loadedPlugin;
+      const v2 = p as SimulationPluginV2<ParamRecord, unknown>;
+      const deck = state.appMode === 'story' ? getStoryDecks(p).find((d) => d.id === state.activeDeckId) : undefined;
+      const beat = deck?.beats[state.storyBeatIndex];
+      const observables = Object.fromEntries(Object.entries(state.telemetry.observables).filter(([, value]) => Number.isFinite(value)));
+      return { modelId: p.meta.id, modelTitle: p.meta.title, appMode: state.appMode,
+        isPlaying: state.isPlaying, isBlackout: state.isBlackout, morphT: morphProgressRef.current,
+        simTime: state.telemetry.t, deckId: deck?.id ?? null, beatIndex: deck ? state.storyBeatIndex : -1,
+        paramContextEpoch: state.paramContextEpoch, totalBeats: deck?.beats.length ?? 0, currentCaption: beat?.caption ?? '', speakerNotes: beat?.speakerNotes ?? '',
+        nextBeatTitle: deck?.beats[state.storyBeatIndex + 1]?.title ?? null, observables, params: state.params,
+        paramSchema: p.paramSchema, canMorph: v2.renderMode === 'three3d' || v2.renderMode === 'hybrid' || Boolean(v2.mountThreeScene),
+        freezeBadge: state.autoFreezeBadge };
+    };
+    try {
+      bridge = new PresenterSyncBridge(presenterSession, 'stage', (envelope) => {
+        if (envelope.sender !== 'presenter') return;
+        const cmd = envelope.msg;
+        if (cmd.type === 'CMD_REQUEST_SYNC') { bridge.broadcastSnapshot(snapshot(), true); return; }
+        const state = useClassroomStore.getState();
+        if (state.appMode === 'studio') return;
+        if (!commandMatchesStage(cmd, { modelId: state.loadedPlugin.meta.id,
+          deckId: state.appMode === 'story' ? state.activeDeckId : null, paramContextEpoch: state.paramContextEpoch })) {
+          bridge.broadcastSnapshot(snapshot(), true);
+          return;
+        }
+        switch (cmd.type) {
+          case 'CMD_NEXT_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.next(); break;
+          case 'CMD_PREV_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.prev(); break;
+          case 'CMD_GOTO_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.goTo(cmd.index); break;
+          case 'CMD_TOGGLE_PLAY': state.togglePlaying(); break;
+          case 'CMD_RESET_SIM': resetPresentation(); break;
+          case 'CMD_TOGGLE_MORPH_2D': if (snapshot().canMorph) state.toggleView3d(); break;
+          case 'CMD_TOGGLE_BLACKOUT': state.toggleBlackout(); break;
+          case 'CMD_SET_PARAM': {
+            const field = state.loadedPlugin.paramSchema.find((item) => item.key === cmd.paramKey);
+            if (!field || state.params[cmd.paramKey] === cmd.value) break;
+            if (field.kind === 'number' && typeof cmd.value === 'number' && cmd.value >= field.min && cmd.value <= field.max ||
+                field.kind === 'boolean' && typeof cmd.value === 'boolean' ||
+                field.kind === 'select' && typeof cmd.value === 'string' && field.options.some((option) => option.value === cmd.value)) {
+              state.updateParam(cmd.paramKey, cmd.value);
+            }
+            break;
+          }
+          case 'CMD_LASER_POINTER':
+            laserLastAtRef.current = performance.now();
+            setLaserPointer(cmd.active ? { x: cmd.normX, y: cmd.normY } : null);
+            break;
+        }
+      });
+    } catch {
+      setPresenterError('双屏通信通道创建失败');
+      return;
+    }
+    const timer = window.setInterval(() => {
+      bridge.broadcastSnapshot(snapshot());
+      if (performance.now() - laserLastAtRef.current > 2000) setLaserPointer((current) => current ? null : current);
+    }, 1000 / 15);
+    bridge.broadcastSnapshot(snapshot(), true);
+    return () => { window.clearInterval(timer); bridge.close(); setLaserPointer(null); };
+  }, [presenterSession]);
+
   // 同步文档主题属性
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', store.theme);
@@ -101,6 +207,32 @@ export const App: React.FC = () => {
   // 课堂快捷键支持（Ctrl+K 全局检索、Ctrl+Z/Shift+Z 撤销重做、1-9 预设、Space 播放、S 单步、R 重置、P 遮罩、B 大屏、F 演说）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.closest('input, select, textarea, [contenteditable="true"]')) return;
+      if (store.annotationOpen || commandPaletteOpen || teachingPackOpen || analysisLabOpen || exportStudioOpen || aiCopilotOpen) return;
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.shiftKey && e.key === 'F5') {
+        e.preventDefault();
+        store.setAppMode('story', decks[0]?.id);
+        return;
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'F11') {
+        e.preventDefault();
+        store.setAppMode(store.appMode === 'studio' ? 'stage' : 'studio');
+        return;
+      }
+      if (store.appMode !== 'studio' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const command = resolvePresentationHotkey(store.appMode, e.key);
+        if (command) {
+          e.preventDefault();
+          if (command === 'next') storyNavigationRef.current?.next();
+          else if (command === 'prev') storyNavigationRef.current?.prev();
+          else if (command === 'play-toggle') store.togglePlaying();
+          else if (command === 'blackout') store.toggleBlackout();
+          else if (command === 'mirror' && has3dView) store.toggleView3d();
+          else if (command === 'exit') store.setAppMode('studio');
+        }
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setCommandPaletteOpen((v) => !v);
@@ -118,15 +250,7 @@ export const App: React.FC = () => {
         return;
       }
 
-      if (e.key === 'Escape' && store.fullscreenPresentation) {
-        e.preventDefault();
-        store.toggleFullscreenPresentation();
-        return;
-      }
-
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-      if (store.annotationOpen || commandPaletteOpen) return;
+      if (store.appMode !== 'studio') return;
 
       if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
         store.toggleFullscreenPresentation();
@@ -154,7 +278,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [plugin, store.annotationOpen, store.fullscreenPresentation, commandPaletteOpen]);
+  }, [plugin, store.appMode, store.annotationOpen, commandPaletteOpen, teachingPackOpen, analysisLabOpen, exportStudioOpen, aiCopilotOpen, has3dView, decks]);
 
   const toggleMeasureTool = (tool: Exclude<MeasureToolKind, 'none'>) => {
     store.setMeasureTool(store.measureTool === tool ? 'none' : tool);
@@ -168,15 +292,11 @@ export const App: React.FC = () => {
     store.updateParam(key, value);
   };
 
-  const has3dView =
-    v2Plugin.renderMode === 'three3d' ||
-    v2Plugin.renderMode === 'hybrid' ||
-    Boolean(v2Plugin.mountThreeScene);
-
   return (
     <div
       data-testid="app-shell"
       data-model-id={plugin.meta.id}
+      data-app-mode={store.appMode}
       className={`h-screen w-screen flex flex-col overflow-hidden select-none ${
         store.bigScreenMode ? 'big-screen-mode' : ''
       }`}
@@ -613,31 +733,76 @@ export const App: React.FC = () => {
             onScrubTime={store.setScrubTime}
             onTogglePoeMask={store.togglePoeMask}
             onTelemetryUpdate={store.setTelemetry}
+            storyDeck={storyDeck}
+            storyNavigationRef={storyNavigationRef}
+            onStoryParams={store.syncStoryParams}
+            onStoryBeat={store.setStoryBeat}
+            onStoryFreeze={store.setAutoFreezeBadge}
+            onStoryPlaying={(playing) => { store.setScrubTime(null); store.setPlaying(playing); }}
+            onStoryFbd={(enabled) => { if (useClassroomStore.getState().autoFbdEnabled !== enabled) store.toggleAutoFbd(); }}
+            onStoryFrame={store.setActiveFrameId}
+            onStoryLayers={store.setStoryLayers}
+            onStoryView3d={store.setView3d}
+            onMorphProgress={(progress) => { morphProgressRef.current = progress; }}
+            onWebGLFallback={() => useClassroomStore.getState().setView3d(false)}
           />
 
           {store.fullscreenPresentation && (
             <>
               <div data-testid="fullscreen-title" className="pointer-events-none absolute left-[68px] top-6 z-20 max-w-[min(44vw,620px)] text-slate-100 drop-shadow-lg">
-                <div className="truncate text-2xl font-semibold tracking-tight">{WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title}</div>
-                <div className="mt-1 text-xs tracking-wide text-slate-400">全屏课堂演说模式</div>
+                <div className="truncate text-2xl font-semibold tracking-tight">{storyDeck?.title ?? (plugin.meta.id === 'em-induction-double-rod' && store.params.rodMode === 'double' ? '电磁感应·双杆切割' : WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title)}</div>
+                <div className="mt-1 text-xs tracking-wide text-slate-400">{store.appMode === 'story' ? '分镜讲课模式' : '全屏课堂演说模式'}</div>
               </div>
-              {store.telemetry.formulaItems.length > 0 && (
-                <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
-                  <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} />
+              {(store.telemetry.formulaItems.length > 0 || liveFormulas.length > 0) && (
+                <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
+                  {liveFormulas.length ? <Suspense fallback={<KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}>
+                    <LazyLiveFormulaCard key={`${plugin.meta.id}:${store.paramContextEpoch}`} specs={liveFormulas} params={store.params} schema={plugin.paramSchema} highlightedId={highlightedFormulaId}
+                      onBegin={(key) => store.beginLiveFormula(plugin.meta.id, key, store.paramContextEpoch)}
+                      onChange={(key, value) => store.updateLiveFormula(plugin.meta.id, key, value, store.paramContextEpoch)}
+                      onEnd={(key) => store.endLiveFormula(plugin.meta.id, key, store.paramContextEpoch)} />
+                    {highlightedReadOnly.length > 0 && <KatexFormulaCard items={highlightedReadOnly} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
+                  </Suspense> : <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
+                  {!store.poeMasked && <StageFormulaReadouts key={plugin.meta.id} items={store.telemetry.formulaItems} />}
                 </div>
               )}
               <div data-testid="fullscreen-controls" className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/15 bg-slate-950/80 p-2 text-slate-100 shadow-2xl backdrop-blur-2xl">
                 <button type="button" data-testid="btn-play-pause" onClick={store.togglePlaying} aria-label={store.isPlaying ? '暂停' : '运行'} className="grid h-9 w-9 place-items-center rounded-full bg-sky-400 text-slate-950 hover:bg-sky-300">
                   {store.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
                 </button>
-                <button type="button" data-testid="btn-reset" onClick={store.triggerReset} className="grid h-9 w-9 place-items-center rounded-full text-slate-200 hover:bg-white/10" aria-label="复位" title="复位"><RotateCcw className="h-4 w-4" /></button>
+                <button type="button" data-testid="btn-reset" onClick={resetPresentation} className="grid h-9 w-9 place-items-center rounded-full text-slate-200 hover:bg-white/10" aria-label="复位" title="复位"><RotateCcw className="h-4 w-4" /></button>
                 {has3dView && (
                   <button type="button" data-testid="btn-view-3d-fullscreen" onClick={store.toggleView3d} className="rounded-full px-3 py-2 text-xs hover:bg-white/10">
                     {store.view3dEnabled ? '2D 剖面' : '3D 空间'}
                   </button>
                 )}
+                {v2Plugin.getForceVectors && (
+                  <button type="button" data-testid="btn-stage-fbd" aria-pressed={store.autoFbdEnabled && !store.view3dEnabled}
+                    title="切换二维受力图" className={`rounded-full px-3 py-2 text-xs hover:bg-white/10 ${store.autoFbdEnabled && !store.view3dEnabled ? 'bg-sky-400/20 text-sky-200' : ''}`}
+                    onClick={() => {
+                      if (store.view3dEnabled) { store.setView3d(false); if (!store.autoFbdEnabled) store.toggleAutoFbd(); }
+                      else store.toggleAutoFbd();
+                    }}>受力</button>
+                )}
+                {store.appMode === 'story' && decks.length > 1 && <select aria-label="选择教学分镜" data-testid="story-deck-select" value={store.activeDeckId ?? ''}
+                  onChange={(event) => store.setAppMode('story', event.target.value)}
+                  className="max-w-[140px] rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-100">
+                  {decks.map((deck) => <option key={deck.id} value={deck.id}>{deck.title}</option>)}
+                </select>}
+                <button type="button" data-testid="btn-toggle-story" disabled={!decks.length} onClick={() => store.setAppMode(store.appMode === 'story' ? 'stage' : 'story', decks[0]?.id)} className="rounded-full px-3 py-2 text-xs hover:bg-white/10 disabled:opacity-40">
+                  {store.appMode === 'story' ? '自由演说' : '分镜讲课'}
+                </button>
+                <button type="button" data-testid="btn-stage-blackout" onClick={store.toggleBlackout} className="rounded-full px-3 py-2 text-xs hover:bg-white/10">黑屏</button>
+                <button type="button" data-testid="btn-presenter" onClick={openPresenter} className="rounded-full px-3 py-2 text-xs hover:bg-white/10">副屏</button>
                 <button type="button" data-testid="btn-exit-fullscreen-speech" onClick={store.toggleFullscreenPresentation} className="rounded-full border border-white/10 px-3 py-2 text-xs hover:bg-white/10">退出全屏</button>
               </div>
+              {laserPointer && !store.isBlackout && <div data-testid="stage-laser-pointer" aria-hidden="true" className="pointer-events-none absolute z-40 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_14px_5px_rgba(239,68,68,0.7)]" style={{ left: `${laserPointer.x * 100}%`, top: `${laserPointer.y * 100}%` }} />}
+              {presenterError && <div role="status" className="absolute left-1/2 top-14 z-30 -translate-x-1/2 rounded-xl bg-slate-950 p-3 text-xs text-amber-300">{presenterError} {presenterSession && <a className="underline" href={buildPresenterWindowUrl(presenterSession, plugin.meta.id)} target="_blank" rel="noreferrer">手动打开副屏</a>}</div>}
+              <Suspense fallback={null}>
+                <LazyStoryStageHud deck={storyDeck} index={store.storyBeatIndex} blackout={store.isBlackout}
+                  freezeBadge={store.autoFreezeBadge} onPrev={() => storyNavigationRef.current?.prev()}
+                  onNext={() => storyNavigationRef.current?.next()} onGoTo={(index) => storyNavigationRef.current?.goTo(index)}
+                  onUnblackout={store.toggleBlackout} />
+              </Suspense>
             </>
           )}
 
@@ -767,6 +932,16 @@ export const App: React.FC = () => {
       )}
     </div>
   );
+};
+
+export const App: React.FC = () => {
+  const query = new URLSearchParams(window.location.search);
+  if (query.get('mode') === 'presenter') {
+    return <Suspense fallback={<div className="grid h-screen place-items-center bg-slate-950 text-sky-300">正在加载教师副屏…</div>}>
+      <LazyPresenterView sessionId={query.get('session') ?? ''} />
+    </Suspense>;
+  }
+  return <ClassroomApp />;
 };
 
 export default App;

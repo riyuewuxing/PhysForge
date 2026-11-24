@@ -241,8 +241,8 @@ export interface ReferenceFrameSpec<TParams extends ParamRecord = ParamRecord, T
   id: string;
   label: string;
   description?: string;
-  getOrigin: (state: TState, params: TParams) => { x: number; y: number };
-  getVelocity?: (state: TState, params: TParams) => { x: number; y: number };
+  getOrigin: (state: TState, params: TParams, activeLayers?: ReadonlySet<string>) => { x: number; y: number };
+  getVelocity?: (state: TState, params: TParams, activeLayers?: ReadonlySet<string>) => { x: number; y: number };
 }
 
 /**
@@ -350,7 +350,7 @@ export interface SimulationPluginV2<TParams extends ParamRecord = ParamRecord, T
   defaultView?: PluginDefaultViewSpec<TParams>;
   renderMode?: 'canvas2d' | 'three3d' | 'hybrid';
   getControlHandles?: (state: TState, params: TParams) => ControlHandle[];
-  getForceVectors?: (state: TState, params: TParams) => ForceVectorItem[];
+  getForceVectors?: (state: TState, params: TParams, activeLayers?: ReadonlySet<string>) => ForceVectorItem[];
   referenceFrames?: readonly ReferenceFrameSpec<TParams, TState>[];
   sceneSerializer?: {
     exportScene: (state: TState, params: TParams) => SceneDSL;
@@ -488,3 +488,6 @@ export function defineSimulationPlugin<TParams extends ParamRecord, TState>(
 }
 
 export * from './visualKit.js';
+
+export * from './v3Types.js';
+export * from './storyRunner.js';

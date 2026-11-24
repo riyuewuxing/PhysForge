@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { wireframePresets } from './presets.js';
@@ -54,7 +55,25 @@ const paramSchema: readonly ParamFieldSpec<WireframeParams>[] = [
   { key: 'gravityEnabled', kind: 'boolean', label: '包含重力自由下落', defaultValue: true }
 ];
 
-export const emWireframeRotationPlugin = defineSimulationPlugin<WireframeParams, WireframeState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "induced-current",
+  "title": "纯电阻闭合线框的感应电流",
+  "latex": "I=\\frac{\\mathcal E}{\\htmlClass{pf-live-var}{\\htmlData{param=resistanceR}{R}}}",
+  "bindings": [
+    {
+      "tokenKey": "resistanceR",
+      "paramKey": "resistanceR",
+      "label": "线框总电阻 R",
+      "unit": "Ω",
+      "min": 0.2,
+      "max": 5,
+      "step": 0.2,
+      "precision": 2
+    }
+  ]
+}];
+export const emWireframeRotationPlugin = Object.assign(defineSimulationPlugin<WireframeParams, WireframeState>({
   meta: {
     id: 'em-wireframe-rotation',
     title: '线框进出多区域磁场与旋转切割 (E05)',
@@ -241,6 +260,6 @@ export const emWireframeRotationPlugin = defineSimulationPlugin<WireframeParams,
       substitutedLatex: `\\Phi=${state.fluxWb.toFixed(3)}\\text{ Wb},\\; \\mathcal{E}=${state.emfV.toFixed(2)}\\text{ V},\\; I=${state.currentA.toFixed(2)}\\text{ A}`
     }
   ]
-});
+}), { liveFormulas });
 
 export default emWireframeRotationPlugin;

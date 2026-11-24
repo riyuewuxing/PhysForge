@@ -93,6 +93,47 @@ async function launchBrowser() {
   throw new Error(`Unable to launch Chromium, Chrome, or Edge: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
+async function auditV3Morph(page, origin, screenshot) {
+  const cases = [
+    ['E10', 'em-3d-magnetic-fields'], ['E04', 'em-induction-double-rod'],
+    ['B1', 'builder-composite-em-field'], ['S02', 'stse-em-devices-suite'],
+    ['S01', 'stse-tokamak-magnetic-mirror'], ['M10', 'astro-orbital-mechanics']
+  ];
+  const report = [];
+  for (const [code, id] of cases) {
+    const url = new URL(origin);
+    url.searchParams.set('model', id);
+    await page.goto(url.toString(), { waitUntil: 'networkidle' });
+    await page.waitForFunction(modelId => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === modelId, id, { timeout: 20000 });
+    const enter = page.getByTestId('btn-fullscreen-speech');
+    if (await enter.isVisible()) await enter.click();
+    const toggle = page.getByTestId('btn-view-3d-fullscreen');
+    await toggle.waitFor({ state: 'visible' });
+    if ((await toggle.textContent())?.includes('3D 空间')) await toggle.click();
+    const spatial = page.getByTestId('three-stage-container');
+    await spatial.waitFor({ state: 'visible', timeout: 20000 });
+    await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0, null, { timeout: 15000 });
+    if (screenshot) await screenshot(code + '_3d');
+    // Capture a genuine intermediate frame, not just the button label.
+    await toggle.click();
+    await page.waitForFunction(() => {
+      const v = Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN');
+      return v > 0 && v < 1;
+    }, null, { timeout: 10000 });
+    await spatial.waitFor({ state: 'detached', timeout: 15000 });
+    await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
+    if (screenshot) await screenshot(code + '_flat');
+    await toggle.click();
+    await spatial.waitFor({ state: 'visible', timeout: 20000 });
+    await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0, null, { timeout: 15000 });
+    await toggle.click();
+    await spatial.waitFor({ state: 'detached', timeout: 15000 });
+    await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
+    report.push({ model: id, intermediateMorph: true, flatCanvas: true, roundTrip: true });
+  }
+  return report;
+}
+
 async function main() {
   if (!fs.existsSync(path.join(distDir, 'index.html'))) {
     throw new Error('apps/web/dist/index.html 不存在，请先运行 VITE_BASE_PATH=/PhysForge/ pnpm build');
@@ -276,9 +317,114 @@ async function main() {
     await page.getByTestId('rail-btn-catalog').click();
     await page.getByTestId('model-card-stse-tokamak-magnetic-mirror').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { timeout: 15000 });
+    // Switch directly between two differently shaped 3D engine states, without reloading the page.
+    await page.getByTestId('rail-btn-catalog').click();
+    await page.getByTestId('model-card-em-3d-magnetic-fields').click();
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('[data-testid="app-shell"]');
+      const stage = document.querySelector('[data-testid="three-stage-container"]');
+      const time = stage?.getAttribute('data-sim-time');
+      const speed = stage?.getAttribute('data-speed');
+      return shell?.getAttribute('data-model-id') === 'em-3d-magnetic-fields' &&
+        time !== null && time !== undefined && Number(time) === 0 &&
+        speed !== null && speed !== undefined && Number.isFinite(Number(speed)) && Number(speed) > 0;
+    }, null, { timeout: 20000 });
     await page.getByTestId('rail-btn-catalog').click();
     await page.getByTestId('model-card-stse-em-devices-suite').click();
     await page.waitForSelector('[data-testid="three-stage-container"]', { state: 'detached', timeout: 15000 });
+
+    // Select the actual velocity-selector experiment before manipulating its law.
+    await page.getByTestId('preset-select').selectOption('velocity-selector-spectrometer');
+    // Actual pointer gesture: formula token identity survives parameter changes.
+    const fieldSlider = page.getByTestId('param-slider-eFieldVPerM');
+    await fieldSlider.waitFor({ timeout: 15000 });
+    const beforeField = Number(await fieldSlider.inputValue());
+    await page.getByTestId('btn-fullscreen-speech').click();
+    const fieldToken = page.locator('[data-testid="live-formula-velocity-selector"] [data-param="eFieldVPerM"]').first();
+    await fieldToken.waitFor({ timeout: 15000 });
+    const formulaReadout = page.locator('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]');
+    await formulaReadout.waitFor({ state: 'visible', timeout: 15000 });
+    const beforeReadout = await formulaReadout.textContent();
+    await fieldToken.evaluate(node => { window.__PF_TEST_TOKEN = node; });
+    const tokenBox = await fieldToken.boundingBox();
+    if (!tokenBox) throw new Error('Live formula token not visible');
+    const x = tokenBox.x + tokenBox.width / 2, y = tokenBox.y + tokenBox.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + (beforeField > 300000 ? -60 : 60), y, { steps: 6 });
+    await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'visible' });
+    if (!await fieldToken.evaluate(node => node === window.__PF_TEST_TOKEN)) throw new Error('Live formula token was replaced during pointer capture');
+    await page.mouse.up();
+    await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'detached' });
+    await page.waitForFunction(before => {
+      const text = document.querySelector('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]')?.textContent;
+      return typeof text === 'string' && text.length > 0 && text !== before;
+    }, beforeReadout);
+    if (!await fieldToken.evaluate(node => node === window.__PF_TEST_TOKEN)) throw new Error('Numeric readout replaced the interactive token');
+    await page.getByTestId('btn-stage-readouts').click();
+    await page.getByTestId('stage-formula-values').waitFor({ state: 'detached' });
+    await page.getByTestId('btn-stage-readouts').click();
+    await formulaReadout.waitFor({ state: 'visible' });
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+    await fieldSlider.waitFor({ timeout: 15000 });
+    const afterField = Number(await fieldSlider.inputValue());
+    if (!Number.isFinite(afterField) || afterField === beforeField) throw new Error('Live formula did not update actual model parameter');
+    await page.getByTestId('btn-fullscreen-speech').click();
+    await fieldToken.dblclick();
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+    if (Number(await fieldSlider.inputValue()) !== 200000) throw new Error('Live formula double click did not restore schema default');
+
+    // Presenter is a second page in the same origin/profile. It must not mount another simulation.
+    await page.getByTestId('btn-fullscreen-speech').click();
+    await page.getByTestId('btn-toggle-story').click();
+    await page.getByTestId('story-caption').waitFor({ timeout: 15000 });
+    const presenterPopup = page.waitForEvent('popup');
+    await page.getByTestId('btn-presenter').click();
+    const presenter = await presenterPopup;
+    presenter.on('pageerror', (error) => pageErrors.push(error.message));
+    presenter.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+    presenter.on('response', (response) => { if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`); });
+    presenter.on('request', (request) => { if (/^https?:/.test(request.url()) && !request.url().startsWith(origin + basePrefix)) externalRequests.push(request.url()); });
+    await presenter.getByTestId('presenter-view').waitFor({ timeout: 15000 });
+    await presenter.waitForFunction(() => document.querySelector('[data-testid="presenter-connection"]')?.textContent === '主屏已连接');
+    if (new URL(presenter.url()).pathname !== basePrefix || await presenter.getByTestId('simulation-canvas').count() || await presenter.getByTestId('three-stage-container').count()) {
+      throw new Error('Presenter path incorrect or second simulation mounted');
+    }
+    const originalBeat = await page.getByTestId('story-progress').textContent();
+    await presenter.getByTestId('presenter-next').click();
+    await page.waitForFunction((old) => document.querySelector('[data-testid="story-progress"]')?.textContent !== old, originalBeat);
+    // S02 second beat is the light isotope comparison. Replay must restore its authored mass,
+    // not merely reset time with the manually altered parameters.
+    await presenter.waitForFunction(() => document.querySelector('[data-testid="presenter-beat"]')?.textContent?.startsWith('2/5'));
+    const massSlider = presenter.locator('label').filter({ hasText: '粒子质量 m' }).locator('input[type="range"]');
+    await massSlider.waitFor({ state: 'visible' });
+    const originalMass = Number(await massSlider.inputValue());
+    const spectrumReadout = page.locator('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]');
+    await spectrumReadout.waitFor({ state: 'visible' });
+    const originalSpectrum = await spectrumReadout.textContent();
+    await massSlider.focus();
+    await massSlider.press('End');
+    await page.waitForFunction(before => {
+      const result = document.querySelector('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]')?.textContent;
+      return typeof result === 'string' && result.length > 0 && result !== before;
+    }, originalSpectrum);
+    await page.getByTestId('fullscreen-controls').getByTestId('btn-reset').click();
+    await page.waitForFunction(before => document.querySelector('[data-testid="stage-formula-values"] [data-readout-id="em-devices-law"]')?.textContent === before, originalSpectrum);
+    if (await page.getByTestId('story-progress').textContent() !== '2/5') throw new Error('Story replay changed beat');
+    await presenter.waitForFunction(before => {
+      const label = [...document.querySelectorAll('label')].find(node => node.textContent?.includes('粒子质量 m'));
+      const slider = label?.querySelector('input[type="range"]');
+      return slider && Math.abs(Number(slider.value) - before) <= 1e-28;
+    }, originalMass);
+    await presenter.getByTestId('presenter-blackout').click();
+    await page.getByTestId('story-blackout').waitFor({ timeout: 5000 });
+    await presenter.getByTestId('presenter-blackout').click();
+    await page.getByTestId('story-blackout').waitFor({ state: 'detached', timeout: 5000 });
+    await presenter.close();
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+
+    const morphReport = await auditV3Morph(page, `${origin}${basePrefix}`);
+    console.log('V3_MORPH_ROUND_TRIPS', morphReport);
 
     if (consoleErrors.length || pageErrors.length || failedResponses.length || externalRequests.length) {
       throw new Error(JSON.stringify({ consoleErrors, pageErrors, failedResponses, externalRequests }, null, 2));

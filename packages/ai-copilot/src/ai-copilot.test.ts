@@ -62,6 +62,30 @@ describe('@physforge/ai-copilot 3-tier routing, Zod SceneDSL & 3-round refine', 
     expect(out.lastAudit.passed).toBe(true);
   });
 
+  it('rejects unknown keys, supplies the actual schema and accepts a corrected second round', async () => {
+    const candidate = {
+      schemaVersion: '2.0',
+      modelId: 'modern-photoelectric-compton',
+      params: { mode: 'photoelectric', wavelengthNm: 405 }
+    };
+    const invalid = { ...candidate, params: { ...candidate.params, wavelengthFake: 405 } };
+    const firstAudit = await auditSceneHeadless(invalid);
+    expect(firstAudit.passed).toBe(false);
+    expect(firstAudit.errors).toContain('Unknown param "wavelengthFake" for model "modern-photoelectric-compton".');
+    expect(firstAudit.finalObservables).toEqual({});
+    expect(firstAudit.errors.join(' ')).toContain('wavelengthNm: number[200..750] nm');
+    const result = await runGenerateThenRefine((round, feedback) => {
+      if (round === 1) return invalid;
+      expect(feedback).toContain('Unknown param "wavelengthFake"');
+      expect(feedback).toContain('mode: select(photoelectric|compton)');
+      expect(feedback).toContain('freezeRefEnabled: boolean');
+      return candidate;
+    }, { maxRounds: 3, steps: 20 });
+    expect(result.accepted).toBe(true);
+    expect(result.attempts).toBe(2);
+    expect(result.finalScene?.params).not.toHaveProperty('wavelengthFake');
+  });
+
   it('synthesizes valid runnable SceneDSL offline from prompt and passes headless audit', async () => {
     const synth = await synthesizeSceneFromPrompt('水平实心球滑滚转换与保龄球回滚');
     expect(synth.route.modelId).toBe('comp-rigid-rolling-slip');

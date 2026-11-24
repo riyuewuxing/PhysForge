@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { capacitorMillikanPresets } from './presets.js';
 import {
@@ -46,7 +47,45 @@ const paramSchema: readonly ParamFieldSpec<CapacitorMillikanParams>[] = [
   { key: 'stokesDrag', kind: 'number', label: '斯托克斯空气阻尼', unit: 's⁻¹', min: 0, max: 12, step: 1, defaultValue: 6 }
 ];
 
-export const emCapacitorMillikanPlugin = defineSimulationPlugin<CapacitorMillikanParams, CapacitorMillikanState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "parallel-capacitance",
+  "title": "平行板电容（σ=S/S₀，忽略边缘效应）",
+  "latex": "C=\\frac{\\varepsilon_0\\htmlClass{pf-live-var}{\\htmlData{param=dielectricEr}{\\varepsilon_r}}S_0\\htmlClass{pf-live-var}{\\htmlData{param=areaRatioS}{\\sigma}}}{\\htmlClass{pf-live-var}{\\htmlData{param=distanceMm}{d}}}",
+  "bindings": [
+    {
+      "tokenKey": "dielectricEr",
+      "paramKey": "dielectricEr",
+      "label": "相对介电常数 εr",
+      "unit": "",
+      "min": 1,
+      "max": 6,
+      "step": 0.5,
+      "precision": 2
+    },
+    {
+      "tokenKey": "areaRatioS",
+      "paramKey": "areaRatioS",
+      "label": "正对面积比 S/S₀",
+      "unit": "",
+      "min": 0.3,
+      "max": 1,
+      "step": 0.05,
+      "precision": 3
+    },
+    {
+      "tokenKey": "distanceMm",
+      "paramKey": "distanceMm",
+      "label": "极板间距 d",
+      "unit": "mm",
+      "min": 8,
+      "max": 40,
+      "step": 1,
+      "precision": 1
+    }
+  ]
+}];
+export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<CapacitorMillikanParams, CapacitorMillikanState>({
   meta: {
     id: 'em-capacitor-millikan',
     title: '平行板电容器动态分析与密立根油滴 (E02)',
@@ -283,6 +322,6 @@ export const emCapacitorMillikanPlugin = defineSimulationPlugin<CapacitorMillika
       }
     ];
   }
-});
+}), { liveFormulas });
 
 export default emCapacitorMillikanPlugin;

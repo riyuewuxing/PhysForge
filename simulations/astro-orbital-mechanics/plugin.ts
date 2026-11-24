@@ -1,3 +1,5 @@
+import { orbitalStoryDecks } from './storyDecks.js';
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { astroOrbitalPresets } from './presets.js';
 import {
@@ -11,6 +13,30 @@ import {
   type AstroOrbitalParams,
   type AstroOrbitalState
 } from './engine.js';
+
+/** Shared inertial/corotating display coordinates; dynamics stay in the inertial frame. */
+export function orbitDisplayXY(x: number, y: number, t: number, corotating: boolean) {
+  const theta = corotating ? -t : 0;
+  const c = Math.cos(theta), sin = Math.sin(theta);
+  return { x: x * c - y * sin, y: x * sin + y * c };
+}
+
+/** Engine-reported Hohmann impulses only; no synthetic burn positions or timing. */
+export function orbitalBurnMarkers(state:AstroOrbitalState,params:AstroOrbitalParams){
+  if(params.mode!=='hohmann-transfer')return [];
+  return state.events.flatMap(event=>{
+    const index=event.id==='hohmann-burn-1'?1:event.id.startsWith('hohmann-burn-2-')?2:0;
+    const pos=event.position;
+    const deltaV=index===1?event.metrics?.deltaV1SI:event.metrics?.deltaV2SI;
+    if(!index||!pos||deltaV===undefined||!Number.isFinite(deltaV))return [];
+    const radius=Math.hypot(pos.x,pos.y);
+    if(radius<1e-10)return [];
+    return [{index,x:pos.x,y:pos.y,deltaV,dx:-pos.y/radius*Math.sign(deltaV),dy:pos.x/radius*Math.sign(deltaV)}];
+  });
+}
+export function orbitDisplayVelocity(state:AstroOrbitalState,corotating:boolean){
+  return orbitDisplayXY(state.vxNorm+(corotating?state.yNorm:0),state.vyNorm-(corotating?state.xNorm:0),state.tNorm,corotating);
+}
 
 const paramSchema: readonly ParamFieldSpec<AstroOrbitalParams>[] = [
   {
@@ -41,7 +67,77 @@ const paramSchema: readonly ParamFieldSpec<AstroOrbitalParams>[] = [
   { key: 'simSpeed', kind: 'number', label: '仿真倍率', unit: 'x', min: 0.5, max: 4, step: 0.5, defaultValue: 1 }
 ];
 
-export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalParams, AstroOrbitalState>({
+
+const liveFormulas: readonly LiveFormulaSpec[] = [
+  {
+    "id": "hohmann-first-burn",
+    "title": "圆轨道霍曼转移第一次加速（κ=r₂/r₁）",
+    "latex": "\\frac{\\Delta v_1}{v_{c1}}=\\sqrt{\\frac{2\\htmlClass{pf-live-var}{\\htmlData{param=r2OverR1}{\\kappa}}}{1+\\htmlClass{pf-live-var}{\\htmlData{param=r2OverR1}{\\kappa}}}}-1",
+    "bindings": [
+      {
+        "tokenKey": "r2OverR1",
+        "paramKey": "r2OverR1",
+        "label": "霍曼目标半径比 r₂/r₁",
+        "unit": "",
+        "min": 1.2,
+        "max": 3.5,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "hohmann-transfer"
+      ]
+    }
+  },
+  {
+    "id": "circular-speed",
+    "title": "圆轨道速度（r₁=ηL₀，M 由尺度位形确定）",
+    "latex": "v_{c1}=\\sqrt{\\frac{GM}{\\htmlClass{pf-live-var}{\\htmlData{param=r1Ratio}{\\eta}}L_0}}",
+    "bindings": [
+      {
+        "tokenKey": "r1Ratio",
+        "paramKey": "r1Ratio",
+        "label": "近地点尺度比 r₁/L₀",
+        "unit": "",
+        "min": 0.5,
+        "max": 2,
+        "step": 0.1,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "kepler-ellipse",
+        "hohmann-transfer"
+      ]
+    }
+  },
+  {
+    "id": "binary-barycenter",
+    "title": "双星质心距离（a 为两星间距）",
+    "latex": "\\begin{aligned}r_1&=\\htmlClass{pf-live-var}{\\htmlData{param=massRatioQ}{q}}a\\\\r_2&=(1-q)a\\end{aligned}",
+    "bindings": [
+      {
+        "tokenKey": "massRatioQ",
+        "paramKey": "massRatioQ",
+        "label": "双星次星质量比 q",
+        "unit": "",
+        "min": 0.01,
+        "max": 0.4,
+        "step": 0.01,
+        "precision": 2
+      }
+    ],
+    "when": {
+      "mode": [
+        "binary-lagrange"
+      ]
+    }
+  }
+];
+export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<AstroOrbitalParams, AstroOrbitalState>({
   meta: {
     id: 'astro-orbital-mechanics',
     title: '万有引力、霍曼转移与拉格朗日点 (M10)',
@@ -50,6 +146,7 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     difficulty: '压轴专题',
     version: '2.0.0'
   },
+  renderMode: 'hybrid',
   defaultView: {
     scale: (params) => (0.42 / 0.24) / (params.mode === 'hohmann-transfer' ? params.r2OverR1 + 0.6 : 2.6),
     offsetRatioX: 0.05
@@ -62,13 +159,13 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     computeObservables,
     checkInvariants
   },
-  getForceVectors: (state, params) => {
-    const { centralMassKg, muSI, r1SI } = buildAstroScaleContext(params);
-    const testMassKg = 1;
+  getForceVectors: (state, params, activeLayers) => {
+    const { muSI, r1SI } = buildAstroScaleContext(params);
+    const scaleSI = muSI / (r1SI * r1SI);
     const position = { x: state.xNorm, y: state.yNorm };
     if (params.mode !== 'binary-lagrange') {
-      const r2 = Math.max(1e-12, position.x * position.x + position.y * position.y);
-      const scale = (-testMassKg * muSI) / (r1SI * r1SI * r2 * Math.sqrt(r2));
+      const r2 = position.x * position.x + position.y * position.y;
+      const scale = r2 > 1e-12 ? -scaleSI / (r2 * Math.sqrt(r2)) : 0;
       return [{
         id: 'central-gravity', label: 'F_g (1 kg)', origin: position,
         force: { x: scale * position.x, y: scale * position.y }, color: '#fbbf24', category: 'gravity', unit: 'N'
@@ -76,15 +173,21 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     }
 
     const q = Math.max(0.01, Math.min(0.45, params.massRatioQ));
-    const primaries = [{ id: 'primary-1', label: 'F₁', x: -q, mass: (1 - q) * centralMassKg }, { id: 'primary-2', label: 'F₂', x: 1 - q, mass: q * centralMassKg }];
+    const c = Math.cos(state.tNorm), sin = Math.sin(state.tNorm);
+    const corotating = activeLayers?.has('corotatingView') ?? false;
+    const project = (x: number, y: number) => orbitDisplayXY(x, y, state.tNorm, corotating);
+    const primaries = [
+      { id: 'primary-1', label: 'F₁', x: -q * c, y: -q * sin, fraction: 1 - q },
+      { id: 'primary-2', label: 'F₂', x: (1 - q) * c, y: (1 - q) * sin, fraction: q }
+    ];
     return primaries.map((primary, index) => {
-      const dx = primary.x - position.x;
-      const dy = -position.y;
-      const r2 = Math.max(1e-12, dx * dx + dy * dy);
-      const scale = (6.6743e-11 * testMassKg * primary.mass) / (r1SI * r1SI * r2 * Math.sqrt(r2));
+      const dx = primary.x - position.x, dy = primary.y - position.y;
+      // Match the existing softened restricted-three-body acceleration.
+      const r2 = dx * dx + dy * dy + 1e-6;
+      const scale = scaleSI * primary.fraction / (r2 * Math.sqrt(r2));
       return {
-        id: primary.id, label: `${primary.label} (1 kg)`, origin: position,
-        force: { x: scale * dx, y: scale * dy }, color: index === 0 ? '#fbbf24' : '#fb923c', category: 'gravity' as const, unit: 'N'
+        id: primary.id, label: `${primary.label} (1 kg)`, origin: project(position.x, position.y),
+        force: project(scale * dx, scale * dy), color: index === 0 ? '#fbbf24' : '#fb923c', category: 'gravity' as const, unit: 'N'
       };
     });
   },
@@ -104,8 +207,11 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     {
       id: 'satellite',
       label: '卫星随动参考系',
-      getOrigin: (s) => ({ x: s.xNorm, y: s.yNorm }),
-      getVelocity: (s) => ({ x: s.vxNorm, y: s.vyNorm })
+      getOrigin: (s, p, layers) => orbitDisplayXY(s.xNorm, s.yNorm, s.tNorm, p.mode === 'binary-lagrange' && (layers?.has('corotatingView') ?? false)),
+      getVelocity: (s, p, layers) => {
+        const rotating = p.mode === 'binary-lagrange' && (layers?.has('corotatingView') ?? false);
+        return orbitDisplayVelocity(s,rotating);
+      }
     }
   ],
   getControlHandles: (state, params) =>
@@ -145,38 +251,25 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     }),
     importScene: (dsl) => dsl.params as Partial<AstroOrbitalParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'circle', cx: 0, cy: 0, r: 0.24, fill: true },
-      {
-        kind: 'polyline',
-        points: state.trailNorm.map((p) => ({ x: p.x, y: p.y })),
-        dashed: true
-      },
-      { kind: 'circle', cx: state.xNorm, cy: state.yNorm, r: 0.1 },
-      {
-        kind: 'arrow',
-        x1: state.xNorm,
-        y1: state.yNorm,
-        x2: state.xNorm + state.vxNorm * 0.45,
-        y2: state.yNorm + state.vyNorm * 0.45,
-        label: 'v'
-      },
-      {
-        kind: 'mathLabel',
-        x: 2.8,
-        y: 2.3,
-        text: `r/r_1=${Math.hypot(state.xNorm, state.yNorm).toFixed(2)},\\; v_0/v_{\\text{circ}}=${params.v0Ratio.toFixed(2)}`,
-        align: 'end'
-      }
-    ];
-    return {
-      width: 720,
-      height: 460,
-      viewBox: { minX: -3.2, minY: -2.6, maxX: 3.2, maxY: 2.6 },
-      title: '天体轨道动力学配图',
-      primitives
-    };
+  exportDiagramIR: (state,params)=>{
+    // Export the inertial view: history points carry no individual time stamps.
+    const primitives:DiagramPrimitive[]=[];
+    if(params.mode==='binary-lagrange'){
+      const q=params.massRatioQ,c=Math.cos(state.tNorm),sin=Math.sin(state.tNorm);
+      primitives.push({kind:'circle',cx:-q*c,cy:-q*sin,r:0.13,fill:true},
+        {kind:'circle',cx:(1-q)*c,cy:(1-q)*sin,r:0.065,fill:true});
+    }else primitives.push({kind:'circle',cx:0,cy:0,r:0.13,fill:true});
+    if(params.mode==='hohmann-transfer')primitives.push({kind:'circle',cx:0,cy:0,r:1,dashed:true},
+      {kind:'circle',cx:0,cy:0,r:params.r2OverR1,dashed:true});
+    primitives.push({kind:'polyline',points:state.trailNorm,dashed:true},
+      {kind:'circle',cx:state.xNorm,cy:state.yNorm,r:0.05,fill:true},
+      {kind:'arrow',x1:state.xNorm,y1:state.yNorm,x2:state.xNorm+state.vxNorm*0.45,y2:state.yNorm+state.vyNorm*0.45,label:'v'});
+    for(const burn of orbitalBurnMarkers(state,params))primitives.push(
+      {kind:'circle',cx:burn.x,cy:burn.y,r:0.08},
+      {kind:'arrow',x1:burn.x,y1:burn.y,x2:burn.x+0.45*burn.dx,y2:burn.y+0.45*burn.dy,label:'Δv'+burn.index});
+    const extent=Math.max(2.8,params.mode==='hohmann-transfer'?params.r2OverR1+0.6:0,Math.hypot(state.xNorm,state.yNorm)+0.6);
+    return {width:720,height:460,viewBox:{minX:-extent,minY:-extent,maxX:extent,maxY:extent},
+      title:'天体轨道动力学配图（惯性系，归一化长度）',primitives};
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const baseExtent = params.mode === 'hohmann-transfer' ? params.r2OverR1 + 0.6 : 2.6;
@@ -186,15 +279,8 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
     const useCorotating = params.mode === 'binary-lagrange' && activeLayers.has('corotatingView');
 
     const mapPoint = (x: number, y: number): { px: number; py: number } => {
-      if (useCorotating) {
-        const ct = Math.cos(-state.tNorm);
-        const st = Math.sin(-state.tNorm);
-        const rx = x * ct - y * st;
-        const ry = x * st + y * ct;
-        const point = m.toScreen(rx, ry);
-        return { px: point.x, py: point.y };
-      }
-      const point = m.toScreen(x, y);
+      const p = orbitDisplayXY(x, y, state.tNorm, useCorotating);
+      const point = m.toScreen(p.x, p.y);
       return { px: point.x, py: point.y };
     };
 
@@ -266,7 +352,8 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
         ctx.setLineDash([]);
       }
 
-      if (state.trailNorm.length > 1) {
+      // Historical points do not include their own times: omit the trail in a true rotating view.
+      if (!useCorotating && state.trailNorm.length > 1) {
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -306,30 +393,55 @@ export const astroOrbitalMechanicsPlugin = defineSimulationPlugin<AstroOrbitalPa
       ctx.beginPath();
       ctx.arc(sat.px, sat.py, markerRadius(6), 0, Math.PI * 2);
       ctx.fill();
+      const drawArrow=(x:number,y:number,dx:number,dy:number,color:string,label:string)=>{
+        const a=m.toScreen(x,y),b=m.toScreen(x+dx,y+dy),angle=Math.atan2(b.y-a.y,b.x-a.x);
+        if(Math.hypot(dx,dy)<1e-8)return;
+        ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+        ctx.moveTo(b.x-8*Math.cos(angle-.45),b.y-8*Math.sin(angle-.45));ctx.lineTo(b.x,b.y);
+        ctx.lineTo(b.x-8*Math.cos(angle+.45),b.y-8*Math.sin(angle+.45));ctx.stroke();
+        ctx.font='12px sans-serif';ctx.fillText(label,b.x+4,b.y-4);
+      };
+      const v=orbitDisplayVelocity(state,useCorotating),position=orbitDisplayXY(state.xNorm,state.yNorm,state.tNorm,useCorotating);
+      drawArrow(position.x,position.y,v.x*.35,v.y*.35,'#4ade80','v');
+      for(const burn of orbitalBurnMarkers(state,params)){
+        const p=m.toScreen(burn.x,burn.y);ctx.strokeStyle='#fb923c';ctx.lineWidth=2;
+        ctx.beginPath();ctx.arc(p.x,p.y,markerRadius(8),0,Math.PI*2);ctx.stroke();
+        drawArrow(burn.x,burn.y,burn.dx*.45,burn.dy*.45,'#fb923c','Δv'+burn.index);
+      }
+      if(useCorotating){ctx.font='12px sans-serif';ctx.fillStyle='#94a3b8';ctx.fillText('共转系：历史轨迹缺少逐点时刻，故不绘制',18,28);}
+
     }
 
     ctx.restore();
   },
   formatFormulas: (state, params) => {
     const obs = computeObservables(state, params);
-    const items = [
-      {
-        id: 'orbit-state',
-        label: '无量纲尺度归一流 (ScaleContext)',
-        latex: 'r/r_1, \\quad v/v_{\\text{circ}}, \\quad e',
-        substitutedLatex: `r/r_1=${(obs.rNorm ?? 0).toFixed(4)},\\; v/v_{\\text{circ}}=${(obs.speedNorm ?? 0).toFixed(4)},\\; e=${(obs.eccentricity ?? 0).toFixed(4)}`
-      }
-    ];
+    if (params.mode === 'binary-lagrange') {
+      const display = orbitDisplayXY(state.xNorm, state.yNorm, state.tNorm, true);
+      return [{ id: 'binary-state', label: '共转系试探粒子位置（双星间距为长度单位）',
+        latex: 'r_1/a=q,\\quad r_2/a=1-q',
+        substitutedLatex: `\\begin{aligned}x_{\\rm rot}/a&=${display.x.toFixed(3)}\\\\y_{\\rm rot}/a&=${display.y.toFixed(3)}\\\\q&=${params.massRatioQ.toFixed(3)}\\end{aligned}` }];
+    }
+    const items = [{ id: 'orbit-state', label: '归一化二体轨道状态',
+      latex: 'r/r_1,\\quad v/v_{c1},\\quad e',
+      substitutedLatex: `\\begin{aligned}r/r_1&=${(obs.rNorm ?? 0).toFixed(4)}\\\\v/v_{c1}&=${(obs.speedNorm ?? 0).toFixed(4)}\\\\e&=${(obs.eccentricity ?? 0).toFixed(4)}\\end{aligned}` }];
+    items.push({id:'orbit-integrals',label:'归一化比机械能与比角动量',
+      latex:'\\varepsilon=\\tfrac12v^2-1/r,\\quad h_z=xv_y-yv_x',
+      substitutedLatex: `\\begin{aligned}\\varepsilon&=${(obs.energyNorm??0).toFixed(5)}\\\\h_z&=${(obs.angularMomNorm??0).toFixed(5)}\\end{aligned}`});
     if (params.mode === 'hohmann-transfer') {
-      items.push({
-        id: 'hohmann-dv',
-        label: '霍曼转移双脉冲速度增量',
-        latex: '\\Delta v_1 = \\sqrt{\\frac{GM}{r_1}}\\left(\\sqrt{\\frac{2r_2}{r_1+r_2}}-1\\right)',
-        substitutedLatex: `\\Delta v_1=${(state.deltaV1SI / 1000).toFixed(3)}\\text{ km/s},\\; \\Delta v_2=${(state.deltaV2SI / 1000).toFixed(3)}\\text{ km/s}`
-      });
+      const dv2 = state.hohmannPhase === 'circularized'
+        ? `${(state.deltaV2SI / 1000).toFixed(3)}\\text{ km/s}` : '\\text{待点火}';
+      items.push({ id: 'hohmann-dv', label: '霍曼转移实际脉冲速度增量',
+        latex: '\\Delta v_1=\\sqrt{GM/r_1}\\left(\\sqrt{2r_2/(r_1+r_2)}-1\\right)',
+        substitutedLatex: `\\begin{aligned}\\Delta v_1&=${(state.deltaV1SI / 1000).toFixed(3)}\\text{ km/s}\\\\\\Delta v_2&=${dv2}\\end{aligned}` });
+    } else if (state.sectors.length >= 2) {
+      const previous = state.sectors[state.sectors.length - 2], last = state.sectors[state.sectors.length - 1];
+      if (previous && last) items.push({ id: 'kepler-area', label: '最近两个完整等时区间的数值扫过面积',
+        latex: '\\Delta A=\\frac12|\\mathbf r\\times\\mathbf v|\\Delta t',
+        substitutedLatex: `\\begin{aligned}A_{n-1}/r_1^2&=${previous.areaDimless.toFixed(5)}\\\\A_n/r_1^2&=${last.areaDimless.toFixed(5)}\\end{aligned}` });
     }
     return items;
   }
-});
+}), { storyDecks: orbitalStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 8.5, sceneDepthRadius: 8, default3DAzimuthRad: 0.5, default3DPolarRad: 0.92 } });
 
 export default astroOrbitalMechanicsPlugin;
