@@ -215,6 +215,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
   const simStateModelIdRef = useRef<string | null>(null);
+  const simStateResetNonceRef = useRef<number | null>(null);
   const initialStateRef = useRef<unknown>(null);
   const eventsRef = useRef<PhysicsEvent[]>([]);
   const snapshotsRef = useRef<SnapshotFrame[]>([]);
@@ -337,6 +338,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     fbdComponentsEnabled,
     activeFrameId,
     scrubTime,
+    resetNonce,
     oscilloscopeCollapsed,
     presentationMode,
     channelA,
@@ -358,6 +360,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     fbdComponentsEnabled,
     activeFrameId,
     scrubTime,
+    resetNonce,
     oscilloscopeCollapsed,
     presentationMode,
     channelA,
@@ -377,6 +380,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (latestRef.current.plugin.meta.id !== expectedModelId) return null;
     return selectDisplayFrame({
       modelId: expectedModelId, ownerModelId: simStateModelIdRef.current,
+      resetNonce: latestRef.current.resetNonce, ownerResetNonce: simStateResetNonceRef.current,
       currentState: simStateRef.current, currentTime: simulationTimeRef.current,
       scrubTime: latestRef.current.scrubTime, snapshots: snapshotsRef.current
     });
@@ -634,6 +638,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     simStateRef.current = init;
     initialStateRef.current = init;
     simStateModelIdRef.current = p.meta.id;
+    simStateResetNonceRef.current = latestRef.current.resetNonce;
     eventsRef.current = [];
     snapshotsRef.current = [{ t: 0, state: init, observables: obs0 }];
     lastSnapshotTRef.current = 0;
@@ -794,7 +799,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
   // 单步精准步进 (16.67 ms = 4 * FIXED_DT)
   useEffect(() => {
-    if (stepOnceNonce === 0) return;
+    if (stepOnceNonce === 0 || simStateModelIdRef.current !== plugin.meta.id ||
+        simStateResetNonceRef.current !== resetNonce) return;
     let cur = simStateRef.current;
     if (cur === null) return;
 
@@ -916,6 +922,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     const loop = (nowMs: number) => {
       rafId = requestAnimationFrame(loop);
+      if (simStateModelIdRef.current !== latestRef.current.plugin.meta.id ||
+          simStateResetNonceRef.current !== latestRef.current.resetNonce) return;
       if (advanceStoryCamera2D(nowMs)) renderFrameToCanvas();
       const runner = requestedStoryDeckRef.current === storyOwnerRef.current &&
         storyOwnerRef.current?.modelId === latestRef.current.plugin.meta.id ? storyRunnerRef.current : null;
