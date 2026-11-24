@@ -138,6 +138,7 @@ interface ClassroomStore {
   toggleFbdComponents: () => void;
   setActiveFrameId: (frameId: string) => void;
   toggleView3d: () => void;
+  setView3d: (enabled: boolean) => void;
   triggerResetView: () => void;
   triggerReset: () => void;
   triggerStepOnce: () => void;
@@ -460,7 +461,8 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
   toggleAutoFbd: () => set((s) => ({ autoFbdEnabled: !s.autoFbdEnabled })),
   toggleFbdComponents: () => set((s) => ({ fbdComponentsEnabled: !s.fbdComponentsEnabled })),
   setActiveFrameId: (activeFrameId) => set({ activeFrameId }),
-  toggleView3d: () => set((s) => ({ view3dEnabled: !s.view3dEnabled })),
+  toggleView3d: () => get().setView3d(!get().view3dEnabled),
+  setView3d: (enabled) => set({ view3dEnabled: enabled, ...(enabled ? { activeFrameId: 'ground', scrubTime: null } : {}) }),
   triggerResetView: () => set((s) => ({ resetViewNonce: s.resetViewNonce + 1 })),
   triggerReset: () =>
     set((s) => ({
