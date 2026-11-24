@@ -146,7 +146,7 @@ const ClassroomApp: React.FC = () => {
       return { modelId: p.meta.id, modelTitle: p.meta.title, appMode: state.appMode,
         isPlaying: state.isPlaying, isBlackout: state.isBlackout, morphT: morphProgressRef.current,
         simTime: state.telemetry.t, deckId: deck?.id ?? null, beatIndex: deck ? state.storyBeatIndex : -1,
-        totalBeats: deck?.beats.length ?? 0, currentCaption: beat?.caption ?? '', speakerNotes: beat?.speakerNotes ?? '',
+        paramContextEpoch: state.paramContextEpoch, totalBeats: deck?.beats.length ?? 0, currentCaption: beat?.caption ?? '', speakerNotes: beat?.speakerNotes ?? '',
         nextBeatTitle: deck?.beats[state.storyBeatIndex + 1]?.title ?? null, observables, params: state.params,
         paramSchema: p.paramSchema, canMorph: v2.renderMode === 'three3d' || v2.renderMode === 'hybrid' || Boolean(v2.mountThreeScene),
         freezeBadge: state.autoFreezeBadge };
@@ -159,7 +159,7 @@ const ClassroomApp: React.FC = () => {
         const state = useClassroomStore.getState();
         if (state.appMode === 'studio') return;
         if (!commandMatchesStage(cmd, { modelId: state.loadedPlugin.meta.id,
-          deckId: state.appMode === 'story' ? state.activeDeckId : null })) {
+          deckId: state.appMode === 'story' ? state.activeDeckId : null, paramContextEpoch: state.paramContextEpoch })) {
           bridge.broadcastSnapshot(snapshot(), true);
           return;
         }
@@ -173,7 +173,7 @@ const ClassroomApp: React.FC = () => {
           case 'CMD_TOGGLE_BLACKOUT': state.toggleBlackout(); break;
           case 'CMD_SET_PARAM': {
             const field = state.loadedPlugin.paramSchema.find((item) => item.key === cmd.paramKey);
-            if (!field) break;
+            if (!field || state.params[cmd.paramKey] === cmd.value) break;
             if (field.kind === 'number' && typeof cmd.value === 'number' && cmd.value >= field.min && cmd.value <= field.max ||
                 field.kind === 'boolean' && typeof cmd.value === 'boolean' ||
                 field.kind === 'select' && typeof cmd.value === 'string' && field.options.some((option) => option.value === cmd.value)) {
