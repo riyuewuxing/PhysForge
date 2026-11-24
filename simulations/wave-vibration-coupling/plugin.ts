@@ -1,3 +1,4 @@
+import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, drawGlowVectorArrow, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import {
   checkInvariants,
@@ -125,7 +126,35 @@ const paramSchema: readonly ParamFieldSpec<WaveCouplingParams>[] = [
   }
 ];
 
-export const waveVibrationCouplingPlugin = defineSimulationPlugin<
+
+const liveFormulas: readonly LiveFormulaSpec[] = [{
+  "id": "wave-speed",
+  "title": "行波波速",
+  "latex": "v=\\htmlClass{pf-live-var}{\\htmlData{param=wavelength}{\\lambda}}\\htmlClass{pf-live-var}{\\htmlData{param=frequency}{f}}",
+  "bindings": [
+    {
+      "tokenKey": "wavelength",
+      "paramKey": "wavelength",
+      "label": "波长 λ",
+      "unit": "m",
+      "min": 0.5,
+      "max": 4,
+      "step": 0.1,
+      "precision": 2
+    },
+    {
+      "tokenKey": "frequency",
+      "paramKey": "frequency",
+      "label": "波源频率 f",
+      "unit": "Hz",
+      "min": 0.2,
+      "max": 3,
+      "step": 0.1,
+      "precision": 2
+    }
+  ]
+}];
+export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
   WaveCouplingParams,
   WaveCouplingState
 >({
@@ -675,6 +704,6 @@ export const waveVibrationCouplingPlugin = defineSimulationPlugin<
     resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   }
-});
+}), { liveFormulas });
 
 export default waveVibrationCouplingPlugin;
