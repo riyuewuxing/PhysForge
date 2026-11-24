@@ -53,10 +53,11 @@ export function attachFormulaScrubber(container: HTMLElement, spec: LiveFormulaS
 
   const findToken = (target: EventTarget | null) => {
     if (!(target instanceof HTMLElement)) return null;
-    const element = target.closest<HTMLElement>('[data-param]');
-    if (!element || !container.contains(element)) return null;
-    const binding = bindings.get(element.dataset.param ?? '');
-    return binding ? { element, binding } : null;
+    const wrapper = target.closest<HTMLElement>('.pf-live-var');
+    const token = target.closest<HTMLElement>('[data-param]') ?? wrapper?.querySelector<HTMLElement>('[data-param]');
+    if (!token || !container.contains(token)) return null;
+    const binding = bindings.get(token.dataset.param ?? '');
+    return binding ? { element: wrapper && container.contains(wrapper) ? wrapper : token, binding } : null;
   };
   const flush = (now: number) => {
     if (!pending) return;
