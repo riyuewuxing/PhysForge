@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPresenterWindowUrl, isPresenterCommand, parseSyncEnvelope, PresenterSyncBridge, type StageSnapshotPayload, type SyncEnvelope } from './presenterSync.js';
+import { buildPresenterWindowUrl, isPresenterCommand, parseSyncEnvelope, PresenterSyncBridge, commandMatchesStage, scopePresenterAction, type StageSnapshotPayload, type SyncEnvelope } from './presenterSync.js';
 
 const snapshot: StageSnapshotPayload = {
   modelId: 'demo', modelTitle: 'Demo', appMode: 'story', isPlaying: false, isBlackout: false,
@@ -20,7 +20,7 @@ describe('PresenterSyncBridge', () => {
     }
   });
   it('rejects malformed, out-of-session and same-role messages', () => {
-    const envelope = { sessionId: 's', sender: 'presenter', ts: 1, msg: { type: 'CMD_NEXT_BEAT' } };
+    const envelope = { sessionId: 's', sender: 'presenter', ts: 1, msg: { type: 'CMD_NEXT_BEAT', modelId: 'demo', deckId: 'deck' } };
     expect(parseSyncEnvelope(envelope, 's', 'stage')).toEqual(envelope);
     expect(parseSyncEnvelope(envelope, 'other', 'stage')).toBeNull();
     expect(parseSyncEnvelope(envelope, 's', 'presenter')).toBeNull();
@@ -28,6 +28,15 @@ describe('PresenterSyncBridge', () => {
     expect(isPresenterCommand({ type: 'CMD_SET_PARAM', paramKey: 'v', value: NaN })).toBe(false);
     expect(isPresenterCommand({ type: 'CMD_LASER_POINTER', active: true, normX: 2, normY: 0 })).toBe(false);
     expect(parseSyncEnvelope({ sessionId: 's', sender: 'stage', ts: 1, msg: { type: 'STAGE_SNAPSHOT', payload: {} } }, 's', 'presenter')).toBeNull();
+  });
+  it('rejects stale model and deck mutations instead of editing a different lesson', () => {
+    const command = scopePresenterAction({ type: 'CMD_SET_PARAM', paramKey: 'speed', value: 2 }, snapshot);
+    expect(isPresenterCommand(command)).toBe(true);
+    expect(isPresenterCommand({ type: 'CMD_SET_PARAM', paramKey: 'speed', value: 2 })).toBe(false);
+    expect(commandMatchesStage(command, snapshot)).toBe(true);
+    expect(commandMatchesStage(command, { modelId: 'other', deckId: 'deck' })).toBe(false);
+    expect(commandMatchesStage(command, { modelId: 'demo', deckId: null })).toBe(false);
+    expect(commandMatchesStage({ type: 'CMD_REQUEST_SYNC' }, { modelId: 'other', deckId: null })).toBe(true);
   });
   it('exchanges real BroadcastChannel messages, throttles snapshots, and closes the channel', async () => {
     const session = crypto.randomUUID();
@@ -38,7 +47,7 @@ describe('PresenterSyncBridge', () => {
     const presenter = new PresenterSyncBridge(session, 'presenter', (env) => fromStage.push(env), () => now);
     try {
       expect(stage.available).toBe(true);
-      presenter.sendCommand({ type: 'CMD_NEXT_BEAT' });
+      presenter.sendCommand(scopePresenterAction({ type: 'CMD_NEXT_BEAT' }, snapshot));
       stage.broadcastSnapshot(snapshot);
       now = 20;
       stage.broadcastSnapshot({ ...snapshot, simTime: 20 });
