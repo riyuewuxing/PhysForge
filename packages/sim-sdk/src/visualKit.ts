@@ -147,42 +147,34 @@ function roundedRectPath(
   ctx.closePath();
 }
 
-/** Draws a polished metallic rail with transparent end fades. */
+/** Solid metallic cross-section; never erase the canvas or circuit junctions. */
 export function drawMetallicRail(
-  ctx: CanvasRenderingContext2D,
-  x1: number,
-  y: number,
-  x2: number,
-  thickness = 8
+  ctx: CanvasRenderingContext2D, x1: number, y: number, x2: number, thickness = 8
 ): void {
   if (![x1, y, x2, thickness].every(Number.isFinite) || x2 <= x1 || thickness <= 0) return;
   ctx.save();
   const half = thickness * 0.5;
   const vertical = ctx.createLinearGradient(0, y - half, 0, y + half);
-  vertical.addColorStop(0, '#64748b');
-  vertical.addColorStop(0.28, '#f1f5f9');
-  vertical.addColorStop(0.58, '#94a3b8');
-  vertical.addColorStop(1, '#334155');
-  ctx.shadowColor = 'rgba(226, 232, 240, 0.25)';
-  ctx.shadowBlur = 10;
+  vertical.addColorStop(0, '#39434f');
+  vertical.addColorStop(0.18, '#8997a7');
+  vertical.addColorStop(0.36, '#edf4fb');
+  vertical.addColorStop(0.51, '#aebccc');
+  vertical.addColorStop(0.76, '#68788a');
+  vertical.addColorStop(1, '#303945');
+  ctx.shadowColor = 'rgba(196, 221, 247, 0.24)';
+  ctx.shadowBlur = 8;
   ctx.fillStyle = vertical;
-  roundedRectPath(ctx, x1, y - half, x2 - x1, thickness, half);
+  roundedRectPath(ctx, x1, y - half, x2 - x1, thickness, Math.min(half, 2));
   ctx.fill();
   ctx.shadowBlur = 0;
-
-  const fadeWidth = Math.min((x2 - x1) * 0.3, Math.max(16, (x2 - x1) * 0.08));
-  const leftFade = ctx.createLinearGradient(x1, 0, x1 + fadeWidth, 0);
-  leftFade.addColorStop(0, 'rgba(0, 0, 0, 1)');
-  leftFade.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.globalCompositeOperation = 'destination-out';
-  ctx.fillStyle = leftFade;
-  ctx.fillRect(x1 - 1, y - thickness, fadeWidth + 1, thickness * 2);
-
-  const rightFade = ctx.createLinearGradient(x2 - fadeWidth, 0, x2, 0);
-  rightFade.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  rightFade.addColorStop(1, 'rgba(0, 0, 0, 1)');
-  ctx.fillStyle = rightFade;
-  ctx.fillRect(x2 - fadeWidth, y - thickness, fadeWidth + 1, thickness * 2);
+  // Taper only the specular highlight, NOT the underlying physical rail.
+  const highlight = ctx.createLinearGradient(x1, 0, x2, 0);
+  highlight.addColorStop(0, 'rgba(255,255,255,.07)');
+  highlight.addColorStop(0.08, 'rgba(255,255,255,.65)');
+  highlight.addColorStop(0.92, 'rgba(255,255,255,.65)');
+  highlight.addColorStop(1, 'rgba(255,255,255,.07)');
+  ctx.fillStyle = highlight;
+  ctx.fillRect(x1, y - thickness * .17, x2 - x1, Math.max(.8, thickness * .13));
   ctx.restore();
 }
 
@@ -249,17 +241,22 @@ export function drawGlowingConductorRod(
 
   const rod = ctx.createLinearGradient(x - rodWidth * 0.5, 0, x + rodWidth * 0.5, 0);
   rod.addColorStop(0, tintHex);
-  rod.addColorStop(0.48, coreHex);
-  rod.addColorStop(1, tintHex);
+  rod.addColorStop(0.22, coreHex);
+  rod.addColorStop(0.42, tintHex);
+  rod.addColorStop(0.78, tintHex);
+  rod.addColorStop(1, coreHex);
   ctx.shadowColor = tintHex;
-  ctx.shadowBlur = 22;
+  ctx.shadowBlur = 18;
   ctx.fillStyle = rod;
   roundedRectPath(ctx, x - rodWidth * 0.5, yTop - 12, rodWidth, yBot - yTop + 24, rodWidth * 0.45);
   ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,.27)';
+  ctx.fillRect(x - rodWidth * .24, yTop - 8, Math.max(.8, rodWidth * .12), yBot - yTop + 16);
   ctx.restore();
 }
 
-/** Draws an arrow with a filled triangular head. */
+/** Draws a luminous vector with an unblurred, precise triangular head. */
 export function drawGlowVectorArrow(
   ctx: CanvasRenderingContext2D,
   x1: number,
@@ -283,12 +280,15 @@ export function drawGlowVectorArrow(
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
   ctx.shadowColor = color;
-  ctx.shadowBlur = 14;
+  ctx.shadowBlur = 11;
   ctx.lineWidth = Math.max(0.5, lineWidth);
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(shaftX, shaftY);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = Math.max(0.5, lineWidth * .76);
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(x2, y2);

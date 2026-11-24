@@ -1,10 +1,13 @@
 name: V3.1 visual and export audit
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'polish/v31-*']
     paths:
       - 'simulations/**'
       - 'apps/web/src/components/RightControlPanel.tsx'
+      - 'apps/web/src/components/SimulationStage.tsx'
+      - 'apps/web/src/index.css'
+      - 'packages/sim-sdk/src/visualKit*'
       - 'scripts/visual-audit.mjs'
       - '.github/workflows/v31-polish-audit.yml'
 permissions:

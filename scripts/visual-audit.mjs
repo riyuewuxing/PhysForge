@@ -617,6 +617,17 @@ async function main() {
     if (defaultPreset !== 'single-rod-battery-drive') {
       throw new Error(`Default E04 preset is ${defaultPreset}; expected single-rod-battery-drive.`);
     }
+    // Hero material regression: no transparent holes in the actual canvas.
+    const material = await page.getByTestId('simulation-canvas').evaluate(canvas => {
+      const ctx = canvas.getContext('2d');
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let alphaHoles = 0;
+      for (let i=3; i<pixels.length; i+=4) if (pixels[i] < 255) alphaHoles++;
+      const sample = (x,y) => Array.from(ctx.getImageData(Math.floor(canvas.width*x),Math.floor(canvas.height*y),1,1).data);
+      return {alphaHoles, center: sample(.46,.43), edge: sample(.99,.98)};
+    });
+    if (material.alphaHoles !== 0) throw new Error('Rail/canvas material erased '+material.alphaHoles+' pixels');
+    if (material.center[0] <= material.edge[0]) throw new Error('Hero background gradient missing');
     await page.screenshot({ path: path.join(OUT_DIR, 'E04_00_default.png') });
 
     const cases = [

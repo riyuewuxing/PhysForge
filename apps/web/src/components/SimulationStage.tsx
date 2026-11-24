@@ -131,6 +131,20 @@ interface PinchGesture {
 }
 
 const dotPatternCache = new WeakMap<CanvasRenderingContext2D, CanvasPattern>();
+const heroBackgroundCache = new WeakMap<CanvasRenderingContext2D, { width: number; height: number; dpr: number; gradient: CanvasGradient }>();
+
+// Rebuild only at viewport/DPR changes, never allocate a gradient per frame.
+function getHeroBackground(ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number): CanvasGradient {
+  const cached = heroBackgroundCache.get(ctx);
+  if (cached?.width === width && cached.height === height && cached.dpr === dpr) return cached.gradient;
+  const cx = width * 0.46, cy = height * 0.42;
+  const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(1, Math.hypot(width, height) * 0.62));
+  gradient.addColorStop(0, '#14191f');
+  gradient.addColorStop(0.57, '#0e1217');
+  gradient.addColorStop(1, '#080b10');
+  heroBackgroundCache.set(ctx, { width, height, dpr, gradient });
+  return gradient;
+}
 
 function getDotPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
   const cached = dotPatternCache.get(ctx);
@@ -140,7 +154,7 @@ function getDotPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
   tile.height = 24;
   const tileContext = tile.getContext('2d');
   if (!tileContext) return null;
-  tileContext.fillStyle = 'rgba(148, 163, 184, 0.14)';
+  tileContext.fillStyle = 'rgba(177, 188, 204, 0.13)';
   tileContext.beginPath();
   tileContext.arc(1, 1, 0.8, 0, Math.PI * 2);
   tileContext.fill();
@@ -454,7 +468,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
 
     // 清空背景（高对比投影白底或黑板深蓝）
-    ctx.fillStyle = currentTheme === 'projector' ? '#ffffff' : '#0b0f17';
+    ctx.fillStyle = currentTheme === 'projector' ? '#ffffff' : getHeroBackground(ctx, baseVp.width, baseVp.height, baseVp.dpr);
     ctx.fillRect(0, 0, baseVp.width, baseVp.height);
     if (currentTheme === 'chalkboard') {
       const dotPattern = getDotPattern(ctx);
