@@ -5,7 +5,10 @@ import { chromium } from 'playwright';
 const out = 'artifacts/byok-audit';
 const live = 'https://riyuewuxing.github.io/PhysForge/';
 const preview = 'http://127.0.0.1:4173/PhysForge/';
-const report = { sha: process.env.GITHUB_SHA ?? 'local', checks: {}, cors: [] };
+const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(await fs.readFile(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
+const report = { sha: process.env.GITHUB_SHA ?? 'local', headSha: event.pull_request?.head.sha ?? null, checks: {}, cors: [] };
+let fixturePage;
+let fixturePhase = 'not started';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const pageOptions = { viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' };
@@ -64,6 +67,7 @@ try {
 
   const ctx = await browser.newContext(pageOptions);
   const page = await ctx.newPage();
+  fixturePage = page;
   const errors = [];
   page.on('pageerror', () => errors.push('pageerror'));
   let gets = 0, posts = 0, mode = 'ok';
@@ -98,7 +102,12 @@ try {
       await respond({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(scene) } }] });
     } else { throw new Error('Unexpected fixture endpoint'); }
   });
-  await page.goto(preview, { waitUntil: 'domcontentloaded' });
+  fixturePhase = 'candidate preview load';
+  const previewResponse = await page.goto(preview, { waitUntil: 'domcontentloaded' });
+  assert.equal(previewResponse?.status(), 200);
+  await page.getByTestId('app-shell').waitFor({ timeout: 30000 });
+  await page.getByTestId('simulation-canvas').or(page.getByTestId('three-stage-container')).first().waitFor({ timeout: 30000 });
+  fixturePhase = 'configuration save / offline choice';
   await openDrawer(page);
   await page.getByTestId('byok-enabled').check();
   assert.equal(await page.getByTestId('byok-model').inputValue(), 'deepseek-flash');
@@ -115,6 +124,7 @@ try {
   assert.equal(await page.getByTestId('byok-enabled').isChecked(), false);
   await page.getByTestId('byok-enabled').check();
   assert.equal(await page.getByTestId('byok-api-key').inputValue(), mockKey);
+  fixturePhase = 'model directory';
   await page.getByTestId('btn-test-byok-connection').click();
   await page.getByTestId('byok-model-list').waitFor();
   assert.equal(gets, 1);
@@ -124,6 +134,7 @@ try {
   await page.getByTestId('btn-save-byok').click();
   // Screenshot only a masked, explicitly synthetic fixture; no actual API key exists in CI.
   await shot(page, '03-candidate-config');
+  fixturePhase = 'refinement';
   await page.getByTestId('ai-prompt-input').fill(prompt);
   await page.getByTestId('btn-run-ai-copilot').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="byok-run-status"]')?.textContent?.includes('第 2 轮通过'), null, { timeout: 30000 });
@@ -132,6 +143,7 @@ try {
   assert.equal(await page.getByTestId('btn-apply-ai-scene').isEnabled(), true);
   await page.getByTestId('btn-apply-ai-scene').scrollIntoViewIfNeeded();
   await shot(page, '04-candidate-refined-scene');
+  fixturePhase = 'apply physics scene';
   await page.getByTestId('btn-apply-ai-scene').click();
   await page.waitForFunction(id => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === id, target);
   await page.getByTestId('simulation-canvas').waitFor();
@@ -139,6 +151,7 @@ try {
   await shot(page, '05-applied-physics');
   await openDrawer(page);
   await page.getByTestId('ai-prompt-input').fill(prompt);
+  fixturePhase = 'safe error / clear / reload';
   mode = '401';
   await page.getByTestId('btn-test-byok-connection').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="byok-probe-status"]')?.textContent?.includes('401'));
@@ -172,7 +185,8 @@ try {
   report.checks.realAuthenticatedProvider = 'NOT_RUN: user must enter own key';
   await ctx.close();
 } catch (error) {
-  report.checks.fixtureEndToEnd = 'FAIL: ' + String(error).slice(0, 300);
+  report.checks.fixtureEndToEnd = 'FAIL at ' + fixturePhase + ': ' + String(error).slice(0, 300);
+  if (fixturePage) await shot(fixturePage, '07-fixture-failure').catch(() => {});
 } finally {
   await browser.close();
   await fs.writeFile(out + '/report.json', JSON.stringify(report, null, 2));

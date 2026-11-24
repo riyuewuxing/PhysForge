@@ -144,7 +144,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
     >
       <div
         className="w-full max-w-xl h-full border-l p-5 flex flex-col gap-4 overflow-y-auto"
-        style={{ backgroundColor: 'var(--pf-surface)', borderColor: 'var(--pf-border)', color: 'var(--pf-text)' }}
+        style={{ backgroundColor: 'var(--pf-bg)', borderColor: 'var(--pf-border)', color: 'var(--pf-text)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--pf-border)' }}>
@@ -196,6 +196,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
             <input data-testid="byok-enabled" type="checkbox" checked={useByok} disabled={running || probing} onChange={(e) => { setUseByok(e.target.checked); sessionOnlineEnabled = e.target.checked; setProbeMsg(''); invalidateResult(); }} />
             <span>启用可选 BYOK 外部大模型 API（Generate-then-Refine 3 轮自修正；默认离线规则引擎）</span>
           </label>
+          {!useByok && saved && <div className="flex items-center justify-between gap-2 text-xs opacity-80"><span>在线模式已关闭；本页内存仍保留已保存的密钥。</span><button type="button" data-testid="btn-clear-offline-byok" onClick={clearKey} disabled={running || probing} className="rounded-lg border px-2 py-1" style={{ borderColor: 'var(--pf-border)' }}>清除密钥</button></div>}
           {useByok && (
             <div className="grid grid-cols-1 gap-2 pt-1 text-xs">
               <div className="flex flex-wrap gap-1.5">
