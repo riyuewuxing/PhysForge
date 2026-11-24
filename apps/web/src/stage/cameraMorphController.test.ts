@@ -58,6 +58,29 @@ describe('3D perspective to orthographic morph', () => {
     }
   });
 
+  it('moves authored target, orbit and projection together, then interrupts without a camera jump', () => {
+    const c = new CameraMorphController(spec('xz'), 1000, 700);
+    c.startKeyframe({ azimuthRad: 1.2, polarRad: 0.9, target: [2, 0, -1], visibleHeight: 4, morphT: 1 }, 0, 1000);
+    c.update(500);
+    expect(c.getMorphT()).toBeCloseTo(0.5);
+    expect(c.getOrbitTarget().toArray()).toEqual([1, 0, -0.5]);
+    const prior = c.perspCamera.position.clone();
+    const rotation = c.perspCamera.quaternion.clone();
+    c.startKeyframe({ azimuthRad: -0.4, polarRad: 1.4, target: [-1, 0, 2], visibleHeight: 6, morphT: 0 }, 500, 500);
+    expect(c.perspCamera.position.distanceTo(prior)).toBeLessThan(1e-9);
+    expect(c.perspCamera.quaternion.angleTo(rotation)).toBeLessThan(1e-7);
+    c.update(1000);
+    expect(c.getOrbitTarget().toArray()).toEqual([-1, 0, 2]);
+    expect(c.getMorphT()).toBe(0);
+    expect(c.isAnimating).toBe(false);
+    expect(c.get2DAlignMetrics().pxPerWorldUnit).toBeCloseTo(700 / 6);
+    c.startKeyframe({ azimuthRad: 0.3, polarRad: 1.1, target: [0.4, 0, -0.8], visibleHeight: 5, morphT: 1 }, 1001, 0);
+    const world = liftPoint(0.4, 0.8, 'xz');
+    const screen = c.project3DToScreen(world);
+    expect(screen.x).toBeCloseTo(500, 8);
+    expect(screen.y).toBeCloseTo(350, 8);
+  });
+
   it('reverses mid-flight without jumping, ignores stale orbit input and finishes exactly', () => {
     const c = new CameraMorphController(spec('xy'), 800, 600);
     c.startMorphTo(1, 0, 1000);
