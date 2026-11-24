@@ -378,6 +378,7 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
       primitives
     };
   },
+  renderMode: 'hybrid',
   paramSchema,
   presets: [
     {
@@ -733,6 +734,6 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
       }
     }
   }
-}), { storyDecks: magneticStoryDecks, liveFormulas });
+}), { storyDecks: magneticStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 5.8, sceneDepthRadius: 9, default3DAzimuthRad: 0.65, default3DPolarRad: 1.15 } });
 
 export default emBoundedMagneticFieldPlugin;
