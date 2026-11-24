@@ -640,7 +640,7 @@ const ClassroomApp: React.FC = () => {
           <button
             type="button"
             data-testid="btn-ai-copilot-menu"
-            onClick={() => setAiCopilotOpen(true)}
+            onClick={() => { setToolsOpen(false); setAiCopilotOpen(true); }}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
             style={{
               borderColor: aiCopilotOpen ? '#38bdf8' : 'var(--pf-border)',

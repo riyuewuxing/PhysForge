@@ -51,6 +51,10 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<RefineLoopResult | null>(null);
   const [statusMsg, setStatusMsg] = useState<string>('');
+  const resultRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (result) resultRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [result]);
 
   const [probing, setProbing] = useState(false);
   const [probeMsg, setProbeMsg] = useState('');
@@ -317,7 +321,7 @@ export const AiCopilotDrawer: React.FC<AiCopilotDrawerProps> = ({ onApplyScene, 
           {result.lastAudit.errors.map((error, i) => <li key={i}>{error}</li>)}
         </ul>}
         {result?.finalScene && (
-          <div className="rounded-xl border p-3 space-y-2 text-xs" style={{ borderColor: 'var(--pf-border)' }}>
+          <div ref={resultRef} data-testid="byok-result-card" className="rounded-xl border p-3 space-y-2 text-xs" style={{ borderColor: 'var(--pf-border)' }}>
             <div className="flex items-center justify-between">
               <span className={`font-bold flex items-center gap-1 ${result.accepted ? 'text-emerald-400' : 'text-amber-400'}`}>
                 {result.accepted && <CheckCircle2 className="w-4 h-4" />}

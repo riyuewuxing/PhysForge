@@ -141,12 +141,14 @@ try {
   assert.equal(posts, 2);
   await page.getByTestId('btn-apply-ai-scene').waitFor();
   assert.equal(await page.getByTestId('btn-apply-ai-scene').isEnabled(), true);
-  await page.getByTestId('btn-apply-ai-scene').scrollIntoViewIfNeeded();
+  const resultBounds = await page.getByTestId('byok-result-card').boundingBox();
+  assert.ok(resultBounds && resultBounds.y >= 0 && resultBounds.y + resultBounds.height <= pageOptions.viewport.height + 1, 'Result card should automatically scroll fully into view');
   await shot(page, '04-candidate-refined-scene');
   fixturePhase = 'apply physics scene';
   await page.getByTestId('btn-apply-ai-scene').click();
   await page.waitForFunction(id => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === id, target);
   await page.getByTestId('simulation-canvas').waitFor();
+  assert.equal(await page.getByTestId('tools-menu').isVisible(), false, 'Tool menu must not obscure applied simulation');
   assert.equal(Number(await page.getByTestId('param-slider-wavelengthNm').inputValue()), 400);
   await shot(page, '05-applied-physics');
   await openDrawer(page);
