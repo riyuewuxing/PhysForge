@@ -1,0 +1,47 @@
+name: V3 cloud visual acceptance (audit only)
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  visual:
+    if: github.head_ref == 'audit/v3-r6-cloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Build subpath distribution
+        env:
+          VITE_BASE_PATH: /PhysForge/
+        run: pnpm build
+      - name: Actual browser visual audit
+        run: |
+          mkdir -p artifacts/ui-audit
+          set -o pipefail
+          pnpm audit:visual 2>&1 | tee artifacts/ui-audit/run.log
+      - name: Upload actual screenshots and audit log even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v3-r6-visual-evidence
+          path: |
+            artifacts/ui-audit/
+            docs/ui-benchmark/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Six flagship offline exports
+        if: success() || failure()
+        run: pnpm export:release --v3-audit
