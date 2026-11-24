@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import type { ParamRecord, SimulationPluginV2, ThreeSceneBridge } from '@physforge/sim-sdk';
+import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
+import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
+import { brushedCopperMaterial, magneticFluxMaterial } from './spatialMaterials.js';
 import {
   buildConductorSegments,
   trace3dFieldLines,
@@ -24,6 +26,11 @@ interface ThreeStageProps {
   readonly params: ParamRecord;
   readonly activeLayers: ReadonlySet<string>;
   readonly presentationMode?: boolean;
+  readonly morphTarget?: 0 | 1;
+  readonly initialFlatViewport?: Viewport;
+  readonly onMorphProgress?: (progress: number) => void;
+  readonly onMorphFlat?: (viewport: Viewport) => void;
+  readonly onWebGLFallback?: () => void;
 }
 
 function disposeObjectResources(root: THREE.Object3D): void {
@@ -160,13 +167,17 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   simStateRef,
   params,
   activeLayers,
-  presentationMode = false
+  presentationMode = false,
+  morphTarget = 0, initialFlatViewport, onMorphProgress, onMorphFlat, onWebGLFallback
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ThreeSceneBridge<ParamRecord, unknown> | null>(null);
   const latestStateRef = useRef(simState);
   const latestParamsRef = useRef(params);
   const latestLayersRef = useRef(activeLayers);
+  const morphPropsRef = useRef({ morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback });
+  morphPropsRef.current = { morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback };
+  const initialViewportRef = useRef(initialFlatViewport);
   latestStateRef.current = simState;
   latestParamsRef.current = params;
   latestLayersRef.current = activeLayers;
@@ -202,11 +213,31 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     scene.background = new THREE.Color('#0b0f17');
     scene.fog = new THREE.FogExp2('#0b0f17', 0.085);
 
-    const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 200);
-    camera.position.set(isMag3d ? 2.2 : 3.4, isMag3d ? 1.9 : 2.5, isMag3d ? 2.8 : 4.4);
-    camera.lookAt(0, 0, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
+    const morph = spatial ? new CameraMorphController(spatial, width, height) : null;
+    const camera = morph?.perspCamera ?? new THREE.PerspectiveCamera(48, width / height, 0.1, 200);
+    if (!morph) {
+      camera.position.set(isMag3d ? 2.2 : 3.4, isMag3d ? 1.9 : 2.5, isMag3d ? 2.8 : 4.4);
+      camera.lookAt(0, 0, 0);
+    }
+    const initialViewport = initialViewportRef.current;
+    const orbitTarget = new THREE.Vector3();
+    if (morph && spatial && initialViewport) {
+      const ppm = getPixelsPerMeter(initialViewport);
+      orbitTarget.copy(liftPoint((initialViewport.width * 0.05 - initialViewport.offsetX) / ppm,
+        initialViewport.offsetY / ppm, spatial.flattenPlane));
+      morph.setFraming(orbitTarget, initialViewport.height / ppm);
+      morph.startMorphTo(1, performance.now(), 0);
+    }
+    let lastMorphTarget: 0 | 1 = initialViewport && morph ? 1 : 0;
+    let flatNotified = false;
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch {
+      morphPropsRef.current.onWebGLFallback?.();
+      return;
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(width, height);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -230,6 +261,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    controls.target.copy(orbitTarget);
+    if (!morph || !initialViewport) controls.update();
+    else controls.enabled = false;
 
     const grid = createRadialGrid();
     const ambient = new THREE.HemisphereLight(0xc7e7ff, 0x101826, 1.05);
@@ -285,6 +319,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const onContextLost = (event: Event) => {
       event.preventDefault();
       contextLost = true;
+      morphPropsRef.current.onWebGLFallback?.();
     };
     const onContextRestored = () => {
       contextLost = false;
@@ -299,7 +334,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const fieldLabelAnchor = new THREE.Vector3();
 
     const separateWorldLabels = (viewportWidth: number, viewportHeight: number) => {
-      camera.updateMatrixWorld();
+      const activeCamera = morph?.getActiveCamera() ?? camera;
+      activeCamera.updateMatrixWorld();
       const activeLabels: Array<{ obj: CSS2DObject; anchor: THREE.Vector3; sx: number; sy: number; depth: number }> = [];
       const candidates: Array<{ obj: CSS2DObject; anchor: THREE.Vector3 }> = [
         { obj: velocityLabel, anchor: velocityLabelAnchor },
@@ -308,13 +344,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       ];
       for (const item of candidates) {
         if (!item.obj.visible) continue;
-        const projected = item.anchor.clone().project(camera);
+        const projected = item.anchor.clone().project(activeCamera);
         activeLabels.push({
           obj: item.obj,
           anchor: item.anchor,
           sx: (projected.x * 0.5 + 0.5) * viewportWidth,
           sy: (-projected.y * 0.5 + 0.5) * viewportHeight,
-          depth: Math.max(0.5, item.anchor.distanceTo(camera.position))
+          depth: Math.max(0.5, item.anchor.distanceTo(activeCamera.position))
         });
       }
       if (activeLabels.length === 0) return;
@@ -347,12 +383,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         }
       }
 
-      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+      const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(activeCamera.quaternion);
+      const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(activeCamera.quaternion);
       const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
       for (let i = 0; i < activeLabels.length; i++) {
         const item = activeLabels[i]!;
-        const worldPerPx = (2 * item.depth * tanHalfFov) / Math.max(240, viewportHeight);
+        const worldPerPx = activeCamera instanceof THREE.OrthographicCamera
+          ? (activeCamera.top - activeCamera.bottom) / Math.max(240, viewportHeight)
+          : (2 * item.depth * tanHalfFov) / Math.max(240, viewportHeight);
         const shiftX = (item.sx - baseX[i]!) * worldPerPx;
         const shiftY = -(item.sy - baseY[i]!) * worldPerPx;
         item.obj.position
@@ -460,13 +498,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
                 const closed = pointsPerConductor > 24;
                 const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
                 const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), 0.026, 10, closed);
-                const conductorMat = new THREE.MeshStandardMaterial({
-                  color: 0xd97706,
-                  metalness: 0.84,
-                  roughness: 0.24,
-                  emissive: 0x7c2d12,
-                  emissiveIntensity: 0.26
-                });
+                const conductorMat = brushedCopperMaterial();
                 staticGroup.add(new THREE.Mesh(tubeGeo, conductorMat));
               }
             }
@@ -482,7 +514,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               const closed = points[0]!.distanceTo(points[points.length - 1]!) < 0.06;
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
               const geometry = new THREE.TubeGeometry(curve, Math.max(32, points.length * 2), 0.012, 5, closed);
-              const material = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.8 });
+              const material = magneticFluxMaterial();
               staticGroup.add(new THREE.Mesh(geometry, material));
             }
           }
@@ -501,7 +533,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               const points = trail.map((point) => mapPhysicalPoint(point, true));
               const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
               const geometry = new THREE.TubeGeometry(curve, Math.max(24, points.length), 0.012, 5, false);
-              const material = new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.82 });
+              const material = magneticFluxMaterial(0x4ade80);
               trailGroup.add(new THREE.Mesh(geometry, material));
             }
           }
@@ -518,8 +550,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       resize: (nextWidth, nextHeight) => {
         const nextW = Math.max(320, nextWidth);
         const nextH = Math.max(240, nextHeight);
-        camera.aspect = nextW / nextH;
-        camera.updateProjectionMatrix();
+        if (morph) {
+          if (morph.getMorphT() === 0 && !morph.isAnimating) morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
+          morph.resize(nextW, nextH);
+        }
+        else { camera.aspect = nextW / nextH; camera.updateProjectionMatrix(); }
         renderer.setSize(nextW, nextH);
         cssRenderer.setSize(nextW, nextH);
         dirty = true;
@@ -559,7 +594,26 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const renderLoop = (now: number) => {
       rafId = requestAnimationFrame(renderLoop);
-      controls.update();
+      if (morph) {
+        const target = morphPropsRef.current.morphTarget;
+        if (target !== lastMorphTarget) {
+          if (target === 1 && morph.getMorphT() === 0 && !morph.isAnimating) {
+            morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
+          }
+          morph.startMorphTo(target, now);
+          lastMorphTarget = target;
+          flatNotified = false;
+          dirty = true;
+        }
+        if (morph.update(now)) dirty = true;
+        controls.enabled = morph.getMorphT() === 0 && !morph.isAnimating;
+        if (controls.enabled) controls.update();
+        const progress = morph.getMorphT();
+        container.dataset.morphT = String(progress);
+        morphPropsRef.current.onMorphProgress?.(progress);
+      } else {
+        controls.update();
+      }
 
       const latestState = simStateRef?.current ?? latestStateRef.current;
       if (latestState && latestState !== lastSyncedState) {
@@ -575,8 +629,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (isMag3d) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
-      renderer.render(scene, camera);
-      cssRenderer.render(scene, camera);
+      const renderCamera = morph?.getActiveCamera() ?? camera;
+      renderer.render(scene, renderCamera);
+      cssRenderer.render(scene, renderCamera);
+      if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
+        flatNotified = true;
+        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)));
+      }
       const renderDuration = performance.now() - renderStart;
       performanceGuard.observe(renderDuration);
       lastRenderTime = now;

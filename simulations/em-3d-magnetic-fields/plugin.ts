@@ -35,7 +35,7 @@ const paramSchema: readonly ParamFieldSpec<Magnetic3dParams>[] = [
   { key: 'uniformBz', kind: 'number', label: '匀强模式磁感应强度 Bz', unit: 'T', min: 0.5, max: 4, step: 0.5, defaultValue: 2.0 }
 ];
 
-export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams, Magnetic3dState>({
+export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Magnetic3dParams, Magnetic3dState>({
   meta: {
     id: 'em-3d-magnetic-fields',
     title: '3D 电磁空间场与左手/右手定则 (E10)',
@@ -97,7 +97,7 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
   // Pure 2D XY projection fallback for non-WebGL headless / singlefile inspection
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
-    const project3D = (p: { x: number; y: number; z: number }) => m.toScreen(p.x + p.z * 0.45, p.y + p.z * 0.25);
+    const project3D = (p: { x: number; y: number; z: number }) => m.toScreen(p.z, p.y);
 
     ctx.save();
     if (activeLayers.has('conductors')) {
@@ -152,8 +152,8 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
   },
   getControlHandles: (state, params) => {
     const origin = {
-      x: state.position.x + state.position.z * 0.45,
-      y: state.position.y + state.position.z * 0.25
+      x: state.position.z,
+      y: state.position.y
     };
     return [
       {
@@ -171,8 +171,8 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
   },
   getForceVectors: (state) => {
     const origin = {
-      x: state.position.x + state.position.z * 0.45,
-      y: state.position.y + state.position.z * 0.25
+      x: state.position.z,
+      y: state.position.y
     };
     const acceleration = state.lorentzForce;
     return [
@@ -180,7 +180,7 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
         id: 'lorentz-acceleration',
         label: 'a洛 = (q/m)v×B',
         origin,
-        force: { x: acceleration.x + acceleration.z * 0.45, y: acceleration.y + acceleration.z * 0.25 },
+        force: { x: acceleration.z, y: acceleration.y },
         color: '#fb7185',
         category: 'magnetic',
         unit: 'm/s²'
@@ -192,12 +192,12 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
       id: 'helical-particle',
       label: '带电粒子随动参考系 (2D 投影)',
       getOrigin: (state) => ({
-        x: state.position.x + state.position.z * 0.45,
-        y: state.position.y + state.position.z * 0.25
+        x: state.position.z,
+        y: state.position.y
       }),
       getVelocity: (state) => ({
-        x: state.velocity.x + state.velocity.z * 0.45,
-        y: state.velocity.y + state.velocity.z * 0.25
+        x: state.velocity.z,
+        y: state.velocity.y
       })
     }
   ],
@@ -221,6 +221,7 @@ export const em3dMagneticFieldsPlugin = defineSimulationPlugin<Magnetic3dParams,
       }
     ];
   }
-});
+}), { spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
+  default3DAzimuthRad: 0.67, default3DPolarRad: 1.08 } });
 
 export default em3dMagneticFieldsPlugin;

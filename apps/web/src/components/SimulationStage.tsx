@@ -3,7 +3,7 @@ import uPlot from 'uplot';
 import { ChevronDown, ChevronUp, Crosshair, MoveDiagonal2, RotateCcw, Ruler } from 'lucide-react';
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
-import { resolvePluginParams } from '@physforge/sim-sdk';
+import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
   StoryDeck,
   StoryRunner,
@@ -102,6 +102,8 @@ interface SimulationStageProps {
   onStoryPlaying?: (playing: boolean) => void;
   onStoryFbd?: (enabled: boolean) => void;
   onStoryFrame?: (frame: string) => void;
+  onMorphProgress?: (progress: number) => void;
+  onWebGLFallback?: () => void;
 }
 
 const FIXED_DT = 1 / 240; // 240 Hz 物理固定步长
@@ -182,11 +184,25 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   onScrubTime,
   onTogglePoeMask,
   onTelemetryUpdate,
-  storyDeck, storyNavigationRef, onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame
+  storyDeck, storyNavigationRef, onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame,
+  onMorphProgress, onWebGLFallback
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = canvasRefExternal ?? internalCanvasRef;
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
+  const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
+  const [heldThreeId, setHeldThreeId] = useState<string | null>(() => view3dEnabled ? plugin.meta.id : null);
+  const showThree = view3dEnabled || Boolean(presentationMode && spatial && heldThreeId === plugin.meta.id);
+  const previouslyShowThreeRef = useRef(showThree);
+  const initialFlatViewportRef = useRef<Viewport | undefined>(undefined);
+  const enterFromCanvas = showThree && !previouslyShowThreeRef.current && Boolean(presentationMode && spatial);
+  useEffect(() => {
+    previouslyShowThreeRef.current = showThree;
+    if (view3dEnabled) setHeldThreeId(plugin.meta.id);
+    else if (!presentationMode || !spatial) setHeldThreeId(null);
+    if (!showThree) onMorphProgress?.(1);
+    else if (!spatial) onMorphProgress?.(0);
+  }, [showThree, view3dEnabled, plugin.meta.id, presentationMode, spatial]);
   const uplotWrapRef = useRef<HTMLDivElement | null>(null);
   const uplotInstanceRef = useRef<uPlot | null>(null);
   const lastPlotSyncMsRef = useRef(0);
@@ -221,6 +237,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     offsetY: 0
   });
 
+  if (enterFromCanvas) initialFlatViewportRef.current = { ...viewportRef.current };
+  else if (!showThree) initialFlatViewportRef.current = undefined;
+
   const [zoomPercent, setZoomPercent] = useState<number>(100);
   const [fbdCount, setFbdCount] = useState<number>(0);
   const fbdCountRef = useRef<number>(0);
@@ -249,6 +268,15 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     };
     setZoomPercent(100);
     setOverlayViewport(viewportRef.current);
+  };
+  const completeFlatMorph = (aligned: Viewport) => {
+    const transform = { scale: aligned.scale, offsetX: aligned.offsetX, offsetY: aligned.offsetY };
+    cameraRef.current = transform;
+    viewportRef.current = aligned;
+    userTransformedViewRef.current = true;
+    setZoomPercent(Math.round(100 * aligned.scale / Math.max(1e-6, baseScaleRef.current)));
+    setOverlayViewport(aligned);
+    setHeldThreeId(null);
   };
   const dragModeRef = useRef<
     | { kind: 'pan'; lastX: number; lastY: number }
@@ -763,6 +791,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const box = stageBoxRef.current;
     if (!box) return;
     const handleWheel = (e: WheelEvent) => {
+      if (!canvasRef.current) return; // OrbitControls owns the wheel in 3D.
       e.preventDefault();
       const rect = box.getBoundingClientRect();
       const cx = e.clientX - rect.left;
@@ -829,7 +858,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const ro = new ResizeObserver(updateSize);
     ro.observe(box);
     return () => ro.disconnect();
-  }, []);
+  }, [showThree]);
 
   // 主 60fps requestAnimationFrame 固定物理步长循环
   useEffect(() => {
@@ -1019,7 +1048,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           backgroundColor: 'var(--pf-canvas-bg)'
         }}
       >
-        {view3dEnabled ? (
+        {showThree ? (
           <Suspense
             fallback={
               <div className="w-full h-full flex items-center justify-center text-sky-300 text-sm">
@@ -1028,12 +1057,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             }
           >
             <LazyThreeStage
+              key={plugin.meta.id}
               plugin={plugin as SimulationPluginV2<ParamRecord, unknown>}
               simState={simStateRef.current}
               simStateRef={simStateRef}
               params={params}
               activeLayers={new Set(activeLayers)}
               presentationMode={presentationMode}
+              morphTarget={view3dEnabled ? 0 : 1}
+              initialFlatViewport={initialFlatViewportRef.current}
+              onMorphProgress={onMorphProgress}
+              onMorphFlat={completeFlatMorph}
+              onWebGLFallback={() => { setHeldThreeId(null); onWebGLFallback?.(); }}
             />
           </Suspense>
         ) : (
