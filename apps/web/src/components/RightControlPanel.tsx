@@ -52,9 +52,9 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
     const coreKeys = new Set(core.map((field) => field.key));
     return {
       coreFields: core,
-      extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key))
+      extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!(plugin.meta.id==='builder-circuit-mna' && params.topology==='divider-lamp') || field.key==='topology'))
     };
-  }, [plugin, params.mode]);
+  }, [plugin, params.mode, params.topology]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
@@ -64,7 +64,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       const max = field.max ?? 100;
       const progress = max > min ? Math.max(0, Math.min(100, ((numberValue - min) / (max - min)) * 100)) : 0;
       const decimals = String(field.step ?? '').split('.')[1]?.length ?? 1;
-      const shortLabel = field.label.replace(/（[^）]*）/g, '');
+      const shortLabel = plugin.meta.id==='builder-circuit-mna' && params.topology==='divider-lamp' && field.key==='sliderR' ? '滑片下段 Rₚ' : field.label.replace(/（[^）]*）/g, '');
       return (
         <div key={field.key} className="space-y-0.5">
           <div className="flex items-baseline justify-between gap-2 text-[11px] font-medium">
@@ -110,6 +110,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
 
   const isCircuit = plugin.meta.id === 'builder-circuit-mna' || plugin.meta.id === 'circuit-dc-capacitor-mna';
   const emf = typeof params.emf === 'number' ? params.emf : 12;
+  const divider = isCircuit && params.topology==='divider-lamp';
   const isInduction = plugin.meta.id === 'em-induction-double-rod';
   const isOpticalInterface = plugin.meta.id === 'builder-optics-ray' && params.sceneMode === 'tir-interface';
   const energyReadouts = [
@@ -170,9 +171,15 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
         </section>
 
         {isCircuit ? (
-          <div className="space-y-1.5 pt-0.5">
-            <div className="flex justify-between font-mono text-[10px] text-slate-400"><span>0V</span><span>电势分布</span><span>{emf.toFixed(0)}V</span></div>
-            <div className="h-1.5 w-full rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400 shadow-[0_0_8px_rgba(56,189,248,0.4)]" />
+          <div className="space-y-2 pt-0.5">
+            {divider && <section data-testid="b2-divider-readouts" className="space-y-1.5" style={{color:'var(--pf-text-muted)'}}>
+              {([{key:'sourceTerminalVoltage',label:'电源路端 Uₛ',unit:'V'},{key:'lampVoltage',label:'灯泡电压 Uₗ',unit:'V'},{key:'lampCurrent',label:'灯泡电流 Iₗ',unit:'A'},{key:'outputPower',label:'灯泡功率 Pₗ',unit:'W'}] as const).map(({key,label,unit})=>{
+                const value=telemetry.observables[key];
+                return <div key={key} className="flex justify-between gap-2 text-xs"><span>{label}</span><span data-testid={'b2-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof value==='number'&&Number.isFinite(value)?value.toFixed(3)+' '+unit:'—'}</span></div>;
+              })}
+            </section>}
+            <div className="flex justify-between font-mono text-[10px]" style={{color:'var(--pf-text-muted)'}}><span>0V</span><span>电势分布</span><span>{emf.toFixed(0)}V</span></div>
+            <div data-testid="b2-inspector-potential" data-divider-palette={divider?(emf===0?'zero':'range'):undefined} className="h-1.5 w-full rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400 shadow-[0_0_8px_rgba(56,189,248,0.4)]" />
           </div>
         ) : isInduction ? (
           <section data-testid="e04-energy-readouts" className="pf-energy-readouts space-y-2 pt-1">

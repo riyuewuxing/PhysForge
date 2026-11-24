@@ -155,14 +155,15 @@ export function renderDivider(ctx:CanvasRenderingContext2D,state:CircuitState,pa
   arrow(g.sourceBottom,pt(X_SOURCE,BATTERY_Y-GAP),state.totalCurrent,low);
   arrow(pt(X_SOURCE,BATTERY_Y+GAP),g.sourceTop,state.totalCurrent,high);
   arrow(g.sourceTop,g.rStart,state.totalCurrent,high);arrow(g.rEnd,g.sliderTop,state.totalCurrent,mid);
-  arrow(g.sliderTop,g.wiper,state.totalCurrent,mid);arrow(g.wiper,g.sliderBottom,state.branchCurrent1,tap);
   flow(g.branchIn,state.branchCurrent2,tap);flow(g.lampReturn,state.branchCurrent2,low);flow(g.groundReturn,state.totalCurrent,low);
   // Fixed label lanes leave both branches and the wiper readable at endpoints.
-  label(pt(X_SOURCE-.30,BATTERY_Y+.17),'E = '+params.emf.toFixed(1)+' V',high);
+  label(pt(X_SOURCE+.46,BATTERY_Y+.17),'E = '+params.emf.toFixed(1)+' V',high);
   label(pt(-1.175,Y_TOP+.16),'r = '+params.internalR.toFixed(1)+' Ω',ink);
-  label(pt(X_WIPER-.58,(Y_TOP+g.wiper.y)/2+.08),'R上 '+(DIVIDER_RESISTANCE-dividerLowerResistance(params.sliderR)).toFixed(1)+' Ω');
-  label(pt(X_WIPER-.58,(g.wiper.y+Y_BOTTOM)/2-.08),'R下 '+dividerLowerResistance(params.sliderR).toFixed(1)+' Ω');
-  label(pt(X_WIPER-.58,g.wiper.y+.0),'滑片 '+(dividerLowerResistance(params.sliderR)*5).toFixed(0)+'%',warm);
+  label(pt(-.96,.95),'R上 '+(DIVIDER_RESISTANCE-dividerLowerResistance(params.sliderR)).toFixed(1)+' Ω');
+  label(pt(-.96,.73),'R下 '+dividerLowerResistance(params.sliderR).toFixed(1)+' Ω');
+  label(pt(-.96,-.25),'I总 = '+state.totalCurrent.toFixed(2)+' A',mid);
+  label(pt(-.96,-.48),'I下 = '+state.branchCurrent1.toFixed(2)+' A',tap);
+  label(pt(X_WIPER-.32,g.wiper.y),'滑片 '+(dividerLowerResistance(params.sliderR)*5).toFixed(0)+'%',warm,Math.max(9,f*.84));
   label(pt(X_LAMP,Y_LAMP-.29),'P灯 = '+state.outputPower.toFixed(2)+' W',warm,Math.max(10,f*.88));
   if(layers.has('potential-labels')){
     label(pt(X_SOURCE+.23,Y_TOP+.16),source.toFixed(2)+' V',high);

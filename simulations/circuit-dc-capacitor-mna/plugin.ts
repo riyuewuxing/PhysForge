@@ -2,9 +2,6 @@ import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import {
   createWorldMapper,
   defineSimulationPlugin,
-  drawFloatingIUCard,
-  drawGlowingBulbSymbol,
-  drawGroundSymbol,
   drawRoundedPotentialPath,
   type DiagramPrimitive,
   type ParamFieldSpec
@@ -13,11 +10,11 @@ import {
   checkInvariants,
   computeObservables,
   createInitialState,
-  sampleDividerLampIvCurve,
   stepCircuit,
   type CircuitParams,
   type CircuitState
 } from './engine.js';
+import { dividerDefaultCamera, dividerWiperX, dividerWiperY, dividerRFromY, exportDividerDiagram, renderDivider } from './dividerView.js';
 
 const branchPhaseMap = new Map<string, number>();
 let lastCircuitFrameTimeMs: number | undefined;
@@ -140,61 +137,6 @@ export function drawShortCircuitBanner(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(`警告：检测到电路短路（${detailMessage}），已触发拓扑保护`, x + barWidth / 2, y + barHeight / 2);
-  ctx.restore();
-}
-
-function drawVerticalZigzagResistor(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y1: number,
-  y2: number,
-  tint: string
-): void {
-  if (![x, y1, y2].every(Number.isFinite) || Math.abs(y2 - y1) < 2) return;
-  const start = Math.min(y1, y2);
-  const end = Math.max(y1, y2);
-  const span = end - start;
-  ctx.save();
-  ctx.strokeStyle = tint;
-  ctx.lineWidth = 3;
-  ctx.lineJoin = 'round';
-  ctx.shadowColor = tint;
-  ctx.shadowBlur = 8;
-  ctx.beginPath();
-  ctx.moveTo(x, start);
-  const segments = 8;
-  for (let index = 1; index < segments; index += 1) {
-    ctx.lineTo(x + (index % 2 === 0 ? -8 : 8), start + span * index / segments);
-  }
-  ctx.lineTo(x, end);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawHorizontalZigzagResistor(
-  ctx: CanvasRenderingContext2D,
-  x1: number,
-  x2: number,
-  y: number,
-  tint: string
-): void {
-  if (![x1, x2, y].every(Number.isFinite) || Math.abs(x2 - x1) < 2) return;
-  const start = Math.min(x1, x2);
-  const end = Math.max(x1, x2);
-  ctx.save();
-  ctx.strokeStyle = tint;
-  ctx.lineWidth = 3;
-  ctx.lineJoin = 'round';
-  ctx.shadowColor = tint;
-  ctx.shadowBlur = 8;
-  ctx.beginPath();
-  ctx.moveTo(start, y);
-  const segments = 8;
-  for (let index = 1; index < segments; index += 1) {
-    ctx.lineTo(start + (end - start) * index / segments, y + (index % 2 === 0 ? -7 : 7));
-  }
-  ctx.lineTo(end, y);
-  ctx.stroke();
   ctx.restore();
 }
 
@@ -475,26 +417,30 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     difficulty: '高三一轮',
     version: '2.0.0'
   },
+  defaultView: {
+    scale: (params,{width,height}) => params.topology==='divider-lamp'?dividerDefaultCamera(width,height).scale:1,
+    offsetRatioX: (params,{width,height}) => params.topology==='divider-lamp'?dividerDefaultCamera(width,height).offsetRatioX:0,
+    offsetRatioY: (params,{width,height}) => params.topology==='divider-lamp'?dividerDefaultCamera(width,height).offsetRatioY:0
+  },
   getControlHandles: (_state, params) => {
     if (!['closed-power', 'series-parallel-dynamic', 'rc-bridge-charge', 'divider-lamp'].includes(params.topology)) {
       return [];
     }
     const sliderFraction = Math.max(0, Math.min(1, params.sliderR / 20));
     const dividerLamp = params.topology === 'divider-lamp';
-    const dividerContactFraction = Math.max(0.05, Math.min(0.95, sliderFraction));
     return [{
       id: 'slider-resistor',
       label: `Rp=${params.sliderR.toFixed(1)}Ω`,
       position: {
-        x: dividerLamp ? 0.17 : 1.7,
-        y: dividerLamp ? -1.093 + dividerContactFraction * 2.52 : -0.7 + sliderFraction * 1.4
+        x: dividerLamp ? dividerWiperX : 1.7,
+        y: dividerLamp ? dividerWiperY(params.sliderR) : -0.7 + sliderFraction * 1.4
       },
       handleKind: 'point',
       showWhenIdle: !dividerLamp,
       color: '#f472b6',
       onDrag: (worldPos) => {
         const value = Number.isFinite(worldPos.y)
-          ? (dividerLamp ? ((worldPos.y + 1.093) / 2.52) * 20 : ((worldPos.y + 0.7) / 1.4) * 20)
+          ? (dividerLamp ? dividerRFromY(worldPos.y) : ((worldPos.y + 0.7) / 1.4) * 20)
           : params.sliderR;
         const nextR = Math.max(0, Math.min(20, value));
         return { sliderR: Math.round(nextR * 2) / 2 };
@@ -511,6 +457,7 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     importScene: (dsl) => dsl.params as Partial<CircuitParams>
   },
   exportDiagramIR: (_state, params) => {
+    if(params.topology==='divider-lamp')return exportDividerDiagram(params);
     const primitives: DiagramPrimitive[] = [
       { kind: 'circuitElement', element: 'battery', x1: -2.2, y1: -1.4, x2: -2.2, y2: 1.4, label: `E=${params.emf}V, r=${params.internalR}\\Omega` },
       { kind: 'line', x1: -2.2, y1: 1.4, x2: -0.6, y2: 1.4 },
@@ -641,7 +588,9 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     { key: 'capVoltage', label: '电容电压 Uc', unit: 'V', color: '#38bdf8' },
     { key: 'capCurrent', label: '电容电流 Ic', unit: 'A', color: '#f472b6' },
     { key: 'totalCurrent', label: '干路总电流 I', unit: 'A', color: '#fbbf24' },
-    { key: 'outputPower', label: '输出功率 P出', unit: 'W', color: '#4ade80' }
+    { key: 'outputPower', label: '输出功率 P出', unit: 'W', color: '#4ade80' },
+    { key: 'lampCurrent', label: '灯泡电流 I灯', unit: 'A', color: '#fbbf24' },
+    { key: 'lampVoltage', label: '灯泡电压 U灯', unit: 'V', color: '#38bdf8' }
   ],
   formatFormulas: (state, params) => {
     if (params.topology === 'closed-power') {
@@ -658,9 +607,15 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
       return [
         {
           id: 'nonlinear-lamp-law',
-          label: '小灯泡伏安特性（正向工作区）',
-          latex: '\\begin{aligned}I_L &= 0.25 U_L^{0.65} \\\\ P_L &= U_L I_L\\end{aligned}',
-          substitutedLatex: `U_L = ${state.terminalVoltage.toFixed(2)}\\text{ V},\\quad I_L = ${state.branchCurrent2.toFixed(2)}\\text{ A}\\quad P_L = ${state.outputPower.toFixed(2)}\\text{ W}`
+          label: '小灯泡伏安特性（幂律近似）',
+          latex: '\\begin{gathered}I_L \\approx 0.25 U_L^{0.65}\\\\ P_L = U_L I_L\\end{gathered}',
+          substitutedLatex: `\\begin{gathered}U_L=${state.terminalVoltage.toFixed(2)}\\text{ V}\\\\ I_L=${state.branchCurrent2.toFixed(2)}\\text{ A}\\\\ P_L=${state.outputPower.toFixed(2)}\\text{ W}\\end{gathered}`
+        },
+        {
+          id:'divider-balance',
+          label:'电源路端与分压节点',
+          latex:'\\begin{gathered}U_s=E-I_s r\\\\ I_s=I_{\\text{下}}+I_L\\end{gathered}',
+          substitutedLatex:`\\begin{gathered}U_s=${(state.divider?.sourceTerminalVoltage??0).toFixed(2)}\\text{ V}\\\\ I_s=${state.totalCurrent.toFixed(2)}\\text{ A}\\end{gathered}`
         }
       ];
     }
@@ -674,19 +629,11 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     ];
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
+    if(params.topology==='divider-lamp'){renderDivider(ctx,state,params,viewport,activeLayers);return;}
     const m = createWorldMapper(viewport);
-    const dividerLamp = params.topology === 'divider-lamp';
     const basePpm = Math.min(viewport.width, viewport.height) * 0.24;
     const px = (pixels: number): number => m.len(pixels / basePpm);
-    const ppm = m.ppm;
-    const cx = dividerLamp ? viewport.width * 0.5 + viewport.offsetX : m.toX(0);
-    const cy = m.toY(0);
-    const left = dividerLamp ? cx - Math.min(viewport.width * 0.31, 250) : m.toX(-1.7);
-    const right = dividerLamp ? cx + Math.min(viewport.width * 0.31, 250) : m.toX(1.7);
-    const top = dividerLamp ? cy - Math.min(viewport.height * 0.27, 140) : m.toY(0.82);
-    const bot = dividerLamp ? cy + Math.min(viewport.height * 0.27, 140) : m.toY(-0.82);
-    const modelOriginX = viewport.width * 0.45 + viewport.offsetX - (dividerLamp ? 1.53 * ppm : 0);
-    const modelOriginY = viewport.height * 0.5 + viewport.offsetY - (dividerLamp ? 0.167 * ppm : 0);
+    const cx=m.toX(0),cy=m.toY(0),left=m.toX(-1.7),right=m.toX(1.7),top=m.toY(.82),bot=m.toY(-.82);
     const finiteVoltages = state.nodeVoltages.filter(Number.isFinite);
     const vMin = Math.min(0, ...finiteVoltages);
     const vMax = Math.max(1, ...finiteVoltages);
@@ -726,95 +673,6 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     };
 
     if (activeLayers.has('schematic')) {
-      if (params.topology === 'divider-lamp') {
-        const batteryX = modelOriginX - 0.52 * ppm;
-        const sliderX = modelOriginX + 1.7 * ppm;
-        const yTop = modelOriginY - 1.26 * ppm;
-        const yBottom = modelOriginY + 1.26 * ppm;
-        const ratio = Math.max(0.05, Math.min(0.95, params.sliderR / 20));
-        const contactY = yBottom - ratio * (yBottom - yTop);
-        const bulbX = modelOriginX + 2.7 * ppm;
-        const bulbY = (contactY + yBottom) * 0.5;
-        const bulbRadius = 18;
-        const sourceV = state.nodeVoltages[1] ?? params.emf;
-        const bulbV = state.nodeVoltages[2] ?? state.terminalVoltage;
-        const zeroV = state.nodeVoltages[0] ?? 0;
-        const internalRStart = { x: batteryX + 0.28 * ppm, y: yTop };
-        const internalREnd = { x: batteryX + 0.9 * ppm, y: yTop };
-        const high = { x: batteryX, y: yTop };
-        const rheostatTop = { x: sliderX, y: yTop };
-        const wiper = { x: sliderX, y: contactY };
-        const rheostatBottom = { x: sliderX, y: yBottom };
-        const bulbTop = { x: bulbX, y: bulbY - bulbRadius };
-        const bulbBottom = { x: bulbX, y: bulbY + bulbRadius };
-        const low = { x: batteryX, y: yBottom };
-
-        ctx.save();
-        drawRoundedPotentialPath(ctx, [high, internalRStart], voltageToColor(sourceV, vMin, vMax), voltageToColor(sourceV, vMin, vMax), 12, 5);
-        drawHorizontalZigzagResistor(ctx, internalRStart.x, internalREnd.x, yTop, voltageToColor(sourceV, vMin, vMax));
-        drawRoundedPotentialPath(ctx, [internalREnd, rheostatTop], voltageToColor(sourceV, vMin, vMax), voltageToColor(sourceV, vMin, vMax), 12, 5);
-        drawRoundedPotentialPath(ctx, [rheostatBottom, low], voltageToColor(zeroV, vMin, vMax), voltageToColor(zeroV, vMin, vMax), 12, 5);
-        drawRoundedPotentialPath(ctx, [wiper, { x: bulbX, y: contactY }, { x: bulbX, y: bulbTop.y }], voltageToColor(bulbV, vMin, vMax), voltageToColor(bulbV, vMin, vMax), 12, 5);
-        drawRoundedPotentialPath(ctx, [bulbBottom, { x: bulbX, y: yBottom }, rheostatBottom], voltageToColor(zeroV, vMin, vMax), voltageToColor(zeroV, vMin, vMax), 12, 5);
-
-        // Battery and internal resistance in series with the full rheostat.
-        const batteryMid = (yTop + yBottom) * 0.5;
-        ctx.strokeStyle = voltageToColor(sourceV, vMin, vMax);
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(batteryX, yTop);
-        ctx.lineTo(batteryX, batteryMid - 12);
-        ctx.moveTo(batteryX - 14, batteryMid - 8);
-        ctx.lineTo(batteryX + 14, batteryMid - 8);
-        ctx.moveTo(batteryX - 8, batteryMid + 8);
-        ctx.lineTo(batteryX + 8, batteryMid + 8);
-        ctx.moveTo(batteryX, batteryMid + 12);
-        ctx.lineTo(batteryX, yBottom);
-        ctx.stroke();
-
-        // Split rheostat sections share the real MNA wiper node.
-        drawVerticalZigzagResistor(ctx, sliderX, yTop + 8, contactY - 8, voltageToColor(sourceV, vMin, vMax));
-        drawVerticalZigzagResistor(ctx, sliderX, contactY + 8, yBottom - 8, voltageToColor(zeroV, vMin, vMax));
-        ctx.strokeStyle = '#f472b6';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(sliderX + 28, contactY);
-        ctx.lineTo(sliderX + 4, contactY);
-        ctx.lineTo(sliderX + 13, contactY - 7);
-        ctx.moveTo(sliderX + 4, contactY);
-        ctx.lineTo(sliderX + 13, contactY + 7);
-        ctx.stroke();
-        drawGlowingBulbSymbol(ctx, bulbX, bulbY, state.outputPower, 8, bulbRadius);
-        drawGroundSymbol(ctx, sliderX, yBottom, '#38bdf8');
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = '600 13px system-ui, sans-serif';
-        ctx.fillText(`E=${params.emf.toFixed(1)} V`, batteryX - 96, batteryMid + 5);
-        ctx.fillStyle = '#cbd5e1';
-        ctx.fillText(`r=${params.internalR.toFixed(1)} Ω`, batteryX + 20, batteryMid + 4);
-        ctx.fillStyle = '#f472b6';
-        ctx.fillText(`R₀=20 Ω`, sliderX + 34, yTop + 12);
-        ctx.fillText('滑片位置', sliderX - 74, contactY - 9);
-        ctx.restore();
-
-        if (activeLayers.has('current-flow')) {
-          const options = { isShorted };
-          drawCurrentParticles(ctx, 'divider-lamp-upper', high, rheostatTop, state.totalCurrent, dtSec, options);
-          drawCurrentParticles(ctx, 'divider-lamp-bulb', { x: bulbX, y: contactY }, bulbBottom, state.branchCurrent2, dtSec, options);
-        }
-
-        const samples = sampleDividerLampIvCurve(Math.max(params.emf, 1), 16);
-        const cardX = Math.min(viewport.width - 440, bulbX + 26);
-        const cardY = Math.min(viewport.height - 144, yBottom + 10);
-        drawFloatingIUCard(
-          ctx,
-          cardX,
-          cardY,
-          144,
-          132,
-          samples,
-          { u: state.terminalVoltage, i: state.branchCurrent2 }
-        );
-      } else {
       ctx.save();
       const topLeft = { x: left, y: top };
       const topRight = { x: right, y: top };
@@ -904,21 +762,10 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
         }
       }
       ctx.restore();
-      }
     }
 
     if (activeLayers.has('potential-labels') && activeLayers.has('schematic')) {
-      const dividerRatio = Math.max(0.05, Math.min(0.95, params.sliderR / 20));
-      const dividerTop = modelOriginY - (dividerLamp ? 1.26 : 0.82) * ppm;
-      const dividerBottom = modelOriginY + (dividerLamp ? 1.26 : 0.82) * ppm;
-      const dividerWiperY = dividerBottom - dividerRatio * (dividerBottom - dividerTop);
-      const nodeLabels = params.topology === 'divider-lamp'
-        ? [
-            { id: 1, voltage: sourceVoltage, x: modelOriginX + 1.7 * ppm - 6, y: dividerTop - 18 },
-            { id: 2, voltage: loadVoltage, x: modelOriginX + 2.7 * ppm + 5, y: dividerWiperY },
-            { id: 0, voltage: groundVoltage, x: modelOriginX + 1.7 * ppm + 5, y: dividerBottom + 24 }
-          ]
-        : [
+      const nodeLabels = [
             { id: 1, voltage: sourceVoltage, x: left + px(6), y: top - px(10) },
             { id: 2, voltage: loadVoltage, x: right - px(72), y: top - px(10) },
             { id: 0, voltage: groundVoltage, x: right - px(52), y: bot + px(18) }
@@ -930,21 +777,18 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
       for (const node of nodeLabels) {
         ctx.fillStyle = voltageToColor(node.voltage, vMin, vMax);
         ctx.beginPath();
-        const nodeRadius = dividerLamp ? 4 : px(4);
-        const nodeYOffset = dividerLamp ? (node.id === 0 ? -4 : 10) : px(node.id === 0 ? -4 : 10);
+        const nodeRadius = px(4);
+        const nodeYOffset = px(node.id === 0 ? -4 : 10);
         ctx.arc(node.x, node.y + nodeYOffset, nodeRadius, 0, Math.PI * 2);
         ctx.fill();
         const numericVoltage = node.voltage;
-        const hasNumericVoltage = typeof numericVoltage === 'number' && Number.isFinite(numericVoltage);
-        const voltageLabel = params.topology === 'divider-lamp' && hasNumericVoltage
-          ? `${numericVoltage === 0 ? '' : numericVoltage > 0 ? '+' : ''}${numericVoltage.toFixed(1)} V`
-          : `N${node.id}=${numericVoltage?.toFixed(2) ?? '—'}V`;
-        ctx.fillText(voltageLabel, node.x + (dividerLamp ? 8 : px(8)), node.y);
+        const voltageLabel = `N${node.id}=${numericVoltage?.toFixed(2) ?? '—'}V`;
+        ctx.fillText(voltageLabel, node.x + px(8), node.y);
       }
       ctx.restore();
     }
 
-    if (activeLayers.has('current-flow') && activeLayers.has('schematic') && params.topology !== 'divider-lamp') {
+    if (activeLayers.has('current-flow') && activeLayers.has('schematic')) {
       const branchOptions = { isShorted };
       drawCurrentParticles(ctx, 'builder-circuit-mna-top-a', { x: left + px(20), y: top }, { x: cx - px(48), y: top }, state.totalCurrent, dtSec, branchOptions);
       drawCurrentParticles(ctx, 'builder-circuit-mna-top-b', { x: cx + px(48), y: top }, { x: right - px(20), y: top }, state.totalCurrent, dtSec, branchOptions);
@@ -958,8 +802,7 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
 
     if (activeLayers.has('meters')) {
       ctx.save();
-      const meterCenterX = dividerLamp ? modelOriginX + 1.7 * ppm : cx;
-      const meterY = dividerLamp ? modelOriginY + 0.74 * ppm : bot;
+      const meterCenterX=cx,meterY=bot;
       const drawMeter = (
         x: number,
         label: string,
@@ -967,7 +810,7 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
         unit: string,
         tint: string
       ) => {
-        const radius = dividerLamp ? 28 : px(34);
+        const radius = px(34);
         ctx.save();
         ctx.shadowColor = tint;
         ctx.shadowBlur = 14;
@@ -982,42 +825,18 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
         ctx.textAlign = 'center';
         ctx.fillStyle = '#f8fafc';
         ctx.font = 'bold 13px ui-monospace, monospace';
-        ctx.fillText(value.toFixed(2), x, meterY + (dividerLamp ? 2 : px(2)));
+        ctx.fillText(value.toFixed(2), x, meterY + px(2));
         ctx.fillStyle = tint;
         ctx.font = 'bold 10px ui-monospace, monospace';
-        ctx.fillText(unit, x, meterY + (dividerLamp ? 16 : px(16)));
+        ctx.fillText(unit, x, meterY + px(16));
         ctx.fillStyle = '#cbd5e1';
         ctx.font = '10px system-ui, sans-serif';
-        ctx.fillText(label, x, meterY + radius + (dividerLamp ? 14 : px(14)));
+        ctx.fillText(label, x, meterY + radius + px(14));
         ctx.restore();
       };
 
-      if (dividerLamp) {
-        const bulbX = modelOriginX + 2.7 * ppm;
-        const yTop = modelOriginY - 1.26 * ppm;
-        const yBottom = modelOriginY + 1.26 * ppm;
-        const ratio = Math.max(0.05, Math.min(0.95, params.sliderR / 20));
-        const contactY = yBottom - ratio * (yBottom - yTop);
-        const voltmeterX = meterCenterX + 1.56 * ppm;
-        ctx.save();
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
-        ctx.lineWidth = 1.6;
-        ctx.setLineDash([4, 3]);
-        ctx.beginPath();
-        ctx.moveTo(bulbX, contactY);
-        ctx.lineTo(voltmeterX, contactY);
-        ctx.lineTo(voltmeterX, meterY);
-        ctx.moveTo(voltmeterX, meterY);
-        ctx.lineTo(voltmeterX, yBottom);
-        ctx.lineTo(bulbX, yBottom);
-        ctx.stroke();
-        ctx.restore();
-        drawMeter(meterCenterX, '电流 I', state.branchCurrent2, 'A', '#fbbf24');
-        drawMeter(voltmeterX, '电压 U', state.terminalVoltage, 'V', '#38bdf8');
-      } else {
         drawMeter(meterCenterX - px(48), '电流 I', state.totalCurrent, 'A', '#fbbf24');
         drawMeter(meterCenterX + px(48), '电压 U', state.terminalVoltage, 'V', '#38bdf8');
-      }
       ctx.restore();
     }
 

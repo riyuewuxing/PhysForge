@@ -8,6 +8,7 @@ import {
   voltageToColor
 } from './plugin.js';
 import { createInitialState, type CircuitParams } from './engine.js';
+import { dividerPotentialColor, dividerWiperY } from './dividerView.js';
 
 function createMockContext(): CanvasRenderingContext2D {
   return {
@@ -81,6 +82,26 @@ describe('circuit-dc-capacitor-mna visual helpers', () => {
     expect(handle?.position.y).toBeCloseTo(0.167, 3);
     expect(handle?.onDrag({ x: 0.17, y: -1.093 }).sliderR).toBe(0);
     expect(handle?.onDrag({ x: 0.17, y: 1.427 }).sliderR).toBe(20);
+  });
+
+  it('exports series ammeter, parallel voltmeter and grounded divider with exact endpoints', () => {
+    for(const sliderR of [0,10,20]){
+      const p=resolvePluginParams<CircuitParams>(circuitDcCapacitorMnaPlugin.paramSchema,{topology:'divider-lamp',sliderR});
+      const state=createInitialState(p);
+      const ir=circuitDcCapacitorMnaPlugin.exportDiagramIR?.(state,p);
+      const elements=ir?.primitives.filter(q=>q.kind==='circuitElement')??[];
+      const a=elements.find(q=>q.element==='ammeter'),v=elements.find(q=>q.element==='voltmeter'),l=elements.find(q=>q.element==='lamp');
+      expect(a?.x2).toBeLessThan(l!.x1);
+      expect(a?.y1).toBe(l?.y1);
+      expect(v?.y1).toBeGreaterThan(l!.y1);
+      expect(v?.x1).toBeGreaterThan(a!.x2);
+      expect(elements.filter(q=>q.element==='resistor')).toHaveLength(sliderR===0||sliderR===20?2:3);
+      expect(circuitDcCapacitorMnaPlugin.getControlHandles?.(state,p)[0]?.position.y).toBeCloseTo(dividerWiperY(sliderR),12);
+    }
+    expect(dividerPotentialColor(0,12)).toBe('#67e8f9');
+    expect(dividerPotentialColor(6,12)).toBe('#ffc76f');
+    expect(dividerPotentialColor(12,12)).toBe('#ff7d77');
+    expect(dividerPotentialColor(0,0)).toBe(dividerPotentialColor(0,12));
   });
 
   it('shows the nonlinear lamp law for the divider-lamp preset instead of capacitor equations', () => {
