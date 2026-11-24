@@ -64,7 +64,7 @@ export interface TelemetrySummary {
 }
 
 const paramCommandStack = new CommandStack(50);
-let liveFormulaGesture: { modelId: string; key: string; before: ParamRecord } | null = null;
+let liveFormulaGesture: { modelId: string; key: string; epoch: number; before: ParamRecord } | null = null;
 
 interface ClassroomStore {
   selectedPluginId: string;
@@ -84,6 +84,8 @@ interface ClassroomStore {
   isBlackout: boolean;
   activeDeckId: string | null;
   storyBeatIndex: number;
+  /** Changes only at a lesson/experiment context boundary, not on every drag sample. */
+  paramContextEpoch: number;
   autoFreezeBadge: string | null;
   leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
@@ -129,9 +131,9 @@ interface ClassroomStore {
   setAutoFreezeBadge: (badge: string | null) => void;
   syncStoryParams: (modelId: string, params: ParamRecord) => void;
   setStoryLayers: (modelId: string, layerIds: readonly string[]) => void;
-  beginLiveFormula: (modelId: string, key: string) => void;
-  updateLiveFormula: (modelId: string, key: string, value: number) => void;
-  endLiveFormula: (modelId: string, key: string) => void;
+  beginLiveFormula: (modelId: string, key: string, epoch: number) => void;
+  updateLiveFormula: (modelId: string, key: string, value: number, epoch: number) => void;
+  endLiveFormula: (modelId: string, key: string, epoch: number) => void;
   setLeftSidebarOpen: (open: boolean) => void;
   setRightSidebarOpen: (open: boolean) => void;
   setOscilloscopeCollapsed: (collapsed: boolean) => void;
@@ -192,6 +194,7 @@ function applyLoadedPluginState(
     : plugin.presets[0] ?? null;
   const mergedOverrides = overrideParams ?? preset?.params;
   const params = resolvePluginParams(plugin.paramSchema, mergedOverrides);
+  liveFormulaGesture = null;
   set((s) => ({
     selectedPluginId: plugin.meta.id,
     loadedPlugin: plugin,
@@ -204,6 +207,7 @@ function applyLoadedPluginState(
     appMode: s.appMode === 'story' ? 'stage' : s.appMode,
     activeDeckId: null,
     storyBeatIndex: -1,
+    paramContextEpoch: s.paramContextEpoch + 1,
     autoFreezeBadge: null,
     isBlackout: false,
     leftSidebarOpen: false,
@@ -236,6 +240,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
   isBlackout: false,
   activeDeckId: null,
   storyBeatIndex: -1,
+  paramContextEpoch: 0,
   autoFreezeBadge: null,
   leftSidebarOpen: false,
   rightSidebarOpen: true,
@@ -285,6 +290,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     const preset = plugin.presets.find((p) => p.id === presetId);
     if (!preset) return;
     const params = resolvePluginParams(plugin.paramSchema, preset.params);
+    liveFormulaGesture = null;
     paramCommandStack.push({
       modelId: plugin.meta.id,
       label: `预设 ${preset.name}`,
@@ -293,6 +299,8 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     });
     set((s) => ({
       activePresetId: preset.id,
+      paramContextEpoch: s.paramContextEpoch + 1,
+      autoFreezeBadge: null,
       params,
       telemetry: { t: 0, observables: {}, events: [], invariants: [], formulaItems: [] },
       activeLayers: getDefaultLayers(plugin, preset.visibleLayers),
@@ -333,6 +341,11 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     const plugin = cur.loadedPlugin;
     const merged = { ...cur.params, ...patch };
     const resolved = resolvePluginParams(plugin.paramSchema, merged);
+    const changed = plugin.paramSchema.filter(field => resolved[field.key] !== cur.params[field.key]);
+    if (!changed.length) return;
+    const interruptedGesture = liveFormulaGesture !== null;
+    if (liveFormulaGesture) get().endLiveFormula(liveFormulaGesture.modelId, liveFormulaGesture.key, liveFormulaGesture.epoch);
+    const contextChanged = interruptedGesture || changed.some(field => field.kind !== 'number');
     paramCommandStack.push({
       modelId: plugin.meta.id,
       label,
@@ -343,6 +356,8 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
       activePresetId: null,
       params: resolved,
       scrubTime: null,
+      autoFreezeBadge: null,
+      paramContextEpoch: s.paramContextEpoch + (contextChanged ? 1 : 0),
       ...(Object.prototype.hasOwnProperty.call(patch, 'topology')
         ? { oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, resolved) }
         : {}),
@@ -354,12 +369,15 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
 
   undoParam: () => {
     const cur = get();
+    if (liveFormulaGesture) get().endLiveFormula(liveFormulaGesture.modelId, liveFormulaGesture.key, liveFormulaGesture.epoch);
     const entry = paramCommandStack.undo(cur.selectedPluginId);
     if (!entry) return;
     set((s) => ({
       activePresetId: null,
       params: entry.beforeParams,
       scrubTime: null,
+      autoFreezeBadge: null,
+      paramContextEpoch: s.paramContextEpoch + 1,
       canUndo: paramCommandStack.canUndo(cur.selectedPluginId),
       canRedo: paramCommandStack.canRedo(cur.selectedPluginId),
       resetNonce: s.resetNonce + 1
@@ -368,12 +386,15 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
 
   redoParam: () => {
     const cur = get();
+    if (liveFormulaGesture) get().endLiveFormula(liveFormulaGesture.modelId, liveFormulaGesture.key, liveFormulaGesture.epoch);
     const entry = paramCommandStack.redo(cur.selectedPluginId);
     if (!entry) return;
     set((s) => ({
       activePresetId: null,
       params: entry.afterParams,
       scrubTime: null,
+      autoFreezeBadge: null,
+      paramContextEpoch: s.paramContextEpoch + 1,
       canUndo: paramCommandStack.canUndo(cur.selectedPluginId),
       canRedo: paramCommandStack.canRedo(cur.selectedPluginId),
       resetNonce: s.resetNonce + 1
@@ -387,11 +408,13 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
         : [...s.activeLayers, layerId]
     })),
 
-  setPlaying: (playing) => set({ isPlaying: playing, scrubTime: playing ? null : get().scrubTime }),
+  setPlaying: (playing) => set((s) => ({ isPlaying: playing, scrubTime: playing ? null : s.scrubTime,
+    autoFreezeBadge: playing ? null : s.autoFreezeBadge })),
   togglePlaying: () =>
     set((s) => ({
       isPlaying: !s.isPlaying,
-      scrubTime: !s.isPlaying ? null : s.scrubTime
+      scrubTime: !s.isPlaying ? null : s.scrubTime,
+      autoFreezeBadge: !s.isPlaying ? null : s.autoFreezeBadge
     })),
   setPlaybackSpeed: (speed) => set({ playbackSpeed: speed }),
   toggleStrobe: () => set((s) => ({ strobeEnabled: !s.strobeEnabled })),
@@ -415,11 +438,15 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     const appMode = requested === 'story' && !deck ? 'stage' : requested;
     const activeDeckId = appMode === 'story' ? deck?.id ?? null : null;
     if (cur.appMode === appMode && cur.activeDeckId === activeDeckId) return;
+    liveFormulaGesture = null;
     set({ appMode, fullscreenPresentation: appMode !== 'studio', activeDeckId,
-      storyBeatIndex: -1, autoFreezeBadge: null, isBlackout: false });
+      storyBeatIndex: -1, paramContextEpoch: cur.paramContextEpoch + 1, autoFreezeBadge: null, isBlackout: false });
   },
   toggleBlackout: () => set((s) => ({ isBlackout: s.appMode === 'studio' ? false : !s.isBlackout })),
-  setStoryBeat: (storyBeatIndex) => set({ storyBeatIndex, autoFreezeBadge: null }),
+  setStoryBeat: (storyBeatIndex) => {
+    liveFormulaGesture = null;
+    set((s) => ({ storyBeatIndex, paramContextEpoch: s.paramContextEpoch + 1, autoFreezeBadge: null }));
+  },
   setAutoFreezeBadge: (autoFreezeBadge) => set({ autoFreezeBadge }),
   syncStoryParams: (modelId, params) => {
     if (get().selectedPluginId !== modelId || get().params === params) return;
@@ -432,31 +459,32 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     const allowed = new Set(state.loadedPlugin.layers.map((layer) => layer.id));
     set({ activeLayers: [...new Set(layerIds.filter((id) => allowed.has(id)))] });
   },
-  beginLiveFormula: (modelId, key) => {
-    if (get().selectedPluginId !== modelId) return;
-    if (liveFormulaGesture) get().endLiveFormula(liveFormulaGesture.modelId, liveFormulaGesture.key);
-    liveFormulaGesture = { modelId, key, before: get().params };
-  },
-  updateLiveFormula: (modelId, key, value) => {
+  beginLiveFormula: (modelId, key, epoch) => {
     const cur = get();
-    if (cur.selectedPluginId !== modelId || !Number.isFinite(value)) return;
+    if (cur.selectedPluginId !== modelId || cur.paramContextEpoch !== epoch) return;
+    if (liveFormulaGesture) get().endLiveFormula(liveFormulaGesture.modelId, liveFormulaGesture.key, liveFormulaGesture.epoch);
+    liveFormulaGesture = { modelId, key, epoch, before: cur.params };
+  },
+  updateLiveFormula: (modelId, key, value, epoch) => {
+    const cur = get();
+    if (cur.selectedPluginId !== modelId || cur.paramContextEpoch !== epoch || !Number.isFinite(value)) return;
     const field = cur.loadedPlugin.paramSchema.find((item) => item.key === key);
     if (field?.kind !== 'number') return;
-    if (liveFormulaGesture?.modelId !== modelId || liveFormulaGesture.key !== key) {
+    if (liveFormulaGesture?.modelId !== modelId || liveFormulaGesture.key !== key || liveFormulaGesture.epoch !== epoch) {
       if (cur.params[key] !== value) get().updateParam(key, value);
       return;
     }
     const params = resolvePluginParams(cur.loadedPlugin.paramSchema, { ...cur.params, [key]: value });
     if (params[key] === cur.params[key]) return;
     // Same reset semantics as a normal workbench slider; gesture is coalesced to one undo entry.
-    set((s) => ({ params, activePresetId: null, scrubTime: null, resetNonce: s.resetNonce + 1 }));
+    set((s) => ({ params, activePresetId: null, scrubTime: null, autoFreezeBadge: null, resetNonce: s.resetNonce + 1 }));
   },
-  endLiveFormula: (modelId, key) => {
+  endLiveFormula: (modelId, key, epoch) => {
     const gesture = liveFormulaGesture;
-    if (!gesture || gesture.modelId !== modelId || gesture.key !== key) return;
+    if (!gesture || gesture.modelId !== modelId || gesture.key !== key || gesture.epoch !== epoch) return;
     liveFormulaGesture = null;
     const cur = get();
-    if (cur.selectedPluginId !== modelId || cur.params[key] === gesture.before[key]) return;
+    if (cur.selectedPluginId !== modelId || cur.paramContextEpoch !== epoch || cur.params[key] === gesture.before[key]) return;
     paramCommandStack.push({ modelId, label: `活公式调整 ${key}`, beforeParams: gesture.before, afterParams: cur.params });
     set({ canUndo: paramCommandStack.canUndo(modelId), canRedo: paramCommandStack.canRedo(modelId) });
   },
@@ -475,12 +503,16 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
   toggleView3d: () => get().setView3d(!get().view3dEnabled),
   setView3d: (enabled) => set({ view3dEnabled: enabled, ...(enabled ? { activeFrameId: 'ground', scrubTime: null } : {}) }),
   triggerResetView: () => set((s) => ({ resetViewNonce: s.resetViewNonce + 1 })),
-  triggerReset: () =>
+  triggerReset: () => {
+    liveFormulaGesture = null;
     set((s) => ({
       isPlaying: false,
       scrubTime: null,
+      autoFreezeBadge: null,
+      paramContextEpoch: s.paramContextEpoch + 1,
       resetNonce: s.resetNonce + 1
-    })),
+    }));
+  },
   triggerStepOnce: () =>
     set((s) => ({
       isPlaying: false,

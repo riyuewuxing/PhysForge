@@ -667,7 +667,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     syncUPlotData(true);
     emitTelemetrySummary(true);
   };
-  useEffect(() => { resetEngine(); }, [plugin.meta.id, resetNonce]);
+  useEffect(() => {
+    // Store-driven resets are manual interventions; never let an old pending tween reset again.
+    storyRunnerRef.current?.cancelTween();
+    resetEngine();
+  }, [plugin.meta.id, resetNonce]);
 
   const flushStoryParams = (modelId: string, nowMs: number, force = false) => {
     if (!storyDirtyRef.current || !storyParamsRef.current) return;
@@ -789,7 +793,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     });
     return () => {
       disposed = true;
-      if (latestRef.current.plugin.meta.id === storyDeck.modelId) flushStoryParams(storyDeck.modelId, performance.now(), true);
+      // Never publish the departing deck's pending patch into a newly selected context.
+      // Navigation and the rAF already flush while this deck is current.
+      if (requestedStoryDeckRef.current === storyDeck && latestRef.current.plugin.meta.id === storyDeck.modelId)
+        flushStoryParams(storyDeck.modelId, performance.now(), true);
       storyRunnerRef.current = null;
       storyCameraTweenRef.current = null;
       storySpatialCommandRef.current = null;

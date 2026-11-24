@@ -13,10 +13,14 @@ export const PresenterView: React.FC<Props> = ({ sessionId }) => {
   const laserAt = useRef(-Infinity);
   const send = (action: PresenterAction) => {
     if (action.type === 'CMD_REQUEST_SYNC' || action.type === 'CMD_LASER_POINTER') bridgeRef.current?.sendCommand(action);
-    else if (snapshot) bridgeRef.current?.sendCommand(scopePresenterAction(action, snapshot));
+    else if (snapshot && snapshot.appMode !== 'studio' && connection === '主屏已连接' && performance.now() - lastSnapshotAt.current <= 1500)
+      bridgeRef.current?.sendCommand(scopePresenterAction(action, snapshot));
   };
 
   useEffect(() => {
+    lastSnapshotAt.current = -Infinity;
+    setSnapshot(null);
+    setConnection('正在等待主屏连接…');
     if (!sessionId) { setConnection('缺少演说会话 ID，请从主屏打开副屏。'); return; }
     let bridge: PresenterSyncBridge;
     try {
@@ -75,7 +79,7 @@ export const PresenterView: React.FC<Props> = ({ sessionId }) => {
         <section className="rounded-2xl bg-slate-900 p-5">
           <h2 className="text-xl font-semibold">{snapshot.modelTitle}</h2>
           <div className="mt-2 text-sm text-slate-400">主屏：{snapshot.appMode} · t = {snapshot.simTime.toFixed(2)} s · {snapshot.isPlaying ? '运行' : '暂停'}</div>
-          <div data-testid="presenter-beat" className="mt-4 text-lg font-bold text-sky-300">{snapshot.beatIndex + 1}/{snapshot.totalBeats} {snapshot.currentCaption}</div>
+          <div data-testid="presenter-beat" className="mt-4 text-lg font-bold text-sky-300">{snapshot.totalBeats > 0 ? `${Math.max(0, snapshot.beatIndex + 1)}/${snapshot.totalBeats} ${snapshot.currentCaption}` : '自由演说'}</div>
           <div data-testid="presenter-notes" className="mt-4 whitespace-pre-wrap text-2xl leading-relaxed">{snapshot.speakerNotes || '自由演说模式，无私密讲稿。'}</div>
           <div className="mt-5 border-t border-slate-700 pt-3 text-slate-400">下一镜：{snapshot.nextBeatTitle ?? '—'}</div>
           {snapshot.freezeBadge && <div className="mt-3 text-amber-300">{snapshot.freezeBadge}</div>}
@@ -99,7 +103,7 @@ export const PresenterView: React.FC<Props> = ({ sessionId }) => {
         </section>
         <section className="rounded-2xl bg-slate-900 p-5">
           <h2 className="mb-3 text-lg font-semibold">主屏参数微调</h2>
-          <div className="max-h-[46vh] space-y-3 overflow-y-auto">
+          <div key={`${snapshot.modelId}:${snapshot.paramContextEpoch}`} className="max-h-[46vh] space-y-3 overflow-y-auto">
             {snapshot.paramSchema.map((field) => {
               const value = snapshot.params[field.key] ?? field.defaultValue;
               const change = (next: string | number | boolean) => send({ type: 'CMD_SET_PARAM', paramKey: field.key, value: next });

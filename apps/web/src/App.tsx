@@ -100,6 +100,12 @@ const ClassroomApp: React.FC = () => {
   const morphProgressRef = useRef(store.view3dEnabled ? 0 : 1);
   const decks = useMemo(() => getStoryDecks(plugin), [plugin]);
   const storyDeck = store.appMode === 'story' ? decks.find((deck) => deck.id === store.activeDeckId) : undefined;
+  const resetPresentation = () => {
+    const state = useClassroomStore.getState();
+    if (state.appMode === 'story' && state.storyBeatIndex >= 0 &&
+        storyNavigationRef.current?.goTo(state.storyBeatIndex)) return;
+    state.triggerReset();
+  };
   const highlightedFormulaId = storyDeck?.beats[store.storyBeatIndex]?.layerOverrides?.highlightFormulaId;
   const highlightedReadOnly = highlightedFormulaId && !liveFormulas.some((spec) => spec.id === highlightedFormulaId)
     ? store.telemetry.formulaItems.filter((item) => item.id === highlightedFormulaId) : [];
@@ -140,7 +146,7 @@ const ClassroomApp: React.FC = () => {
       return { modelId: p.meta.id, modelTitle: p.meta.title, appMode: state.appMode,
         isPlaying: state.isPlaying, isBlackout: state.isBlackout, morphT: morphProgressRef.current,
         simTime: state.telemetry.t, deckId: deck?.id ?? null, beatIndex: deck ? state.storyBeatIndex : -1,
-        totalBeats: deck?.beats.length ?? 0, currentCaption: beat?.caption ?? '', speakerNotes: beat?.speakerNotes ?? '',
+        paramContextEpoch: state.paramContextEpoch, totalBeats: deck?.beats.length ?? 0, currentCaption: beat?.caption ?? '', speakerNotes: beat?.speakerNotes ?? '',
         nextBeatTitle: deck?.beats[state.storyBeatIndex + 1]?.title ?? null, observables, params: state.params,
         paramSchema: p.paramSchema, canMorph: v2.renderMode === 'three3d' || v2.renderMode === 'hybrid' || Boolean(v2.mountThreeScene),
         freezeBadge: state.autoFreezeBadge };
@@ -153,7 +159,7 @@ const ClassroomApp: React.FC = () => {
         const state = useClassroomStore.getState();
         if (state.appMode === 'studio') return;
         if (!commandMatchesStage(cmd, { modelId: state.loadedPlugin.meta.id,
-          deckId: state.appMode === 'story' ? state.activeDeckId : null })) {
+          deckId: state.appMode === 'story' ? state.activeDeckId : null, paramContextEpoch: state.paramContextEpoch })) {
           bridge.broadcastSnapshot(snapshot(), true);
           return;
         }
@@ -162,12 +168,12 @@ const ClassroomApp: React.FC = () => {
           case 'CMD_PREV_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.prev(); break;
           case 'CMD_GOTO_BEAT': if (state.appMode === 'story') storyNavigationRef.current?.goTo(cmd.index); break;
           case 'CMD_TOGGLE_PLAY': state.togglePlaying(); break;
-          case 'CMD_RESET_SIM': state.triggerReset(); break;
+          case 'CMD_RESET_SIM': resetPresentation(); break;
           case 'CMD_TOGGLE_MORPH_2D': if (snapshot().canMorph) state.toggleView3d(); break;
           case 'CMD_TOGGLE_BLACKOUT': state.toggleBlackout(); break;
           case 'CMD_SET_PARAM': {
             const field = state.loadedPlugin.paramSchema.find((item) => item.key === cmd.paramKey);
-            if (!field) break;
+            if (!field || state.params[cmd.paramKey] === cmd.value) break;
             if (field.kind === 'number' && typeof cmd.value === 'number' && cmd.value >= field.min && cmd.value <= field.max ||
                 field.kind === 'boolean' && typeof cmd.value === 'boolean' ||
                 field.kind === 'select' && typeof cmd.value === 'string' && field.options.some((option) => option.value === cmd.value)) {
@@ -750,10 +756,10 @@ const ClassroomApp: React.FC = () => {
               {(store.telemetry.formulaItems.length > 0 || liveFormulas.length > 0) && (
                 <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(250px,36vw)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
                   {liveFormulas.length ? <Suspense fallback={<KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}>
-                    <LazyLiveFormulaCard key={plugin.meta.id} specs={liveFormulas} params={store.params} schema={plugin.paramSchema} highlightedId={highlightedFormulaId}
-                      onBegin={(key) => store.beginLiveFormula(plugin.meta.id, key)}
-                      onChange={(key, value) => store.updateLiveFormula(plugin.meta.id, key, value)}
-                      onEnd={(key) => store.endLiveFormula(plugin.meta.id, key)} />
+                    <LazyLiveFormulaCard key={`${plugin.meta.id}:${store.paramContextEpoch}`} specs={liveFormulas} params={store.params} schema={plugin.paramSchema} highlightedId={highlightedFormulaId}
+                      onBegin={(key) => store.beginLiveFormula(plugin.meta.id, key, store.paramContextEpoch)}
+                      onChange={(key, value) => store.updateLiveFormula(plugin.meta.id, key, value, store.paramContextEpoch)}
+                      onEnd={(key) => store.endLiveFormula(plugin.meta.id, key, store.paramContextEpoch)} />
                     {highlightedReadOnly.length > 0 && <KatexFormulaCard items={highlightedReadOnly} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
                   </Suspense> : <KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}
                   {!store.poeMasked && <StageFormulaReadouts key={plugin.meta.id} items={store.telemetry.formulaItems} />}
@@ -763,7 +769,7 @@ const ClassroomApp: React.FC = () => {
                 <button type="button" data-testid="btn-play-pause" onClick={store.togglePlaying} aria-label={store.isPlaying ? '暂停' : '运行'} className="grid h-9 w-9 place-items-center rounded-full bg-sky-400 text-slate-950 hover:bg-sky-300">
                   {store.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
                 </button>
-                <button type="button" data-testid="btn-reset" onClick={store.triggerReset} className="grid h-9 w-9 place-items-center rounded-full text-slate-200 hover:bg-white/10" aria-label="复位" title="复位"><RotateCcw className="h-4 w-4" /></button>
+                <button type="button" data-testid="btn-reset" onClick={resetPresentation} className="grid h-9 w-9 place-items-center rounded-full text-slate-200 hover:bg-white/10" aria-label="复位" title="复位"><RotateCcw className="h-4 w-4" /></button>
                 {has3dView && (
                   <button type="button" data-testid="btn-view-3d-fullscreen" onClick={store.toggleView3d} className="rounded-full px-3 py-2 text-xs hover:bg-white/10">
                     {store.view3dEnabled ? '2D 剖面' : '3D 空间'}
