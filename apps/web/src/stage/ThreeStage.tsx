@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
+import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial } from './spatialMaterials.js';
@@ -293,6 +294,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const staticGroup = new THREE.Group();
     const trailGroup = new THREE.Group();
     scene.add(staticGroup, trailGroup);
+    const magneticTrail=isMag3d?new DynamicTubeTrail(301,.012,6):null;
+    if(magneticTrail){
+      const mesh=new THREE.Mesh(magneticTrail.geometry,magneticFluxMaterial(0x4ade80));
+      mesh.name='magnetic-particle-trail';mesh.frustumCulled=false;trailGroup.add(mesh);
+    }
     const fusionTrailGeometry = isTokamak3d ? new THREE.BufferGeometry() : null;
     const fusionTrailBuffer = fusionTrailGeometry ? new THREE.BufferAttribute(new Float32Array(261 * 3), 3).setUsage(THREE.DynamicDrawUsage) : null;
     if (fusionTrailGeometry && fusionTrailBuffer) {
@@ -332,7 +338,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const performanceGuard = new PerformanceGuard();
     let lastConfigSig = '';
-    let lastTrailToken = '';
+    let lastMagneticTrail:Magnetic3dState['trail']|null=null;
     let lastSyncedState: unknown;
     let rafId = 0;
     let dirty = true;
@@ -567,22 +573,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
         }
 
-        if (isMag3d) {
-          const trail = (state as Magnetic3dState).trail;
-          const lastPoint = trail[trail.length - 1];
-          const trailToken = lastPoint
-            ? `${trail.length}:${lastPoint.x.toPrecision(6)}:${lastPoint.y.toPrecision(6)}:${lastPoint.z.toPrecision(6)}`
-            : 'empty';
-          if (trailToken !== lastTrailToken) {
-            lastTrailToken = trailToken;
-            disposeGroupChildren(trailGroup);
-            if (trail.length > 1) {
-              const points = trail.map((point) => mapMagneticPoint(point));
-              const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
-              const geometry = new THREE.TubeGeometry(curve, Math.max(24, points.length), 0.012, 5, false);
-              const material = magneticFluxMaterial(0x4ade80);
-              trailGroup.add(new THREE.Mesh(geometry, material));
-            }
+        if(isMag3d&&magneticTrail){
+          const trail=(state as Magnetic3dState).trail;
+          if(trail!==lastMagneticTrail){
+            lastMagneticTrail=trail;magneticTrail.update(trail,magnetic3dDisplayPoint);
           }
         }
       } else {
