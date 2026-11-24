@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type SimulationPluginV2, type ThreeSceneBridge, type Viewport } from '@physforge/sim-sdk';
 import { DynamicTubeTrail } from './dynamicTubeTrail.js';
-import { CameraMorphController, alignedCanvasViewport, liftPoint } from './cameraMorphController.js';
+import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
@@ -73,6 +73,40 @@ function disposeGroupChildren(group: THREE.Group): void {
 function mapMagneticPoint(point: { x: number; y: number; z: number }): THREE.Vector3 {
   const p = magnetic3dDisplayPoint(point);
   return new THREE.Vector3(p.x, p.y, p.z);
+}
+
+const magneticAxisColors = [
+  { name: 'X', color: '#fb7185', direction: { x: 1, y: 0, z: 0 } },
+  { name: 'Y', color: '#4ade80', direction: { x: 0, y: 1, z: 0 } },
+  { name: 'Z', color: '#38bdf8', direction: { x: 0, y: 0, z: 1 } }
+] as const;
+
+function updateMagneticAxisWidget(widget: SVGSVGElement, camera: THREE.Camera): void {
+  const directions = magneticAxisColors.map(axis => projectCameraDirection(mapMagneticPoint(axis.direction), camera));
+  const orientation = directions.map(v => v.toArray().map(x => x.toFixed(3)).join(',')).join(';');
+  if (widget.getAttribute('data-axis-orientation') === orientation) return;
+  widget.setAttribute('data-axis-orientation', orientation);
+  for (let i = 0; i < magneticAxisColors.length; i++) {
+    const axis = magneticAxisColors[i]!, v = directions[i]!;
+    const group = widget.querySelector<SVGGElement>(`[data-physical-axis="${axis.name}"]`);
+    const line = group?.querySelector('line'), arrow = group?.querySelector('polygon'), label = group?.querySelector('text');
+    if (!line || !arrow || !label) continue;
+    const dx = v.x * 21, dy = -v.y * 21, length = Math.hypot(dx,dy);
+    const x = 30 + dx, y = 30 + dy;
+    if (length < 3.5) {
+      line.setAttribute('visibility','hidden'); arrow.setAttribute('visibility','hidden');
+      label.textContent = axis.name + (v.z > 0 ? '⊙' : '⊗');
+      label.setAttribute('x','30'); label.setAttribute('y','39');
+    } else {
+      const ux = dx/length, uy = dy/length, bx = x-ux*5, by = y-uy*5;
+      line.setAttribute('visibility','visible'); arrow.setAttribute('visibility','visible');
+      line.setAttribute('x2',String(bx)); line.setAttribute('y2',String(by));
+      arrow.setAttribute('points',`${x},${y} ${bx-uy*2.8},${by+ux*2.8} ${bx+uy*2.8},${by-ux*2.8}`);
+      label.textContent = axis.name;
+      label.setAttribute('x',String(30+ux*Math.min(26,length+6)));
+      label.setAttribute('y',String(32+uy*Math.min(26,length+6)));
+    }
+  }
 }
 
 function updateVectorArrow(
@@ -223,6 +257,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const isMag3d = plugin.meta.id === 'em-3d-magnetic-fields';
     const isTokamak3d = plugin.meta.id === 'stse-tokamak-magnetic-mirror';
+    const magneticAxisWidget = isMag3d ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
 
     const width = Math.max(320, container.clientWidth);
     const height = Math.max(240, container.clientHeight);
@@ -479,6 +514,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           const fieldLength = vectorsVisible
             ? updateVectorArrow(magneticFieldArrow, position, magneticField, fieldMagnitude, 0.52, 0.45, 0.9)
             : 0;
+          if (!vectorsVisible) {
+            velocityArrow.visible = false;
+            lorentzForceArrow.visible = false;
+            magneticFieldArrow.visible = false;
+          }
+          container.dataset.renderedVelocityArrow = String(velocityArrow.visible);
+          container.dataset.renderedForceArrow = String(lorentzForceArrow.visible);
+          container.dataset.renderedFieldArrow = String(magneticFieldArrow.visible);
           velocityLabel.visible = velocityLength > 0;
           forceLabel.visible = forceLength > 0;
           fieldLabel.visible = fieldLength > 0;
@@ -716,6 +759,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
       const renderCamera = morph?.getActiveCamera() ?? camera;
+      if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget, renderCamera);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
       if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
@@ -797,7 +841,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         </div>
       )}
       <div aria-hidden="true" data-testid="three-axis-widget" className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-lg border border-white/10 bg-slate-950/70 p-1 shadow-lg backdrop-blur">
-        <svg viewBox="0 0 44 38" width="44" height="38">
+        {plugin.meta.id === 'em-3d-magnetic-fields' ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
+          <circle cx="30" cy="30" r="1.8" fill="#cbd5e1" />
+          {magneticAxisColors.map(axis => <g key={axis.name} data-physical-axis={axis.name}>
+            <line x1="30" y1="30" x2="30" y2="30" stroke={axis.color} strokeWidth="1.8" strokeLinecap="round" />
+            <polygon fill={axis.color} />
+            <text x="30" y="30" textAnchor="middle" fontSize="9" fill={axis.color} fontWeight="600">{axis.name}</text>
+          </g>)}
+        </svg> : <svg viewBox="0 0 44 38" width="44" height="38">
           <path d="M8 30 L34 30 M8 30 L8 6 M8 30 L25 13" fill="none" strokeWidth="2" strokeLinecap="round" />
           <path d="M34 30 L29 27 L29 33 Z" fill="#fb7185" />
           <path d="M8 6 L5 11 L11 11 Z" fill="#4ade80" />
@@ -808,7 +859,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           <text x="35" y="33" fill="#fb7185" fontSize="7">X</text>
           <text x="5" y="6" fill="#4ade80" fontSize="7">Y</text>
           <text x="26" y="12" fill="#38bdf8" fontSize="7">Z</text>
-        </svg>
+        </svg>}
       </div>
     </div>
   );

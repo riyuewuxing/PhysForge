@@ -855,6 +855,42 @@ async function main() {
           return Number(stage?.getAttribute('data-field-line-count')) === 21 && Number(stage?.getAttribute('data-conductor-count')) === 10;
         });
         await page.screenshot({ path: path.join(OUT_DIR, 'E10_04_fullscreen_3d.png') });
+        const widget = page.locator('[data-magnetic-axis-widget]');
+        await page.waitForFunction(() => Boolean(document.querySelector('[data-magnetic-axis-widget]')?.getAttribute('data-axis-orientation')));
+        const initialAxis = await widget.getAttribute('data-axis-orientation');
+        const orbitBox = await page.locator('[data-testid="three-stage-container"] canvas').boundingBox();
+        if (!orbitBox || !initialAxis) throw new Error('E10 missing real orbit/axis indicator');
+        await page.mouse.move(orbitBox.x+orbitBox.width*.48, orbitBox.y+orbitBox.height*.46);
+        await page.mouse.down();
+        await page.mouse.move(orbitBox.x+orbitBox.width*.40, orbitBox.y+orbitBox.height*.40,{steps:8});
+        await page.mouse.up();
+        await page.waitForFunction(before => document.querySelector('[data-magnetic-axis-widget]')?.getAttribute('data-axis-orientation') !== before, initialAxis);
+        await page.waitForTimeout(350);
+        await page.screenshot({path:path.join(OUT_DIR,'H4_E10_orbit.png')});
+        await page.getByTestId('btn-exit-fullscreen-speech').click();
+        const stage = page.getByTestId('three-stage-container');
+        const current = page.getByTestId('param-slider-currentI');
+        await current.focus(); await current.press('Home');
+        await page.waitForFunction(() => {
+          const d = document.querySelector('[data-testid="three-stage-container"]')?.dataset;
+          return d?.fieldLineCount === '0' && d.conductorCount === '10' && d.renderedFieldArrow === 'false' && d.renderedForceArrow === 'false' && d.renderedVelocityArrow === 'true';
+        });
+        await page.screenshot({path:path.join(OUT_DIR,'H4_E10_zero_current.png')});
+        await selectPreset(page,'finite-solenoid-3d');
+        await page.waitForFunction(() => document.querySelector('[data-testid="three-stage-container"]')?.dataset.fieldLineCount === '21');
+        const vectors = page.getByLabel('速度、磁场与洛伦兹加速度',{exact:true});
+        if (!await vectors.isVisible()) await page.getByText('更多参数与图层',{exact:false}).first().click();
+        await vectors.uncheck();
+        await page.waitForFunction(() => {
+          const d = document.querySelector('[data-testid="three-stage-container"]')?.dataset;
+          return d?.renderedVelocityArrow === 'false' && d.renderedForceArrow === 'false' && d.renderedFieldArrow === 'false' && d.fieldLineCount === '21';
+        });
+        await vectors.check();
+        await page.waitForFunction(() => document.querySelector('[data-testid="three-stage-container"]')?.dataset.renderedVelocityArrow === 'true');
+        await page.locator('#param-geometryType').selectOption('parallel-wires');
+        await page.waitForFunction(() => document.querySelector('[data-testid="three-stage-container"]')?.dataset.conductorCount === '2');
+        await page.screenshot({path:path.join(OUT_DIR,'H4_E10_parallel_wires.png')});
+        await selectPreset(page,'finite-solenoid-3d');
       }
 
       if (testCase.id === 'builder-optics-ray') {

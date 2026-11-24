@@ -32,6 +32,12 @@ export function project3DToScreen(world: WorldPoint3D, camera: THREE.Camera, wid
   };
 }
 
+/** Unit direction in camera coordinates; +z points toward the viewer.
+ * The camera position/zoom do not change an orientation-only axis indicator. */
+export function projectCameraDirection(direction: THREE.Vector3, camera: THREE.Camera): THREE.Vector3 {
+  return direction.clone().normalize().applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()).invert());
+}
+
 /** Canvas +Y up is world +Y (XY) or world -Z (XZ viewed from +Y). */
 export function flattenPoint(world: WorldPoint3D, plane: Spatial3DFlattenSpec['flattenPlane']) {
   return { x: world.x, y: plane === 'xy' ? world.y : -(world.z ?? 0) };

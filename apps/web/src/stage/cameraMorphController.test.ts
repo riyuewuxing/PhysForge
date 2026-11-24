@@ -1,12 +1,27 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { createWorldMapper, type Spatial3DFlattenSpec } from '@physforge/sim-sdk';
-import { CameraMorphController, alignedCanvasViewport, flattenPoint, liftPoint, project3DToScreen } from './cameraMorphController.js';
+import { CameraMorphController, alignedCanvasViewport, flattenPoint, liftPoint, project3DToScreen, projectCameraDirection } from './cameraMorphController.js';
 
 const spec = (flattenPlane: Spatial3DFlattenSpec['flattenPlane']): Spatial3DFlattenSpec => ({
   flattenPlane, defaultVisibleHeight: 8, sceneDepthRadius: 5, default3DAzimuthRad: 0.7, default3DPolarRad: 1.1
 });
 describe('3D perspective to orthographic morph', () => {
+  it('projects physical axis directions into camera coordinates, preserving depth sign and ignoring translation', () => {
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(4, 8, 2);
+    const direction = new THREE.Vector3(0, 0, -1);
+    expect(projectCameraDirection(direction, camera).toArray()).toEqual([0,0,-1]);
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0,1,0), Math.PI/2);
+    const projected = projectCameraDirection(direction, camera);
+    expect(projected.x).toBeCloseTo(1, 10);
+    expect(projected.y).toBeCloseTo(0, 10);
+    expect(projected.z).toBeCloseTo(0, 10);
+    const towardViewer = projectCameraDirection(new THREE.Vector3(1,0,0), camera);
+    expect(towardViewer.z).toBeCloseTo(1, 10);
+    expect(towardViewer.length()).toBeCloseTo(1, 10);
+  });
+
   it.each(['xy', 'xz'] as const)('aligns offset, resized %s plane against real 2D mapper within 0.5 CSS px', plane => {
     const c = new CameraMorphController(spec(plane), 1440, 900);
     c.setFraming(liftPoint(0.8, -0.3, plane, 0.6), 7);
