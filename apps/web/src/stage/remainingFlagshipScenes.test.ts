@@ -5,6 +5,7 @@ import {stseEmDevicesSuitePlugin} from '@physforge/simulations/stse-em-devices-s
 import {astroOrbitalMechanicsPlugin,orbitDisplayXY} from '@physforge/simulations/astro-orbital-mechanics';
 import {magnetic3dDisplayPoint} from '@physforge/simulations/em-3d-magnetic-fields';
 import type {EmDevicesParams} from '../../../../simulations/stse-em-devices-suite/engine.js';
+import {deviceDiagramPoint,getDeviceSchematic,deeOutline} from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import type {AstroOrbitalParams} from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import {CameraMorphController,alignedCanvasViewport} from './cameraMorphController.js';
 import {createRemainingFlagshipScene,deviceDisplayPoint,orbitDisplayPoint} from './remainingFlagshipScenes.js';
@@ -21,6 +22,58 @@ describe('remaining planar flagship projections',()=>{
     expect(Math.hypot(a.x-b.x,a.y-b.y)).toBeLessThan(0.5);
     expect(scene.getObjectByName('dee-left')).toBeDefined();
     driver.dispose();expect(scene.children.length).toBe(0);
+  });
+  it('switches all six S02 device structures and projects their shared schematic geometry',()=>{
+    const p=stseEmDevicesSuitePlugin,scene=new THREE.Scene(),driver=createRemainingFlagshipScene(p.meta.id,scene)!;
+    const devices=[
+      ['velocity-selector','selector-chamber'],['mass-spectrometer','spectrometer-analyzer'],
+      ['cyclotron','dee-left'],['hall-sensor','hall-semiconductor'],
+      ['mhd-generator','mhd-load'],['em-flowmeter','flowmeter-pipe']
+    ] as const;
+    const camera=new CameraMorphController(p.spatial3D,1280,800);camera.startMorphTo(1,0,0);
+    const mapper=createWorldMapper(alignedCanvasViewport(camera.get2DAlignMetrics()));
+    let previous:string|null=null;
+    for(const [device,expected] of devices){
+      const params=resolvePluginParams<EmDevicesParams>(p.paramSchema,{device}),state=p.engine.createInitialState(params);
+      driver.sync(state,params,new Set(['main']));
+      if(previous)expect(scene.getObjectByName(previous)).toBeUndefined();
+      previous=expected;
+      const diagram=getDeviceSchematic(device);
+      for(const part of diagram.parts){
+        const object=scene.getObjectByName(part.id);
+        expect(object,part.id).toBeDefined();
+        const projected=camera.project3DToScreen(object!.position),canvas=mapper.toScreen(part.x,part.y);
+        expect(Math.hypot(projected.x-canvas.x,projected.y-canvas.y),part.id).toBeLessThan(0.5);
+      }
+      const particle=scene.getObjectByName('device-particle')!;
+      const q=deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
+      expect(particle.position.distanceTo(new THREE.Vector3(q.x,0,-q.y))).toBeLessThan(1e-9);
+      const ir=p.exportDiagramIR?.(state,params);
+      expect(ir?.primitives.filter(item=>item.kind==='fieldMarker')).toHaveLength(diagram.fields.length);
+      expect(ir?.primitives.filter(item=>item.kind==='rect'||item.kind==='polyline')).toHaveLength(diagram.parts.length);
+      expect(ir?.primitives.find(item=>item.kind==='circle')).toMatchObject({cx:q.x,cy:q.y});
+      const field=scene.getObjectByName('device-field-0')!;
+      expect(new THREE.Vector3(0,1,0).applyQuaternion(field.quaternion).y).toBeCloseTo(1);
+    }
+    driver.dispose();expect(scene.children.length).toBe(0);
+  });
+  it('D-shaped footprints open into the same central gap',()=>{
+    const [left,right]=getDeviceSchematic('cyclotron').parts;
+    expect(left&&right).toBeTruthy();
+    const l=deeOutline(left!),r=deeOutline(right!);
+    expect(Math.max(...l.map(p=>p.x))).toBeCloseTo(-0.29,12);
+    expect(Math.min(...r.map(p=>p.x))).toBeCloseTo(-0.21,12);
+  });
+  it('incident selector forces use positive particle charge, not Hall carrier type',()=>{
+    const p=stseEmDevicesSuitePlugin,params=resolvePluginParams<EmDevicesParams>(p.paramSchema,{
+      device:'velocity-selector',carrierType:'electron',eFieldVPerM:2e5,bFieldT:1,particleSpeedMps:2e5
+    });
+    const state=p.engine.createInitialState(params);
+    const forces=p.getForceVectors!(state,params);
+    expect(forces[0]!.force.y).toBeGreaterThan(0);
+    expect(forces[1]!.force.y).toBeLessThan(0);
+    expect(forces[0]!.force.y+forces[1]!.force.y).toBeCloseTo(0,20);
+    expect(p.getForceVectors!(state,{...params,carrierType:'hole'})).toEqual(forces);
   });
   it('M10 co-rotating mode uses the same projection as the 2D view',()=>{
     const p=astroOrbitalMechanicsPlugin,params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'binary-lagrange'});
