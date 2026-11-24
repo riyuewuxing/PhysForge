@@ -61,6 +61,25 @@ describe('V3 tri-mode shell', () => {
     get().undoParam();
     useClassroomStore.setState({ params: before.params, activePresetId: before.activePresetId, scrubTime: before.scrubTime });
   });
+  it('uses real preset layer visibility and rejects foreign layer ids during story navigation', () => {
+    const get = useClassroomStore.getState;
+    const before = get();
+    const legacy = { ...before.loadedPlugin, storyDecks: [] };
+    const deck = getStoryDecks(legacy)[0];
+    expect(deck?.beats.length).toBe(legacy.presets.length);
+    for (const beat of deck?.beats ?? []) {
+      const preset = legacy.presets.find(item => item.id === beat.id);
+      expect(beat.layerOverrides?.visibleLayerIds).toEqual(preset?.visibleLayers?.length
+        ? preset.visibleLayers : legacy.layers.filter(layer => layer.defaultVisible).map(layer => layer.id));
+    }
+    const first = before.loadedPlugin.layers[0]?.id;
+    if (!first) throw new Error('Expected a teaching layer');
+    before.setStoryLayers(before.selectedPluginId, [first, first, 'unknown-layer']);
+    expect(get().activeLayers).toEqual([first]);
+    before.setStoryLayers('other-model', []);
+    expect(get().activeLayers).toEqual([first]);
+    useClassroomStore.setState({ activeLayers: before.activeLayers });
+  });
   it('synchronizes story params without resetting physics or creating per-frame undo commands', () => {
     const get = useClassroomStore.getState;
     const before = get();

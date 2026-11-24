@@ -104,6 +104,7 @@ interface SimulationStageProps {
   onStoryPlaying?: (playing: boolean) => void;
   onStoryFbd?: (enabled: boolean) => void;
   onStoryFrame?: (frame: string) => void;
+  onStoryLayers?: (modelId: string, layerIds: readonly string[]) => void;
   onStoryView3d?: (enabled: boolean) => void;
   onMorphProgress?: (progress: number) => void;
   onWebGLFallback?: () => void;
@@ -188,7 +189,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   onTogglePoeMask,
   onTelemetryUpdate,
   storyDeck, storyNavigationRef, onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame,
-  onStoryView3d, onMorphProgress, onWebGLFallback
+  onStoryLayers, onStoryView3d, onMorphProgress, onWebGLFallback
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = canvasRefExternal ?? internalCanvasRef;
@@ -325,8 +326,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const publishedStoryParamsRef = useRef<ParamRecord | null>(null);
   const storyDirtyRef = useRef(false);
   const storyLastSyncRef = useRef(-Infinity);
-  const storyCallbacksRef = useRef({ onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame, onStoryView3d });
-  storyCallbacksRef.current = { onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame, onStoryView3d };
+  const storyCallbacksRef = useRef({ onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame, onStoryLayers, onStoryView3d });
+  storyCallbacksRef.current = { onStoryParams, onStoryBeat, onStoryFreeze, onStoryPlaying, onStoryFbd, onStoryFrame, onStoryLayers, onStoryView3d };
   if (params !== lastPropsParamsRef.current) {
     lastPropsParamsRef.current = params;
     if (storyParamsRef.current && params !== publishedStoryParamsRef.current) {
@@ -753,13 +754,24 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           advanceStoryCamera2D(now);
         },
         applyLayerOverrides: (overrides) => {
+          const currentPlugin = latestRef.current.plugin;
+          if (overrides.visibleLayerIds) {
+            const allowed = new Set(currentPlugin.layers.map((layer) => layer.id));
+            const layers = [...new Set(overrides.visibleLayerIds.filter((id) => allowed.has(id)))];
+            latestRef.current.activeLayers = layers;
+            storyCallbacksRef.current.onStoryLayers?.(currentPlugin.meta.id, layers);
+          }
           if (overrides.showFbd !== undefined) {
             latestRef.current.autoFbdEnabled = overrides.showFbd;
             storyCallbacksRef.current.onStoryFbd?.(overrides.showFbd);
           }
           if (overrides.referenceFrameId !== undefined) {
-            latestRef.current.activeFrameId = overrides.referenceFrameId;
-            storyCallbacksRef.current.onStoryFrame?.(overrides.referenceFrameId);
+            const v2 = currentPlugin as SimulationPluginV2<ParamRecord, unknown>;
+            const frame = overrides.referenceFrameId;
+            if (frame === 'ground' || v2.referenceFrames?.some((item) => item.id === frame)) {
+              latestRef.current.activeFrameId = frame;
+              storyCallbacksRef.current.onStoryFrame?.(frame);
+            }
           }
         },
         onBeatChanged: (index) => storyCallbacksRef.current.onStoryBeat?.(index),
@@ -920,11 +932,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const loop = (nowMs: number) => {
       rafId = requestAnimationFrame(loop);
       if (advanceStoryCamera2D(nowMs)) renderFrameToCanvas();
-      const runner = storyRunnerRef.current;
-      if (runner && requestedStoryDeckRef.current === storyOwnerRef.current && storyOwnerRef.current?.modelId === latestRef.current.plugin.meta.id) {
+      const runner = requestedStoryDeckRef.current === storyOwnerRef.current &&
+        storyOwnerRef.current?.modelId === latestRef.current.plugin.meta.id ? storyRunnerRef.current : null;
+      if (runner) {
         const current = latestRef.current;
-        const observables = simStateRef.current === null ? undefined : current.plugin.engine.computeObservables(simStateRef.current, current.params);
-        runner.tick(nowMs, observables);
+        // The tween may reset the physical state; sample only after applying its new params.
+        runner.tick(nowMs);
+        if (runner.hasArmedFreeze && simStateRef.current !== null &&
+            runner.checkAutoFreeze(current.plugin.engine.computeObservables(simStateRef.current, current.params))) {
+          accumulatorRef.current = 0;
+          renderFrameToCanvas();
+          emitTelemetrySummary(true);
+        }
         if (storyDirtyRef.current) {
           if (!latestRef.current.isPlaying) renderFrameToCanvas();
           emitTelemetrySummary(false);
@@ -950,6 +969,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       );
 
       let stepped = false;
+      let freezeHit = false;
       let cur = simStateRef.current;
       let simT = simulationTimeRef.current;
 
@@ -964,13 +984,21 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           eventsRef.current = [...eventsRef.current, ...res.events];
         }
 
-        if (simT - lastSnapshotTRef.current >= SNAPSHOT_INTERVAL) {
-          const obs = p.engine.computeObservables(cur, pm);
+        // Detect at each actual 240 Hz physics sample, never only at the next browser frame.
+        const armedObs = runner?.hasArmedFreeze ? p.engine.computeObservables(cur, pm) : undefined;
+        freezeHit = armedObs !== undefined && runner !== null && runner.checkAutoFreeze(armedObs);
+        if (freezeHit || simT - lastSnapshotTRef.current >= SNAPSHOT_INTERVAL) {
+          const obs = armedObs ?? p.engine.computeObservables(cur, pm);
           snapshotsRef.current.push({ t: simT, state: cur, observables: obs });
           if (snapshotsRef.current.length > MAX_SNAPSHOTS) {
             snapshotsRef.current.shift();
           }
           lastSnapshotTRef.current = simT;
+        }
+        if (freezeHit) {
+          accumulatorRef.current = 0;
+          lastFrameMsRef.current = null;
+          break;
         }
       }
 
@@ -978,8 +1006,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         simulationTimeRef.current = simT;
         simStateRef.current = cur;
         renderFrameToCanvas();
-        syncUPlotData();
-        emitTelemetrySummary(false);
+        syncUPlotData(freezeHit);
+        emitTelemetrySummary(freezeHit);
       }
     };
 

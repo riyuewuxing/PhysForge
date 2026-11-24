@@ -65,6 +65,43 @@ describe('StoryRunner V3 headless', () => {
     expect(callbacks.applyLayerOverrides).toHaveBeenCalledWith({ showFbd: true });
   });
 
+  it('pauses through a reset tween, initializes at target values, and ignores pre-reset observations', () => {
+    const { runner, params, callbacks } = setup([beat('a', { paramPatch: { speed: 16 }, paramTweenMs: 1000,
+      simAction: 'reset-play', autoFreeze: { observableKey: 'x', operator: '<=', threshold: 1, badgeText: 'hit' } })]);
+    const resetSpeeds: unknown[] = [];
+    callbacks.controlSimulation.mockImplementation(action => {
+      if (action === 'reset-play') resetSpeeds.push(params()['speed']);
+    });
+    runner.next(0);
+    expect(callbacks.controlSimulation).toHaveBeenCalledExactlyOnceWith('pause');
+    expect(runner.hasArmedFreeze).toBe(false);
+    runner.tick(500, { x: 0 });
+    expect(resetSpeeds).toEqual([]);
+    expect(runner.checkAutoFreeze({ x: 0 })).toBe(false);
+    runner.tick(1000, { x: 0 });
+    expect(resetSpeeds).toEqual([16]);
+    expect(callbacks.onAutoFreezeTriggered).not.toHaveBeenCalled();
+    expect(runner.checkAutoFreeze({ x: 2 })).toBe(false);
+    expect(runner.checkAutoFreeze({ x: 0.9 })).toBe(true);
+    expect(runner.checkAutoFreeze({ x: 0.8 })).toBe(false);
+    expect(callbacks.onAutoFreezeTriggered).toHaveBeenCalledOnce();
+  });
+
+  it('never fires an abandoned reset when navigation or a manual edit interrupts its tween', () => {
+    const { runner, callbacks } = setup([
+      beat('a', { paramPatch: { speed: 16 }, paramTweenMs: 1000, simAction: 'reset-play' }),
+      beat('b', { paramPatch: { speed: 8 }, paramTweenMs: 1000, simAction: 'reset-pause',
+        autoFreeze: { observableKey: 'x', operator: '>=', threshold: 2, badgeText: 'hit' } })
+    ]);
+    runner.next(0);
+    runner.next(500);
+    expect(callbacks.controlSimulation).not.toHaveBeenCalledWith('reset-play');
+    runner.cancelTween();
+    runner.tick(1500, { x: 3 });
+    expect(callbacks.controlSimulation).not.toHaveBeenCalledWith('reset-pause');
+    expect(callbacks.onAutoFreezeTriggered).not.toHaveBeenCalled();
+  });
+
   it('interrupts a tween at the actual navigation instant and uses the current interpolated value', () => {
     const { runner, params } = setup([
       beat('a', { paramPatch: { speed: 20 }, paramTweenMs: 1000 }),

@@ -64,6 +64,8 @@ export interface StoryBeat {
   /** 强制开关特定教学图层 */
   layerOverrides?: {
     showFbd?: boolean;
+    /** Exact set of visible teaching layers for this beat, when specified. */
+    visibleLayerIds?: readonly string[];
     referenceFrameId?: string;
     highlightFormulaId?: string;
   };

@@ -491,11 +491,32 @@ async function auditV3StoryAndFormula(page, origin, screenshot) {
   await page.getByTestId('btn-fullscreen-speech').click();
   await page.getByTestId('btn-toggle-story').click();
   await page.getByTestId('story-caption').waitFor({ state: 'visible' });
+  const spatial = page.getByTestId('three-stage-container');
+  await spatial.waitFor({ state: 'visible', timeout: 20000 });
+  await page.waitForFunction(() => Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN') === 0, null, { timeout: 15000 });
+  await page.locator('[data-formula-id="faraday-emf"][data-highlighted="true"]').waitFor({ state: 'visible' });
+  if (screenshot) await screenshot('E04_story_opening_3d');
+  await spatial.locator('canvas').evaluate(canvas => {
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    if (!gl || gl.isContextLost()) throw new Error('Story opening has no active WebGL context');
+    window.__PF_STORY_GL = gl;
+  });
   await page.getByTestId('btn-story-next').click();
+  await page.waitForFunction(() => {
+    const value = Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t') ?? 'NaN');
+    return value > 0 && value < 1;
+  }, null, { timeout: 10000 });
+  await spatial.waitFor({ state: 'detached', timeout: 15000 });
+  await page.getByTestId('simulation-canvas').waitFor({ state: 'visible' });
+  await page.waitForFunction(() => window.__PF_STORY_GL?.isContextLost() === true, null, { timeout: 10000 });
+  await page.evaluate(() => { delete window.__PF_STORY_GL; });
   await page.getByTestId('story-freeze-badge').waitFor({ state: 'visible', timeout: 45000 });
   const freeze = await page.getByTestId('story-freeze-badge').textContent();
   if (!freeze?.includes('接近共速')) throw new Error('Unexpected E04 physics freeze: ' + freeze);
   if (await page.locator('[data-testid="fullscreen-controls"] [aria-label="运行"]').count() !== 1) throw new Error('Auto-freeze did not pause simulation');
+  const frozenTime = await readDisplayedTime(page);
+  await page.waitForTimeout(250);
+  if (frozenTime === null || await readDisplayedTime(page) !== frozenTime) throw new Error('Story clock advanced after freeze');
   if (screenshot) await screenshot('E04_story_freeze');
   await page.getByTestId('btn-stage-blackout').click();
   await page.getByTestId('story-blackout').waitFor({ state: 'visible' });
@@ -525,7 +546,7 @@ async function auditV3StoryAndFormula(page, origin, screenshot) {
   await page.getByTestId('btn-exit-fullscreen-speech').click();
   const after = Number(await slider.inputValue());
   if (!Number.isFinite(after) || after === before) throw new Error('Formula drag did not change actual slider');
-  return { freeze, formulaBefore: before, formulaAfter: after, tokenIdentityPreserved: true };
+  return { freeze, frozenTime, authoredMorph: true, storyContextLost: true, formulaHighlight: true, formulaBefore: before, formulaAfter: after, tokenIdentityPreserved: true };
 }
 
 async function main() {
