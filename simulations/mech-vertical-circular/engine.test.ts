@@ -152,3 +152,18 @@ it('keeps the exact bilateral-rod separatrix asymptotic for 25 seconds without n
   }
   expect(s.x).toBeLessThan(1e-23);expect(s.derailed).toBe(false);
 });
+
+it('captures a same-sign guard excursion around a near-side angular turning point',()=>{
+  // 60-digit quadrature of dt=sqrt(R/g)dθ/sqrt(v₀²/(gR)-2-2cosθ).
+  for(const [radius,tExact] of [[.8,.529719126969281621],[1.6,.749135973608393609],[2.5,.936419967010492012]] as const){
+    const p:VerticalCircularParams={trackMode:'inner-loop',mass:1,radius,vLaunch:Math.sqrt(2.00000001*9.8*radius),startAngleDeg:0};
+    const init=createInitialState(p),r=stepVerticalCircular(init,p,1.5);
+    expect(r.nextState.derailed).toBe(true);expect(r.events).toHaveLength(1);
+    expect(Math.abs(r.events[0]!.time-tExact)).toBeLessThan(2e-7);
+    expect(r.nextState.derailAngleDeg).toBeCloseTo(89.99999980901407,7);
+    expect(r.nextState.t).toBeCloseTo(1.5,12);
+    let s=init;const events=[];
+    for(let i=0;i<360;i++){const step=stepVerticalCircular(s,p,1/240);s=step.nextState;events.push(...step.events);}
+    expect(events).toHaveLength(1);expect(Math.abs(events[0]!.time-tExact)).toBeLessThan(2e-7);
+  }
+});

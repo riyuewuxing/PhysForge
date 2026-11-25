@@ -142,11 +142,22 @@ export function stepVerticalCircular(state:VerticalCircularState,p:VerticalCircu
   let count=0;
   while(a.t<end){
     if(++count>200000)throw Error('M06 constrained substep budget exceeded');
-    const h=Math.min(end-a.t,.0015,.02/(1+Math.abs(a.omega)+Math.sqrt(g/R)));
+    // Very near the side-turn threshold the forbidden contact interval
+    // can be shorter than a single RK substep. Refine the local integration
+    // and split the guard bracket at the actual angular-velocity turning point.
+    const nearSide=p.trackMode==='inner-loop'&&ratio>2&&ratio<2.0001;
+    const h=Math.min(end-a.t,nearSide?.00025:.0015,.02/(1+Math.abs(a.omega)+Math.sqrt(g/R)));
     if(h<=0||a.t+h===a.t)break;
     const next=advanceAngle(a,p,h);
-    if(guard&&guard(a)>=0&&guard(next)<=0){
-      const hit=bisectEvent(a,a.t,h,(s,d)=>advanceAngle(s,p,d),guard,{timeTolerance:1e-11,triggerOnStartZero:true});
+    let bracket=h;
+    let crosses=Boolean(guard&&guard(a)>=0&&guard(next)<=0);
+    if(!crosses&&guard&&p.trackMode==='inner-loop'&&guard(a)>=0&&a.omega<0&&next.omega>=0){
+      const turn=bisectEvent(a,a.t,h,(s,d)=>advanceAngle(s,p,d),s=>s.omega,{timeTolerance:1e-13});
+      if(!turn)throw Error('M06 turning bracket failed');
+      if(guard(turn.state)<=0){crosses=true;bracket=turn.timeOffset;}
+    }
+    if(guard&&crosses){
+      const hit=bisectEvent(a,a.t,bracket,(s,d)=>advanceAngle(s,p,d),guard,{timeTolerance:1e-11,triggerOnStartZero:true});
       if(!hit)throw Error('M06 release bracket failed');
       const b=toCartesian(hit.state,R),event=releaseEvent(b,hit.bracketWidth),free=projectile(b,end-b.t);
       const pts=[{x:b.x,y:b.y},...(end>b.t?[{x:free.x,y:free.y}]:[])];
