@@ -389,7 +389,7 @@ async function auditM02Equilibrium(page,origin){
   const sphere=await read();
   const checkSphere=d=>{const L=Math.sqrt(1+1.6**2-3.2*Math.cos(d.angleDeg*Math.PI/180));if(Math.abs(d.force1-19.6/1.6)>1e-9||Math.abs(d.force2-19.6*L/1.6)>1e-9||Math.abs(d.ropeLengthM-L)>1e-9||d.netResidualN>=1e-10)throw Error('M02 hemisphere '+JSON.stringify(d));};
   checkSphere(sphere);
-  const expand=page.getByRole('button',{name:'展开示波器',exact:true});
+  const expand=page.getByTestId('btn-expand-oscilloscope');
   if(await expand.isVisible())await expand.click();
   await page.getByTestId('uplot-container').waitFor({state:'attached'});
   await page.getByTestId('equilibrium-scope-empty').waitFor({state:'visible'});
