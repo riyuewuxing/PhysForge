@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, stepVerticalCircular, type VerticalCircularParams } from './engine.js';
+import { createInitialState, stepVerticalCircular, checkInvariants, type VerticalCircularParams } from './engine.js';
 
 describe('M06 mech-vertical-circular verification', () => {
   it('derails smooth outer hemisphere near arccos(2/3) (< 1e-6 rad for tiny launchperturbation) and conserves energy < 1e-6', () => {
@@ -126,4 +126,14 @@ describe('H25 M06 geometric and near-critical contracts',()=>{
     expect(verticalBoundsFit(s,p,fit,safe)).toBe(true);expect(fit.scale).toBeGreaterThan(.1);
     expect(s.t).toBe(6);expect(s.trail.length).toBeLessThanOrEqual(1201);
   });
+});
+
+it('audits zero-reference-energy side turn in joules rather than dividing by nearly zero',()=>{
+  const p:VerticalCircularParams={trackMode:'inner-loop',mass:1,radius:1.6,vLaunch:Math.sqrt(2*9.8*1.6),startAngleDeg:0};
+  const init=createInitialState(p);let s=init;
+  for(let i=0;i<2400;i++){
+    s=stepVerticalCircular(s,p,1/240).nextState;
+    const report=checkInvariants(s,init,p)[0]!;
+    expect(report.unit).toBe('J');expect(report.measuredError).toBeLessThan(1e-8);expect(report.passed).toBe(true);
+  }
 });

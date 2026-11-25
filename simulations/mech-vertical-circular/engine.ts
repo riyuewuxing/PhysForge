@@ -148,6 +148,7 @@ export function stepVerticalCircular(state:VerticalCircularState,p:VerticalCircu
   const next=toCartesian(a,R),react=evaluateConstrainedReaction(next.x,next.y,next.vx,next.vy,p.mass,g,p.trackMode);
   // In physically admissible zero-force tangencies, numerical roundoff must
   // not display a spurious pulling contact force. The energy audit is separate.
+  if(p.trackMode!=='light-rod'&&react.radialScalarForce < -1e-8*Math.max(1,p.mass*g))throw Error('M06 inadmissible constrained reaction: '+react.radialScalarForce);
   const N=p.trackMode==='light-rod'?react.radialScalarForce:Math.max(0,react.radialScalarForce);
   return {nextState:{...state,...next,...appendTrail(state,[{x:next.x,y:next.y}],state.trail.length+1),normalForceN:N},events:[]};
 }
@@ -171,6 +172,10 @@ export function computeObservables(state: VerticalCircularState, params: Vertica
 
 export function checkInvariants(state: VerticalCircularState, _init: VerticalCircularState, params: VerticalCircularParams): InvariantReport[] {
   const obs = computeObservables(state, params);
-  const relErr = Math.abs(obs.energy! - state.initialEnergy) / Math.max(Math.abs(state.initialEnergy), 1e-6);
+  const absoluteError=Math.abs(obs.energy!-state.initialEnergy);
+  // At zero reference energy the relative error is undefined. Audit the
+  // absolute SI residual as well, rather than normalize by an arbitrary 1e-6 J.
+  if(Math.abs(state.initialEnergy)<1e-8*Math.max(1,params.mass*CLASSROOM_GRAVITY*radius(params)))return [{name:'机械能绝对残差（初始能量近零）',measuredError:absoluteError,tolerance:1e-8,passed:absoluteError<1e-8,unit:'J'}];
+  const relErr = absoluteError / Math.max(Math.abs(state.initialEnergy), 1e-6);
   return [{ name: '竖直圆周机械能守恒 ΔE/E₀', measuredError: relErr, tolerance: 1e-6, passed: relErr < 1e-6 }];
 }

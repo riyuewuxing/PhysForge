@@ -1,6 +1,5 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { verticalCircularStoryDecks } from './storyDecks.js';
-import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { verticalDiagram,verticalForceVectors,verticalInitialView,fitVerticalViewport,verticalBoundsFit,type VerticalRole } from './diagram.js';
 import { verticalCircularPresets } from './presets.js';
@@ -243,7 +242,7 @@ export const mechVerticalCircularPlugin = Object.assign(defineSimulationPlugin<
       }
       ctx.restore();
     }
-    resolveAndDrawLabels(ctx,labels,vp.width,vp.height);
+    resolveAndDrawLabels(ctx,labels.filter(l=>l.x>=0&&l.x<=vp.width&&l.y>=0&&l.y<=vp.height),vp.width,vp.height);
   }
 }), { storyDecks: verticalCircularStoryDecks, liveFormulas,fitVerticalViewport,verticalBoundsFit });
 
