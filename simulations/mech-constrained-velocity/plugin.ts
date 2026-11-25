@@ -1,5 +1,5 @@
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
-import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type DiagramPrimitive, type ParamFieldSpec, type Viewport } from '@physforge/sim-sdk';
 import { constrainedVelocityPresets } from './presets.js';
 import { checkInvariants,computeObservables,createInitialState,stepConstrainedVelocity,normalizedParams,
   type ConstrainedVelocityParams,type ConstrainedVelocityState,type Point } from './engine.js';
@@ -10,7 +10,7 @@ const paramSchema:readonly ParamFieldSpec<ConstrainedVelocityParams>[]=[
     {label:'斜面推竖直轻杆',value:'wedge-rod'},{label:'双绳不等速收绳',value:'dual-rope-pull'}],defaultValue:'rope-pull-boat'},
   {key:'driveSpeed',kind:'number',label:'驱动速率 u',unit:'m/s',min:0,max:5,step:.5,defaultValue:1.5},
   {key:'heightOrLength',kind:'number',label:'几何尺寸',unit:'m',min:1,max:4,step:.2,defaultValue:1.8},
-  {key:'initialAngleDeg',kind:'number',label:'初始几何倾角 θ₀',unit:'°',min:15,max:75,step:5,defaultValue:25},
+  {key:'initialAngleDeg',kind:'number',label:'初始几何倾角 θ₀',unit:'°',min:15,max:75,step:1,defaultValue:25},
   {key:'secondarySpeedRatio',kind:'number',label:'右/左收绳速率比 r',min:0,max:1.5,step:.1,defaultValue:.6},
   {key:'payloadMassKg',kind:'number',label:'载荷质量 m（仅用于重力）',unit:'kg',min:.5,max:10,step:.5,defaultValue:1}
 ];
@@ -27,9 +27,19 @@ function layout(p:ConstrainedVelocityParams){
   if(q.mode==='dual-rope-pull'){const l=D/(2*Math.cos(a));minX=Math.min(0,D-l);maxX=Math.max(D,l);minY=-l;maxY=0;}
   const span=Math.max(1,maxX-minX,maxY-minY),cy=(minY+maxY)/2,cx=maxX+.90*span;
   const bounds={minX:minX-.42*span,minY:Math.min(minY-.40*span,cy-.82*span),
-    maxX:maxX+1.50*span,maxY:Math.max(maxY+.40*span,cy+.82*span)};
+    maxX:maxX+1.50*span,maxY:Math.max(maxY+.40*span,cy+.99*span)};
   return {minX,maxX,minY,maxY,span,cx,cy,bounds};
 }
+export function fitConstrainedViewport(p:ConstrainedVelocityParams,v:Viewport,safe:{left:number;right:number;top:number;bottom:number}):Viewport|null{
+  const b=layout(p).bounds,{left,right,top,bottom}=safe;
+  if(right-left<100||bottom-top<100)return null;
+  const ppm=Math.min((right-left)/(b.maxX-b.minX),(bottom-top)/(b.maxY-b.minY));
+  if(!(ppm>0&&Number.isFinite(ppm)))return null;
+  return {...v,scale:ppm/(.24*Math.min(v.width,v.height)),
+    offsetX:(left+right)/2-(b.minX+b.maxX)*ppm/2-.45*v.width,
+    offsetY:(top+bottom)/2+(b.minY+b.maxY)*ppm/2-.5*v.height};
+}
+export const constrainedViewBounds=(p:ConstrainedVelocityParams)=>layout(p).bounds;
 function initialCamera(p:ConstrainedVelocityParams,v:{width:number;height:number}){
   const b=layout(p).bounds,base=.24*Math.min(v.width,v.height),left=26,right=v.width>=1200?v.width-300:v.width-26;
   const top=30,bottom=v.height>=650?v.height-175:v.height-26;
@@ -82,7 +92,7 @@ export function constrainedGeometry(s:ConstrainedVelocityState,p:ConstrainedVelo
   };
   arrow(A,s.velA,'velocity',s.mode==='rope-pull-boat'?'v船':s.mode==='dual-rope-pull'?'v物':'vA');
   arrow(B,s.velB,'velocity','vB');
-  text(vectors,{x:cx,y:cy+.74*span},'速度空间 · 共同尺度');
+  text(vectors,{x:cx,y:cy+.88*span},'速度空间 · 同帧统一比例');
   for(const [i,c] of s.constraints.entries()){
     const y=cy+(s.constraints.length===1?0:(i===0?.35:-.35)*span),o={x:cx,y};
     const end=add(o,c.parallel,scale);
@@ -110,6 +120,7 @@ export const mechConstrainedVelocityPlugin=defineSimulationPlugin<ConstrainedVel
   layers:[{id:'geometry',label:'真实约束几何',defaultVisible:true},{id:'decomposition',label:'合速度与正交分量',defaultVisible:true}],
   telemetryChannels:[{key:'speedA',label:'A 端速率',unit:'m/s',color:'#38bdf8'},{key:'speedB',label:'B 端速率',unit:'m/s',color:'#f472b6'},{key:'angleDeg',label:'实际几何角',unit:'°',color:'#fbbf24'},{key:'projection1',label:'约束投影 1',unit:'m/s',color:'#4ade80'},{key:'target1',label:'目标投影 1',unit:'m/s',color:'#e8ba76'}],
   getControlHandles:s=>{
+    if(s.t>0)return []; // This is an initial-configuration control, not a moving constraint.
     const h=handle(s);
     return [{id:'initial-angle',label:'θ₀='+s.initialAngleDeg+'°',...h,handleKind:'angle',showWhenIdle:false,color:'#fbbf24',
       onDrag:wp=>{
@@ -117,7 +128,7 @@ export const mechConstrainedVelocityPlugin=defineSimulationPlugin<ConstrainedVel
           s.mode==='ladder-wall'?Math.asin(Math.max(0,Math.min(1,wp.y/s.size))):
           s.mode==='wedge-rod'?Math.atan2(Math.max(0,wp.y),Math.max(.001,h.origin.x-wp.x)):
           Math.atan2(Math.max(0,-wp.y),s.size/2);
-        return {initialAngleDeg:Math.max(15,Math.min(75,Math.round(rad*180/Math.PI/5)*5))};
+        return {initialAngleDeg:Math.max(15,Math.min(75,Math.round(rad*180/Math.PI)))};
       }}];
   },
   // The prescribed trajectory does not determine constraint forces. Only the
@@ -136,7 +147,7 @@ export const mechConstrainedVelocityPlugin=defineSimulationPlugin<ConstrainedVel
     const pair=(a:string,b:string)=>'\\begin{gathered}'+a+'\\\\'+b+'\\end{gathered}';
     const eq=s.mode==='rope-pull-boat'?'\\vec v_A\\cdot\\hat e=u':s.mode==='dual-rope-pull'?pair('\\vec v\\cdot\\hat e_1=u_1','\\vec v\\cdot\\hat e_2=u_2'):s.mode==='ladder-wall'?'\\vec v_A\\cdot\\hat e=\\vec v_B\\cdot\\hat e':'\\vec v_A\\cdot\\hat n=\\vec v_B\\cdot\\hat n';
     const law=s.mode==='rope-pull-boat'?pair('v_A=ul/x','a_A=u^2H^2/x^3'):s.mode==='ladder-wall'?'v_B=u\\tan\\theta':s.mode==='wedge-rod'?'v_B=u\\tan\\alpha':pair('l_i=l_{i0}-u_it','\\vec v=E^{-1}\\vec u');
-    return [{id:'proj-eq',label:'约束全导数',latex:eq,substitutedLatex:s.constraints.map(c=>'v_{\\parallel}='+c.projected.toFixed(3)+'\\,\\mathrm{m/s}').reduce((a,b)=>pair(a,b))},
+    return [{id:'proj-eq',label:'约束全导数',latex:eq,substitutedLatex:s.constraints.map((c,i)=>'v_{\\parallel'+(s.constraints.length>1?','+(i+1):'')+'}='+c.projected.toFixed(3)+'\\,\\mathrm{m/s}').reduce((a,b)=>pair(a,b))},
       {id:'kinematics',label:'解析瞬时速度',latex:law,substitutedLatex:pair('v_A='+norm(s.velA).toFixed(3)+'\\,\\mathrm{m/s}','v_B='+norm(s.velB).toFixed(3)+'\\,\\mathrm{m/s}')},
       ...(s.terminal?[{id:'terminal',label:s.terminal,latex:'\\text{边界前瞬时值；演示终止}'}]:[])];
   },

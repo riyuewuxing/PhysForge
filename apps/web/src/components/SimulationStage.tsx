@@ -11,6 +11,8 @@ type OrbitStagePlugin=typeof import('../../../../simulations/astro-orbital-mecha
 import type { KinematicsChaseParams,KinematicsChaseState } from '../../../../simulations/mech-kinematics-chase/engine.js';
 import type { ChaseSafeRect } from '../../../../simulations/mech-kinematics-chase/plugin.js';
 type ChaseStagePlugin=typeof import('../../../../simulations/mech-kinematics-chase/plugin.js').mechKinematicsChasePlugin;
+import type { ConstrainedVelocityParams } from '../../../../simulations/mech-constrained-velocity/engine.js';
+type ConstrainedStagePlugin=typeof import('../../../../simulations/mech-constrained-velocity/plugin.js').mechConstrainedVelocityPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -332,6 +334,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const userTransformedViewRef = useRef<boolean>(false);
   const b1FitKeyRef=useRef('');
   const chaseSafeRef=useRef<{key:string;safe:ChaseSafeRect}|null>(null);
+  const constrainedFitKeyRef=useRef('');
   const b1FitAtRef=useRef(-Infinity);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
@@ -340,7 +343,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
-    chaseSafeRef.current=null;
+    chaseSafeRef.current=null;constrainedFitKeyRef.current='';
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -596,6 +599,21 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       }
     }
+    const constrainedAutomatic=p.meta.id==='mech-constrained-velocity'&&!userTransformedViewRef.current&&
+      !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
+    if(constrainedAutomatic&&drawState!==null){
+      const model=p as unknown as ConstrainedStagePlugin,cur=latestRef.current,v=viewportRef.current;
+      const key=JSON.stringify([pm.mode,pm.heightOrLength,pm.initialAngleDeg,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      if(key!==constrainedFitKeyRef.current){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const right=cur.presentationMode||cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-300):v.width-26;
+        const bottom=cur.presentationMode||!cur.oscilloscopeCollapsed?(dock&&dock.height>0?dock.top-box.top-14:v.height-180):v.height-76;
+        const next=model.fitConstrainedViewport(pm as ConstrainedVelocityParams,v,{left:30,right,top:cur.presentationMode?90:28,bottom});
+        if(next){constrainedFitKeyRef.current=key;cameraRef.current=next;viewportRef.current=next;baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(100);}
+      }
+    }
     const baseVp = viewportRef.current;
     ctx.save();
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
@@ -751,7 +769,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
     if(p.meta.id==='mech-kinematics-chase'&&frame&&drawState!==null){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.chaseAutoFit=String(chaseAutomatic);}
     if(p.meta.id==='mech-dynamic-equilibrium'&&frame&&drawState!==null){const layers=readDisplayedLayers();canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});canvas.dataset.equilibriumView=layers.has('angle-curve')?'angle-curve':layers.has('aux-circle')?'aux-circle':layers.has('triangle')?'triangle':'none';canvas.dataset.equilibriumViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
-    if(p.meta.id==='mech-constrained-velocity'&&frame&&drawState!==null)canvas.dataset.constrainedRendered=JSON.stringify({t:frame.t,mode:pm.mode,...p.engine.computeObservables(drawState,pm)});
+    if(p.meta.id==='mech-constrained-velocity'&&frame&&drawState!==null){canvas.dataset.constrainedRendered=JSON.stringify({t:frame.t,mode:pm.mode,...p.engine.computeObservables(drawState,pm)});canvas.dataset.constrainedViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.constrainedAutoFit=String(constrainedAutomatic);}
     if(p.getTelemetryChannels&&frame&&drawState!==null){canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
       canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...p.engine.computeObservables(drawState,pm)});
@@ -1071,7 +1089,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     emitTelemetrySummary(true);
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
 
-  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}},[chaseStage,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
+  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}},[chaseStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
@@ -1588,7 +1606,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (e.pointerType === 'touch') hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = hoveredHandleIdRef.current ? 'pointer' : 'grab';
-              if(chaseStage&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||plugin.meta.id==='mech-constrained-velocity')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerCancel={(e) => {
               activePointersRef.current.clear();
@@ -1597,7 +1615,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = 'grab';
-              if(chaseStage&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||plugin.meta.id==='mech-constrained-velocity')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerLeave={(e) => {
               if (e.pointerType === 'touch' || dragModeRef.current) return;
