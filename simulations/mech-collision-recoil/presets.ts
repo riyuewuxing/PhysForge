@@ -62,7 +62,7 @@ export const collisionRecoilPresets: readonly PresetSpec<CollisionRecoilParams>[
   {
     id: 'boat-person-recoil',
     name: '人船反冲（质心位置严格恒定）',
-    description: '总动量恒为零，观察人走船退时红色质心轴线与位移反比关系',
+    description: '峰值相对速度给定，sin² 平滑起止；总水平动量恒为零，质心位置固定',
     curriculumNotes: '选择性必修一 · 反冲运动',
     params: {
       mode: 'boat-recoil',
@@ -77,5 +77,10 @@ export const collisionRecoilPresets: readonly PresetSpec<CollisionRecoilParams>[
       dragForceF: 8,
       blockLength: 3
     }
-  }
+  },
+  {id:'oblique-miss',name:'未命中：b 大于两球半径和',description:'真实瞄准距 .66m，半径和 .60m；全程无碰撞冲量。',params:{mode:'collision-2d-oblique',mass1:2,mass2:2,v10:4,v20:0,restitutionE:1,impactParamB:.66,radius1:.3,radius2:.3,dragForceF:8,blockLength:2}},
+  {id:'oblique-grazing',name:'精确擦边：b 等于两球半径和',description:'接触瞬间法向相对速度为零，不产生碰撞冲量。',params:{mode:'collision-2d-oblique',mass1:2,mass2:2,v10:4,v20:0,restitutionE:1,impactParamB:.6,radius1:.3,radius2:.3,dragForceF:8,blockLength:2}},
+  {id:'bullet-exit',name:'理想质点先穿出木块',description:'先穿出而非共速，穿行阶段末阻力撤除，Q=f d。',params:{mode:'bullet-block',mass1:.5,mass2:2,v10:8,v20:0,restitutionE:0,impactParamB:0,radius1:.14,radius2:.35,dragForceF:10,blockLength:1}},
+  {id:'block-force-pair',name:'长木块：观察穿行阶段真实内力对',description:'长木块使质点较早进入，穿行时两物体受到等大反向内力；到共速后消失。',params:{mode:'bullet-block',mass1:.5,mass2:2,v10:8,v20:0,restitutionE:0,impactParamB:0,radius1:.14,radius2:.35,dragForceF:10,blockLength:4},visibleLayers:['bodies','momentumTriangle','cmLine','construction','forces']},
+  {id:'boat-zero-speed',name:'人船零速度静止',description:'峰值相对速度为零，初始状态保持，不人为给定最低速度。',params:{mode:'boat-recoil',mass1:1,mass2:3,v10:0,v20:0,restitutionE:0,impactParamB:0,radius1:.25,radius2:.35,dragForceF:8,blockLength:3}}
 ];

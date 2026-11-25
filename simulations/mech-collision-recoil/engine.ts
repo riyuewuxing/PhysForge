@@ -1,470 +1,175 @@
 import { bisectEvent } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
-
-export type CollisionRecoilMode =
-  | 'collision-1d'
-  | 'collision-2d-oblique'
-  | 'bullet-block'
-  | 'boat-recoil';
-
-export type CollisionRecoilParams = {
-  mode: CollisionRecoilMode;
-  mass1: number;
-  mass2: number;
-  v10: number;
-  v20: number;
-  restitutionE: number;
-  impactParamB: number;
-  radius1: number;
-  radius2: number;
-  dragForceF: number;
-  blockLength: number;
-};
-
-export interface CollisionRecoilState {
-  readonly t: number;
-  readonly x1: number;
-  readonly y1: number;
-  readonly vx1: number;
-  readonly vy1: number;
-  readonly x2: number;
-  readonly y2: number;
-  readonly vx2: number;
-  readonly vy2: number;
-  readonly collided: boolean;
-  readonly bulletPhase: 'approach' | 'penetrating' | 'comoving' | 'exited';
-  readonly heatLostJ: number;
-  readonly penetrationDist: number;
-  readonly xCm0: number;
-  readonly pInitX: number;
-  readonly pInitY: number;
-  readonly kInit: number;
-  readonly events: readonly PhysicsEvent[];
+export type CollisionRecoilMode='collision-1d'|'collision-2d-oblique'|'bullet-block'|'boat-recoil';
+export type CollisionRecoilParams={mode:CollisionRecoilMode;mass1:number;mass2:number;v10:number;v20:number;restitutionE:number;impactParamB:number;radius1:number;radius2:number;dragForceF:number;blockLength:number};
+type Vec={x:number;y:number};
+export type SphereImpact={t:number;center1:Vec;center2:Vec;normal:Vec;before1:Vec;before2:Vec;after1:Vec;after2:Vec;impulse:number;approachNormal:number;contact:Vec;bracketWidth:number};
+export interface CollisionRecoilState{
+  readonly t:number;readonly x1:number;readonly y1:number;readonly vx1:number;readonly vy1:number;
+  readonly x2:number;readonly y2:number;readonly vx2:number;readonly vy2:number;readonly collided:boolean;
+  readonly bulletPhase:'approach'|'penetrating'|'comoving'|'exited';
+  readonly heatLostJ:number;readonly penetrationDist:number;readonly xCm0:number;readonly yCm0:number;
+  readonly pInitX:number;readonly pInitY:number;readonly kInit:number;readonly events:readonly PhysicsEvent[];
+  readonly impact:SphereImpact|null;readonly entryTime:number|null;readonly phaseEndTime:number|null;
 }
-
-export function createInitialState(params: CollisionRecoilParams): CollisionRecoilState {
-  const m1 = Math.max(0.05, params.mass1);
-  const m2 = Math.max(0.05, params.mass2);
-
-  if (params.mode === 'boat-recoil') {
-    const boatLen = Math.max(1.0, params.blockLength);
-    const x20 = 0;
-    const x10 = -0.45 * boatLen;
-    const xCm0 = (m1 * x10 + m2 * x20) / (m1 + m2);
-    return {
-      t: 0,
-      x1: x10,
-      y1: 0.35,
-      vx1: 0,
-      vy1: 0,
-      x2: x20,
-      y2: 0,
-      vx2: 0,
-      vy2: 0,
-      collided: false,
-      bulletPhase: 'approach',
-      heatLostJ: 0,
-      penetrationDist: 0,
-      xCm0,
-      pInitX: 0,
-      pInitY: 0,
-      kInit: 0,
-      events: []
-    };
+const v=(x:number,y:number):Vec=>({x,y});
+const dot=(a:Vec,b:Vec)=>a.x*b.x+a.y*b.y;
+const norm=(a:Vec)=>Math.hypot(a.x,a.y);
+const sub=(a:Vec,b:Vec)=>v(a.x-b.x,a.y-b.y);
+const add=(a:Vec,b:Vec)=>v(a.x+b.x,a.y+b.y);
+const scale=(a:Vec,k:number)=>v(a.x*k,a.y*k);
+const mass=(p:CollisionRecoilParams)=>p.mass1+p.mass2;
+const reduced=(p:CollisionRecoilParams)=>p.mass1*p.mass2/mass(p);
+const eps=(...x:number[])=>32*Number.EPSILON*Math.max(1,...x.map(Math.abs));
+function validate(p:CollisionRecoilParams){
+  if(![p.mass1,p.mass2,p.radius1,p.radius2,p.blockLength].every(x=>Number.isFinite(x)&&x>0)||
+     ![p.v10,p.v20,p.impactParamB,p.restitutionE,p.dragForceF].every(Number.isFinite)||
+     p.restitutionE<0||p.restitutionE>1||p.dragForceF<0||((p.mode==='boat-recoil'||p.mode==='bullet-block')&&p.v10<0))
+    throw Error('Invalid M09 physical parameters');
+}
+export function createInitialState(p:CollisionRecoilParams):CollisionRecoilState{
+  validate(p);
+  const M=mass(p),boat=p.mode==='boat-recoil',bullet=p.mode==='bullet-block',oblique=p.mode==='collision-2d-oblique';
+  const x1=boat?-.45*p.blockLength:bullet?-Math.max(2.4,p.blockLength/2+.2):-Math.max(2.6,p.radius1+p.radius2+.2);
+  const y1=boat?.35:oblique?p.impactParamB:0,x2=0,y2=0,vx1=boat?0:p.v10,vx2=boat||bullet||oblique?0:p.v20;
+  return {t:0,x1,y1,x2,y2,vx1,vy1:0,vx2,vy2:0,collided:false,bulletPhase:'approach',heatLostJ:0,penetrationDist:0,
+    xCm0:p.mass1*x1/M,yCm0:p.mass1*y1/M,pInitX:p.mass1*vx1+p.mass2*vx2,pInitY:0,kInit:.5*(p.mass1*vx1**2+p.mass2*vx2**2),events:[],impact:null,entryTime:null,phaseEndTime:null};
+}
+function linear(s:CollisionRecoilState,h:number):CollisionRecoilState{
+  return {...s,t:s.t+h,x1:s.x1+s.vx1*h,y1:s.y1+s.vy1*h,x2:s.x2+s.vx2*h,y2:s.y2+s.vy2*h};
+}
+// In uniform relative motion solve |r-u h|=R analytically. The
+// transverse distance is calculated without a subtractive discriminant.
+// The rationalized entry root remains stable just before contact.
+type LocatedEvent={timeOffset:number;bracketWidth:number};
+// The analytic domain determines whether a root exists and brackets the
+// FIRST event; the shared event locator then bisects the exact trajectory.
+// Never rely on the sign of the gap at the requested outer-step endpoint.
+function sphereEvent(s:CollisionRecoilState,p:CollisionRecoilParams,maxDt=Infinity):LocatedEvent|null{
+  const R=p.radius1+p.radius2,r=v(s.x2-s.x1,s.y2-s.y1),u=v(s.vx1-s.vx2,s.vy1-s.vy2),speed=norm(u),distance=norm(r);
+  if(speed===0)return null;
+  const dir=scale(u,1/speed),projection=dot(r,dir),b=Math.abs(r.x*dir.y-r.y*dir.x);
+  if(projection<=0||b>=R-eps(R,b))return null;
+  if(distance<R-eps(distance,R))throw Error('M09 invalid initial sphere overlap');
+  if(distance<=R+eps(distance,R))return {timeOffset:0,bracketWidth:0};
+  const chord=Math.sqrt((R-b)*(R+b)),den=speed*(projection+chord);
+  const estimate=(distance-R)*(distance+R)/den;
+  if(estimate<0||estimate>maxDt)return null;
+  // On the approaching branch, r_parallel-chord has precisely the same
+  // zero/sign as the physical surface gap, without grazing cancellation.
+  const hit=bisectEvent(projection,s.t,projection/speed,(x,h)=>x-speed*h,x=>x-chord,{timeTolerance:1e-13,biasEndpoint:'positive'});
+  if(!hit)throw Error('M09 analytic approach bracket did not locate contact');
+  return {timeOffset:Math.min(hit.timeOffset,maxDt),bracketWidth:hit.bracketWidth};
+}
+export function sphereTimeOfImpact(s:CollisionRecoilState,p:CollisionRecoilParams):number|null{
+  return sphereEvent(s,p)?.timeOffset??null;
+}
+function stepSphere(s:CollisionRecoilState,p:CollisionRecoilParams,dt:number):StepResult<CollisionRecoilState>{
+  if(s.collided)return {nextState:linear(s,dt),events:[]};
+  const located=sphereEvent(s,p,dt);
+  if(!located)return {nextState:linear(s,dt),events:[]};
+  const hit=located.timeOffset,at=linear(s,hit),a=v(at.x1,at.y1),b=v(at.x2,at.y2),r=sub(b,a),n=scale(r,1/norm(r));
+  const before1=v(s.vx1,s.vy1),before2=v(s.vx2,s.vy2),un=dot(sub(before1,before2),n);
+  if(un<=0)return {nextState:linear(s,dt),events:[]};
+  const J=(1+p.restitutionE)*reduced(p)*un,after1=sub(before1,scale(n,J/p.mass1)),after2=add(before2,scale(n,J/p.mass2));
+  const Q=.5*reduced(p)*(1-p.restitutionE)*(1+p.restitutionE)*un*un;
+  const impact:SphereImpact={t:at.t,center1:a,center2:b,normal:n,before1,before2,after1,after2,impulse:J,approachNormal:un,contact:add(a,scale(n,p.radius1)),bracketWidth:located.bracketWidth};
+  const ev:PhysicsEvent={id:'impact-'+s.events.length,time:at.t,label:p.mode==='collision-2d-oblique'?'二维球体瞬时冲量':'一维对心碰撞',position:impact.contact,metrics:{heatLostJ:Q,normalImpulse:J,normalBefore:un,normalAfter:dot(sub(after1,after2),n),separation:norm(r),bracketWidth:located.bracketWidth}};
+  const post={...at,vx1:after1.x,vy1:after1.y,vx2:after2.x,vy2:after2.y,collided:true,heatLostJ:Q,impact,events:[...s.events,ev]};
+  return {nextState:linear(post,dt-hit),events:[ev]};
+}
+// The projectile is a material point in this teaching model; the
+// drawn marker has no independent contact radius. Internal resistance
+// is constant only during forward penetration, not after common speed.
+function penetrate(s:CollisionRecoilState,p:CollisionRecoilParams,h:number,d:number,u:number):CollisionRecoilState{
+  const M=mass(p),V=s.pInitX/M,X=s.xCm0+V*(s.t+h),relative=d-p.blockLength/2;
+  return {...s,t:s.t+h,x1:X+p.mass2/M*relative,x2:X-p.mass1/M*relative,vx1:V+p.mass2/M*u,vx2:V-p.mass1/M*u,penetrationDist:d,heatLostJ:p.dragForceF*d};
+}
+function locateKnownEvent(t0:number,estimate:number,guard:(u:number)=>number,horizon:number):LocatedEvent{
+  const hit=bisectEvent<number>(0,t0,horizon,(u,h)=>u+h,guard,{timeTolerance:1e-13,biasEndpoint:'positive'});
+  if(!hit||Math.abs(hit.timeOffset-estimate)>Math.max(1e-9,eps(estimate)*8))throw Error('M09 analytic event and bisection disagree');
+  return {timeOffset:hit.timeOffset,bracketWidth:hit.bracketWidth};
+}
+function stepBullet(s:CollisionRecoilState,p:CollisionRecoilParams,dt:number):StepResult<CollisionRecoilState>{
+  const L=p.blockLength,f=p.dragForceF,end=s.t+dt,events:PhysicsEvent[]=[];
+  let cur=s;
+  if(cur.bulletPhase==='approach'){
+    if(p.v10===0)return {nextState:linear(cur,dt),events};
+    const initialGap=Math.max(2.4,L/2+.2)-L/2,estimate=initialGap/p.v10;
+    if(estimate>end)return {nextState:linear(cur,dt),events};
+    const located=locateKnownEvent(0,estimate,h=>initialGap-p.v10*h,estimate+Math.max(1e-9,eps(estimate)*4)),entry=located.timeOffset;
+    cur=penetrate({...cur,t:entry},p,0,0,p.v10);
+    const ev:PhysicsEvent={id:'entry-'+cur.events.length,time:entry,label:'质点进入木块左端',position:{x:cur.x1,y:0},metrics:{relativeSpeed:p.v10,penetrationDist:0,bracketWidth:located.bracketWidth}};
+    cur={...cur,collided:true,bulletPhase:'penetrating',entryTime:entry,events:[...cur.events,ev]};events.push(ev);
   }
-
-  const r1 = Math.max(0.1, params.radius1);
-  const r2 = Math.max(0.1, params.radius2);
-  const is2D = params.mode === 'collision-2d-oblique';
-  const maxB = 0.95 * (r1 + r2);
-  const b = is2D ? Math.max(-maxB, Math.min(maxB, params.impactParamB)) : 0;
-
-  const x10 = params.mode === 'bullet-block' ? -2.4 : -2.6;
-  const x20 = 0;
-  const vx10 = params.v10;
-  const vx20 = params.mode === 'bullet-block' ? 0 : is2D ? 0 : params.v20;
-
-  const xCm0 = (m1 * x10 + m2 * x20) / (m1 + m2);
-  const pInitX = m1 * vx10 + m2 * vx20;
-  const kInit = 0.5 * m1 * vx10 * vx10 + 0.5 * m2 * vx20 * vx20;
-
-  return {
-    t: 0,
-    x1: x10,
-    y1: b,
-    vx1: vx10,
-    vy1: 0,
-    x2: x20,
-    y2: 0,
-    vx2: vx20,
-    vy2: 0,
-    collided: false,
-    bulletPhase: 'approach',
-    heatLostJ: 0,
-    penetrationDist: 0,
-    xCm0,
-    pInitX,
-    pInitY: 0,
-    kInit,
-    events: []
-  };
-}
-
-function advanceLinear(st: CollisionRecoilState, dt: number): CollisionRecoilState {
-  return {
-    ...st,
-    t: st.t + dt,
-    x1: st.x1 + st.vx1 * dt,
-    y1: st.y1 + st.vy1 * dt,
-    x2: st.x2 + st.vx2 * dt,
-    y2: st.y2 + st.vy2 * dt
-  };
-}
-
-function applySphereImpulse(
-  st: CollisionRecoilState,
-  params: CollisionRecoilParams
-): CollisionRecoilState {
-  const m1 = Math.max(0.05, params.mass1);
-  const m2 = Math.max(0.05, params.mass2);
-  const e = Math.max(0, Math.min(1, params.restitutionE));
-
-  const dx = st.x2 - st.x1;
-  const dy = st.y2 - st.y1;
-  const dist = Math.hypot(dx, dy);
-  const nx = dist > 1e-12 ? dx / dist : 1;
-  const ny = dist > 1e-12 ? dy / dist : 0;
-
-  const relVn = (st.vx1 - st.vx2) * nx + (st.vy1 - st.vy2) * ny;
-  if (relVn <= 0) return st;
-
-  const jn = ((1 + e) * m1 * m2 * relVn) / (m1 + m2);
-  const vx1p = st.vx1 - (jn / m1) * nx;
-  const vy1p = st.vy1 - (jn / m1) * ny;
-  const vx2p = st.vx2 + (jn / m2) * nx;
-  const vy2p = st.vy2 + (jn / m2) * ny;
-
-  const kBefore = 0.5 * m1 * (st.vx1 * st.vx1 + st.vy1 * st.vy1) + 0.5 * m2 * (st.vx2 * st.vx2 + st.vy2 * st.vy2);
-  const kAfter = 0.5 * m1 * (vx1p * vx1p + vy1p * vy1p) + 0.5 * m2 * (vx2p * vx2p + vy2p * vy2p);
-
-  return {
-    ...st,
-    vx1: vx1p,
-    vy1: vy1p,
-    vx2: vx2p,
-    vy2: vy2p,
-    collided: true,
-    heatLostJ: Math.max(0, kBefore - kAfter)
-  };
-}
-
-function stepSphereCollision(
-  state: CollisionRecoilState,
-  params: CollisionRecoilParams,
-  dt: number
-): StepResult<CollisionRecoilState> {
-  const rSum = Math.max(0.1, params.radius1) + Math.max(0.1, params.radius2);
-  const events: PhysicsEvent[] = [];
-
-  if (state.collided) {
-    return { nextState: advanceLinear(state, dt), events };
-  }
-
-  const gapFn = (s: CollisionRecoilState) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1) - rSum;
-  const endCand = advanceLinear(state, dt);
-
-  if (gapFn(state) > 0 && gapFn(endCand) <= 0 && (state.vx1 - state.vx2) * (state.x2 - state.x1) > 0) {
-    const hit = bisectEvent(state, state.t, dt, advanceLinear, gapFn, {
-      timeTolerance: 1e-9,
-      biasEndpoint: 'midpoint'
-    });
-    if (hit) {
-      const afterImpulse = applySphereImpulse(hit.state, params);
-      const remDt = dt - hit.timeOffset;
-      const finalState = advanceLinear(afterImpulse, remDt);
-      const ev: PhysicsEvent = {
-        id: `impact-${state.events.length}`,
-        time: hit.time,
-        label: params.mode === 'collision-2d-oblique' ? '二维斜碰瞬时冲量' : '一维对心碰撞',
-        position: { x: 0.5 * (hit.state.x1 + hit.state.x2), y: 0.5 * (hit.state.y1 + hit.state.y2) },
-        metrics: { heatLostJ: afterImpulse.heatLostJ }
-      };
-      events.push(ev);
-      return {
-        nextState: { ...finalState, events: [...state.events, ev] },
-        events
-      };
+  if(cur.bulletPhase==='penetrating'){
+    // Determine the ordering ONCE from the immutable entry conditions.
+    // Do not reclassify an exact exit/common-speed tie due to accumulated
+    // per-step rounding of the remaining depth or relative speed.
+    const t0=cur.entryTime!,u=p.v10,a=f/reduced(p),stop=a===0?Infinity:u/a,stopDistance=a===0?Infinity:u*u/(2*a);
+    const canExit=L<stopDistance-eps(L,Number.isFinite(stopDistance)?stopDistance:L);
+    const tie=Number.isFinite(stopDistance)&&Math.abs(L-stopDistance)<=eps(L,stopDistance);
+    const hExit=canExit?(a===0?L/u:2*L/(u+Math.sqrt(Math.max(0,u*u-2*a*L)))):Infinity,h=Math.min(stop,hExit);
+    if(t0+h<=end){
+      const isExit=hExit<stop,disp=isExit||tie?L:stopDistance,speed=isExit?(a===0?u:Math.sqrt(Math.max(0,u*u-2*a*L))):0;
+      // For exit bracket only the increasing-depth branch; for common speed
+      // the signed relative velocity is the physical event guard.
+      const located=isExit?locateKnownEvent(t0,h,uTime=>L-u*uTime+.5*a*uTime*uTime,a===0?h+Math.max(1e-9,eps(h)*4):stop):locateKnownEvent(t0,h,uTime=>u-a*uTime,stop+Math.max(1e-9,eps(stop)*4));
+      cur=penetrate({...cur,t:t0+located.timeOffset},p,0,disp,speed);
+      const ev:PhysicsEvent={id:(isExit?'exit-':'covel-')+cur.events.length,time:cur.t,label:isExit?'质点穿出木块右端':tie?'恰在右端共速':'质点与木块共速',position:{x:cur.x1,y:0},metrics:{heatLostJ:cur.heatLostJ,penetrationDist:disp,relativeSpeed:speed,vCommon:cur.pInitX/mass(p),bracketWidth:located.bracketWidth}};
+      cur={...cur,bulletPhase:isExit?'exited':'comoving',phaseEndTime:cur.t,events:[...cur.events,ev]};events.push(ev);
+    }else{
+      const elapsed=end-t0;
+      cur=penetrate({...cur,t:end},p,0,u*elapsed-.5*a*elapsed*elapsed,u-a*elapsed);
+      return {nextState:cur,events};
     }
   }
-
-  return { nextState: endCand, events };
+  return {nextState:linear(cur,end-cur.t),events};
 }
-
-function advancePenetrating(
-  st: CollisionRecoilState,
-  m1: number,
-  m2: number,
-  fDrag: number,
-  dt: number
-): CollisionRecoilState {
-  const a1 = -fDrag / m1;
-  const a2 = fDrag / m2;
-  const x1 = st.x1 + st.vx1 * dt + 0.5 * a1 * dt * dt;
-  const x2 = st.x2 + st.vx2 * dt + 0.5 * a2 * dt * dt;
-  const vx1 = st.vx1 + a1 * dt;
-  const vx2 = st.vx2 + a2 * dt;
-  const relDisp = (st.vx1 - st.vx2) * dt + 0.5 * (a1 - a2) * dt * dt;
-  const dRel = st.penetrationDist + Math.max(0, relDisp);
-  return {
-    ...st,
-    t: st.t + dt,
-    x1,
-    x2,
-    vx1,
-    vx2,
-    penetrationDist: dRel,
-    heatLostJ: fDrag * dRel
-  };
+export const boatWalkDuration=(p:CollisionRecoilParams)=>p.v10===0?null:1.8*p.blockLength/p.v10;
+function smoothProgress(u:number){
+  const x=2*Math.PI*u;
+  if(Math.abs(x)<.01)return x*x*x*(1/6-x*x/120+x**4/5040)/(2*Math.PI);
+  return u-Math.sin(x)/(2*Math.PI);
 }
-
-function stepBulletBlock(
-  state: CollisionRecoilState,
-  params: CollisionRecoilParams,
-  dt: number
-): StepResult<CollisionRecoilState> {
-  const m1 = Math.max(0.05, params.mass1);
-  const m2 = Math.max(0.05, params.mass2);
-  const fDrag = Math.max(1, params.dragForceF);
-  const L = Math.max(0.2, params.blockLength);
-  const events: PhysicsEvent[] = [];
-
-  let cur = state;
-  let rem = dt;
-
-  if (cur.bulletPhase === 'approach') {
-    const gapFn = (s: CollisionRecoilState) => s.x2 - 0.5 * L - s.x1;
-    const cand = advanceLinear(cur, rem);
-    if (gapFn(cur) > 0 && gapFn(cand) <= 0) {
-      const hit = bisectEvent(cur, cur.t, rem, advanceLinear, gapFn, {
-        timeTolerance: 1e-9,
-        biasEndpoint: 'midpoint'
-      });
-      if (hit) {
-        const ev: PhysicsEvent = {
-          id: `entry-${cur.events.length}`,
-          time: hit.time,
-          label: '子弹射入木块左端',
-          position: { x: hit.state.x1, y: 0 }
-        };
-        events.push(ev);
-        cur = {
-          ...hit.state,
-          collided: true,
-          bulletPhase: 'penetrating',
-          events: [...cur.events, ev]
-        };
-        rem -= hit.timeOffset;
-      }
-    } else {
-      return { nextState: cand, events };
-    }
-  }
-
-  if (cur.bulletPhase === 'penetrating' && rem > 0) {
-    const advPen = (s: CollisionRecoilState, h: number) => advancePenetrating(s, m1, m2, fDrag, h);
-    const cand = advPen(cur, rem);
-    const vRelFn = (s: CollisionRecoilState) => s.vx1 - s.vx2;
-    const distRemFn = (s: CollisionRecoilState) => L - s.penetrationDist;
-
-    const coVelHit =
-      vRelFn(cur) > 0 && vRelFn(cand) <= 0
-        ? bisectEvent(cur, cur.t, rem, advPen, vRelFn, {
-            timeTolerance: 1e-9,
-            biasEndpoint: 'midpoint'
-          })
-        : null;
-    const exitHit =
-      distRemFn(cur) > 0 && distRemFn(cand) <= 0
-        ? bisectEvent(cur, cur.t, rem, advPen, distRemFn, {
-            timeTolerance: 1e-9,
-            biasEndpoint: 'midpoint'
-          })
-        : null;
-
-    if (exitHit && (!coVelHit || exitHit.timeOffset <= coVelHit.timeOffset)) {
-      const ev: PhysicsEvent = {
-        id: `exit-${cur.events.length + events.length}`,
-        time: exitHit.time,
-        label: '子弹穿出木块右端',
-        position: { x: exitHit.state.x1, y: 0 },
-        metrics: { heatLostJ: exitHit.state.heatLostJ }
-      };
-      events.push(ev);
-      cur = { ...exitHit.state, bulletPhase: 'exited', events: [...cur.events, ev] };
-      rem -= exitHit.timeOffset;
-    } else if (coVelHit) {
-      const vCommon = (m1 * cur.vx1 + m2 * cur.vx2) / (m1 + m2);
-      const ev: PhysicsEvent = {
-        id: `covel-${cur.events.length + events.length}`,
-        time: coVelHit.time,
-        label: '子弹与木块共速 (Q=f·d)',
-        position: { x: coVelHit.state.x1, y: 0 },
-        metrics: { vCommon, heatLostJ: coVelHit.state.heatLostJ }
-      };
-      events.push(ev);
-      cur = {
-        ...coVelHit.state,
-        vx1: vCommon,
-        vx2: vCommon,
-        bulletPhase: 'comoving',
-        events: [...cur.events, ev]
-      };
-      rem -= coVelHit.timeOffset;
-    } else {
-      return { nextState: cand, events };
-    }
-  }
-
-  if (rem > 0) {
-    cur = advanceLinear(cur, rem);
-  }
-  return { nextState: cur, events };
+function stepBoat(s:CollisionRecoilState,p:CollisionRecoilParams,dt:number):StepResult<CollisionRecoilState>{
+  const end=s.t+dt,T=boatWalkDuration(p),span=.9*p.blockLength,M=mass(p);
+  if(T===null)return {nextState:{...s,t:end},events:[]};
+  const u=Math.min(1,end/T),relative=-span/2+span*(u===1?1:smoothProgress(u)),speed=u===1?0:p.v10*Math.sin(Math.PI*u)**2;
+  const x1=s.xCm0+p.mass2/M*relative,x2=s.xCm0-p.mass1/M*relative;
+  const events:PhysicsEvent[]=[];
+  if(end>=T&&s.bulletPhase!=='comoving')events.push({id:'boat-stop-'+s.events.length,time:T,label:'到达船右端 · 双体平滑静止',position:{x:x1,y:s.y1},metrics:{xCm:s.xCm0,relativeDisplacement:span}});
+  return {nextState:{...s,t:end,x1,x2,vx1:p.mass2/M*speed,vx2:speed===0?0:-p.mass1/M*speed,bulletPhase:u===1?'comoving':'approach',events:[...s.events,...events]},events};
 }
-
-function stepBoatRecoil(
-  state: CollisionRecoilState,
-  params: CollisionRecoilParams,
-  dt: number
-): StepResult<CollisionRecoilState> {
-  const m1 = Math.max(0.05, params.mass1);
-  const m2 = Math.max(0.05, params.mass2);
-  const vRelMax = Math.max(0.2, Math.abs(params.v10));
-  const walkSpan = 0.9 * Math.max(1.0, params.blockLength);
-  const walkDuration = walkSpan / vRelMax;
-  const events: PhysicsEvent[] = [];
-
-  if (state.t >= walkDuration) {
-    return { nextState: { ...state, t: state.t + dt, vx1: 0, vx2: 0 }, events };
-  }
-
-  const endT = Math.min(walkDuration, state.t + dt);
-  const activeDt = endT - state.t;
-  const v1 = (m2 / (m1 + m2)) * vRelMax;
-  const v2 = -(m1 / (m1 + m2)) * vRelMax;
-  const x1 = state.x1 + v1 * activeDt;
-  const x2 = state.x2 + v2 * activeDt;
-  const finished = endT >= walkDuration - 1e-12;
-
-  if (finished && state.bulletPhase !== 'comoving') {
-    const ev: PhysicsEvent = {
-      id: `boat-stop-${state.events.length}`,
-      time: endT,
-      label: '人走到船右端停下（双体同时静止）',
-      position: { x: x2, y: 0 },
-      metrics: { xCm: (m1 * x1 + m2 * x2) / (m1 + m2) }
-    };
-    events.push(ev);
-    return {
-      nextState: {
-        ...state,
-        t: state.t + dt,
-        x1,
-        x2,
-        vx1: 0,
-        vx2: 0,
-        bulletPhase: 'comoving',
-        events: [...state.events, ev]
-      },
-      events
-    };
-  }
-
-  return {
-    nextState: {
-      ...state,
-      t: state.t + dt,
-      x1,
-      x2,
-      vx1: finished ? 0 : v1,
-      vx2: finished ? 0 : v2
-    },
-    events
-  };
+export function stepCollisionRecoil(s:CollisionRecoilState,p:CollisionRecoilParams,dt:number):StepResult<CollisionRecoilState>{
+  if(!Number.isFinite(dt)||dt<0)throw Error('Invalid dt: '+dt);
+  if(dt===0)return {nextState:s,events:[]};
+  switch(p.mode){case 'boat-recoil':return stepBoat(s,p,dt);case 'bullet-block':return stepBullet(s,p,dt);default:return stepSphere(s,p,dt);}
 }
-
-export function stepCollisionRecoil(
-  state: CollisionRecoilState,
-  params: CollisionRecoilParams,
-  dt: number
-): StepResult<CollisionRecoilState> {
-  if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
-  if (dt === 0) return { nextState: state, events: [] };
-
-  switch (params.mode) {
-    case 'collision-1d':
-    case 'collision-2d-oblique':
-      return stepSphereCollision(state, params, dt);
-    case 'bullet-block':
-      return stepBulletBlock(state, params, dt);
-    case 'boat-recoil':
-      return stepBoatRecoil(state, params, dt);
+export function computeObservables(s:CollisionRecoilState,p:CollisionRecoilParams):Record<string,number>{
+  const M=mass(p),px=p.mass1*s.vx1+p.mass2*s.vx2,py=p.mass1*s.vy1+p.mass2*s.vy2,ek=.5*(p.mass1*(s.vx1**2+s.vy1**2)+p.mass2*(s.vx2**2+s.vy2**2));
+  const xCm=(p.mass1*s.x1+p.mass2*s.x2)/M,yCm=(p.mass1*s.y1+p.mass2*s.y2)/M,boat=p.mode==='boat-recoil',bullet=p.mode==='bullet-block';
+  const T=boat?boatWalkDuration(p):null;
+  return {t:s.t,x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2,vx1:s.vx1,vy1:s.vy1,vx2:s.vx2,vy2:s.vy2,px,py,ek,heatLostJ:s.heatLostJ,xCm,yCm,
+    vDotProduct:s.vx1*s.vx2+s.vy1*s.vy2,relativeSpeed:s.vx1-s.vx2,relativePosition:s.x1-s.x2,
+    px1:p.mass1*s.vx1,py1:p.mass1*s.vy1,px2:p.mass2*s.vx2,py2:p.mass2*s.vy2,
+    momentumResidual:Math.hypot(px-s.pInitX,py-s.pInitY),cmResidual:Math.hypot(xCm-s.xCm0-s.pInitX/M*s.t,yCm-s.yCm0-s.pInitY/M*s.t),
+    collided:s.collided?1:0,phase:s.bulletPhase==='penetrating'?1:s.bulletPhase==='comoving'?2:s.bulletPhase==='exited'?3:0,
+    ...(!boat?{energyResidual:ek+s.heatLostJ-s.kInit}:{}),
+    ...(bullet?{penetrationDist:s.penetrationDist,remainingDepth:p.blockLength-s.penetrationDist,...(s.entryTime!==null?{entryTime:s.entryTime}:{}),...(s.phaseEndTime!==null?{phaseEndTime:s.phaseEndTime}:{})}:{}),
+    ...(boat?{walkProgress:(s.x1-s.x2+.45*p.blockLength)/(.9*p.blockLength),...(T===null?{}:{walkDuration:T})}:{}),
+    ...(!boat&&!bullet?{gap:Math.hypot(s.x2-s.x1,s.y2-s.y1)-p.radius1-p.radius2}:{}),
+    ...(s.impact?{impactTime:s.impact.t,normalImpulse:s.impact.impulse,normalBefore:s.impact.approachNormal,impactBracketWidth:s.impact.bracketWidth,normalAfter:dot(sub(s.impact.after1,s.impact.after2),s.impact.normal)}:{})};
+}
+export function checkInvariants(s:CollisionRecoilState,_initial:CollisionRecoilState,p:CollisionRecoilParams):InvariantReport[]{
+  const o=computeObservables(s,p),report=(name:string,value:number,tolerance:number,unit:string):InvariantReport=>({name,measuredError:Math.abs(value),tolerance,passed:Number.isFinite(value)&&Math.abs(value)<tolerance,unit});
+  const out=[report('系统二维动量守恒',o.momentumResidual!,1e-10,'kg·m/s'),report('质心惯性运动',o.cmResidual!,1e-10*Math.max(1,Math.abs(o.xCm!)),'m')];
+  if(p.mode!=='boat-recoil')out.push(report('动能与内能损耗总和守恒',o.energyResidual!,1e-9,'J'));
+  if(p.mode==='bullet-block'){
+    out.push(report('穿行深度范围',Math.max(0,-s.penetrationDist,s.penetrationDist-p.blockLength),1e-9,'m'),report('阻力功等于内能损耗',s.heatLostJ-p.dragForceF*s.penetrationDist,1e-10,'J'));
+  }else if(p.mode!=='boat-recoil'){
+    out.push(report('球体不可穿透',Math.min(0,o.gap!),1e-9,'m'));
+    if(s.impact)out.push(report('法向恢复系数',o.normalAfter!+p.restitutionE*o.normalBefore!,1e-10,'m/s'));
   }
-}
-
-export function computeObservables(
-  state: CollisionRecoilState,
-  params: CollisionRecoilParams
-): Record<string, number> {
-  const m1 = Math.max(0.05, params.mass1);
-  const m2 = Math.max(0.05, params.mass2);
-  const px = m1 * state.vx1 + m2 * state.vx2;
-  const py = m1 * state.vy1 + m2 * state.vy2;
-  const ek =
-    0.5 * m1 * (state.vx1 * state.vx1 + state.vy1 * state.vy1) +
-    0.5 * m2 * (state.vx2 * state.vx2 + state.vy2 * state.vy2);
-  const xCm = (m1 * state.x1 + m2 * state.x2) / (m1 + m2);
-  return {
-    t: state.t,
-    x1: state.x1,
-    x2: state.x2,
-    vx1: state.vx1,
-    vy1: state.vy1,
-    vx2: state.vx2,
-    vy2: state.vy2,
-    px,
-    py,
-    ek,
-    heatLostJ: state.heatLostJ,
-    xCm,
-    vDotProduct: state.vx1 * state.vx2 + state.vy1 * state.vy2
-  };
-}
-
-export function checkInvariants(
-  state: CollisionRecoilState,
-  _initial: CollisionRecoilState,
-  params: CollisionRecoilParams
-): InvariantReport[] {
-  const obs = computeObservables(state, params);
-  const momentumErr = Math.hypot(obs.px! - state.pInitX, obs.py! - state.pInitY);
-  const energyErr =
-    params.mode === 'boat-recoil' ? 0 : Math.abs(obs.ek! + state.heatLostJ - state.kInit);
-  const cmDrift = params.mode === 'boat-recoil' ? Math.abs(obs.xCm! - state.xCm0) : 0;
-
-  return [
-    {
-      name: '系统水平/二维动量守恒',
-      measuredError: momentumErr,
-      tolerance: 1e-8,
-      passed: Number.isFinite(momentumErr) && momentumErr < 1e-8,
-      unit: 'kg·m/s'
-    },
-    {
-      name: params.mode === 'boat-recoil' ? '系统质心位置恒定' : '动能与内能损耗总和守恒',
-      measuredError: params.mode === 'boat-recoil' ? cmDrift : energyErr,
-      tolerance: 1e-8,
-      passed: params.mode === 'boat-recoil' ? cmDrift < 1e-8 : energyErr < 1e-8,
-      unit: params.mode === 'boat-recoil' ? 'm' : 'J'
-    }
-  ];
+  return out;
 }
