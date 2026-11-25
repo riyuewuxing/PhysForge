@@ -232,6 +232,7 @@ export const SingleFileApp: React.FC = () => {
       if(opticalSlice&&frame)canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...frame.observables});
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
       if(chaseSlice&&frame)canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...frame.observables});
+      if(equilibriumSlice&&frame)canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...frame.observables});
       if(odeSlice&&frame)canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...frame.observables});
       if(mechanicsSlice&&frame)canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...frame.observables});
 
