@@ -127,7 +127,7 @@ export function stepBlockConveyor(s:BlockConveyorState,p:BlockConveyorParams,dt:
     // Exact reset maps at a localized root; conserve momentum for the
     // tiny numerical correction to common velocity, not a physical impulse.
     if(co){
-      const v=p.systemMode==='conveyor'?p.beltVelocity:stop?0:(m1(p)*cur.vBlock+m2(p)*cur.vCarrier)/(m1(p)+m2(p));
+      const v=p.systemMode==='conveyor'?p.beltVelocity:stop||q.stopped?0:(m1(p)*cur.vBlock+m2(p)*cur.vCarrier)/(m1(p)+m2(p));
       cur={...cur,vBlock:v,vCarrier:v};
     }else if(stop)cur={...cur,vCarrier:0,...(q.locked?{vBlock:0}:{})};
     const edge=simultaneous.find((id):id is 'left-edge'|'right-edge'=>id==='left-edge'||id==='right-edge');
