@@ -29,7 +29,8 @@ const MAX_SNAPSHOTS = 2400;
 const circuitSlice=targetPlugin.paramSchema.some(f=>f.key==='topology'&&f.kind==='select'&&f.options.some(o=>o.value==='divider-lamp'));
 const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind==='select'&&f.options.some(o=>o.value==='thin-lens-imaging'));
 const mechanicsSlice=targetPlugin.paramSchema.some(f=>f.key==='scenario'&&f.kind==='select'&&f.options.some(o=>o.value==='atwood-constrained'));
-const measuredScope=circuitSlice||mechanicsSlice;
+const odeSlice=Boolean(targetPlugin.getTelemetryChannels);
+const measuredScope=circuitSlice||mechanicsSlice||odeSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -69,6 +70,7 @@ const CIRCUIT_CHANNELS:Record<string,string[]>={
   'nonlinear-lamp-diode':['totalCurrent','terminalVoltage','outputPower']
 };
 function channelsFor(params:ParamRecord){
+  if(targetPlugin.getTelemetryChannels)return targetPlugin.getTelemetryChannels(params);
   const keys=circuitSlice?CIRCUIT_CHANNELS[String(params.topology)]:mechanicsSlice?MECHANICS_CHANNELS[String(params.scenario)]:undefined;
   return keys?keys.flatMap(key=>targetPlugin.telemetryChannels.filter(c=>c.key===key)):targetPlugin.telemetryChannels;
 }
@@ -136,7 +138,7 @@ export const SingleFileApp: React.FC = () => {
     formulas: FormulaDisplayItem[];
   }>({ t: 0, observables: {}, events: [], invariants: [], formulas: [] });
 
-  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario]);
+  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario,params.template]);
   const [channelA, setChannelA] = useState(channels[0]?.key ?? '');
   const [channelB, setChannelB] = useState(channels[1]?.key ?? channels[0]?.key ?? '');
   useEffect(()=>{if(measuredScope){setChannelA(channels[0]?.key??'');setChannelB(channels[1]?.key??channels[0]?.key??'');}},[channels]);
@@ -227,6 +229,7 @@ export const SingleFileApp: React.FC = () => {
       targetPlugin.renderCanvas(ctx, drawState, pm, measuredScope||opticalSlice?{...vp,theme:th}:vp, layerSet);
       if(opticalSlice&&frame)canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...frame.observables});
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
+      if(odeSlice&&frame)canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...frame.observables});
       if(mechanicsSlice&&frame)canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...frame.observables});
 
       if (strobe && !masked && snapshotsRef.current.length > 2) {
@@ -725,7 +728,7 @@ export const SingleFileApp: React.FC = () => {
           ))}
 
           <div className="text-xs font-bold text-sky-400">参数调节</div>
-          {targetPlugin.paramSchema.filter(field=>circuitSlice?(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key):opticalSlice?(OPTICAL_FIELDS[String(params.sceneMode)]??[]).includes(field.key):mechanicsSlice?(MECHANICS_FIELDS[String(params.scenario)]??[]).includes(field.key):true).map((field) => {
+          {(targetPlugin.getParamFields?.(params)??targetPlugin.paramSchema).filter(field=>circuitSlice?(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key):opticalSlice?(OPTICAL_FIELDS[String(params.sceneMode)]??[]).includes(field.key):mechanicsSlice?(MECHANICS_FIELDS[String(params.scenario)]??[]).includes(field.key):true).map((field) => {
             const val = params[field.key] ?? field.defaultValue;
             if (field.kind === 'number') {
               return (
@@ -750,6 +753,7 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
+                      if(odeSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                     className="w-full h-9"
@@ -777,6 +781,7 @@ export const SingleFileApp: React.FC = () => {
                 </label>
               );
             }
+            if(field.customTextMaxLength!==undefined){const selected=typeof val==='string'?val:field.defaultValue;const apply=(value:string)=>{setActivePresetId(null);setParams(resolvePluginParams(targetPlugin.paramSchema,{...params,[field.key]:value}));setIsPlaying(false);setScrubTime(null);setResetNonce(n=>n+1);};return <div key={field.key} className="space-y-1 text-xs"><span>{field.label}</span><select aria-label="示例方程" value={field.options.some(o=>o.value===selected)?selected:''} onChange={e=>{if(e.target.value)apply(e.target.value);}} className="w-full rounded border px-2 py-1" style={{background:'var(--pf-surface-elevated)'}}><option value="">自定义表达式</option>{field.options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select><form key={selected} onSubmit={e=>{e.preventDefault();apply(String(new FormData(e.currentTarget).get('expression')??''));}} className="space-y-1"><textarea data-testid="sf-ode-expression-input" aria-label="加速度表达式" name="expression" defaultValue={selected} rows={3} maxLength={field.customTextMaxLength} className="w-full rounded border p-2 font-mono" style={{background:'var(--pf-surface-elevated)'}}/><button type="submit" data-testid="sf-ode-expression-apply" className="w-full rounded border p-2">应用方程并复位</button></form><div>显式乘法 *；x,v,t,k,m,g,A,w,gamma；量纲由建模者指定。</div></div>;}
             return (
               <div key={field.key} className="text-xs space-y-1">
                 <span>{field.label}</span>
@@ -789,6 +794,7 @@ export const SingleFileApp: React.FC = () => {
                         [field.key]: e.target.value
                       })
                     );
+                    if(odeSlice){setIsPlaying(false);setScrubTime(null);}
                     setResetNonce((n) => n + 1);
                   }}
                   className="w-full rounded border px-2 py-1.5"

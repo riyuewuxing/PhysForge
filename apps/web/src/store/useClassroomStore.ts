@@ -364,6 +364,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
       scrubTime: null,
       autoFreezeBadge: null,
       paramContextEpoch: s.paramContextEpoch + (contextChanged ? 1 : 0),
+      ...(plugin.getParamFields?{isPlaying:false}:{}),
       ...(Object.prototype.hasOwnProperty.call(patch, 'topology')
         ? { oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, resolved) }
         : {}),

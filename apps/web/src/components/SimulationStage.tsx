@@ -263,6 +263,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const lastPlotSyncMsRef = useRef(0);
 
   const channels=useMemo(()=>{
+    if(plugin.getTelemetryChannels)return plugin.getTelemetryChannels(params);
     if(plugin.meta.id==='astro-orbital-mechanics')return plugin.telemetryChannels.filter(c=>params.mode==='binary-lagrange'||!['jacobiConstant','rotatingSpeedNorm'].includes(c.key));
     if(plugin.meta.id==='builder-circuit-mna'||plugin.meta.id==='circuit-dc-capacitor-mna'){
       const allowed:Record<string,string[]>={'divider-lamp':['totalCurrent','lampCurrent','lampVoltage','outputPower'],'closed-power':['totalCurrent','terminalVoltage','outputPower'],'series-parallel-dynamic':['totalCurrent','branchCurrent1','branchCurrent2','terminalVoltage','outputPower'],'rc-transient':['capVoltage','capCurrent'],'rc-bridge-charge':['capVoltage','capCurrent','totalCurrent','branchCurrent1','branchCurrent2'],'nonlinear-lamp-diode':['totalCurrent','terminalVoltage','outputPower']};
@@ -273,16 +274,16 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       return plugin.telemetryChannels.filter(c=>keys.includes(c.key));
     }
     return plugin.telemetryChannels;
-  },[plugin.meta.id,plugin.telemetryChannels,params.mode,params.topology,params.scenario]);
+  },[plugin,params.mode,params.topology,params.scenario,params.template]);
   const [channelA, setChannelA] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[0]);
   const [channelB, setChannelB] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[1]);
 
   // 当模型或相关实验模式切换时同步默认示波器双通道
   useEffect(() => {
-    const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.telemetryChannels);
+    const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.getTelemetryChannels?channels:plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined,plugin.getTelemetryChannels?params.template:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -712,6 +713,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if(p.meta.id==='builder-optics-ray'&&frame&&drawState!==null){
       canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...p.engine.computeObservables(drawState,pm)});
     }
+    if(p.getTelemetryChannels&&frame&&drawState!==null){canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
       canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...p.engine.computeObservables(drawState,pm)});
     }
@@ -745,7 +747,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
-    const mechanics=latestRef.current.plugin.meta.id==='builder-mechanics-lab';
+    const mechanics=latestRef.current.plugin.meta.id==='builder-mechanics-lab'||Boolean(latestRef.current.plugin.getTelemetryChannels);
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
@@ -960,10 +962,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
-    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna','builder-mechanics-lab'].includes(latestRef.current.plugin.meta.id)){
+    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna','builder-mechanics-lab','builder-custom-ode-lab'].includes(latestRef.current.plugin.meta.id)){
       // The final displayed physical sample and chart must agree after pause.
       const current = latestRef.current;
-      if (['builder-circuit-mna','builder-mechanics-lab'].includes(current.plugin.meta.id) &&
+      if (['builder-circuit-mna','builder-mechanics-lab','builder-custom-ode-lab'].includes(current.plugin.meta.id) &&
           current.scrubTime === null && simStateModelIdRef.current === current.plugin.meta.id &&
           simStateResetNonceRef.current === current.resetNonce && simStateRef.current !== null &&
           simulationTimeRef.current > lastSnapshotTRef.current) {
@@ -1210,8 +1212,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror'||orbitScope;
   const circuitScope=plugin.meta.id==='builder-circuit-mna'&&params.topology!=='divider-lamp';
   const mechanicsScope=plugin.meta.id==='builder-mechanics-lab';
-  const measuredScope=circuitScope||mechanicsScope;
-  const semanticScope=heroScope||circuitScope||plugin.meta.id==='builder-mechanics-lab';
+  const odeScope=Boolean(plugin.getTelemetryChannels);
+  const measuredScope=circuitScope||mechanicsScope||odeScope;
+  const semanticScope=heroScope||measuredScope;
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {
@@ -1330,7 +1333,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       plot.destroy();
       uplotInstanceRef.current = null;
     };
-  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope,semanticScope,circuitScope,mechanicsScope,measuredScope]);
+  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope,semanticScope,circuitScope,mechanicsScope,measuredScope,odeScope]);
 
   return (
     <div className="relative flex flex-1 min-h-0">
@@ -1711,7 +1714,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : measuredScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
-            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽

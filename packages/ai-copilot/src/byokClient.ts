@@ -204,7 +204,7 @@ export function formatModelSchemaHint(modelId: string, schema: readonly AnyParam
       return `${field.key}: number[${field.min}..${field.max}]${field.unit ? ` ${field.unit}` : ''}`;
     }
     if (field.kind === 'select') {
-      return `${field.key}: select(${field.options.map((option) => option.value).join('|')})`;
+      return field.customTextMaxLength!==undefined ? `${field.key}: editable string (max ${field.customTextMaxLength} chars; explicit safe arithmetic, no executable code)` : `${field.key}: select(${field.options.map((option) => option.value).join('|')})`;
     }
     return `${field.key}: boolean`;
   });

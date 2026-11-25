@@ -39,6 +39,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   const [showLiveSubstituted, setShowLiveSubstituted] = useState(false);
 
   const { coreFields, extraFields } = useMemo(() => {
+    if(plugin.getParamFields){const fields=plugin.getParamFields(params);const core=[...fields.filter(f=>f.kind!=='number'),...fields.filter(f=>f.kind==='number').slice(0,3)];const keys=new Set(core.map(f=>f.key));return {coreFields:core,extraFields:fields.filter(f=>!keys.has(f.key))};}
     const circuit=plugin.meta.id==='builder-circuit-mna'||plugin.meta.id==='circuit-dc-capacitor-mna';
     const circuitFields:Record<string,string[]>={
       'divider-lamp':['emf','sliderR','internalR','topology'],
@@ -81,7 +82,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       coreFields: core,
       extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!valid||valid.includes(field.key)))
     };
-  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario]);
+  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
@@ -125,6 +126,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       );
     }
     const selected = typeof value === 'string' ? value : field.defaultValue;
+    if(field.customTextMaxLength!==undefined)return <div key={field.key} className="space-y-1"><label htmlFor={'param-'+field.key} className="block text-[10px] text-slate-400">{field.label}</label><select aria-label="示例方程" value={field.options.some(o=>o.value===selected)?selected:''} onChange={e=>{if(e.target.value)onUpdateParam(field.key,e.target.value);}} className="w-full rounded border px-2 py-1 text-xs" style={{background:'var(--pf-surface-elevated)'}}><option value="">自定义表达式</option>{field.options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select><form key={selected} onSubmit={e=>{e.preventDefault();onUpdateParam(field.key,String(new FormData(e.currentTarget).get('expression')??''));}} className="space-y-1"><textarea id={'param-'+field.key} data-testid="ode-expression-input" name="expression" defaultValue={selected} maxLength={field.customTextMaxLength} rows={3} className="w-full rounded border p-2 font-mono text-xs" style={{background:'var(--pf-surface-elevated)'}}/><button type="submit" data-testid="ode-expression-apply" className="w-full rounded bg-sky-500/20 px-2 py-1 text-xs text-sky-300">应用方程并复位</button></form><div className="text-[10px] text-slate-400">显式乘法 *；变量 x,v,t,k,m,g,A,w,gamma；最多256字符，量纲由建模者指定。</div></div>;
     return (
       <div key={field.key} className="space-y-1">
         <label htmlFor={`param-${field.key}`} className="block text-[10px] text-slate-400">{field.label}</label>
@@ -201,6 +203,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
           >
             {showLiveSubstituted ? '仅符号' : '显示数值'}
           </button>
+          {plugin.getTelemetryChannels && telemetry.formulaItems[0] && <div data-testid="ode-equation-caption" className="mb-2 break-all text-xs" style={{color:telemetry.observables.solverValid===0?'#fb7185':'var(--pf-text-muted)'}}>{telemetry.formulaItems[0].label}</div>}
           <KatexFormulaCard items={telemetry.formulaItems} compact showSubstituted={showLiveSubstituted} />
         </section>
 
@@ -254,6 +257,8 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
             {params.sceneMode==='thin-lens-imaging'&&telemetry.observables.imageAtInfinity===1&&<div data-testid="b3-focus-infinity" className="text-xs">物在焦平面 · 无有限像</div>}
             {params.sceneMode==='optical-fiber'&&Number(params.n1)<=Number(params.n2)&&<div className="text-xs">无全反射导光条件</div>}
           </section>
+        ) : plugin.getTelemetryChannels ? (
+          <section data-testid="ode-readouts" className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>{telemetry.observables.solverValid===0&&<div data-testid="ode-invalid" className="text-rose-400">方程未定义或积分失败 · 已停止</div>}{plugin.getTelemetryChannels(params).map(c=>{const v=telemetry.observables[c.key];return <div key={c.key} className="flex justify-between gap-2"><span>{c.label}</span><span className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+c.unit:'—'}</span></div>;})}</section>
         ) : hasEnergyMetrics ? (
           <div className="space-y-2 pt-0.5">
             <div>
