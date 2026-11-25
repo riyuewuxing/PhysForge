@@ -1,9 +1,6 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import {
-  createWorldMapper,
   defineSimulationPlugin,
-  drawRoundedPotentialPath,
-  type DiagramPrimitive,
   type ParamFieldSpec
 } from '@physforge/sim-sdk';
 import {
@@ -16,8 +13,10 @@ import {
 } from './engine.js';
 import { dividerDefaultCamera, dividerWiperX, dividerWiperY, dividerRFromY, exportDividerDiagram, renderDivider } from './dividerView.js';
 
+import { exportTopologyDiagram, renderTopology, sliderRange, topologyCamera } from './topologyView.js';
+
 const branchPhaseMap = new Map<string, number>();
-let lastCircuitFrameTimeMs: number | undefined;
+
 
 export interface CurrentParticleOptions {
   spacingPx?: number;
@@ -136,7 +135,7 @@ export function drawShortCircuitBanner(
   ctx.font = 'bold 13px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`警告：检测到电路短路（${detailMessage}），已触发拓扑保护`, x + barWidth / 2, y + barHeight / 2);
+  ctx.fillText(`警告：电路短路（${detailMessage}）`, x + barWidth / 2, y + barHeight / 2);
   ctx.restore();
 }
 
@@ -218,7 +217,7 @@ const paramSchema: readonly ParamFieldSpec<CircuitParams>[] = [
   {
     key: 'switchClosed',
     kind: 'boolean',
-    label: '开关闭合（充电 / 断开经 R₁ 放电）',
+    label: '充电初态 / 二极管（取消：放电初态 / 灯泡）',
     defaultValue: true
   }
 ];
@@ -418,9 +417,9 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     version: '2.0.0'
   },
   defaultView: {
-    scale: (params,{width,height}) => params.topology==='divider-lamp'?dividerDefaultCamera(width,height).scale:1,
-    offsetRatioX: (params,{width,height}) => params.topology==='divider-lamp'?dividerDefaultCamera(width,height).offsetRatioX:0,
-    offsetRatioY: (params,{width,height}) => params.topology==='divider-lamp'?dividerDefaultCamera(width,height).offsetRatioY:0
+    scale: (params,{width,height}) => (params.topology==='divider-lamp'?dividerDefaultCamera(width,height):topologyCamera(width,height)).scale,
+    offsetRatioX: (params,{width,height}) => (params.topology==='divider-lamp'?dividerDefaultCamera(width,height):topologyCamera(width,height)).offsetRatioX,
+    offsetRatioY: (params,{width,height}) => (params.topology==='divider-lamp'?dividerDefaultCamera(width,height):topologyCamera(width,height)).offsetRatioY
   },
   getControlHandles: (_state, params) => {
     if (!['closed-power', 'series-parallel-dynamic', 'rc-bridge-charge', 'divider-lamp'].includes(params.topology)) {
@@ -428,19 +427,20 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     }
     const sliderFraction = Math.max(0, Math.min(1, params.sliderR / 20));
     const dividerLamp = params.topology === 'divider-lamp';
+    const [minY,maxY]=sliderRange(params);
     return [{
       id: 'slider-resistor',
       label: `Rp=${params.sliderR.toFixed(1)}Ω`,
       position: {
         x: dividerLamp ? dividerWiperX : 1.7,
-        y: dividerLamp ? dividerWiperY(params.sliderR) : -0.7 + sliderFraction * 1.4
+        y: dividerLamp ? dividerWiperY(params.sliderR) : minY + sliderFraction * (maxY-minY)
       },
       handleKind: 'point',
       showWhenIdle: !dividerLamp,
       color: '#f472b6',
       onDrag: (worldPos) => {
         const value = Number.isFinite(worldPos.y)
-          ? (dividerLamp ? dividerRFromY(worldPos.y) : ((worldPos.y + 0.7) / 1.4) * 20)
+          ? (dividerLamp ? dividerRFromY(worldPos.y) : ((worldPos.y - minY) / (maxY-minY)) * 20)
           : params.sliderR;
         const nextR = Math.max(0, Math.min(20, value));
         return { sliderR: Math.round(nextR * 2) / 2 };
@@ -456,28 +456,7 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     }),
     importScene: (dsl) => dsl.params as Partial<CircuitParams>
   },
-  exportDiagramIR: (_state, params) => {
-    if(params.topology==='divider-lamp')return exportDividerDiagram(params);
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'circuitElement', element: 'battery', x1: -2.2, y1: -1.4, x2: -2.2, y2: 1.4, label: `E=${params.emf}V, r=${params.internalR}\\Omega` },
-      { kind: 'line', x1: -2.2, y1: 1.4, x2: -0.6, y2: 1.4 },
-      { kind: 'circuitElement', element: 'resistor', x1: -0.6, y1: 1.4, x2: 1.6, y2: 1.4, label: `R_1=${params.r1}\\Omega` },
-      { kind: 'line', x1: 1.6, y1: 1.4, x2: 2.2, y2: 1.4 },
-      params.topology === 'rc-transient'
-        ? { kind: 'circuitElement', element: 'capacitor', x1: 2.2, y1: 1.4, x2: 2.2, y2: -1.4, label: `C=${params.capacitance}F` }
-        : params.topology === 'nonlinear-lamp-diode'
-          ? { kind: 'circuitElement', element: 'lamp', x1: 2.2, y1: 1.4, x2: 2.2, y2: -1.4, label: params.switchClosed ? 'D' : 'L' }
-          : { kind: 'circuitElement', element: 'resistor', x1: 2.2, y1: 1.4, x2: 2.2, y2: -1.4, label: `R_p=${params.sliderR}\\Omega` },
-      { kind: 'circuitElement', element: 'ammeter', x1: 2.2, y1: -1.4, x2: -2.2, y2: -1.4, label: 'A' }
-    ];
-    return {
-      width: 720,
-      height: 440,
-      viewBox: { minX: -3.2, minY: -2.2, maxX: 3.2, maxY: 2.2 },
-      title: '直流/含容/非线性电路原理图',
-      primitives
-    };
-  },
+  exportDiagramIR: (state, params) => params.topology==='divider-lamp' ? exportDividerDiagram(params) : exportTopologyDiagram(state,params),
   paramSchema,
   presets: [
     {
@@ -557,8 +536,8 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     },
     {
       id: 'closed-power-short-circuit',
-      name: '7. 闭合电路零欧姆短路保护告警',
-      description: '理想电源经零欧姆外电阻短接；节点电压着色、电流粒子与短路横幅共同显示拓扑保护状态。',
+      name: '7. 理想电源零欧姆短路（无有限解）',
+      description: '理想电源经零欧姆外电阻短接，模型无有限解；不将数值占位显示为测量。',
       params: {
         topology: 'closed-power',
         emf: 12,
@@ -570,6 +549,8 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
         switchClosed: true
       }
     }
+    ,{id:'series-parallel-branches',name:'8. 混联分流与支路电流',description:'R₁ 与 R₂、Rₚ 的并联部分串联；比较两个支路电流。',params:{topology:'series-parallel-dynamic',emf:12,internalR:2,r1:4,r2:6,sliderR:3}},
+    {id:'nonlinear-lamp-iv',name:'9. 串联非线性小灯泡',description:'幂律近似下的小灯泡与串联限流电阻。',params:{topology:'nonlinear-lamp-diode',emf:5,internalR:.5,sliderR:10,switchClosed:false}}
   ],
   engine: {
     createInitialState,
@@ -590,9 +571,13 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     { key: 'totalCurrent', label: '干路总电流 I', unit: 'A', color: '#fbbf24' },
     { key: 'outputPower', label: '输出功率 P出', unit: 'W', color: '#4ade80' },
     { key: 'lampCurrent', label: '灯泡电流 I灯', unit: 'A', color: '#fbbf24' },
-    { key: 'lampVoltage', label: '灯泡电压 U灯', unit: 'V', color: '#38bdf8' }
+    { key: 'lampVoltage', label: '灯泡电压 U灯', unit: 'V', color: '#38bdf8' },
+    {key:'branchCurrent1',label:'支路电流 I₁',unit:'A',color:'#38bdf8'},
+    {key:'branchCurrent2',label:'支路电流 I₂',unit:'A',color:'#f472b6'},
+    {key:'terminalVoltage',label:'负载 / 路端电压 U',unit:'V',color:'#38bdf8'}
   ],
   formatFormulas: (state, params) => {
+    if(state.idealShort)return [{id:'ideal-short',label:'理想零阻回路不可求唯一有限解',latex:params.emf===0?'0=0\\quad\\text{电流不唯一}':'E\\ne0,\\quad R+r=0',substitutedLatex:'I\\;\\text{不可定义}'}];
     if (params.topology === 'closed-power') {
       return [
         {
@@ -619,6 +604,16 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
         }
       ];
     }
+    if(params.topology==='series-parallel-dynamic')return [{
+      id:'parallel-kcl',label:'并联分流与等效电阻',
+      latex:'I=I_2+I_p,\\quad R_{eq}=R_1+\\frac{R_2R_p}{R_2+R_p}',
+      substitutedLatex:`I=${state.totalCurrent.toFixed(3)}\\text{ A},\\quad I_2=${state.branchCurrent1.toFixed(3)}\\text{ A},\\quad I_p=${state.branchCurrent2.toFixed(3)}\\text{ A}`
+    }];
+    if(params.topology==='nonlinear-lamp-diode')return [{
+      id:'nonlinear-load',label:params.switchClosed?'肖克利二极管（指数限幅近似）':'小灯泡幂律近似',
+      latex:params.switchClosed?'I_D=I_s(e^{U_D/V_T}-1)':'I_L\\approx0.25U_L^{0.65}',
+      substitutedLatex:`U=${state.terminalVoltage.toFixed(3)}\\text{ V},\\quad I=${state.totalCurrent.toFixed(3)}\\text{ A}`
+    }];
     return [
       {
         id: 'cap-charge',
@@ -628,225 +623,9 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
       }
     ];
   },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
+  renderCanvas: (ctx,state,params,viewport,activeLayers)=>{
     if(params.topology==='divider-lamp'){renderDivider(ctx,state,params,viewport,activeLayers);return;}
-    const m = createWorldMapper(viewport);
-    const basePpm = Math.min(viewport.width, viewport.height) * 0.24;
-    const px = (pixels: number): number => m.len(pixels / basePpm);
-    const cx=m.toX(0),cy=m.toY(0),left=m.toX(-1.7),right=m.toX(1.7),top=m.toY(.82),bot=m.toY(-.82);
-    const finiteVoltages = state.nodeVoltages.filter(Number.isFinite);
-    const vMin = Math.min(0, ...finiteVoltages);
-    const vMax = Math.max(1, ...finiteVoltages);
-    const nodeVoltage = (index: number): number | undefined => state.nodeVoltages[index];
-    const sourceVoltage = nodeVoltage(1);
-    const loadVoltage = nodeVoltage(2);
-    const groundVoltage = nodeVoltage(0) ?? 0;
-    const shortEvent = state.events.find((event) => event.id === 'SHORT_CIRCUIT');
-    const overcurrent = [state.totalCurrent, state.branchCurrent1, state.branchCurrent2].some(
-      (current) => Number.isFinite(current) && Math.abs(current) > 50
-    );
-    const isShorted = Boolean(shortEvent) || overcurrent;
-    const nowMs = typeof performance !== 'undefined' ? performance.now() : state.t * 1000;
-    const dtSec = lastCircuitFrameTimeMs === undefined
-      ? 0
-      : Math.max(0, Math.min((nowMs - lastCircuitFrameTimeMs) / 1000, 0.05));
-    lastCircuitFrameTimeMs = nowMs;
-    const branchReturnCurrent = params.topology === 'series-parallel-dynamic' || params.topology === 'rc-bridge-charge'
-      ? state.branchCurrent1 + state.branchCurrent2
-      : state.totalCurrent;
-
-    const drawVoltageSegment = (
-      p1: { x: number; y: number },
-      p2: { x: number; y: number },
-      fromVoltage: number | undefined,
-      toVoltage: number | undefined,
-      width = 3
-    ): void => {
-      drawRoundedPotentialPath(
-        ctx,
-        [p1, p2],
-        voltageToColor(fromVoltage, vMin, vMax),
-        voltageToColor(toVoltage, vMin, vMax),
-        10,
-        width
-      );
-    };
-
-    if (activeLayers.has('schematic')) {
-      ctx.save();
-      const topLeft = { x: left, y: top };
-      const topRight = { x: right, y: top };
-      const bottomRight = { x: right, y: bot };
-      const bottomLeft = { x: left, y: bot };
-      drawVoltageSegment(topLeft, topRight, sourceVoltage, loadVoltage);
-      drawVoltageSegment(topRight, bottomRight, loadVoltage, groundVoltage);
-      drawVoltageSegment(bottomRight, bottomLeft, groundVoltage, groundVoltage);
-      drawVoltageSegment(bottomLeft, topLeft, groundVoltage, sourceVoltage);
-
-      // 左侧电源符号 (E, r)
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(left - px(18), cy - px(28), px(36), px(56));
-      const sourceGradient = ctx.createLinearGradient(left, cy - px(28), left, cy + px(28));
-      sourceGradient.addColorStop(0, voltageToColor(sourceVoltage, vMin, vMax));
-      sourceGradient.addColorStop(1, voltageToColor(groundVoltage, vMin, vMax));
-      ctx.strokeStyle = sourceGradient;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(left - px(14), cy - px(8));
-      ctx.lineTo(left + px(14), cy - px(8));
-      ctx.moveTo(left - px(7), cy + px(8));
-      ctx.lineTo(left + px(7), cy + px(8));
-      ctx.stroke();
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      ctx.fillText(`E=${params.emf}V, r=${params.internalR}Ω`, left + px(22), cy + px(5));
-
-      // 顶部 R1 电阻框
-      ctx.fillStyle = '#1e293b';
-      const resistorGradient = ctx.createLinearGradient(cx - px(42), top - px(16), cx + px(42), top + px(16));
-      resistorGradient.addColorStop(0, voltageToColor(sourceVoltage, vMin, vMax));
-      resistorGradient.addColorStop(1, voltageToColor(loadVoltage, vMin, vMax));
-      ctx.strokeStyle = resistorGradient;
-      ctx.lineWidth = 3;
-      ctx.fillRect(cx - px(42), top - px(16), px(84), px(32));
-      ctx.strokeRect(cx - px(42), top - px(16), px(84), px(32));
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillText(
-        params.topology === 'closed-power'
-          ? `r=${params.internalR}Ω`
-          : `R₁=${params.r1}Ω`,
-        cx - px(32),
-        top + px(5)
-      );
-
-      // 右侧电容或负载元件
-      if (params.topology === 'rc-transient') {
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(right - px(16), cy - px(20), px(32), px(40));
-        const capacitorGradient = ctx.createLinearGradient(right, cy - px(20), right, cy + px(20));
-        capacitorGradient.addColorStop(0, voltageToColor(loadVoltage, vMin, vMax));
-        capacitorGradient.addColorStop(1, voltageToColor(groundVoltage, vMin, vMax));
-        ctx.strokeStyle = capacitorGradient;
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(right - px(16), cy - px(10));
-        ctx.lineTo(right + px(16), cy - px(10));
-        ctx.moveTo(right - px(16), cy + px(10));
-        ctx.lineTo(right + px(16), cy + px(10));
-        ctx.stroke();
-        ctx.fillStyle = '#4ade80';
-        ctx.fillText(`C=${params.capacitance}F`, right - px(75), cy + px(5));
-      } else {
-        ctx.fillStyle = '#1e293b';
-        const loadGradient = ctx.createLinearGradient(right, cy - px(34), right, cy + px(34));
-        loadGradient.addColorStop(0, voltageToColor(loadVoltage, vMin, vMax));
-        loadGradient.addColorStop(1, voltageToColor(groundVoltage, vMin, vMax));
-        ctx.strokeStyle = loadGradient;
-        ctx.lineWidth = 3;
-        ctx.fillRect(right - px(18), cy - px(34), px(36), px(68));
-        ctx.strokeRect(right - px(18), cy - px(34), px(36), px(68));
-        ctx.fillStyle = '#f472b6';
-        ctx.fillText(`Rp=${params.sliderR}Ω`, right - px(95), cy + px(5));
-        if (['closed-power', 'series-parallel-dynamic', 'rc-bridge-charge'].includes(params.topology)) {
-          const sliderFraction = Math.max(0, Math.min(1, params.sliderR / 20));
-          const contactY = m.toY(-0.7 + sliderFraction * 1.4);
-          ctx.strokeStyle = '#f472b6';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(right + px(44), contactY);
-          ctx.lineTo(right + px(19), contactY);
-          ctx.lineTo(right + px(27), contactY - px(6));
-          ctx.moveTo(right + px(19), contactY);
-          ctx.lineTo(right + px(27), contactY + px(6));
-          ctx.stroke();
-        }
-      }
-      ctx.restore();
-    }
-
-    if (activeLayers.has('potential-labels') && activeLayers.has('schematic')) {
-      const nodeLabels = [
-            { id: 1, voltage: sourceVoltage, x: left + px(6), y: top - px(10) },
-            { id: 2, voltage: loadVoltage, x: right - px(72), y: top - px(10) },
-            { id: 0, voltage: groundVoltage, x: right - px(52), y: bot + px(18) }
-          ];
-      ctx.save();
-      ctx.font = '12px ui-monospace, SFMono-Regular, Consolas, monospace';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      for (const node of nodeLabels) {
-        ctx.fillStyle = voltageToColor(node.voltage, vMin, vMax);
-        ctx.beginPath();
-        const nodeRadius = px(4);
-        const nodeYOffset = px(node.id === 0 ? -4 : 10);
-        ctx.arc(node.x, node.y + nodeYOffset, nodeRadius, 0, Math.PI * 2);
-        ctx.fill();
-        const numericVoltage = node.voltage;
-        const voltageLabel = `N${node.id}=${numericVoltage?.toFixed(2) ?? '—'}V`;
-        ctx.fillText(voltageLabel, node.x + px(8), node.y);
-      }
-      ctx.restore();
-    }
-
-    if (activeLayers.has('current-flow') && activeLayers.has('schematic')) {
-      const branchOptions = { isShorted };
-      drawCurrentParticles(ctx, 'builder-circuit-mna-top-a', { x: left + px(20), y: top }, { x: cx - px(48), y: top }, state.totalCurrent, dtSec, branchOptions);
-      drawCurrentParticles(ctx, 'builder-circuit-mna-top-b', { x: cx + px(48), y: top }, { x: right - px(20), y: top }, state.totalCurrent, dtSec, branchOptions);
-      drawCurrentParticles(ctx, 'builder-circuit-mna-return', { x: right, y: top + px(40) }, { x: right, y: bot - px(40) }, branchReturnCurrent, dtSec, branchOptions);
-    }
-
-    if (isShorted && activeLayers.has('short-circuit')) {
-      drawShortCircuitGlow(ctx, { x: left, y: top }, { x: right, y: top }, nowMs);
-      drawShortCircuitGlow(ctx, { x: right, y: top }, { x: right, y: bot }, nowMs);
-    }
-
-    if (activeLayers.has('meters')) {
-      ctx.save();
-      const meterCenterX=cx,meterY=bot;
-      const drawMeter = (
-        x: number,
-        label: string,
-        value: number,
-        unit: string,
-        tint: string
-      ) => {
-        const radius = px(34);
-        ctx.save();
-        ctx.shadowColor = tint;
-        ctx.shadowBlur = 14;
-        ctx.fillStyle = 'rgba(10, 16, 27, 0.94)';
-        ctx.strokeStyle = tint;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(x, meterY, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#f8fafc';
-        ctx.font = 'bold 13px ui-monospace, monospace';
-        ctx.fillText(value.toFixed(2), x, meterY + px(2));
-        ctx.fillStyle = tint;
-        ctx.font = 'bold 10px ui-monospace, monospace';
-        ctx.fillText(unit, x, meterY + px(16));
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = '10px system-ui, sans-serif';
-        ctx.fillText(label, x, meterY + radius + px(14));
-        ctx.restore();
-      };
-
-        drawMeter(meterCenterX - px(48), '电流 I', state.totalCurrent, 'A', '#fbbf24');
-        drawMeter(meterCenterX + px(48), '电压 U', state.terminalVoltage, 'V', '#38bdf8');
-      ctx.restore();
-    }
-
-    if (isShorted && activeLayers.has('short-circuit')) {
-      drawShortCircuitBanner(
-        ctx,
-        ctx.canvas.width,
-        shortEvent?.label ?? `支路电流超过 50 A（I=${Math.max(Math.abs(state.totalCurrent), Math.abs(state.branchCurrent1), Math.abs(state.branchCurrent2)).toFixed(1)} A）`
-      );
-    }
+    renderTopology(ctx,state,params,viewport,activeLayers);
   }
 }), { liveFormulas });
 
