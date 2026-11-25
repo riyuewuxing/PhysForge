@@ -5,7 +5,7 @@ export const customOdePresets: readonly PresetSpec<CustomOdeParams>[] = [
   {
     id: 'harmonic-undamped',
     name: '1. 无阻尼简谐振子 (RK4 守恒验证)',
-    description: 'k = 16 N/m, m = 1 kg 的标准简谐振子，对比相空间闭合圆与机械能守恒。',
+    description: 'k = 16 N/m, m = 1 kg 的标准简谐振子，对比相空间闭合椭圆与机械能守恒。',
     params: {
       template: 'harmonic-custom',
       mass: 1.0,
@@ -19,7 +19,7 @@ export const customOdePresets: readonly PresetSpec<CustomOdeParams>[] = [
   {
     id: 'nonlinear-duffing-expr',
     name: '2. 自定义 Duffing 非线性恢复力方程 (Safe AST)',
-    description: '使用白名单 AST 安全沙箱直接求解 a = -(k*x + 2*x^3)/m + A*cos(w*t)。',
+    description: '使用白名单 AST 安全沙箱直接求解 a = -(k*x + 2*x^3)/m - gamma*v + A*cos(w*t)。',
     params: {
       template: 'custom-expr',
       exprText: '-(k * x + 2 * x^3) / m - gamma * v + A * cos(w * t)',

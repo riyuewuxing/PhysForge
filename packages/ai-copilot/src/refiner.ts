@@ -73,7 +73,7 @@ export async function auditSceneHeadless(
           errors.push(`Param "${field.key}" must be boolean.`);
         }
       } else if (field.kind === 'select') {
-        if (typeof val !== 'string' || !field.options.some((o) => o.value === val)) {
+        if (typeof val !== 'string' || (field.customTextMaxLength!==undefined ? val.trim().length===0 || val.length>field.customTextMaxLength : !field.options.some((o) => o.value === val))) {
           errors.push(`Param "${field.key}"="${String(val)}" is not an allowed option.`);
         }
       }

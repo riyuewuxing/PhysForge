@@ -61,6 +61,8 @@ export interface SelectParamSpec<K extends string = string, TVal extends string 
   label: string;
   options: readonly SelectOption<TVal>[];
   defaultValue: TVal;
+  /** Opt-in editable string with preset suggestions. The model validates its domain. */
+  customTextMaxLength?: number;
   description?: string;
 }
 
@@ -331,6 +333,9 @@ export interface SimulationPlugin<TParams extends ParamRecord, TState> {
   engine: SimulationEngine<TParams, TState>;
   layers: readonly LayerSpec[];
   telemetryChannels: readonly TelemetryChannelSpec[];
+  /** Mode-only presentation override; persisted parameter schema remains authoritative. */
+  getParamFields?: (params:TParams)=>readonly AnyParamFieldSpec[];
+  getTelemetryChannels?: (params:TParams)=>readonly TelemetryChannelSpec[];
   renderCanvas: (
     ctx: CanvasRenderingContext2D,
     state: TState,
@@ -425,7 +430,7 @@ export function resolvePluginParams<TParams extends ParamRecord>(
 
     // field.kind === 'select'
     const allowedValues = new Set<string>(field.options.map((opt) => opt.value));
-    if (typeof rawOverride === 'string' && allowedValues.has(rawOverride)) {
+    if (typeof rawOverride === 'string' && (field.customTextMaxLength !== undefined || allowedValues.has(rawOverride))) {
       resolved[field.key] = rawOverride;
     } else {
       resolved[field.key] = field.defaultValue;

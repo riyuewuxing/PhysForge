@@ -121,3 +121,28 @@ describe('H11 expression semantics and physical mode boundaries',()=>{
     expect(force).toBeCloseTo(-grad,3);
   });
 });
+
+
+describe('H11 mode presentation and editable expression contract',()=>{
+  const plugin=builderCustomOdeLabPlugin;
+  it('preserves custom input and exposes only quantities defined by the selected model',()=>{
+    const p=resolvePluginParams<CustomOdeParams>(plugin.paramSchema,{template:'custom-expr',exprText:'-2*x + 1e-3'});
+    expect(p.exprText).toBe('-2*x + 1e-3');
+    const s=createInitialState(p);
+    expect(s.formulaError).toBeNull();
+    expect(plugin.getTelemetryChannels!(p).map(c=>c.key)).toEqual(['x','v','kineticEnergy']);
+    const pend=resolvePluginParams<CustomOdeParams>(plugin.paramSchema,{template:'lagrangian-pendulum'});
+    expect(plugin.getTelemetryChannels!(pend).map(c=>c.unit)).toEqual(['rad','rad/s','J']);
+    expect(plugin.getParamFields!(pend).find(f=>f.key==='initialVel')).toMatchObject({unit:'rad/s'});
+    const orbit=resolvePluginParams<CustomOdeParams>(plugin.paramSchema,{template:'kepler-2d'});
+    expect(plugin.getParamFields!(orbit).some(f=>f.key==='damping')).toBe(false);
+    expect(plugin.getForceVectors!(s,p)).toEqual([]);
+  });
+  it('uses the visible phase point as the initial-condition handle and does not edit history',()=>{
+    const p=resolvePluginParams<CustomOdeParams>(plugin.paramSchema,{template:'harmonic-custom',initialPos:1,initialVel:2});
+    const s=createInitialState(p),h=plugin.getControlHandles!(s,p)[0]!;
+    expect(h.position).toEqual({x:1,y:2});
+    expect(h.onDrag({x:-.7,y:1.4})).toMatchObject({initialPos:-.7,initialVel:1.4});
+    expect(plugin.getControlHandles!(stepCustomOde(s,p,.02).nextState,p)).toEqual([]);
+  });
+});
