@@ -255,3 +255,34 @@ describe('H23 M05 force and reference contracts',()=>{
     expect(ir.primitives.some(x=>x.kind==='text'&&x.text.includes('边界'))).toBe(true);
   });
 });
+
+import { contactSupport, contactInitialView } from './diagram.js';
+describe('H24 long-run contact viewport',()=>{
+  it('keeps a bounded visible interval around the actual block on ideal infinite support',()=>{
+    const initial=createInitialState(baseParams);
+    const s=stepBlockConveyor(initial,baseParams,30).nextState;
+    expect(s.xBlock).toBeGreaterThan(100);
+    const support=contactSupport(s,baseParams);
+    expect(support.finite).toBe(false);
+    expect(support.right-support.left).toBeCloseTo(6,10);
+    expect((support.left+support.right)/2).toBeCloseTo(s.xBlock,10);
+    const size={width:1280,height:720};
+    expect(contactInitialView(s,baseParams,size).scale).toBeGreaterThan(.75*contactInitialView(initial,baseParams,size).scale);
+  });
+  it('does not move the ends of a finite conveyor to follow the block',()=>{
+    const p={...baseParams,carrierLengthM:2};
+    const s=stepBlockConveyor(createInitialState(p),p,10).nextState;
+    expect(s.terminal).toBeTruthy();
+    const support=contactSupport(s,p);
+    expect(support).toMatchObject({finite:true,left:-1,right:1,center:0});
+  });
+  it('distinguishes the critical applied force on a frictionless-ground plank',()=>{
+    const p={...baseParams,systemMode:'plank' as const,muBlockCarrier:.2,muGround:0};
+    const critical=(p.massBlock+p.massPlank)*p.muBlockCarrier*CLASSROOM_GRAVITY;
+    for(const delta of [-1e-7,1e-7]){
+      const q={...p,externalForcePlank:critical+delta};
+      const s=stepBlockConveyor(createInitialState(q),q,.2).nextState;
+      expect(s.coMovingLocked).toBe(delta<0);
+    }
+  });
+});
