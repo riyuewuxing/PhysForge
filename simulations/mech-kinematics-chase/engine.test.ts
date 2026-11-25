@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createInitialState, stepKinematicsChase, type KinematicsChaseParams } from './engine.js';
 
 describe('M01 mech-kinematics-chase verification', () => {
-  it('captures exact co-velocity (t=4s) and catch-up (t=8s) within < 1e-7 s', () => {
+  it('captures exact co-velocity (t=4s) and catch-up (t=4+4√2 s) within < 1e-7 s', () => {
     const params: KinematicsChaseParams = {
       scenario: 'accelerate-chase',
       vA0: 0,
