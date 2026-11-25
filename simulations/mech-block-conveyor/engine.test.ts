@@ -141,3 +141,51 @@ describe('mech-block-conveyor engine', () => {
     }
   });
 });
+
+describe('H22 M05 independent Coulomb phase and boundary tests',()=>{
+  const p:BlockConveyorParams={...baseParams,systemMode:'plank',muBlockCarrier:.8,muGround:.5,blockInitialV:1,plankInitialV:1};
+  it('stops a jointly moving plank without spurious reverse motion or heat after stopping',()=>{
+    const s0=createInitialState(p),r=stepBlockConveyor(s0,p,1),s=r.nextState;
+    const stop=1/(.5*9.8),x=.5*stop;
+    expect(s.vBlock).toBe(0);expect(s.vCarrier).toBe(0);
+    expect(s.xBlock).toBeCloseTo(x,9);expect(s.xCarrier).toBeCloseTo(x,9);
+    expect(s.groundHeat).toBeCloseTo(3,9);expect(s.relativeScratch).toBeCloseTo(0,12);
+    expect(r.events).toHaveLength(1);expect(Math.abs(r.events[0]!.time-stop)).toBeLessThan(1e-7);
+    expect(s.plankStopped).toBe(true);
+  });
+  it('does not declare an impossible initial static contact under a strong pull',()=>{
+    const q={...p,muGround:0,muBlockCarrier:.1,blockInitialV:0,plankInitialV:0,externalForcePlank:30},s0=createInitialState(q);
+    expect(s0.coMovingLocked).toBe(false);
+    const s=stepBlockConveyor(s0,q,.2).nextState;
+    expect(s.coMovingLocked).toBe(false);
+    expect(s.vBlock).toBeCloseTo(.98*.2,10);expect(s.vCarrier).toBeCloseTo((30-1.96)/4*.2,10);
+    expect(s.relativeScratch).toBeCloseTo(.5*((30-1.96)/4-.98)*.2**2,10);
+  });
+  it('lets ground static friction hold a stationary plank against the moving block',()=>{
+    const q={...p,muBlockCarrier:.2,blockInitialV:2,plankInitialV:0};
+    const s=stepBlockConveyor(createInitialState(q),q,2).nextState;
+    expect(s.vBlock).toBe(0);expect(s.vCarrier).toBe(0);expect(s.plankStopped).toBe(true);
+    expect(s.xCarrier).toBe(0);expect(s.xBlock).toBeCloseTo(4/(2*1.96),9);
+    expect(s.frictionHeat).toBeCloseTo(4,9);expect(s.groundHeat).toBe(0);
+  });
+  it('resolves static failure due to ground deceleration, not external force sign',()=>{
+    const q={...p,muBlockCarrier:.1,blockInitialV:2,plankInitialV:2};
+    const s0=createInitialState(q),s=stepBlockConveyor(s0,q,.1).nextState;
+    expect(s0.coMovingLocked).toBe(false);expect(s.coMovingLocked).toBe(false);
+    expect(s.vBlock).toBeCloseTo(2-.98*.1,10);expect(s.vCarrier).toBeCloseTo(2+(1.96-29.4)/4*.1,10);
+    expect(s.frictionHeat).toBeGreaterThan(0);
+  });
+  it('halts at the optional physical edge and does not integrate unsupported contact',()=>{
+    const q={...baseParams,systemMode:'conveyor' as const,beltVelocity:0,blockInitialV:4,muBlockCarrier:0,carrierLengthM:2};
+    const r=stepBlockConveyor(createInitialState(q),q,2);
+    expect(r.halt).toBe(true);expect(r.nextState.xBlock).toBeCloseTo(1,9);
+    expect(r.advancedTime).toBeCloseTo(.25,9);expect(r.events).toHaveLength(1);
+    const a=stepBlockConveyor(r.nextState,q,1);expect(a.nextState).toBe(r.nextState);expect(a.advancedTime).toBe(0);expect(a.events).toHaveLength(0);
+  });
+  it('checks absolute work-energy residual in joules rather than a dimensionless tolerance',()=>{
+    const s0=createInitialState(p),s=stepBlockConveyor(s0,p,1).nextState;
+    const reports=checkInvariants(s,s0,p);
+    expect(reports.some(r=>r.unit==='J'&&r.tolerance===1e-7&&r.passed)).toBe(true);
+    expect(reports[0]!.measuredError).toBeLessThan(1e-7);
+  });
+});
