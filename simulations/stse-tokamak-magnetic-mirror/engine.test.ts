@@ -7,6 +7,9 @@ import {
   evaluateTokamakMirrorField,
   stepTokamakMirror,
   traceTokamakMirrorLines,
+  fusionSurfaceWinding,
+  fusionParallelVelocity,
+  TOKAMAK_MINOR_RADIUS_M,
   type TokamakMirrorParams
 } from './engine.js';
 
@@ -100,6 +103,30 @@ describe('stse-tokamak-magnetic-mirror physics invariants (S01)', () => {
     expect(out.nextState.reflectionCount).toBe(reflections.length);
     expect(out.nextState.escaped).toBe(false);
     expect(out.nextState.currentKineticJ).toBeCloseTo(out.nextState.initialKineticJ,8);
+  });
+  it('reports a toroidal chamber crossing once and does not claim indefinite confinement',()=>{
+    const p=getPreset(2),initial=createInitialState(p);
+    const position={x:p.majorRadiusM+TOKAMAK_MINOR_RADIUS_M-.001,y:0,z:0},velocity={x:2,y:0,z:0};
+    const state={...initial,position,velocity,bField:evaluateTokamakMirrorField(position,p)};
+    const out=stepTokamakMirror(state,p,.01);
+    const hit=out.events.find(e=>e.id==='fusion-escape');
+    expect(hit).toBeDefined();
+    expect(Math.hypot(Math.hypot(hit!.position!.x,hit!.position!.y)-p.majorRadiusM,hit!.position!.z!)).toBeCloseTo(TOKAMAK_MINOR_RADIUS_M,8);
+    expect(out.nextState.escaped).toBe(true);
+    expect(out.nextState.t).toBeCloseTo(.01,12);
+    expect(stepTokamakMirror(out.nextState,p,.01).events.filter(e=>e.id==='fusion-escape')).toHaveLength(0);
+  });
+  it('uses the finite-radius winding rather than equating it to the field strength parameter',()=>{
+    const p=getPreset(2),rho=.4,q=fusionSurfaceWinding(p,rho);
+    expect(q).toBeGreaterThan(p.safetyFactorQ);
+    let integral=0;const n=4096;
+    for(let i=0;i<n;i++){
+      const theta=2*Math.PI*(i+.5)/n;
+      integral+=p.safetyFactorQ*p.majorRadiusM/(p.majorRadiusM+rho*Math.cos(theta))/n;
+    }
+    expect(q).toBeCloseTo(integral,11);
+    const st=createInitialState(p);
+    expect(fusionParallelVelocity(st.velocity,st.bField)).toBeCloseTo(p.speed0*Math.cos(p.pitchAngleDeg*Math.PI/180),12);
   });
   it('simulates tokamak helical confinement without NaN and handles dt=0', () => {
     const params = getPreset(2);

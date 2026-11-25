@@ -5,7 +5,7 @@ export const tokamakMirrorPresets: readonly PresetSpec<TokamakMirrorParams>[] = 
   {
     id: 'mirror-trapped-bounce',
     name: '磁瓶往复反射约束（θ = 52° > 逃逸锥角 38.7°）',
-    description: '带电粒子满足 θ > θ_c，在无散磁镜缩颈处顺次减速反转，实现磁瓶长期约束且磁矩 μ 绝热守恒',
+    description: '带电粒子满足 θ > θ_c，在无散磁镜缩颈处顺次减速反转，实现本次轨迹的往复反射且磁矩 μ 近似守恒',
     curriculumNotes: '选择性必修二 第一章 · 受控核聚变磁镜约束原理与 STSE',
     params: {
       mode: 'magnetic-mirror',
@@ -38,8 +38,8 @@ export const tokamakMirrorPresets: readonly PresetSpec<TokamakMirrorParams>[] = 
   },
   {
     id: 'tokamak-helical-confinement',
-    name: '托卡马克环形 + 极向螺旋磁面约束（EAST/ITER）',
-    description: '环形磁场叠加极向角向场形成闭合螺旋磁面，抑制曲率/梯度漂移实现稳态环形约束',
+    name: '托卡马克环向与极向场（单粒子示意）',
+    description: '在给定环向与极向外磁场中观察真实粒子轨迹与螺旋磁感线；有限时段未越过示意室壁不代表长期约束或真实聚变装置稳态',
     curriculumNotes: '选择性必修二 / 必修三 · 人造太阳托卡马克螺旋磁位形',
     params: {
       mode: 'tokamak',
