@@ -179,3 +179,57 @@ describe('circuit-dc-capacitor-mna engine', () => {
     }
   });
 });
+
+describe('B2 non-divider independent physical limits', () => {
+  it('preserves the exact zero-ohm endpoints when a finite series resistance remains', () => {
+    const idealSource = createInitialState({...baseParams, internalR:0, sliderR:3});
+    expect(idealSource.terminalVoltage).toBe(12);
+    expect(idealSource.totalCurrent).toBeCloseTo(4,12);
+    const idealWire = createInitialState({...baseParams, internalR:2, sliderR:0});
+    expect(idealWire.terminalVoltage).toBe(0);
+    expect(idealWire.totalCurrent).toBeCloseTo(6,12);
+    expect(idealWire.outputPower).toBe(0);
+  });
+  it('does not assign a fictitious capacitor to a purely resistive network', () => {
+    const s = createInitialState({...baseParams,topology:'series-parallel-dynamic',sliderR:3});
+    expect(s.capVoltage).toBe(0);
+    expect(s.capCharge).toBe(0);
+    expect(s.capEnergy).toBe(0);
+    const shortBranch = createInitialState({...baseParams,topology:'series-parallel-dynamic',internalR:0,sliderR:0});
+    expect(shortBranch.nodeVoltages[2]).toBe(12);
+    expect(shortBranch.nodeVoltages[3]).toBe(0);
+    expect(shortBranch.branchCurrent1).toBe(0);
+    expect(shortBranch.branchCurrent2).toBeCloseTo(3,12);
+  });
+  it('uses the new RC circuit immediately after switching without reusing pre-switch current', () => {
+    const p: CircuitParams = {...baseParams,topology:'rc-transient',emf:10,internalR:1,r1:9,capacitance:.05};
+    let s=createInitialState(p);
+    s=stepCircuit(s,p,.2).nextState;
+    const v=s.capVoltage;
+    const off={...p,switchClosed:false};
+    const next=stepCircuit(s,off,.02).nextState;
+    const expected=v*Math.exp(-.02/(9*.05));
+    expect(next.capVoltage).toBeCloseTo(expected,10);
+    expect(next.capCurrent).toBeCloseTo(-expected/9,10);
+    expect(next.capEnergy).toBeLessThan(s.capEnergy);
+    expect(next.nodeVoltages[0]).toBe(0);
+  });
+  it('preserves bridge capacitor voltage at topology parameter changes and follows independent Thevenin evolution', () => {
+    const p: CircuitParams={...baseParams,topology:'rc-bridge-charge',internalR:0,r1:4,r2:6,sliderR:2,capacitance:.2};
+    const s=createInitialState(p);
+    const changed={...p,sliderR:8};
+    const next=stepCircuit(s,changed,.1).nextState;
+    const vTh=12*6/10-12*6/14;
+    const rTh=4*6/10+8*6/14;
+    const expected=vTh+(s.capVoltage-vTh)*Math.exp(-.1/(rTh*.2));
+    expect(next.capVoltage).toBeCloseTo(expected,9);
+    expect(next.capCurrent).toBeCloseTo((vTh-expected)/rTh,9);
+    expect(next.nodeVoltages[3]!-next.nodeVoltages[4]!).toBeCloseTo(next.capVoltage,10);
+  });
+  it('does not mistake a nonlinear resistor or diode for a capacitor', () => {
+    const s=createInitialState({...baseParams,topology:'nonlinear-lamp-diode',emf:5,sliderR:10});
+    expect(s.capVoltage).toBe(0);
+    expect(s.capCharge).toBe(0);
+    expect(s.capEnergy).toBe(0);
+  });
+});
