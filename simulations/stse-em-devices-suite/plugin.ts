@@ -1,7 +1,7 @@
 import { emDevicesStoryDecks } from './storyDecks.js';
 import { flightReadout } from './particleFlight.js';
 import { cyclotronReadout, cyclotronHistory, CYCL_DISPLAY_RADIUS } from './cyclotronFlight.js';
-import { deviceDiagramPoint, getDeviceSchematic, deeOutline } from './deviceGeometry.js';
+import { deviceDiagramPoint, getDeviceSchematic, deeOutline, deviceCueColor } from './deviceGeometry.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { emDevicesPresets } from './presets.js';
@@ -513,14 +513,14 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     for (const cue of diagram.cues) {
       const a=m.toScreen(cue.x,cue.y),b=m.toScreen(cue.x+cue.dx,cue.y+cue.dy);
       const angle=Math.atan2(b.y-a.y,b.x-a.x),size=8;
-      ctx.strokeStyle=cue.kind==='electric'?'#fbbf24':'#4ade80';ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=2;
+      ctx.strokeStyle=deviceCueColor(cue.kind);ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=2;
       ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
       ctx.moveTo(b.x-size*Math.cos(angle-.45),b.y-size*Math.sin(angle-.45));ctx.lineTo(b.x,b.y);
       ctx.lineTo(b.x-size*Math.cos(angle+.45),b.y-size*Math.sin(angle+.45));ctx.stroke();
       ctx.font='600 12px system-ui, sans-serif';ctx.fillText(cue.label,(a.x+b.x)/2+6,(a.y+b.y)/2-8);
     }
     ctx.fillStyle='#94a3b8';ctx.font='12px system-ui, sans-serif';ctx.textAlign='center';
-    for (const label of diagram.labels) { const p=m.toScreen(label.x,label.y);ctx.fillText(label.text,p.x,p.y); }
+    for (const label of diagram.labels) { const p=m.toScreen(label.x,label.y);const terminal=/^(上|下) /.test(label.text);ctx.fillStyle=terminal?'#f8fafc':'#94a3b8';ctx.font=terminal?'bold 14px system-ui, sans-serif':'12px system-ui, sans-serif';ctx.fillText(label.text,p.x,p.y); }
     ctx.textAlign='left';
 
     // RF arrow above the actual gap; direction from the current RF voltage.
@@ -568,8 +568,8 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       'mass-spectrometer': `质谱仪偏转半径 R = ${state.spectrometerRadiusM.toExponential(3)} m`,
       'cyclotron': `当前 K=${((state.cyclotron?.energyJ??0)/1.602176634e-13).toFixed(3)} MeV · 理想经典上限 ${(state.cyclotronAnalyticalEnergyJ/1.602176634e-13).toFixed(3)} MeV`,
       'hall-sensor': `霍尔电压 U_H = ${(state.hallVoltageV * 1000).toFixed(4)} mV （下−上）`,
-      'mhd-generator': `MHD ℰ=${state.mhdEmfV.toFixed(1)} V · P_R=${state.mhdOutputWatt.toFixed(0)} W`,
-      'em-flowmeter': `电磁流量计 Q = ${state.flowRateM3ps.toExponential(3)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
+      'mhd-generator': `磁流体发电机 · P_R=${state.mhdOutputWatt.toFixed(0)} W · r=${state.mhdInternalOhm.toFixed(2)} Ω`,
+      'em-flowmeter': `电磁流量计 · 开路测量 · 均匀流速理想模型`
     };
     ctx.textAlign = 'center';
     ctx.fillText(summaryMap[params.device], viewport.width * 0.5, 28);

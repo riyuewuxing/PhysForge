@@ -16,6 +16,7 @@ import type { EmDevicesState } from '../../../../simulations/stse-em-devices-sui
 import { flightReadout } from '../../../../simulations/stse-em-devices-suite/particleFlight.js';
 import { cyclotronReadout } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
 import { isSensorDevice, sensorReadout, type EmDevicesParams } from '../../../../simulations/stse-em-devices-suite/engine.js';
+import { getDeviceSchematic, deviceCueColor } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import {
   buildMagneticConductorPaths,
   magneticFieldGeometrySignature,
@@ -440,6 +441,27 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const forceLabelAnchor = new THREE.Vector3();
     const fieldLabelAnchor = new THREE.Vector3();
 
+    // S02 labels share the schematic anchors; rebuild only when direction/polarity changes.
+    let deviceLabels: Array<{obj:CSS2DObject;anchor:THREE.Vector3}> = [];
+    let deviceLabelSignature='';
+    const clearDeviceLabels=()=>{for(const {obj} of deviceLabels){scene.remove(obj);obj.element.remove();}deviceLabels=[];};
+    const syncDeviceLabels=(p:EmDevicesParams,layers:ReadonlySet<string>)=>{
+      const signature=[p.device,p.carrierType,Math.sign(p.hallCurrentA),Math.sign(p.bFieldT),Math.sign(p.particleSpeedMps)].join(':');
+      if(signature!==deviceLabelSignature){
+        deviceLabelSignature=signature;clearDeviceLabels();
+        if(isSensorDevice(p.device)){
+          const diagram=getDeviceSchematic(p.device,p);
+          const add=(text:string,color:string,x:number,y:number)=>{
+            const obj=createWorldLabel(text,color),anchor=new THREE.Vector3(x,.22,-y);
+            obj.element.dataset.deviceLabel=text;obj.position.copy(anchor);scene.add(obj);deviceLabels.push({obj,anchor});
+          };
+          for(const l of diagram.labels.filter(l=>/^(上|下) /.test(l.text)))add(l.text,'#f8fafc',l.x,l.y);
+          for(const c of diagram.cues)add(c.label,deviceCueColor(c.kind),c.x+c.dx*.5,c.y+c.dy*.5);
+        }
+      }
+      for(const {obj} of deviceLabels)obj.visible=layers.has('main');
+    };
+
     const separateWorldLabels = (viewportWidth: number, viewportHeight: number) => {
       const activeCamera = morph?.getActiveCamera() ?? camera;
       activeCamera.updateMatrixWorld();
@@ -447,7 +469,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       const candidates: Array<{ obj: CSS2DObject; anchor: THREE.Vector3 }> = [
         { obj: velocityLabel, anchor: velocityLabelAnchor },
         { obj: forceLabel, anchor: forceLabelAnchor },
-        { obj: fieldLabel, anchor: fieldLabelAnchor }
+        { obj: fieldLabel, anchor: fieldLabelAnchor },
+        ...deviceLabels
       ];
       for (const item of candidates) {
         if (!item.obj.visible) continue;
@@ -459,7 +482,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           ndcZ: projected.z,
           x: (projected.x * 0.5 + 0.5) * viewportWidth,
           y: (-projected.y * 0.5 + 0.5) * viewportHeight,
-          width: Math.max(30, rect.width, item.obj.element.offsetWidth),
+          width: Math.max(30, rect.width, item.obj.element.offsetWidth, item.obj.element.dataset.deviceLabel ? item.obj.element.dataset.deviceLabel.length*12+12 : 0),
           height: Math.max(32, rect.height, item.obj.element.offsetHeight)
         });
       }
@@ -481,7 +504,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       layers: ReadonlySet<string>
     ) => {
       if (state === null || state === undefined) return;
-      if (planarDriver) { planarDriver.sync(state, curParams, layers); dirty = true; return; }
+      if (planarDriver) { planarDriver.sync(state, curParams, layers); if(isDeviceStage)syncDeviceLabels(curParams as EmDevicesParams,layers); dirty = true; return; }
       if (isMag3d || isTokamak3d) {
         const magState = state as Magnetic3dState | TokamakMirrorState;
         const fusionParams = curParams as TokamakMirrorParams;
@@ -692,6 +715,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
         planarDriver?.dispose();
+        clearDeviceLabels();
         disposeGroupChildren(staticGroup);
         disposeGroupChildren(trailGroup);
         scene.remove(velocityArrow, lorentzForceArrow, magneticFieldArrow, marker, velocityLabel, forceLabel, fieldLabel);
@@ -779,7 +803,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       }
 
       const renderStart = performance.now();
-      if (isMag3d) {
+      if (isMag3d || isDeviceStage) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
       const renderCamera = morph?.getActiveCamera() ?? camera;

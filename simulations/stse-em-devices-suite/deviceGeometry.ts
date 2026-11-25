@@ -21,9 +21,12 @@ export interface DeviceCue {
   readonly y: number;
   readonly dx: number;
   readonly dy: number;
-  readonly kind: 'electric' | 'flow' | 'current';
+  readonly kind: 'electric' | 'flow' | 'current' | 'magnetic-force';
   readonly label: string;
 }
+
+/** Semantic direction colors, shared by 2D cues and spatial labels/arrows. */
+export const deviceCueColor=(kind:DeviceCue['kind']):string=>({electric:'#fbbf24',flow:'#a7f3d0',current:'#4ade80','magnetic-force':'#fb7185'}[kind]);
 
 export interface DeviceSchematic {
   readonly parts: readonly DevicePart[];
@@ -131,7 +134,7 @@ export function getDeviceSchematic(device:EmDeviceKind,params?:EmDevicesParams):
     if(voltage!==0){
       const sign=Math.sign(voltage),forceSign=-Math.sign(params.hallCurrentA*params.bFieldT);
       cues.push({id:'hall-equilibrium-electric',x:-.72,y:-sign*.13,dx:0,dy:sign*.26,kind:'electric',label:'E_H'});
-      cues.push({id:'hall-magnetic-force',x:.38,y:-forceSign*.13,dx:0,dy:forceSign*.26,kind:'flow',label:'F洛'});
+      cues.push({id:'hall-magnetic-force',x:.38,y:-forceSign*.13,dx:0,dy:forceSign*.26,kind:'magnetic-force',label:'F洛'});
     }
     return {...base,fields,cues,labels:[...labels,{x:-.25,y:-.98,text:'U_H=V下−V上 · 稳态漂移示意'}]};
   }

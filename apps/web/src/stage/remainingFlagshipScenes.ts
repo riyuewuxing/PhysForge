@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
 import { isSensorDevice, type EmDevicesParams, type EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { cyclotronHistory,type CyclotronHistoryArc } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
-import { deviceDiagramPoint, getDeviceSchematic, deeOutline, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
+import { deviceDiagramPoint, getDeviceSchematic, deeOutline, deviceCueColor, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers } from '@physforge/simulations/astro-orbital-mechanics';
 import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial, coilCopperMaterial, createParticleGlow } from './spatialMaterials.js';
@@ -104,11 +104,16 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
       for(const cue of schematic.cues){
         const delta=new THREE.Vector3(cue.dx,0,-cue.dy),length=delta.length();
         if(length<=0)continue;
-        const direction=new THREE.ArrowHelper(delta.normalize(),new THREE.Vector3(cue.x,0.10,-cue.y),length,
-          cue.kind==='electric'?0xfbbf24:0x4ade80,Math.min(0.13,length*0.25),0.07);
+        const headLength=Math.min(0.13,length*0.25),color=new THREE.Color(deviceCueColor(cue.kind));
+        const direction=new THREE.ArrowHelper(delta.normalize(),new THREE.Vector3(cue.x,0.10,-cue.y),length,color,headLength,0.07);
+        if(isSensorDevice(p.device)){
+          const shaftLength=length-headLength;
+          const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.008,.008,shaftLength,8),new THREE.MeshBasicMaterial({color,toneMapped:false}));
+          shaft.position.y=shaftLength/2;direction.add(shaft);
+        }
         direction.name=cue.id;fixed.add(direction);
       }
-      for(const x of p.device==='cyclotron'?[]:[-1.65,1.28]) {
+      for(const x of p.device==='cyclotron'?[]:p.device==='velocity-selector'?[-1.65,1.28]:[1.28]) {
         const guide=mesh(fixed,'field-guide',new THREE.BoxGeometry(0.025,0.025,1.2),anodizedRailMaterial());
         guide.position.set(x,0,0);
       }

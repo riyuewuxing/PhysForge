@@ -540,14 +540,17 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
     if(device==='hall-sensor'){
       const drift=Number(await stage.getAttribute('data-sensor-drift')),u=Number(await stage.getAttribute('data-hall-voltage'));
       if(!(drift<0)||Math.abs(u-(-3*.8/(2e24*1.602176634e-19*.0005)))>1e-10)throw Error('S02 electron polarity/drift mismatch');
+      for(const label of ['上 ＋','下 −','电子漂移','E_H','F洛','I'])await stage.locator(`[data-device-label="${label}"]`).waitFor({state:'visible'});
     }
     if(device==='mhd-generator'){
       const emf=Number(await stage.getAttribute('data-mhd-emf')),u=Number(await stage.getAttribute('data-mhd-terminal')),i=Number(await stage.getAttribute('data-mhd-current'));
       if(Math.abs(emf-960)>1e-6||Math.abs(u-480)>1e-6||Math.abs(i-600)>1e-6)throw Error('S02 MHD loaded voltage/current mismatch');
+      for(const label of ['上 −','下 ＋','I外','v'])await stage.locator(`[data-device-label="${label}"]`).waitFor({state:'visible'});
     }
     if(device==='em-flowmeter'){
       const u=Number(await stage.getAttribute('data-flow-voltage')),q=Number(await stage.getAttribute('data-flow-rate'));
       if(Math.abs(u-20)>1e-8||Math.abs(q-Math.PI)>1e-8)throw Error('S02 flowmeter independent oracle mismatch');
+      for(const label of ['上 −','下 ＋','v'])await stage.locator(`[data-device-label="${label}"]`).waitFor({state:'visible'});
     }
     if (screenshot) await screenshot('S02_' + device + '_3d');
     await toggle.click();
@@ -570,6 +573,7 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
   await page.waitForFunction(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-sensor-drift'))>0);
   const holeU=Number(await sensorStage.getAttribute('data-hall-voltage'));
   if(Math.abs(holeU-3*.8/(2e24*1.602176634e-19*.0005))>1e-10)throw Error('S02 hole polarity mismatch');
+  for(const label of ['上 −','下 ＋','空穴漂移','E_H','F洛','I'])await sensorStage.locator(`[data-device-label="${label}"]`).waitFor({state:'visible'});
   if(screenshot)await screenshot('S02_hall_hole_3d');
   await sensorToggle.click();await sensorStage.waitFor({state:'detached',timeout:15000});
   if(screenshot)await screenshot('S02_hall_hole_flat');
