@@ -112,7 +112,7 @@ export function equilibriumGeometry(s: EquilibriumState) {
 }
 
 export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumParams,EquilibriumState>({
-  meta: { id:'mech-dynamic-equilibrium',title:'动态平衡几何图解（绳结·杆·半球）(M02)',
+  meta: { id:'mech-dynamic-equilibrium',title:'动态平衡几何图解（活结/死结/矢量三角形）(M02)',
     textbookRef:'人教版 必修第一册 第三章 第4节',curriculumTags:['物理观念','科学思维'],difficulty:'高三一轮',version:'2.2.0' },
   defaultView: {scale:p=>p.mode==='hemisphere-suspension'?Math.min(.78,1.76/((p.radiusM??1)+(p.anchorHeightM??.6))):isRodMode(p.mode)?.76:.80,offsetRatioX:-.14},
   paramSchema,
