@@ -180,3 +180,28 @@ describe('H21 independent classroom geometry and print contracts',()=>{
     expect(ir.viewBox.minY).toBeLessThan(s.y);expect(ir.viewBox.maxY).toBeGreaterThan(s.y);
   });
 });
+
+import { projectileDiagram,projectileBounds,fitProjectileViewport,projectileBoundsFit,vacuumFarthest } from './diagram.js';
+it('fits physical domains at extremes and exports exactly the shared geometry',()=>{
+  for(const mode of ['incline-flat','semicircle-trough','safety-envelope'] as const)for(const v0 of [1,6,14])for(const inclineDeg of [15,60])for(const launchAngleDeg of [0,85]){
+    const p:ProjectileCouplingParams={mode,v0,inclineDeg,launchAngleDeg,troughRadius:5,mass:.5,dragCoeff:.3};
+    const s=stepProjectileCoupling(createInitialState(p),p,10).nextState;
+    const d=projectileDiagram(s,p),ir=mechProjectileCouplingPlugin.exportDiagramIR!(s,p);
+    expect(ir.primitives).toEqual(d.items.map(x=>x.primitive));
+    const b=projectileBounds(p,s);expect(b.maxX).toBeGreaterThan(s.x);expect(b.minY).toBeLessThan(s.y);expect(b.maxY).toBeGreaterThan(s.y);
+    for(const [width,height,right,bottom] of [[1392,852,1090,680],[900,600,600,430],[600,420,570,380]] as const){
+      const safe={left:30,right,top:28,bottom},v=fitProjectileViewport(p,s,{width,height,dpr:1,scale:1,offsetX:0,offsetY:0},safe)!;
+      expect(projectileBoundsFit(p,s,v,safe)).toBe(true);
+    }
+  }
+});
+it('uses the signed normal distance and true perpendicular at the vacuum maximum',()=>{
+  for(const inclineDeg of [15,37,60])for(const v0 of [1,14]){
+    const p:ProjectileCouplingParams={mode:'incline-flat',v0,inclineDeg,launchAngleDeg:0,troughRadius:2,mass:1,dragCoeff:0};
+    const f=vacuumFarthest(p)!,th=degToRad(inclineDeg),d=v0*v0*Math.sin(th)**2/(2*9.8*Math.cos(th));
+    expect(f.distance).toBeCloseTo(d,10);
+    expect(f.foot.y+f.foot.x*Math.tan(th)).toBeCloseTo(0,10);
+    expect(Math.hypot(f.point.x-f.foot.x,f.point.y-f.foot.y)).toBeCloseTo(d,10);
+    expect(vacuumFarthest({...p,dragCoeff:.1})).toBeNull();
+  }
+});
