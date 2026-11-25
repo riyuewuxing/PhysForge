@@ -86,7 +86,7 @@ function penetrate(s:CollisionRecoilState,p:CollisionRecoilParams,h:number,d:num
   return {...s,t:s.t+h,x1:X+p.mass2/M*relative,x2:X-p.mass1/M*relative,vx1:V+p.mass2/M*u,vx2:V-p.mass1/M*u,penetrationDist:d,heatLostJ:p.dragForceF*d};
 }
 function locateKnownEvent(t0:number,estimate:number,guard:(u:number)=>number,horizon:number):LocatedEvent{
-  const hit=bisectEvent(0,t0,horizon,(u,h)=>u+h,guard,{timeTolerance:1e-13,biasEndpoint:'positive'});
+  const hit=bisectEvent<number>(0,t0,horizon,(u,h)=>u+h,guard,{timeTolerance:1e-13,biasEndpoint:'positive'});
   if(!hit||Math.abs(hit.timeOffset-estimate)>Math.max(1e-9,eps(estimate)*8))throw Error('M09 analytic event and bisection disagree');
   return {timeOffset:hit.timeOffset,bracketWidth:hit.bracketWidth};
 }
