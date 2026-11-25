@@ -3,8 +3,8 @@ import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
 import { isSensorDevice, type EmDevicesParams, type EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { cyclotronHistory,type CyclotronHistoryArc } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline, deviceCueColor, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
-import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers } from '@physforge/simulations/astro-orbital-mechanics';
-import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
+import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers,orbitDisplayTrail } from '@physforge/simulations/astro-orbital-mechanics';
+import { computeLagrangePoints, extractRocheIsolines,binaryMassRatio, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial, coilCopperMaterial, createParticleGlow } from './spatialMaterials.js';
 import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 
@@ -201,10 +201,10 @@ function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
     moving.visible=showOrbit;guides.visible=showOrbit;
     secondary.visible=p.mode==='binary-lagrange';
     if(secondary.visible){
-      const q=p.massRatioQ,c=Math.cos(s.tNorm),sin=Math.sin(s.tNorm);
+      const q=binaryMassRatio(p.massRatioQ),c=Math.cos(s.tNorm),sin=Math.sin(s.tNorm);
       primary.position.copy(project(-q*c,-q*sin));secondary.position.copy(project((1-q)*c,(1-q)*sin));
     }else primary.position.set(0,0,0);
-    satellite.position.copy(project(s.xNorm,s.yNorm));trail.update(corotating?[]:s.trailNorm,project);
+    satellite.position.copy(project(s.xNorm,s.yNorm));trail.update(orbitDisplayTrail(s,corotating),(x,y)=>orbitDisplayPoint(x,y,0,false));
     const v=orbitDisplayVelocity(s,corotating),speed=Math.hypot(v.x,v.y);
     velocity.visible=speed>1e-8;velocity.position.copy(satellite.position);
     if(velocity.visible){velocity.setDirection(new THREE.Vector3(v.x/speed,0,-v.y/speed));const len=speed*.35;velocity.setLength(len,Math.min(.12,len*.3),Math.min(.07,len*.2));}

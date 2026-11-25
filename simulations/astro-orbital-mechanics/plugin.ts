@@ -7,6 +7,7 @@ import {
   computeLagrangePoints,
   computeObservables,
   buildAstroScaleContext,
+  binaryMassRatio,binaryGravityAt,
   createInitialState,
   extractRocheIsolines,
   stepAstroOrbital,
@@ -19,6 +20,12 @@ export function orbitDisplayXY(x: number, y: number, t: number, corotating: bool
   const theta = corotating ? -t : 0;
   const c = Math.cos(theta), sin = Math.sin(theta);
   return { x: x * c - y * sin, y: x * sin + y * c };
+}
+
+/** Each inertial historical point is transformed at its own physical time. */
+export function orbitDisplayTrail(state:AstroOrbitalState,corotating:boolean){
+  const history=state.trailNorm.filter(p=>!corotating||Number.isFinite(p.tNorm));
+  return history.map(p=>orbitDisplayXY(p.x,p.y,p.tNorm,corotating));
 }
 
 /** Engine-reported Hohmann impulses only; no synthetic burn positions or timing. */
@@ -172,24 +179,13 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
       }];
     }
 
-    const q = Math.max(0.01, Math.min(0.45, params.massRatioQ));
-    const c = Math.cos(state.tNorm), sin = Math.sin(state.tNorm);
     const corotating = activeLayers?.has('corotatingView') ?? false;
     const project = (x: number, y: number) => orbitDisplayXY(x, y, state.tNorm, corotating);
-    const primaries = [
-      { id: 'primary-1', label: 'F₁', x: -q * c, y: -q * sin, fraction: 1 - q },
-      { id: 'primary-2', label: 'F₂', x: (1 - q) * c, y: (1 - q) * sin, fraction: q }
-    ];
-    return primaries.map((primary, index) => {
-      const dx = primary.x - position.x, dy = primary.y - position.y;
-      // Match the existing softened restricted-three-body acceleration.
-      const r2 = dx * dx + dy * dy + 1e-6;
-      const scale = scaleSI * primary.fraction / (r2 * Math.sqrt(r2));
-      return {
-        id: primary.id, label: `${primary.label} (1 kg)`, origin: project(position.x, position.y),
-        force: project(scale * dx, scale * dy), color: index === 0 ? '#fbbf24' : '#fb923c', category: 'gravity' as const, unit: 'N'
-      };
-    });
+    return binaryGravityAt(position.x,position.y,state.tNorm,params.massRatioQ).map((primary,index)=>({
+      id:'primary-'+(index+1),label:index===0?'F₁ (1 kg)':'F₂ (1 kg)',
+      origin:project(position.x,position.y),force:project(scaleSI*primary.ax,scaleSI*primary.ay),
+      color:index===0?'#fbbf24':'#fb923c',category:'gravity' as const,unit:'N'
+    }));
   },
   layers: [
     { id: 'orbit', label: '轨道轨迹与天体', defaultVisible: true },
@@ -200,8 +196,10 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
   telemetryChannels: [
     { key: 'rNorm', label: '无量纲距离 r/r₁', unit: '', color: '#38bdf8' },
     { key: 'speedNorm', label: '无量纲速率 v/v_环', unit: '', color: '#4ade80' },
-    { key: 'energyNorm', label: '比机械能 ε', unit: '', color: '#fbbf24' },
-    { key: 'angularMomNorm', label: '比角动量 Lz', unit: '', color: '#f472b6' }
+    { key: 'energyNorm', label: '惯性系比机械能 ε', unit: '', color: '#fbbf24' },
+    { key: 'angularMomNorm', label: '惯性系比角动量 Lz', unit: '', color: '#f472b6' },
+    { key:'jacobiConstant',label:'三体雅可比积分 C',unit:'',color:'#fbbf24' },
+    { key:'rotatingSpeedNorm',label:'共转系归一化速率',unit:'',color:'#4ade80' }
   ],
   referenceFrames: [
     {
@@ -255,7 +253,7 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     // Export the inertial view: history points carry no individual time stamps.
     const primitives:DiagramPrimitive[]=[];
     if(params.mode==='binary-lagrange'){
-      const q=params.massRatioQ,c=Math.cos(state.tNorm),sin=Math.sin(state.tNorm);
+      const q=binaryMassRatio(params.massRatioQ),c=Math.cos(state.tNorm),sin=Math.sin(state.tNorm);
       primitives.push({kind:'circle',cx:-q*c,cy:-q*sin,r:0.13,fill:true},
         {kind:'circle',cx:(1-q)*c,cy:(1-q)*sin,r:0.065,fill:true});
     }else primitives.push({kind:'circle',cx:0,cy:0,r:0.13,fill:true});
@@ -352,22 +350,16 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
         ctx.setLineDash([]);
       }
 
-      // Historical points do not include their own times: omit the trail in a true rotating view.
-      if (!useCorotating && state.trailNorm.length > 1) {
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        const p0 = mapPoint(state.trailNorm[0]!.x, state.trailNorm[0]!.y);
-        ctx.moveTo(p0.px, p0.py);
-        for (let i = 1; i < state.trailNorm.length; i++) {
-          const p = mapPoint(state.trailNorm[i]!.x, state.trailNorm[i]!.y);
-          ctx.lineTo(p.px, p.py);
-        }
+      const history=orbitDisplayTrail(state,useCorotating);
+      if(history.length>1){
+        ctx.strokeStyle=viewport.theme==='projector'?'#0369a1':'#38bdf8';
+        ctx.lineWidth=2;ctx.beginPath();
+        history.forEach((point,i)=>{const p=m.toScreen(point.x,point.y);if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);});
         ctx.stroke();
       }
 
       if (params.mode === 'binary-lagrange') {
-        const q = params.massRatioQ;
+        const q = binaryMassRatio(params.massRatioQ);
         const p1 = { x: -q * Math.cos(state.tNorm), y: -q * Math.sin(state.tNorm) };
         const p2 = { x: (1 - q) * Math.cos(state.tNorm), y: (1 - q) * Math.sin(state.tNorm) };
         const c1 = mapPoint(p1.x, p1.y);
@@ -408,7 +400,7 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
         ctx.beginPath();ctx.arc(p.x,p.y,markerRadius(8),0,Math.PI*2);ctx.stroke();
         drawArrow(burn.x,burn.y,burn.dx*.45,burn.dy*.45,'#fb923c','Δv'+burn.index);
       }
-      if(useCorotating){ctx.font='12px sans-serif';ctx.fillStyle='#94a3b8';ctx.fillText('共转系：历史轨迹缺少逐点时刻，故不绘制',18,28);}
+      if(useCorotating){ctx.font='12px sans-serif';ctx.fillStyle=viewport.theme==='projector'?'#475569':'#94a3b8';ctx.fillText('共转系 · 各历史点按自身时刻转换',18,28);}
 
     }
 
@@ -418,9 +410,12 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     const obs = computeObservables(state, params);
     if (params.mode === 'binary-lagrange') {
       const display = orbitDisplayXY(state.xNorm, state.yNorm, state.tNorm, true);
-      return [{ id: 'binary-state', label: '共转系试探粒子位置（双星间距为长度单位）',
+      return [{ id: 'binary-jacobi',label:'三体共转系雅可比积分（归一化）',
+        latex:'C=2U+x^2+y^2-|\\\\mathbf v_{\\\\rm rot}|^2',
+        substitutedLatex:`C=${obs.jacobiConstant!.toFixed(7)}`},
+        { id: 'binary-state', label: '共转系试探粒子位置（双星间距为长度单位）',
         latex: 'r_1/a=q,\\quad r_2/a=1-q',
-        substitutedLatex: `\\begin{aligned}x_{\\rm rot}/a&=${display.x.toFixed(3)}\\\\y_{\\rm rot}/a&=${display.y.toFixed(3)}\\\\q&=${params.massRatioQ.toFixed(3)}\\end{aligned}` }];
+        substitutedLatex: `\\begin{aligned}x_{\\rm rot}/a&=${display.x.toFixed(3)}\\\\y_{\\rm rot}/a&=${display.y.toFixed(3)}\\\\q&=${binaryMassRatio(params.massRatioQ).toFixed(3)}\\end{aligned}` }];
     }
     const items = [{ id: 'orbit-state', label: '归一化二体轨道状态',
       latex: 'r/r_1,\\quad v/v_{c1},\\quad e',

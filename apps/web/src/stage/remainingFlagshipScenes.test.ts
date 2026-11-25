@@ -75,7 +75,7 @@ describe('remaining planar flagship projections',()=>{
     expect(forces[0]!.force.y+forces[1]!.force.y).toBeCloseTo(0,20);
     expect(p.getForceVectors!(state,{...params,carrierType:'hole'})).toEqual(forces);
   });
-  it('M10 renders only actual burn events and does not fake a rotating-frame trail',()=>{
+  it('M10 renders only actual burn events and transforms each genuine historical sample',()=>{
     const p=astroOrbitalMechanicsPlugin,params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'hohmann-transfer'});
     const scene=new THREE.Scene(),driver=createRemainingFlagshipScene(p.meta.id,scene)!;
     const initial=p.engine.createInitialState(params);
@@ -89,10 +89,19 @@ describe('remaining planar flagship projections',()=>{
     driver.sync(next,params,new Set(['orbit']));
     expect(scene.getObjectByName('orbital-burn-2')?.position.x).toBe(-2.4);
     const binary=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'binary-lagrange'});
-    const state={...p.engine.createInitialState(binary),tNorm:.5,trailNorm:[{x:1,y:0},{x:1,y:.1}]};
+    const state=p.engine.step(p.engine.createInitialState(binary),binary,1).nextState;
     driver.sync(state,binary,new Set(['orbit','corotatingView']));
     expect(scene.getObjectByName('orbital-burn-1')).toBeUndefined();
-    expect(scene.getObjectByName('engine-trail')?.visible).toBe(false);
+    const line=scene.getObjectByName('engine-trail') as THREE.Line;
+    expect(line.visible).toBe(true);
+    expect(line.geometry.drawRange.count).toBe(state.trailNorm.length);
+    const positions=line.geometry.getAttribute('position');
+    state.trailNorm.forEach((point,i)=>{
+      const expected=orbitDisplayPoint(point.x,point.y,point.tNorm,true);
+      expect(new THREE.Vector3().fromBufferAttribute(positions,i).distanceTo(expected)).toBeLessThan(1e-6);
+    });
+    driver.sync(state,binary,new Set(['orbit']));
+    state.trailNorm.forEach((point,i)=>expect(new THREE.Vector3().fromBufferAttribute(positions,i).distanceTo(orbitDisplayPoint(point.x,point.y,0,false))).toBeLessThan(1e-6));
     const v=orbitDisplayVelocity(state,true);
     const expected=orbitDisplayXY(state.vxNorm+state.yNorm,state.vyNorm-state.xNorm,state.tNorm,true);
     expect(v).toEqual(expected);

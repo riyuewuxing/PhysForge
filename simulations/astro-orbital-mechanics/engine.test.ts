@@ -4,6 +4,7 @@ import { astroOrbitalMechanicsPlugin } from './plugin.js';
 import { astroOrbitalPresets } from './presets.js';
 import {
   buildAstroScaleContext,
+  binaryGravityAt,checkInvariants,
   computeLagrangePoints,
   computeObservables,
   createInitialState,
@@ -136,5 +137,45 @@ describe('M10 physically independent regression gates',()=>{
     const p=getPreset(2);
     expect(p.v0Ratio).toBe(Math.SQRT2);
     expect(Math.abs(computeObservables(createInitialState(p),p).energyNorm!)).toBeLessThan(1e-12);
+  });
+});
+
+describe('M10 physical boundary and mode contracts',()=>{
+  it('keeps polygon area equal across irregular caller steps with simSpeed=2.5',()=>{
+    const p={...getPreset(0),simSpeed:2.5};
+    let s=createInitialState(p);
+    for(const dt of [.07,.19,.26,.43,.59])s=stepAstroOrbital(s,p,dt).nextState;
+    expect(s.sectors).toHaveLength(6);
+    for(const sec of s.sectors){
+      expect(sec.endTNorm-sec.startTNorm).toBeCloseTo(.55,12);
+      expect(Math.abs(sec.areaDimless-.5*p.v0Ratio*.55)/(.5*p.v0Ratio*.55)).toBeLessThan(1e-4);
+    }
+    expect(s.trailNorm.length).toBeLessThanOrEqual(421);
+  });
+  it('uses true binary energy and Jacobi, finite core potential, no two-body orbital elements',()=>{
+    const p={...getPreset(3),massRatioQ:.4},s=createInitialState(p);
+    const obs=computeObservables(s,p);
+    expect(obs.semiMajorAxisNorm).toBeUndefined();
+    expect(obs.eccentricity).toBeUndefined();
+    const g=binaryGravityAt(s.xNorm,s.yNorm,s.tNorm,p.massRatioQ);
+    expect(obs.energyNorm).toBeCloseTo(.5*(s.vxNorm**2+s.vyNorm**2)-g[0]!.potential-g[1]!.potential,12);
+    expect(checkInvariants(s,s,p)[0]!.passed).toBe(true);
+    for(const q of [.01,.4,.49]){
+      const lps=computeLagrangePoints(q);
+      for(const l of lps){
+        const a=binaryGravityAt(l.x,l.y,0,q);
+        expect(Math.hypot(l.x+a[0]!.ax+a[1]!.ax,l.y+a[0]!.ay+a[1]!.ay)).toBeLessThan(1e-9);
+      }
+      for(const r of [0,.0009,.001,.0011]){
+        const a=binaryGravityAt(-q+r,0,0,q);
+        expect(a.every(x=>[x.ax,x.ay,x.potential].every(Number.isFinite))).toBe(true);
+      }
+    }
+  });
+  it('returns finite observables and an absolute invariant for an exact escape threshold',()=>{
+    const p=getPreset(2),initial=createInitialState(p);
+    const s=stepAstroOrbital(initial,p,5).nextState;
+    expect(Object.values(computeObservables(s,p)).every(Number.isFinite)).toBe(true);
+    expect(checkInvariants(s,initial,p).every(x=>x.passed)).toBe(true);
   });
 });

@@ -28,7 +28,11 @@ export type AstroOrbitalParams = {
   simSpeed: number;
 };
 
+export interface OrbitTrailPoint { readonly x:number; readonly y:number; readonly tNorm:number; }
+
 export interface SweptSector {
+  readonly startTNorm:number;
+  readonly endTNorm:number;
   readonly vertices: readonly { x: number; y: number }[];
   readonly areaDimless: number;
 }
@@ -46,7 +50,7 @@ export interface AstroOrbitalState {
   readonly yNorm: number;
   readonly vxNorm: number;
   readonly vyNorm: number;
-  readonly trailNorm: readonly { x: number; y: number }[];
+  readonly trailNorm: readonly OrbitTrailPoint[];
   readonly sectors: readonly SweptSector[];
   readonly currentSectorVerts: readonly { x: number; y: number }[];
   readonly sectorStartTNorm: number;
@@ -55,7 +59,8 @@ export interface AstroOrbitalState {
   readonly deltaV2SI: number;
   readonly energyNorm0: number;
   readonly angularMomNorm0: number;
-  readonly semiMajorAxisNorm0: number;
+  readonly semiMajorAxisNorm0: number | null;
+  readonly jacobi0?:number;
   readonly events: readonly PhysicsEvent[];
 }
 
@@ -92,30 +97,31 @@ function twoBodyAccelNorm(positions: readonly number[]): number[] {
   return [-x * invR3, -y * invR3];
 }
 
+export const BINARY_CORE_RADIUS_NORM=.001;
+export const binaryMassRatio=(q:number)=>Math.max(.01,Math.min(.49,q));
+
+/** Newtonian outside a tiny finite spherical core. The acceleration and
+ * potential are from the same C1 function; no all-space Plummer drift at L4. */
+export function binaryGravityAt(x:number,y:number,t:number,massRatioQ:number){
+  const q=binaryMassRatio(massRatioQ),ct=Math.cos(t),st=Math.sin(t);
+  return [{x:-q*ct,y:-q*st,mass:1-q},{x:(1-q)*ct,y:(1-q)*st,mass:q}].map(primary=>{
+    const dx=primary.x-x,dy=primary.y-y,r=Math.hypot(dx,dy),R=BINARY_CORE_RADIUS_NORM;
+    const f=primary.mass/Math.max(r,R)**3;
+    const potential=primary.mass*(r>=R?1/r:(3-(r/R)**2)/(2*R));
+    return {...primary,ax:dx*f,ay:dy*f,potential};
+  });
+}
 function restricted3BodyAccelNorm(positions: readonly number[], t: number, q: number): number[] {
-  const x = positions[0]!;
-  const y = positions[1]!;
-  const ct = Math.cos(t);
-  const st = Math.sin(t);
-  const x1 = -q * ct;
-  const y1 = -q * st;
-  const x2 = (1 - q) * ct;
-  const y2 = (1 - q) * st;
-
-  const dx1 = x - x1;
-  const dy1 = y - y1;
-  const d1Sq = dx1 * dx1 + dy1 * dy1 + 1e-6;
-  const invD1_3 = 1 / (d1Sq * Math.sqrt(d1Sq));
-
-  const dx2 = x - x2;
-  const dy2 = y - y2;
-  const d2Sq = dx2 * dx2 + dy2 * dy2 + 1e-6;
-  const invD2_3 = 1 / (d2Sq * Math.sqrt(d2Sq));
-
-  return [
-    -(1 - q) * dx1 * invD1_3 - q * dx2 * invD2_3,
-    -(1 - q) * dy1 * invD1_3 - q * dy2 * invD2_3
-  ];
+  const g=binaryGravityAt(positions[0]!,positions[1]!,t,q);
+  return [g[0]!.ax+g[1]!.ax,g[0]!.ay+g[1]!.ay];
+}
+export function binaryEffectivePotential(x:number,y:number,q:number):number{
+  const g=binaryGravityAt(x,y,0,q);
+  return -g[0]!.potential-g[1]!.potential-.5*(x*x+y*y);
+}
+export function binaryJacobi(x:number,y:number,vx:number,vy:number,t:number,q:number):number{
+  const g=binaryGravityAt(x,y,t,q);
+  return 2*(g[0]!.potential+g[1]!.potential)+x*x+y*y-(vx+y)**2-(vy-x)**2;
 }
 
 function stepYoshida4Verlet(
@@ -138,16 +144,13 @@ function stepYoshida4Verlet(
 }
 
 export function computeLagrangePoints(massRatioQ: number): LagrangePoint[] {
-  const q = Math.max(0.01, Math.min(0.49, massRatioQ));
-  const mu1 = 1 - q;
-  const mu2 = q;
+  const q = binaryMassRatio(massRatioQ);
   const x1 = -q;
   const x2 = 1 - q;
 
   const dPhiDx = (x: number): number => {
-    const dx1 = x - x1;
-    const dx2 = x - x2;
-    return x - (mu1 * dx1) / Math.pow(Math.abs(dx1), 3) - (mu2 * dx2) / Math.pow(Math.abs(dx2), 3);
+    const g=binaryGravityAt(x,0,0,q);
+    return x+g[0]!.ax+g[1]!.ax;
   };
 
   const l1x = findRootBrent(dPhiDx, x1 + 0.02, x2 - 0.02, { tolerance: 1e-11 }).root;
@@ -163,40 +166,38 @@ export function computeLagrangePoints(massRatioQ: number): LagrangePoint[] {
   ];
 }
 
+let rocheCache:{q:number;contours:IsolineContour[]}|null=null;
 export function extractRocheIsolines(massRatioQ: number): IsolineContour[] {
-  const q = Math.max(0.01, Math.min(0.49, massRatioQ));
+  const q = binaryMassRatio(massRatioQ);
+  if(rocheCache?.q===q)return rocheCache.contours;
   const nx = 44;
   const ny = 44;
   const bounds = { xMin: -1.8, xMax: 1.8, yMin: -1.8, yMax: 1.8 };
   const grid = new Float64Array(nx * ny);
-  const x1 = -q;
-  const x2 = 1 - q;
 
   for (let j = 0; j < ny; j++) {
     const y = bounds.yMin + (j / (ny - 1)) * (bounds.yMax - bounds.yMin);
     for (let i = 0; i < nx; i++) {
       const x = bounds.xMin + (i / (nx - 1)) * (bounds.xMax - bounds.xMin);
-      const r1 = Math.max(0.08, Math.hypot(x - x1, y));
-      const r2 = Math.max(0.08, Math.hypot(x - x2, y));
-      const phiEff = -(1 - q) / r1 - q / r2 - 0.5 * (x * x + y * y);
-      grid[j * nx + i] = Math.max(-6, phiEff);
+      grid[j * nx + i] = binaryEffectivePotential(x,y,q);
     }
   }
-  return extractIsolines(grid, nx, ny, bounds, [-2.4, -2.0, -1.75, -1.55]);
+  const contours=extractIsolines(grid, nx, ny, bounds, [-2.4, -2.0, -1.75, -1.55]);
+  rocheCache={q,contours};return contours;
 }
 
 function twoBodyMetricsNorm(x: number, y: number, vx: number, vy: number): {
   r: number;
   energy: number;
   lz: number;
-  a: number;
+  a: number | null;
   ecc: number;
 } {
   const r = Math.hypot(x, y);
   const v2 = vx * vx + vy * vy;
   const energy = 0.5 * v2 - 1 / Math.max(1e-9, r);
   const lz = x * vy - y * vx;
-  const a = energy < -1e-12 ? -0.5 / energy : Infinity;
+  const a = Math.abs(energy)>1e-12 ? -0.5 / energy : null;
   const rDotV = x * vx + y * vy;
   const ex = (v2 - 1 / r) * x - rDotV * vx;
   const ey = (v2 - 1 / r) * y - rDotV * vy;
@@ -208,7 +209,7 @@ export function createInitialState(params: AstroOrbitalParams): AstroOrbitalStat
   const { scale, muSI, r1SI } = buildAstroScaleContext(params);
 
   if (params.mode === 'binary-lagrange') {
-    const q = Math.max(0.01, Math.min(0.45, params.massRatioQ));
+    const q = binaryMassRatio(params.massRatioQ);
     const x0 = 0.5 - q + 0.025;
     const y0 = Math.sqrt(3) / 2 - 0.02;
     const vx0 = -y0;
@@ -220,16 +221,17 @@ export function createInitialState(params: AstroOrbitalParams): AstroOrbitalStat
       yNorm: y0,
       vxNorm: vx0,
       vyNorm: vy0,
-      trailNorm: [{ x: x0, y: y0 }],
+      trailNorm: [{ x: x0, y: y0,tNorm:0 }],
       sectors: [],
       currentSectorVerts: [{ x: x0, y: y0 }],
       sectorStartTNorm: 0,
       hohmannPhase: 'parking',
       deltaV1SI: 0,
       deltaV2SI: 0,
-      energyNorm0: 0.5 * (vx0 * vx0 + vy0 * vy0),
+      energyNorm0: .5*(vx0*vx0+vy0*vy0)+binaryEffectivePotential(x0,y0,q)+.5*(x0*x0+y0*y0),
       angularMomNorm0: x0 * vy0 - y0 * vx0,
-      semiMajorAxisNorm0: 1,
+      semiMajorAxisNorm0: null,
+      jacobi0:binaryJacobi(x0,y0,vx0,vy0,0,q),
       events: []
     };
   }
@@ -262,7 +264,7 @@ export function createInitialState(params: AstroOrbitalParams): AstroOrbitalStat
       yNorm,
       vxNorm: 0,
       vyNorm,
-      trailNorm: [{ x: xNorm, y: yNorm }],
+      trailNorm: [{ x: xNorm, y: yNorm,tNorm:0 }],
       sectors: [],
       currentSectorVerts: [{ x: xNorm, y: yNorm }],
       sectorStartTNorm: 0,
@@ -289,7 +291,7 @@ export function createInitialState(params: AstroOrbitalParams): AstroOrbitalStat
     yNorm,
     vxNorm: 0,
     vyNorm,
-    trailNorm: [{ x: xNorm, y: yNorm }],
+    trailNorm: [{ x: xNorm, y: yNorm,tNorm:0 }],
     sectors: [],
     currentSectorVerts: [{ x: xNorm, y: yNorm }],
     sectorStartTNorm: 0,
@@ -318,13 +320,24 @@ export function stepAstroOrbital(
   if (dt === 0) return { nextState: state, events: [] };
 
   const { scale } = buildAstroScaleContext(params);
-  const q = Math.max(0.01, Math.min(0.45, params.massRatioQ));
+  const q = binaryMassRatio(params.massRatioQ);
   const simRate = Math.max(0.2, params.simSpeed);
   const dtNormTotal = dt * simRate;
 
   const maxSub = 0.015;
   const nSub = Math.max(1, Math.ceil(dtNormTotal / maxSub));
-  const subH = dtNormTotal / nSub;
+  const nominalSubH = dtNormTotal / nSub;
+  const endT=state.tNorm+dtNormTotal;
+  const sectorInterval=.55;
+  let sectors=state.sectors;
+  let currentSectorVerts=state.currentSectorVerts.slice();
+  let sectorStartTNorm=state.sectorStartTNorm;
+  const trailNorm=state.trailNorm.slice();
+  const appendTrail=(v:VerletSubState,force=false)=>{
+    const x=v.positions[0]!,y=v.positions[1]!,last=trailNorm.at(-1);
+    if(last&&v.t<=last.tNorm+1e-12)return;
+    if(force||!last||Math.hypot(x-last.x,y-last.y)>.04)trailNorm.push({x,y,tNorm:v.t});
+  };
 
   let curSub: VerletSubState = {
     positions: [state.xNorm, state.yNorm],
@@ -338,7 +351,15 @@ export function stepAstroOrbital(
   const advSub = (s: VerletSubState, h: number) => stepYoshida4Verlet(s.positions, s.velocities, s.t, h, params.mode, q);
   const radialVelFn = (s: VerletSubState) => s.positions[0]! * s.velocities[0]! + s.positions[1]! * s.velocities[1]!;
 
-  for (let i = 0; i < nSub; i++) {
+  // Split at the actual .55 normalized-time boundaries, including multiple
+  // complete sectors in one caller step. The integrator, not interpolation,
+  // supplies each boundary point and the polygon's interior samples.
+  while(endT-curSub.t>1e-12){
+    const nextBoundary=sectorStartTNorm+sectorInterval;
+    const remaining=endT-curSub.t;
+    const toBoundary=params.mode==='kepler-ellipse'?nextBoundary-curSub.t:Infinity;
+    const subH=Math.min(nominalSubH,remaining,toBoundary);
+    const startT=curSub.t;
     const next = advSub(curSub, subH);
 
     if (params.mode === 'hohmann-transfer' && phase === 'transfer') {
@@ -368,48 +389,43 @@ export function stepAstroOrbital(
 
           const ev: PhysicsEvent = {
             id: `hohmann-burn-2-${state.events.length + newEvents.length}`,
-            time: state.tSim + (i * subH + hit.timeOffset) / simRate,
+            time: state.tSim + (startT-state.tNorm + hit.timeOffset) / simRate,
             label: '远地点二次点火 Δv₂ 圆化轨道',
             position: { x: rx, y: ry },
-            metrics: { rApoNorm: rApo, deltaV2SI }
+            metrics: { rApoNorm: rApo, deltaV2SI,tNorm:atApo.t,bracketWidth:hit.bracketWidth/simRate }
           };
           newEvents.push(ev);
           phase = 'circularized';
 
+          appendTrail(atApo,true);
           curSub = advSub(postBurnSub, subH - hit.timeOffset);
+          appendTrail(curSub);
           continue;
         }
       }
     }
 
     curSub = next;
+    appendTrail(curSub);
+    if(params.mode==='kepler-ellipse'){
+      const vertex={x:curSub.positions[0]!,y:curSub.positions[1]!};
+      currentSectorVerts.push(vertex);
+      if(curSub.t>=nextBoundary-1e-11){
+        let area=0;
+        for(let k=1;k<currentSectorVerts.length;k++){
+          const a=currentSectorVerts[k-1]!,b=currentSectorVerts[k]!;
+          area+=.5*(a.x*b.y-a.y*b.x);
+        }
+        sectors=[...sectors.slice(-5),{vertices:currentSectorVerts,areaDimless:Math.abs(area),startTNorm:sectorStartTNorm,endTNorm:nextBoundary}];
+        currentSectorVerts=[vertex];sectorStartTNorm=nextBoundary;
+      }
+    }
   }
 
   const nx = curSub.positions[0]!;
   const ny = curSub.positions[1]!;
   const nvx = curSub.velocities[0]!;
   const nvy = curSub.velocities[1]!;
-
-  const lastTrail = state.trailNorm[state.trailNorm.length - 1];
-  const shouldAppend = !lastTrail || Math.hypot(nx - lastTrail.x, ny - lastTrail.y) > 0.04;
-  const trailNorm = shouldAppend ? [...state.trailNorm.slice(-420), { x: nx, y: ny }] : state.trailNorm;
-
-  const sectorInterval = 0.55;
-  let sectors = state.sectors;
-  let currentSectorVerts = [...state.currentSectorVerts, { x: nx, y: ny }];
-  let sectorStartTNorm = state.sectorStartTNorm;
-
-  if (params.mode === 'kepler-ellipse' && curSub.t - sectorStartTNorm >= sectorInterval) {
-    let area = 0;
-    for (let k = 0; k < currentSectorVerts.length - 1; k++) {
-      const a = currentSectorVerts[k]!;
-      const b = currentSectorVerts[k + 1]!;
-      area += 0.5 * (a.x * b.y - a.y * b.x);
-    }
-    sectors = [...sectors.slice(-5), { vertices: currentSectorVerts, areaDimless: Math.abs(area) }];
-    currentSectorVerts = [{ x: nx, y: ny }];
-    sectorStartTNorm = curSub.t;
-  }
 
   return {
     nextState: {
@@ -420,7 +436,7 @@ export function stepAstroOrbital(
       yNorm: ny,
       vxNorm: nvx,
       vyNorm: nvy,
-      trailNorm,
+      trailNorm:trailNorm.slice(-421),
       sectors,
       currentSectorVerts,
       sectorStartTNorm,
@@ -437,18 +453,27 @@ export function computeObservables(
   params: AstroOrbitalParams
 ): Record<string, number> {
   const { scale } = buildAstroScaleContext(params);
-  const m = twoBodyMetricsNorm(state.xNorm, state.yNorm, state.vxNorm, state.vyNorm);
   const speedNorm = Math.hypot(state.vxNorm, state.vyNorm);
+  if(params.mode==='binary-lagrange'){
+    const {xNorm:x,yNorm:y,vxNorm:vx,vyNorm:vy,tNorm:t}=state;
+    const g=binaryGravityAt(x,y,t,params.massRatioQ),r=Math.hypot(x,y);
+    return {tSim:state.tSim,tNorm:t,tPhysicalS:scale.toSI(t,'time'),rNorm:r,speedNorm,
+      rSI:scale.toSI(r,'length'),speedSI:scale.toSI(speedNorm,'velocity'),
+      energyNorm:.5*speedNorm**2-g[0]!.potential-g[1]!.potential,angularMomNorm:x*vy-y*vx,
+      jacobiConstant:binaryJacobi(x,y,vx,vy,t,params.massRatioQ),
+      rotatingSpeedNorm:Math.hypot(vx+y,vy-x),deltaV1SI:0,deltaV2SI:0};
+  }
+  const m = twoBodyMetricsNorm(state.xNorm, state.yNorm, state.vxNorm, state.vyNorm);
   return {
     tSim: state.tSim,
     tNorm: state.tNorm,
+    tPhysicalS:scale.toSI(state.tNorm,'time'),
     rNorm: m.r,
     speedNorm,
     rSI: scale.toSI(m.r, 'length'),
     speedSI: scale.toSI(speedNorm, 'velocity'),
     eccentricity: m.ecc,
-    semiMajorAxisNorm: m.a,
-    aSI: Number.isFinite(m.a) ? scale.toSI(m.a, 'length') : Infinity,
+    ...(m.a===null?{}:{semiMajorAxisNorm:m.a,aSI:scale.toSI(m.a,'length')}),
     energyNorm: m.energy,
     angularMomNorm: m.lz,
     deltaV1SI: state.deltaV1SI,
@@ -462,23 +487,22 @@ export function checkInvariants(
   params: AstroOrbitalParams
 ): InvariantReport[] {
   const obs = computeObservables(state, params);
-  if (params.mode !== 'kepler-ellipse') {
-    return [
-      {
-        name: '数值解有限性检查',
-        measuredError: 0,
-        tolerance: 1e-6,
-        passed: Number.isFinite(state.xNorm) && Number.isFinite(state.yNorm)
-      }
-    ];
+  if(params.mode==='binary-lagrange'){
+    const c0=state.jacobi0??binaryJacobi(_initial.xNorm,_initial.yNorm,_initial.vxNorm,_initial.vyNorm,_initial.tNorm,params.massRatioQ);
+    const error=Math.abs(obs.jacobiConstant!-c0);
+    return [{name:'圆型限制性三体雅可比积分 C 绝对漂移',measuredError:error,tolerance:1e-6,passed:Number.isFinite(error)&&error<1e-6}];
   }
-
-  const relEnergyErr = Math.abs(obs.energyNorm! - state.energyNorm0) / Math.max(1e-9, Math.abs(state.energyNorm0));
-  const relLzErr = Math.abs(obs.angularMomNorm! - state.angularMomNorm0) / Math.max(1e-9, Math.abs(state.angularMomNorm0));
+  const circularized=params.mode==='hohmann-transfer'&&state.hohmannPhase==='circularized';
+  const rho=Math.max(1.1,params.r2OverR1);
+  const targetEnergy=circularized?-.5/rho:state.energyNorm0;
+  const targetLz=circularized?Math.sqrt(rho):state.angularMomNorm0;
+  const nearParabolic=Math.abs(targetEnergy)<1e-9;
+  const relEnergyErr = Math.abs(obs.energyNorm! - targetEnergy) / (nearParabolic?1:Math.abs(targetEnergy));
+  const relLzErr = Math.abs(obs.angularMomNorm! - targetLz) / Math.max(1e-9, Math.abs(targetLz));
 
   return [
     {
-      name: '比机械能辛积分相对漂移',
+      name: nearParabolic?'抛物线临界比机械能绝对漂移':'分段比机械能辛积分相对漂移',
       measuredError: relEnergyErr,
       tolerance: 1e-6,
       passed: Number.isFinite(relEnergyErr) && relEnergyErr < 1e-6

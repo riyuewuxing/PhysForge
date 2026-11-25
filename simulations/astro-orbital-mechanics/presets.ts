@@ -5,7 +5,7 @@ export const astroOrbitalPresets: readonly PresetSpec<AstroOrbitalParams>[] = [
   {
     id: 'kepler-ellipse-second-law',
     name: '开普勒椭圆轨道与等面积扫过扇区',
-    description: '近地高轨 e≈0.44，基于 ScaleContext 归一化与四阶辛积分，实时渲染等时间扫过面积',
+    description: '理想中心引力椭圆 e≈0.44，基于 ScaleContext 归一化与四阶辛积分，实时渲染等时间扫过面积',
     curriculumNotes: '必修二 · 开普勒第一/二/三定律',
     params: {
       mode: 'kepler-ellipse',
@@ -19,7 +19,7 @@ export const astroOrbitalPresets: readonly PresetSpec<AstroOrbitalParams>[] = [
   },
   {
     id: 'hohmann-geo-transfer',
-    name: '地球同步轨道霍曼双脉冲转移 (Δv₁ + Δv₂)',
+    name: '理想霍曼双脉冲转移：目标半径 2.4 倍 (Δv₁ + Δv₂)',
     description: '近地点点火进入大椭圆，bisectEvent 捕获远地点自动二次圆化变轨',
     curriculumNotes: '必修二 · 卫星变轨与宇宙航行',
     params: {
@@ -42,7 +42,7 @@ export const astroOrbitalPresets: readonly PresetSpec<AstroOrbitalParams>[] = [
       scaleRegime: 'solar-au',
       r1Ratio: 1,
       r2OverR1: 2,
-      v0Ratio: 1.414,
+      v0Ratio: Math.SQRT2,
       massRatioQ: 0.08,
       simSpeed: 1
     }

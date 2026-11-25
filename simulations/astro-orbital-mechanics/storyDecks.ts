@@ -20,7 +20,7 @@ export const orbitalStoryDecks: readonly StoryDeck[] = [{
       paramPatch: { ...orbit, v0Ratio: 1 }, paramTweenMs: 0, simAction: 'reset-play', camera: camera(0),
       layerOverrides: { visibleLayerIds: keplerLayers, showFbd: false, referenceFrameId: 'ground', highlightFormulaId: 'circular-speed' } },
     { id: 'm10-areas', title: '椭圆轨道与等面积', caption: '相等时间扫过相等面积；近心点运动更快。',
-      speakerNotes: '初始速度增至圆轨道速度的 1.2 倍，仍小于逃逸速度。观察已有积分器每 0.55 个归一化时间生成的扇区。定格后比较面积及位置；等面积来自角动量守恒，不是要求等弧长。离散扇区面积仅为数值近似。',
+      speakerNotes: '初始速度增至圆轨道速度的 1.2 倍，仍小于逃逸速度。观察积分器在每个 0.55 归一化时间边界精确分步生成的扇区。定格后比较面积及位置；等面积来自角动量守恒，不是要求等弧长。离散扇区面积仅为数值近似。',
       paramPatch: orbit, paramTweenMs: 0, simAction: 'reset-play', camera: camera(1),
       autoFreeze: { observableKey: 'tNorm', operator: '>=', threshold: 3.3, badgeText: '已演化约六个等时区间' },
       layerOverrides: { visibleLayerIds: keplerLayers, showFbd: true, referenceFrameId: 'ground', highlightFormulaId: 'circular-speed' } },
@@ -31,7 +31,7 @@ export const orbitalStoryDecks: readonly StoryDeck[] = [{
       autoFreeze: { observableKey: 'deltaV2SI', operator: '>=', threshold: 1, badgeText: '引擎已记录第二次点火' },
       layerOverrides: { visibleLayerIds: ['orbit'], showFbd: true, referenceFrameId: 'ground', highlightFormulaId: 'hohmann-first-burn' } },
     { id: 'm10-binary', title: '双星系统共转系', caption: '换到共转系，两颗主星保持固定方位。',
-      speakerNotes: '切换限制性三体模型，质量分数 q=0.03。解释双星质心与 L₁—L₅ 的几何位置，强调平衡点是共转系中引力和惯性项共同作用的结果，不是两颗星的引力必然互相抵消。展示的等势线不是粒子的轨道。',
+      speakerNotes: '切换限制性三体模型，质量分数 q=0.03。解释双星质心与 L₁—L₅ 的几何位置，强调平衡点是共转系中引力和惯性项共同作用的结果，不是两颗星的引力必然互相抵消。展示的等势线不是粒子的轨道。共转轨迹使用每个采样点自身时刻；雅可比积分守恒，单独的惯性系比机械能、比角动量一般不守恒。',
       paramPatch: { ...orbit, mode: 'binary-lagrange', scaleRegime: 'solar-au', v0Ratio: 1 },
       paramTweenMs: 0, simAction: 'reset-play', camera: camera(0),
       layerOverrides: { visibleLayerIds: binaryLayers, showFbd: false, referenceFrameId: 'ground', highlightFormulaId: 'binary-barycenter' } }
