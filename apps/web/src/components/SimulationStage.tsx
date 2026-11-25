@@ -700,6 +700,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
 
     ctx.restore();
+    if(p.meta.id==='builder-optics-ray'&&frame&&drawState!==null){
+      canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...p.engine.computeObservables(drawState,pm)});
+    }
     if(p.meta.id==='builder-circuit-mna'&&frame&&drawState!==null){
       canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...p.engine.computeObservables(drawState,pm)});
     }
@@ -999,7 +1002,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     storySpatialCommandRef.current = null;
     applyDefaultCameraView(viewportRef.current.width, viewportRef.current.height);
     renderFrameToCanvas();
-  }, [plugin.meta.id, resetViewNonce, plugin.meta.id==='builder-circuit-mna'?params.topology:undefined]);
+  }, [plugin.meta.id, resetViewNonce, plugin.meta.id==='builder-circuit-mna'?params.topology:undefined, plugin.meta.id==='builder-optics-ray'?params.sceneMode:undefined]);
 
   // 鼠标滚轮以指针为锚点缩放 (0.1x ~ 20x)
   useEffect(() => {

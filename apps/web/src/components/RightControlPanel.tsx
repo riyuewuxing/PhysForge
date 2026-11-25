@@ -48,7 +48,16 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       'rc-bridge-charge':['emf','sliderR','internalR','r1','r2','capacitance','topology'],
       'nonlinear-lamp-diode':['emf','sliderR','internalR','switchClosed','topology']
     };
-    const valid=circuit?circuitFields[String(params.topology)]:undefined;
+    const optics=plugin.meta.id==='builder-optics-ray';
+    const opticsFields:Record<string,string[]>={
+      'tir-interface':['incidentAngleDeg','n1','n2','sceneMode','animateSweep'],
+      'parallel-slab':['incidentAngleDeg','n1','slabThickness','sceneMode','animateSweep'],
+      'prism-dispersion':['incidentAngleDeg','n1','prismApexDeg','sceneMode','animateSweep'],
+      'optical-fiber':['incidentAngleDeg','n1','n2','fiberHalfWidth','sceneMode','animateSweep'],
+      'double-slit':['wavelengthNm','slitSeparationMm','screenDistanceM','sceneMode'],
+      'thin-lens-imaging':['objectDistanceM','focalLengthM','sceneMode']
+    };
+    const valid=circuit?circuitFields[String(params.topology)]:optics?opticsFields[String(params.sceneMode)]:undefined;
     const preferred = valid ?? (plugin.meta.id === 'modern-photoelectric-compton'
       ? params.mode === 'compton' ? ['xrayWavelengthNm', 'scatterAngleDeg'] : ['wavelengthNm', 'intensityRel', 'anodeVoltageV']
       : CONTEXT_CORE_KEYS[plugin.meta.id]);
@@ -64,7 +73,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       coreFields: core,
       extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!valid||valid.includes(field.key)))
     };
-  }, [plugin, params.mode, params.topology]);
+  }, [plugin, params.mode, params.topology, params.sceneMode]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
@@ -223,6 +232,19 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
                 <div className="h-1.5 w-full overflow-hidden rounded-full" style={{background:'var(--pf-border)'}}><div className="h-full rounded-full" style={{width:percent+'%',background:color}}/></div>
               </div>;
             })}
+          </section>
+        ) : plugin.meta.id==='builder-optics-ray' ? (
+          <section data-testid="b3-mode-readouts" className="space-y-1.5" style={{color:'var(--pf-text-muted)'}}>
+            {(params.sceneMode==='parallel-slab'?[['refractedAngleDeg','折射角','°'],['lateralShift','侧移量','m']]:
+              params.sceneMode==='prism-dispersion'?[['prismDeviationDeg','黄光偏向角','°']]:
+              params.sceneMode==='optical-fiber'?[['fiberAcceptanceDeg','空气接受半角','°']]:
+              params.sceneMode==='double-slit'?[['fringeSpacingMm','条纹间距','mm']]:
+              [['imageDistanceM','像距','m'],['magnification','倍率','']]).map(([key,label,unit])=>{
+                const value=telemetry.observables[key!];
+                return <div key={key} className="flex justify-between gap-2 text-xs"><span>{label}</span><span data-testid={'b3-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof value==='number'&&Number.isFinite(value)?value.toFixed(3)+' '+unit:'—'}</span></div>;
+              })}
+            {params.sceneMode==='thin-lens-imaging'&&telemetry.observables.imageAtInfinity===1&&<div data-testid="b3-focus-infinity" className="text-xs">物在焦平面 · 无有限像</div>}
+            {params.sceneMode==='optical-fiber'&&Number(params.n1)<=Number(params.n2)&&<div className="text-xs">无全反射导光条件</div>}
           </section>
         ) : hasEnergyMetrics ? (
           <div className="space-y-2 pt-0.5">
