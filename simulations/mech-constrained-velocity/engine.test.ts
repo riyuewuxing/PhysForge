@@ -130,7 +130,7 @@ describe('H18 M03 geometry, orthogonal decomposition and terminal guards',()=>{
   });
 });
 
-import { mechConstrainedVelocityPlugin,constrainedGeometry } from './plugin.js';
+import { mechConstrainedVelocityPlugin,constrainedGeometry,fitConstrainedViewport,constrainedViewBounds } from './plugin.js';
 it('shares actual geometry and vector decomposition with print and handle contracts',()=>{
   for(const mode of ['rope-pull-boat','ladder-wall','wedge-rod','dual-rope-pull'] as const){
     const p:ConstrainedVelocityParams={mode,driveSpeed:1.5,heightOrLength:3,initialAngleDeg:45,secondarySpeedRatio:.6};
@@ -143,4 +143,22 @@ it('shares actual geometry and vector decomposition with print and handle contra
     expect(g.vectors.some(x=>x.role==='parallel'&&x.primitive.kind==='arrow')).toBe(true);
     expect(g.vectors.some(x=>x.role==='perpendicular'&&x.primitive.kind==='arrow')).toBe(true);
   }
+});
+
+it('fits the complete valid motion domain in the supplied safe rectangle and keeps the initial-angle handle honest',()=>{
+  for(const mode of ['rope-pull-boat','ladder-wall','wedge-rod','dual-rope-pull'] as const)
+    for(const initialAngleDeg of [15,37,75])for(const heightOrLength of [1,4]){
+      const p:ConstrainedVelocityParams={mode,driveSpeed:1.5,heightOrLength,initialAngleDeg};
+      const s=createInitialState(p),model=mechConstrainedVelocityPlugin;
+      const h=model.getControlHandles!(s,p)[0]!;
+      expect(h.onDrag(h.position).initialAngleDeg).toBe(initialAngleDeg);
+      expect(model.getControlHandles!(stepConstrainedVelocity(s,p,.001).nextState,p)).toHaveLength(0);
+      for(const [width,height,right,bottom] of [[1392,852,1090,680],[900,600,600,435],[600,420,570,380]] as const){
+        const safe={left:30,right,top:28,bottom},vp=fitConstrainedViewport(p,{width,height,dpr:1,scale:1,offsetX:0,offsetY:0},safe)!;
+        const b=constrainedViewBounds(p),ppm=.24*Math.min(width,height)*vp.scale;
+        const x=(n:number)=>.45*width+vp.offsetX+ppm*n,y=(n:number)=>.5*height+vp.offsetY-ppm*n;
+        expect(x(b.minX)).toBeGreaterThanOrEqual(safe.left-1e-9);expect(x(b.maxX)).toBeLessThanOrEqual(right+1e-9);
+        expect(y(b.maxY)).toBeGreaterThanOrEqual(safe.top-1e-9);expect(y(b.minY)).toBeLessThanOrEqual(bottom+1e-9);
+      }
+    }
 });

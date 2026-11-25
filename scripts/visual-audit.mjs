@@ -493,7 +493,26 @@ async function auditM03Constraints(page,origin){
   const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
   const read=async()=>JSON.parse(await canvas.getAttribute('data-constrained-rendered'));
   const waitMode=async(mode)=>page.waitForFunction(mode=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null');return d?.mode===mode&&d.t===0;},mode);
-  const run=async()=>{await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null')?.t>.22);await play.click();return read();};
+  const run=async()=>{
+    const expand=page.getByTestId('btn-expand-oscilloscope');
+    if(await expand.isVisible())await expand.click();
+    await play.click();
+    await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null')?.t>.22);
+    await play.click();
+    const samples=await page.evaluate(async()=>{
+      const result=[];
+      for(let i=0;i<8;i++){
+        await new Promise(requestAnimationFrame);
+        const state=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]').dataset.constrainedRendered);
+        const timeText=document.querySelector('[data-testid="topbar"]').innerText.match(/t\s*=\s*([\d.]+)\s*s/);
+        result.push({t:state.t,clock:Number(timeText?.[1]),plot:Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT)});
+      }
+      return result;
+    });
+    console.log('H19 M03 paused snapshots '+JSON.stringify(samples));
+    if(samples.some(x=>!Number.isFinite(x.clock)||!Number.isFinite(x.plot)||Math.abs(x.t-x.clock)>.00501||Math.abs(x.t-x.plot)>1e-10))throw Error('M03 paused snapshot mismatch '+JSON.stringify(samples));
+    return read();
+  };
   const check=(v,x,name,tol=1e-8)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M03 '+name+' '+JSON.stringify({v,x}));};
   const residual=d=>{check(d.projSpeedDiff,0,'projection',1e-10);check(d.geometryResidualM,0,'geometry',1e-10);};
   await selectPreset(page,'ladder-sliding-wall',true);await waitMode('ladder-wall');
@@ -511,9 +530,24 @@ async function auditM03Constraints(page,origin){
   check(((3-dual.xA)*dual.vAx-dual.yA*dual.vAy)/l2,.9,'right material projection',1e-10);residual(dual);
   await page.screenshot({path:path.join(OUT_DIR,'H18_M03_dual.png')});
   await selectPreset(page,'boat-dock-winch',true);await waitMode('rope-pull-boat');
+  const vp0=JSON.parse(await canvas.getAttribute('data-constrained-viewport'));
+  const box=await canvas.boundingBox();
+  const ppm=.24*Math.min(vp0.width,vp0.height)*vp0.scale;
+  const sx=x=>box.x+.45*vp0.width+vp0.offsetX+ppm*x,sy=y=>box.y+.5*vp0.height+vp0.offsetY-ppm*y;
+  const initial=await read();
+  await page.mouse.move(sx(initial.xA),sy(0));await page.mouse.down();await page.mouse.move(sx(1.8),sy(0),{steps:4});await page.mouse.up();
+  await page.waitForFunction(()=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null');return d?.t===0&&Math.abs(d.angleDeg-45)<1e-8;});
+  await page.screenshot({path:path.join(OUT_DIR,'H19_M03_boat_drag.png')});
   await page.getByTestId('param-slider-initialAngleDeg').fill('75');
   await page.waitForFunction(()=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null');return d?.t===0&&Math.abs(d.angleDeg-75)<1e-8;});
-  await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null')?.terminal===1);
+  const vp75=JSON.parse(await canvas.getAttribute('data-constrained-viewport'));
+  if(vp75.scale<vp0.scale*1.5||await canvas.getAttribute('data-constrained-auto-fit')!=='true')throw Error('M03 high-angle automatic camera did not reframe '+JSON.stringify({vp0,vp75}));
+  await page.mouse.move(box.x+40,box.y+55);await page.mouse.down();await page.mouse.move(box.x+80,box.y+75,{steps:4});await page.mouse.up();
+  const manual=JSON.parse(await canvas.getAttribute('data-constrained-viewport'));
+  if(await canvas.getAttribute('data-constrained-auto-fit')!=='false'||Math.abs(manual.offsetX-vp75.offsetX-40)>1||Math.abs(manual.offsetY-vp75.offsetY-20)>1)throw Error('M03 manual camera ownership '+JSON.stringify({vp75,manual}));
+  await page.getByTestId('btn-reset-view').click();
+  await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedAutoFit==='true');
+    await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null')?.terminal===1);
   const boat=await read(),time=(1.8/Math.sin(75*Math.PI/180)-1.8/Math.sin(80*Math.PI/180))/1.5;
   check(boat.t,time,'boat terminal time',1e-7);check(boat.accelBoatMag,1.5**2*1.8**2/boat.xA**3,'boat instantaneous acceleration',1e-5);
   residual(boat);await page.getByTestId('btn-step').click();const again=await read();check(again.t,boat.t,'terminal frozen time',1e-10);
