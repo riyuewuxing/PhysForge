@@ -44,8 +44,12 @@ export interface EmDevicesState {
   readonly cyclotronAnalyticalEnergyJ: number;
   readonly cyclotronRelError: number;
   readonly hallVoltageV: number;
+  readonly hallCurrentA: number;
   readonly mhdEmfV: number;
   readonly mhdInternalOhm: number;
+  readonly mhdLoadCurrentA: number;
+  readonly mhdTerminalVoltageV: number;
+  readonly mhdInternalLossWatt: number;
   readonly mhdOutputWatt: number;
   readonly mhdMaxPowerWatt: number;
   readonly flowRateM3ps: number;
@@ -68,6 +72,9 @@ export function computeHallVoltageV(params: EmDevicesParams): number {
 export function computeMhdMetrics(params: EmDevicesParams): {
   emfV: number;
   internalOhm: number;
+  loadCurrentA: number;
+  terminalVoltageV: number;
+  internalLossWatt: number;
   outputWatt: number;
   maxPowerWatt: number;
 } {
@@ -79,7 +86,8 @@ export function computeMhdMetrics(params: EmDevicesParams): {
   const current = emfV / (rLoad + rInt);
   const outputWatt = current * current * rLoad;
   const maxPowerWatt = (emfV * emfV) / (4 * rInt);
-  return { emfV, internalOhm: rInt, outputWatt, maxPowerWatt };
+  return { emfV, internalOhm: rInt, loadCurrentA:current, terminalVoltageV:current*rLoad,
+    internalLossWatt:current*current*rInt, outputWatt, maxPowerWatt };
 }
 
 export function computeCyclotronExitMetrics(params: EmDevicesParams): {
@@ -118,8 +126,12 @@ export function solveAllDeviceMetrics(params: EmDevicesParams): Omit<
     cyclotronAnalyticalEnergyJ: cyc.analyticalMaxJ,
     cyclotronRelError: cyc.relError,
     hallVoltageV,
+    hallCurrentA: params.hallCurrentA,
     mhdEmfV: mhd.emfV,
     mhdInternalOhm: mhd.internalOhm,
+    mhdLoadCurrentA: mhd.loadCurrentA,
+    mhdTerminalVoltageV: mhd.terminalVoltageV,
+    mhdInternalLossWatt: mhd.internalLossWatt,
     mhdOutputWatt: mhd.outputWatt,
     mhdMaxPowerWatt: mhd.maxPowerWatt,
     flowRateM3ps,
@@ -127,12 +139,28 @@ export function solveAllDeviceMetrics(params: EmDevicesParams): Omit<
   };
 }
 
+/** Sensor motion is explicitly a schematic steady-state tracer, not a microscopic trajectory. */
+export function sensorDisplayVelocity(params: EmDevicesParams): number {
+  if(params.device==='hall-sensor')return 1.2*Math.sign(params.hallCurrentA)*(params.carrierType==='electron'?-1:1);
+  return 1.2*Math.sign(params.particleSpeedMps);
+}
+export function isSensorDevice(device: EmDeviceKind): boolean {
+  return device==='hall-sensor'||device==='mhd-generator'||device==='em-flowmeter';
+}
+/** In the displayed xy plane: +x conventional current/flow, +z B, U=V_lower−V_upper. */
+export function sensorReadout(state:EmDevicesState,params:EmDevicesParams):string {
+  const reference='U=V下−V上';
+  if(params.device==='hall-sensor')return `I→ · ${params.carrierType==='electron'?'电子漂移←':'空穴漂移→'} · ${reference}=${(state.hallVoltageV*1000).toFixed(4)} mV`;
+  if(params.device==='mhd-generator')return `开路 ℰ=${state.mhdEmfV.toFixed(2)} V · ${reference}=${state.mhdTerminalVoltageV.toFixed(2)} V · I外=${state.mhdLoadCurrentA.toFixed(2)} A`;
+  return `开路 ${reference}=${state.flowVoltageV.toFixed(3)} V · Q=${state.flowRateM3ps.toExponential(3)} m³/s`;
+}
 export function createInitialState(params: EmDevicesParams): EmDevicesState {
   const metrics = solveAllDeviceMetrics(params);
   const flight=isBeamDevice(params)?sampleBeamFlight(params,0):null;
   const cyclotron=params.device==='cyclotron'?sampleCyclotron(params,0):null;
-  const pos0=flight?.position??cyclotron?.position??{x:-1.5,y:0};
-  const vel0=flight?beamDisplayVelocity(flight):cyclotron?cyclotronDisplayVelocity(params,cyclotron):{x:1.2,y:0};
+  const vx=sensorDisplayVelocity(params);
+  const pos0=flight?.position??cyclotron?.position??{x:vx<0?1.35:vx>0?-1.35:0,y:0};
+  const vel0=flight?beamDisplayVelocity(flight):cyclotron?cyclotronDisplayVelocity(params,cyclotron):{x:vx,y:0};
   return {
     t: 0,
     ...metrics,
@@ -165,25 +193,19 @@ export function stepEmDevices(
     return {nextState:{...state,...metrics,t:state.t+dt,flight:null,cyclotron:flight,particlePos:flight.position,
       particleVel:cyclotronDisplayVelocity(params,flight),trail:flight===previous?state.trail:cyclotronTrail(params,flight)},events};
   }
-  // Hall and flow devices retain explicitly schematic carrier animations.
-  let { x, y } = state.particlePos;
-  let { x: vx, y: vy } = state.particleVel;
-  const substeps = 10;
-  const h = dt / substeps;
-
-  for (let i = 0; i < substeps; i++) {
-    x += 1.2 * h;
-    if (x > 1.5) x = -1.5;
-  }
-
-  const nextPos = { x, y };
-  const trail = x < state.particlePos.x - 1.0 ? [nextPos] : [...state.trail.slice(-120), nextPos];
+  // Periodic schematic tracer; wrapping must not draw a fictitious crossing line.
+  const vx=sensorDisplayVelocity(params),half=1.35,span=2*half;
+  const raw=state.particlePos.x+vx*dt;
+  const wrapped=raw>half||raw< -half;
+  const x=wrapped?((raw+half)%span+span)%span-half:raw;
+  const nextPos={x,y:0};
+  const trail=wrapped?[nextPos]:vx===0?state.trail:[...state.trail.slice(-120),nextPos];
   return {
     nextState: {
       t: state.t + dt,
       ...metrics,
       particlePos: nextPos,
-      particleVel: { x: vx, y: vy },
+      particleVel: { x: vx, y: 0 },
       trail,
       flight:null,
       cyclotron:null
@@ -202,6 +224,11 @@ export function computeObservables(state: EmDevicesState): Record<string, number
     cyclotronGapCount:state.cyclotron?.gapCount??0,
     cyclotronPhaseSlipRad:state.cyclotron?.phaseSlip??0,
     hallVoltageMv: state.hallVoltageV * 1000,
+    hallCurrentA: state.hallCurrentA,
+    particleSpeedMps:state.flight?Math.hypot(state.flight.velocityMps.x,state.flight.velocityMps.y):0,
+    mhdLoadCurrentA:state.mhdLoadCurrentA,
+    mhdTerminalVoltageV:state.mhdTerminalVoltageV,
+    flowRateM3ps:state.flowRateM3ps,
     mhdOutputWatt: state.mhdOutputWatt,
     flowVoltageMv: state.flowVoltageV * 1000
   };
@@ -228,6 +255,11 @@ export function checkInvariants(state: EmDevicesState, _init: EmDevicesState, pa
     return [{name:'实际过缝RF功与动能一致',measuredError:workErr,tolerance:1e-8,passed:workErr<1e-8},
       {name:'磁场轨道半径与动量一致',measuredError:radiusErr,tolerance:1e-8,passed:radiusErr<1e-8},
       {name:'速度与动能一致',measuredError:kineticErr,tolerance:1e-8,passed:kineticErr<1e-8}];
+  }
+  if(params.device==='mhd-generator'){
+    const input=state.mhdEmfV*state.mhdLoadCurrentA,loss=state.mhdOutputWatt+state.mhdInternalLossWatt;
+    const error=Math.abs(input-loss)/Math.max(Math.abs(input),1e-30);
+    return [{name:'等效电源输入功率=负载功率+内耗',measuredError:error,tolerance:1e-8,passed:error<1e-8}];
   }
   return [];
 }

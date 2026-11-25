@@ -8,6 +8,8 @@ import { emDevicesPresets } from './presets.js';
 import {
   checkInvariants,
   computeObservables,
+  isSensorDevice,
+  sensorReadout,
   createInitialState,
   stepEmDevices,
   type EmDevicesParams,
@@ -209,7 +211,7 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
   },
   {
     "id": "hall-voltage",
-    "title": "霍尔电压（载流子电荷 q_c=±e）",
+    "title": "霍尔电压（下−上，q_c=±e）",
     "latex": "U_H=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=hallCurrentA}{I}}\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}}{\\htmlClass{pf-live-var}{\\htmlData{param=hallDensityPerM3}{n}}q_c\\htmlClass{pf-live-var}{\\htmlData{param=hallThicknessM}{d}}}",
     "bindings": [
       {
@@ -355,7 +357,7 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
   },
   {
     "id": "flowmeter-rate",
-    "title": "电磁流量计的体积流量及感生电压",
+    "title": "电磁流量计体积流量与开路电压（下−上）",
     "latex": "\\begin{aligned}Q&=\\frac{\\pi \\htmlClass{pf-live-var}{\\htmlData{param=flowDiameterM}{D}}^2 \\htmlClass{pf-live-var}{\\htmlData{param=particleSpeedMps}{v}}}{4}\\\\U&=\\htmlClass{pf-live-var}{\\htmlData{param=bFieldT}{B}}Dv\\end{aligned}",
     "bindings": [
       {
@@ -423,7 +425,13 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     { key: 'mhdOutputWatt', label: 'MHD 输出功率', unit: 'W', color: '#4ade80' },
     { key: 'flowVoltageMv', label: '流量计感生电压', unit: 'mV', color: '#a855f7' },
     { key:'cyclotronEnergyJ', label:'回旋粒子当前动能', unit:'J', color:'#fbbf24' },
-    { key:'cyclotronPhaseSlipRad', label:'过缝相位差', unit:'rad', color:'#c084fc' }
+    { key:'cyclotronPhaseSlipRad', label:'过缝相位差', unit:'rad', color:'#c084fc' },
+    { key:'particleSpeedMps',label:'粒子实际速率',unit:'m/s',color:'#4ade80' },
+    { key:'spectrometerRadiusM',label:'质谱偏转半径',unit:'m',color:'#fbbf24' },
+    { key:'hallCurrentA',label:'霍尔控制电流',unit:'A',color:'#4ade80' },
+    { key:'mhdLoadCurrentA',label:'MHD 负载电流',unit:'A',color:'#fbbf24' },
+    { key:'mhdTerminalVoltageV',label:'MHD 端电压',unit:'V',color:'#38bdf8' },
+    { key:'flowRateM3ps',label:'体积流量',unit:'m³/s',color:'#4ade80' }
   ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
@@ -435,7 +443,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     importScene: (dsl) => dsl.params as Partial<EmDevicesParams>
   },
   exportDiagramIR: (state, params) => {
-    const diagram = getDeviceSchematic(params.device);
+    const diagram = getDeviceSchematic(params.device,params);
     const primitives: DiagramPrimitive[] = [];
     for (const part of diagram.parts) {
       if (part.kind === 'dee') primitives.push({ kind:'polyline', points:deeOutline(part), closed:true });
@@ -457,7 +465,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     }
     const position=deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
     primitives.push({kind:'circle',cx:position.x,cy:position.y,r:0.035,fill:true});
-    primitives.push({kind:'text',x:0,y:-1.38,text:state.flight?flightReadout(state.flight):state.cyclotron?cyclotronReadout(params,state.cyclotron):'归一化原理示意（不按 SI 尺度）',align:'middle'});
+    primitives.push({kind:'text',x:0,y:-1.38,text:state.flight?flightReadout(state.flight):state.cyclotron?cyclotronReadout(params,state.cyclotron):isSensorDevice(params.device)?sensorReadout(state,params):'归一化原理示意（不按 SI 尺度）',align:'middle'});
     return {
       width: 680, height: 400, viewBox: { minX: -2.2, minY: -1.6, maxX: 2.2, maxY: 1.6 },
       title: '现代电磁器件原理配图', primitives
@@ -467,7 +475,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     if (!activeLayers.has('main')) return;
     ctx.save();
     const m = createWorldMapper(viewport);
-    const diagram = getDeviceSchematic(params.device);
+    const diagram = getDeviceSchematic(params.device,params);
 
     ctx.strokeStyle = 'rgba(148,163,184,0.35)';
     ctx.lineWidth = 1;
@@ -559,14 +567,14 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       'velocity-selector': `速度选择器 v_sel = E/B = ${state.selectedSpeed.toFixed(0)} m/s`,
       'mass-spectrometer': `质谱仪偏转半径 R = ${state.spectrometerRadiusM.toExponential(3)} m`,
       'cyclotron': `当前 K=${((state.cyclotron?.energyJ??0)/1.602176634e-13).toFixed(3)} MeV · 理想经典上限 ${(state.cyclotronAnalyticalEnergyJ/1.602176634e-13).toFixed(3)} MeV`,
-      'hall-sensor': `霍尔电压 U_H = ${(state.hallVoltageV * 1000).toFixed(4)} mV (${params.carrierType === 'electron' ? '电子负极性' : '空穴正极性'})`,
-      'mhd-generator': `MHD E=${state.mhdEmfV.toFixed(1)}V | r=${state.mhdInternalOhm.toFixed(2)}Ω | P=${state.mhdOutputWatt.toFixed(0)}W (峰值 ${state.mhdMaxPowerWatt.toFixed(0)}W)`,
+      'hall-sensor': `霍尔电压 U_H = ${(state.hallVoltageV * 1000).toFixed(4)} mV （下−上）`,
+      'mhd-generator': `MHD ℰ=${state.mhdEmfV.toFixed(1)} V · P_R=${state.mhdOutputWatt.toFixed(0)} W`,
       'em-flowmeter': `电磁流量计 Q = ${state.flowRateM3ps.toExponential(3)} m³/s | U=${(state.flowVoltageV * 1000).toFixed(2)} mV`
     };
     ctx.textAlign = 'center';
     ctx.fillText(summaryMap[params.device], viewport.width * 0.5, 28);
     ctx.font='11px system-ui, sans-serif';ctx.fillStyle='#94a3b8';
-    ctx.fillText(state.flight?flightReadout(state.flight):state.cyclotron?cyclotronReadout(params,state.cyclotron):'归一化原理示意 · 轨迹不作为 SI 测量依据', viewport.width * 0.5, 46);
+    ctx.fillText(state.flight?flightReadout(state.flight):state.cyclotron?cyclotronReadout(params,state.cyclotron):sensorReadout(state,params)+' · 示意慢放', viewport.width * 0.5, 46);
     ctx.restore();
   },
   getControlHandles: (_state, params) => {
@@ -661,13 +669,13 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       case 'cyclotron': return [{ id, label: '理想经典上限 / 当前动能 / 终止预测（有限装置）',
         latex: 'K_{\\mathrm{lim}}=\\frac{q^2B^2R^2}{2m},\\quad \\Delta K=qU\\cos\\phi',
         substitutedLatex: `\\begin{aligned}K_{\\mathrm{lim}}&=${scientificLatex(state.cyclotronAnalyticalEnergyJ)}\\text{ J},\\\\K_{\\mathrm{now}}&=${scientificLatex(state.cyclotron?.energyJ??0)}\\text{ J},\\\\K_{\\mathrm{end}}&=${scientificLatex(state.cyclotronMaxEnergyJ)}\\text{ J},\\\\\\phi&=${(state.cyclotron?.phaseSlip??0).toFixed(3)}\\text{ rad}\\end{aligned}` }];
-      case 'hall-sensor': return [{ id, label: '霍尔电势差（载流子电荷含符号）',
+      case 'hall-sensor': return [{ id, label: '霍尔电势差 U_H=V下−V上（载流子电荷含符号）',
         latex: 'U_H=\\frac{IB}{nq_cd}',
         substitutedLatex: `U_H=${scientificLatex(state.hallVoltageV * 1000)}\\text{ mV}` }];
-      case 'mhd-generator': return [{ id, label: '磁流体发电机输出功率',
+      case 'mhd-generator': return [{ id, label: '磁流体发电机输出功率与实际负载端电压',
         latex: 'P_R=\\frac{(Bdv)^2R}{(R+r)^2},\\quad r=\\rho d/S',
-        substitutedLatex: `\\begin{aligned}P_R&=${scientificLatex(state.mhdOutputWatt)}\\text{ W},\\\\r&=${state.mhdInternalOhm.toFixed(3)}\\ \\Omega\\end{aligned}` }];
-      case 'em-flowmeter': return [{ id, label: '电磁流量计体积流量与电压',
+        substitutedLatex: `\\begin{aligned}P_R&=${scientificLatex(state.mhdOutputWatt)}\\text{ W},\\\\r&=${state.mhdInternalOhm.toFixed(3)}\\ \\Omega,\\\\U_R&=${scientificLatex(state.mhdTerminalVoltageV)}\\text{ V},\\\\I_R&=${scientificLatex(state.mhdLoadCurrentA)}\\text{ A}\\end{aligned}` }];
+      case 'em-flowmeter': return [{ id, label: '电磁流量计体积流量与开路电压 U=V下−V上',
         latex: 'Q=\\frac{\\pi D^2v}{4}=\\frac{\\pi DU}{4B}',
         substitutedLatex: `\\begin{aligned}Q&=${scientificLatex(state.flowRateM3ps)}\\text{ m}^3/\\text{s},\\\\U&=${scientificLatex(state.flowVoltageV)}\\text{ V}\\end{aligned}` }];
     }

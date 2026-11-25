@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
-import type { EmDevicesParams, EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
+import { isSensorDevice, type EmDevicesParams, type EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { cyclotronHistory,type CyclotronHistoryArc } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers } from '@physforge/simulations/astro-orbital-mechanics';
@@ -89,10 +89,11 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
     const state=raw as EmDevicesState|null, p=rawParams as EmDevicesParams;
     if(!state?.particlePos)return;
     root.visible=layers.has('main');
-    if(signature!==p.device) {
-      signature=p.device;clear(fixed);
+    const nextSignature=isSensorDevice(p.device)?[p.device,p.carrierType,Math.sign(p.hallCurrentA),Math.sign(p.bFieldT),Math.sign(p.particleSpeedMps)].join(':'):p.device;
+    if(signature!==nextSignature) {
+      signature=nextSignature;clear(fixed);
       const base=mesh(fixed,'device-base',p.device==='cyclotron'?new THREE.CylinderGeometry(.99,1.05,.08,96):new THREE.BoxGeometry(3.15,.09,2.65),obsidianStageFloorMaterial());base.position.set(-0.25,p.device==='cyclotron'?-0.23:-0.52,0);
-      const schematic=getDeviceSchematic(p.device);
+      const schematic=getDeviceSchematic(p.device,p);
       for(const part of schematic.parts)buildDevicePart(fixed,part);
       // B points along +Y, i.e. out of the physical diagram plane (x,y)->(x,0,-y).
       // These are direction markers, not a solved field distribution or a strength scale.

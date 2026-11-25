@@ -3,6 +3,7 @@ import { stepBorisPusher } from '@physforge/physics-core';
 import { describe, expect, it } from 'vitest';
 import { stseEmDevicesSuitePlugin } from './plugin.js';
 import { emDevicesPresets } from './presets.js';
+import { getDeviceSchematic } from './deviceGeometry.js';
 import { getCyclotronPlan,sampleCyclotron,cyclotronHistory,C_LIGHT,CYCL_DISPLAY_RADIUS } from './cyclotronFlight.js';
 import { BEAM_LENGTH_M,RIGHT_X,SELECTOR_HALF_GAP,beamScale,sampleBeamFlight } from './particleFlight.js';
 import {
@@ -193,6 +194,49 @@ describe('stse-em-devices-suite physics invariants (S02)', () => {
     expect(Math.abs(mAtExactR.outputWatt - mAtExactR.maxPowerWatt)).toBeLessThan(1e-8);
     expect(mAtExactR.outputWatt).toBeGreaterThan(mLowR.outputWatt);
     expect(mAtExactR.outputWatt).toBeGreaterThan(mHighR.outputWatt);
+  });
+
+  it('uses signed Hall drift, force direction and a common lower-minus-upper reference',()=>{
+    const base=getPreset(1),e=1.602176634e-19,expected=base.hallCurrentA*base.bFieldT/(base.hallDensityPerM3*e*base.hallThicknessM);
+    for(const carrierType of ['electron','hole'] as const){
+      const p={...base,carrierType},sign=carrierType==='electron'?-1:1;
+      const init=createInitialState(p),s=stepEmDevices(init,p,.2).nextState;
+      expect(s.hallVoltageV).toBeCloseTo(sign*expected,12);
+      expect(Math.sign(s.particlePos.x-init.particlePos.x)).toBe(sign);
+      expect(Math.sign(s.particleVel.x)).toBe(sign);
+      const diagram=getDeviceSchematic(p.device,p);
+      expect(diagram.cues.find(c=>c.id==='hall-carrier-drift')?.dx).toBeCloseTo(sign*.96,12);
+      expect(diagram.cues.find(c=>c.id==='hall-equilibrium-electric')?.dy).toBeCloseTo(sign*.26,12);
+      expect(diagram.cues.find(c=>c.id==='hall-magnetic-force')?.dy).toBeLessThan(0);
+      expect(diagram.labels.some(l=>l.text===('下 '+(sign>0?'＋':'−')))).toBe(true);
+      const wrapped=stepEmDevices(init,p,3).nextState;
+      expect(wrapped.trail).toHaveLength(1);
+      expect(Math.abs(wrapped.particlePos.x)).toBeLessThanOrEqual(1.35);
+      const zero={...p,hallCurrentA:0},z=createInitialState(zero);
+      expect(stepEmDevices(z,zero,1).nextState.particlePos).toEqual(z.particlePos);
+      expect(getDeviceSchematic(zero.device,zero).cues).toHaveLength(0);
+    }
+    expect(computeHallVoltageV({...base,bFieldT:0})).toBe(0);
+  });
+  it('distinguishes MHD open and loaded voltage and independently checks power, current and electrode signs',()=>{
+    const p=getPreset(2),s=createInitialState(p);
+    expect(s.mhdEmfV).toBeCloseTo(960,10);expect(s.mhdInternalOhm).toBeCloseTo(.8,12);
+    expect(s.mhdLoadCurrentA).toBeCloseTo(600,10);expect(s.mhdTerminalVoltageV).toBeCloseTo(480,10);
+    expect(s.mhdOutputWatt).toBeCloseTo(288000,7);expect(s.mhdInternalLossWatt).toBeCloseTo(288000,7);
+    expect(checkInvariants(s,s,p)[0]?.passed).toBe(true);
+    expect(getDeviceSchematic(p.device,p).cues.find(c=>c.id==='mhd-load-current')?.dx).toBeLessThan(0);
+    expect(getDeviceSchematic(p.device,p).labels.some(l=>l.text==='下 ＋')).toBe(true);
+    const zero=createInitialState({...p,bFieldT:0});
+    expect(zero.mhdLoadCurrentA).toBe(0);expect(zero.mhdOutputWatt).toBe(0);
+  });
+  it('recovers volume flow independently of the open circuit voltage and retains flow at B=0',()=>{
+    const p={...getPreset(2),device:'em-flowmeter' as const,bFieldT:1,flowDiameterM:.2,particleSpeedMps:100};
+    const s=createInitialState(p);
+    expect(s.flowVoltageV).toBeCloseTo(20,12);expect(s.flowRateM3ps).toBeCloseTo(Math.PI,12);
+    expect(Math.PI*p.flowDiameterM*s.flowVoltageV/(4*p.bFieldT)).toBeCloseTo(s.flowRateM3ps,12);
+    const zero=createInitialState({...p,bFieldT:0});
+    expect(zero.flowVoltageV).toBe(0);expect(zero.flowRateM3ps).toBe(s.flowRateM3ps);
+    expect(getDeviceSchematic(p.device,p).labels.some(l=>l.text==='下 ＋')).toBe(true);
   });
 
   it('handles dt=0 cleanly across all 6 devices without NaN', () => {

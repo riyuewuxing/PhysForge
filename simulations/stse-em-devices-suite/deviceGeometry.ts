@@ -1,4 +1,4 @@
-import type { EmDeviceKind } from './engine.js';
+import { computeHallVoltageV, computeMhdMetrics, sensorDisplayVelocity, type EmDeviceKind, type EmDevicesParams } from './engine.js';
 import { CYCL_DISPLAY_RADIUS, CYCL_GAP_HALF } from './cyclotronFlight.js';
 import { RIGHT_X,SPECTROMETER_DEPTH,SPECTROMETER_SLIT_HALF } from './particleFlight.js';
 
@@ -44,7 +44,7 @@ export function deviceDiagramPoint(x: number, y: number) {
   return {x: -0.25 + x * 0.7, y: y * 0.7};
 }
 
-export function getDeviceSchematic(device: EmDeviceKind): DeviceSchematic {
+function baseDeviceSchematic(device: EmDeviceKind): DeviceSchematic {
   switch (device) {
     case 'velocity-selector': return {
       parts: [box('selector-chamber', -0.25, 0, 2.1, 1.2, 'glass', 0.32), ...plates('selector-plate', -0.25, 2.1, 0.6),
@@ -110,6 +110,37 @@ export function getDeviceSchematic(device: EmDeviceKind): DeviceSchematic {
       labels: [{x:-0.25,y:0.96,text:'测量电极 · 感生电压 U'}, {x:-0.25,y:-0.97,text:'圆管截面 · 体积流量 Q'}]
     };
   }
+}
+
+/** Common directions and terminal labels for Canvas, Three and DiagramIR. */
+export function getDeviceSchematic(device:EmDeviceKind,params?:EmDevicesParams):DeviceSchematic {
+  const base=baseDeviceSchematic(device);
+  if(!params||!['hall-sensor','mhd-generator','em-flowmeter'].includes(device))return base;
+  const fields=params.bFieldT===0?[]:base.fields;
+  const drift=Math.sign(sensorDisplayVelocity(params));
+  const voltage=device==='hall-sensor'?computeHallVoltageV(params):device==='mhd-generator'?computeMhdMetrics(params).terminalVoltageV:params.bFieldT*params.flowDiameterM*params.particleSpeedMps;
+  const lower=voltage>0?'＋':voltage<0?'−':'0',upper=voltage>0?'−':voltage<0?'＋':'0';
+  const y=device==='hall-sensor'?.43:device==='mhd-generator'?.55:.48;
+  const labels=[...base.labels.filter(l=>device!=='hall-sensor'||l.y!==-.94),
+    {x:.22,y:y+.07,text:`上 ${upper}`},{x:.22,y:-y-.04,text:`下 ${lower}`}];
+  if(device==='hall-sensor'){
+    const current=Math.sign(params.hallCurrentA);
+    const cues:DeviceCue[]=[];
+    if(current)cues.push({id:'hall-current',x:-.25-current*.93,y:-.68,dx:current*1.86,dy:0,kind:'current',label:'I'});
+    if(drift)cues.push({id:'hall-carrier-drift',x:-.25-drift*.48,y:0,dx:drift*.96,dy:0,kind:'flow',label:params.carrierType==='electron'?'电子漂移':'空穴漂移'});
+    if(voltage!==0){
+      const sign=Math.sign(voltage),forceSign=-Math.sign(params.hallCurrentA*params.bFieldT);
+      cues.push({id:'hall-equilibrium-electric',x:-.72,y:-sign*.13,dx:0,dy:sign*.26,kind:'electric',label:'E_H'});
+      cues.push({id:'hall-magnetic-force',x:.38,y:-forceSign*.13,dx:0,dy:forceSign*.26,kind:'flow',label:'F洛'});
+    }
+    return {...base,fields,cues,labels:[...labels,{x:-.25,y:-.98,text:'U_H=V下−V上 · 稳态漂移示意'}]};
+  }
+  const cues:DeviceCue[]=drift?[{id:device==='mhd-generator'?'mhd-flow':'flowmeter-flow',x:-.25-drift*1.05,y:0,dx:drift*2.1,dy:0,kind:'flow',label:'v'}]:[];
+  if(device==='mhd-generator'&&voltage!==0){
+    const sign=Math.sign(voltage);
+    cues.push({id:'mhd-load-current',x:-.25+sign*.65,y:1.35,dx:-sign*1.3,dy:0,kind:'current',label:'I外'});
+  }
+  return {...base,fields,cues,labels:[...labels,{x:-.25,y:device==='mhd-generator'?-1.1:-1.2,text:device==='mhd-generator'?'U=V下−V上 · 负载端电压':'U=V下−V上 · 开路测量'}]};
 }
 
 /** Outline of one D-shaped half disk, identical in Canvas, export and the 3D mesh. */

@@ -40,19 +40,19 @@ export const emDevicesStoryDecks: readonly StoryDeck[] = [
   { id: 's02-field-sensors', modelId: 'stse-em-devices-suite', title: '电磁测量与能量转化',
     beats: [
       { id: 's02-hall-electron', title: '霍尔电压的符号', caption: '载流子偏转，横向电场建立平衡。',
-        speakerNotes: '固定电流、磁场与厚度，采用模型的电子载流子符号约定，计算 U_H=IB/(nq_cd)。说明电压正负与接线和载流子符号有关，不把符号本身当成绝对电势。',
+        speakerNotes: '固定电流、磁场与厚度，采用模型的电子载流子符号约定，计算 U_H=IB/(nq_cd)。常规电流向右，电子向左漂移、磁力向下；定义 U_H=V下−V上，电子下负上正。不把符号当绝对电势。',
         paramPatch: { ...base, device: 'hall-sensor', bFieldT: 0.8 }, paramTweenMs: 0, simAction: 'reset-pause', camera: camera(1), layerOverrides: layerOverrides('hall-voltage') },
       { id: 's02-hall-hole', title: '电子与空穴对照', caption: '其他条件不变，载流子符号改变，霍尔电压反号。',
-        speakerNotes: '只切换空穴载流子，保持 |q_c|=e、n、I、B、d 不变。比较引擎输出的霍尔电压符号和绝对值。',
+        speakerNotes: '只切换空穴载流子，保持 |q_c|=e、n、I、B、d 不变。空穴向右漂移、磁力仍向下，下正上负；比较 U_H 符号与绝对值。',
         paramPatch: { ...base, device: 'hall-sensor', bFieldT: 0.8, carrierType: 'hole' }, paramTweenMs: 0, simAction: 'reset-pause', layerOverrides: layerOverrides('hall-voltage') },
       { id: 's02-mhd-low', title: '磁流体发电与外负载', caption: '导电流体切割磁场，产生动生电动势。',
-        speakerNotes: 'B=2 T，d=0.4 m，v=1200 m/s，开路电动势 960 V；模型内阻为 ρd/S=0.8 Ω。先设置外阻 0.4 Ω，比较负载功率。',
+        speakerNotes: 'B=2 T，d=0.4 m，v=1200 m/s，开路电动势 960 V；模型内阻为 ρd/S=0.8 Ω。下电极为正端，外电流从下经右引线、负载向左回上电极。先设置外阻 0.4 Ω，比较实际端电压与负载功率。',
         paramPatch: { ...mhd, mhdLoadOhm: 0.4 }, paramTweenMs: 0, simAction: 'reset-pause', layerOverrides: layerOverrides('mhd-load-power') },
       { id: 's02-mhd-match', title: '负载匹配', caption: '外阻等于内阻时，外电路获得最大功率。',
-        speakerNotes: '将外阻设为 0.8 Ω。在电动势与内阻固定的等效电源模型中，输出功率峰值为 E²/(4r)=288000 W。最大功率不等于最高效率。',
+        speakerNotes: '将外阻设为 0.8 Ω。在电动势与内阻固定的等效电源模型中，输出功率峰值为 E²/(4r)=288000 W，端电压480 V、电流600 A，另有同样的内耗。最大功率不等于最高效率。',
         paramPatch: mhd, paramTweenMs: 0, simAction: 'reset-pause', layerOverrides: layerOverrides('mhd-load-power') },
       { id: 's02-flow', title: '电磁流量计', caption: '测电压，结合管径与磁场求体积流量。',
-        speakerNotes: '均匀流速、有效极间距为管径 D 时 U=BDv，Q=πD²v/4=πDU/(4B)。这是理想模型的定量关系，真实仪表还需校准速度分布与电极响应。',
+        speakerNotes: '均匀流速、有效极间距为管径 D 时 U=BDv，Q=πD²v/4=πDU/(4B)。开路测量 U=V下−V上，流速向右、磁场出纸面、下电极为正；B=0 时无法反演流量。这是理想模型的定量关系，真实仪表还需校准速度分布与电极响应。',
         paramPatch: { ...base, device: 'em-flowmeter', particleSpeedMps: 100, bFieldT: 1 }, paramTweenMs: 0, simAction: 'reset-pause', camera: camera(1), layerOverrides: layerOverrides('flowmeter-rate') }
     ] }
 ];

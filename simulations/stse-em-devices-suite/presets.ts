@@ -32,7 +32,7 @@ export const emDevicesPresets: readonly PresetSpec<EmDevicesParams>[] = [
   {
     id: 'hall-electron-vs-hole',
     name: '霍尔元件载流子极性翻转（N 型电子 vs P 型空穴）',
-    description: '一键切换电子与空穴载流子，定量计算微伏/毫伏级霍尔电势差与前/后表面电势高低',
+    description: '一键切换电子与空穴载流子，定量计算微伏/毫伏级霍尔电势差与下/上电极电势高低',
     curriculumNotes: '选择性必修二 第一章 · 霍尔效应及其半导体检测应用',
     params: {
       device: 'hall-sensor',
@@ -110,5 +110,6 @@ export const emDevicesPresets: readonly PresetSpec<EmDevicesParams>[] = [
       flowDiameterM: 0.2
     }
   },
-  { id:'cyclotron-gap-classroom',name:'低能回旋：逐次过缝与圆弧',description:'小装置与较低磁场，观察少量过缝、同步极性与有限外缘',curriculumNotes:'经典回旋半周与狭缝做功',params:{device:'cyclotron',bFieldT:0.6,cyclotronRadiusM:0.15,cyclotronVoltageV:25000,relativisticDetune:false,massKg:1.67262192369e-27,chargeC:1.602176634e-19} }
+  { id:'cyclotron-gap-classroom',name:'低能回旋：逐次过缝与圆弧',description:'小装置与较低磁场，观察少量过缝、同步极性与有限外缘',curriculumNotes:'经典回旋半周与狭缝做功',params:{device:'cyclotron',bFieldT:0.6,cyclotronRadiusM:0.15,cyclotronVoltageV:25000,relativisticDetune:false,massKg:1.67262192369e-27,chargeC:1.602176634e-19} },
+  { id:'flowmeter-open-circuit',name:'电磁流量计：开路电压与体积流量',description:'理想均匀流速模型，改变 B 与 D，区分 U=V下−V上 和体积流量 Q；高速为当前共享参数范围的演示值',curriculumNotes:'动生电动势与圆管体积流量',params:{device:'em-flowmeter',bFieldT:1,particleSpeedMps:100,flowDiameterM:.2} }
 ];
