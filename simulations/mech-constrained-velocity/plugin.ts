@@ -1,3 +1,4 @@
+import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { constrainedVelocityPresets } from './presets.js';
 import { checkInvariants,computeObservables,createInitialState,stepConstrainedVelocity,normalizedParams,
@@ -10,7 +11,8 @@ const paramSchema:readonly ParamFieldSpec<ConstrainedVelocityParams>[]=[
   {key:'driveSpeed',kind:'number',label:'驱动速率 u',unit:'m/s',min:0,max:5,step:.5,defaultValue:1.5},
   {key:'heightOrLength',kind:'number',label:'几何尺寸',unit:'m',min:1,max:4,step:.2,defaultValue:1.8},
   {key:'initialAngleDeg',kind:'number',label:'初始几何倾角 θ₀',unit:'°',min:15,max:75,step:5,defaultValue:25},
-  {key:'secondarySpeedRatio',kind:'number',label:'右/左收绳速率比 r',min:0,max:1.5,step:.1,defaultValue:.6}
+  {key:'secondarySpeedRatio',kind:'number',label:'右/左收绳速率比 r',min:0,max:1.5,step:.1,defaultValue:.6},
+  {key:'payloadMassKg',kind:'number',label:'载荷质量 m（仅用于重力）',unit:'kg',min:.5,max:10,step:.5,defaultValue:1}
 ];
 type Role='structure'|'object'|'velocity'|'parallel'|'perpendicular'|'guide'|'text';
 interface Item{primitive:DiagramPrimitive;role:Role}
@@ -102,7 +104,7 @@ export const mechConstrainedVelocityPlugin=defineSimulationPlugin<ConstrainedVel
   meta:{id:'mech-constrained-velocity',title:'关联速度（绳拉船 / 靠墙杆 / 接触面分解）(M03)',textbookRef:'人教版 必修第二册 第五章 第1–2节',curriculumTags:['物理观念','科学思维'],difficulty:'高三一轮',version:'2.1.0'},
   defaultView:{scale:(p,v)=>initialCamera(p,v).scale,offsetRatioX:(p,v)=>initialCamera(p,v).offsetRatioX,offsetRatioY:(p,v)=>initialCamera(p,v).offsetRatioY},
   paramSchema,
-  getParamFields:p=>paramSchema.filter(f=>f.key!=='secondarySpeedRatio'||p.mode==='dual-rope-pull').map(f=>f.key==='heightOrLength'?{...f,label:p.mode==='rope-pull-boat'?'滑轮高度 H':p.mode==='ladder-wall'?'杆长 L':p.mode==='wedge-rod'?'斜面底长 D':'滑轮间距 D'}:f),
+  getParamFields:p=>paramSchema.filter(f=>(f.key!=='secondarySpeedRatio'||p.mode==='dual-rope-pull')&&(f.key!=='payloadMassKg'||p.mode==='rope-pull-boat'||p.mode==='dual-rope-pull')).map(f=>f.key==='heightOrLength'?{...f,label:p.mode==='rope-pull-boat'?'滑轮高度 H':p.mode==='ladder-wall'?'杆长 L':p.mode==='wedge-rod'?'斜面底长 D':'滑轮间距 D'}:f),
   presets:constrainedVelocityPresets,
   engine:{createInitialState,step:stepConstrainedVelocity,computeObservables,checkInvariants},
   layers:[{id:'geometry',label:'真实约束几何',defaultVisible:true},{id:'decomposition',label:'合速度与正交分量',defaultVisible:true}],
@@ -118,7 +120,13 @@ export const mechConstrainedVelocityPlugin=defineSimulationPlugin<ConstrainedVel
         return {initialAngleDeg:Math.max(15,Math.min(75,Math.round(rad*180/Math.PI/5)*5))};
       }}];
   },
-  // Pure kinematics does not determine forces: deliberately do not declare a force capability.
+  // The prescribed trajectory does not determine constraint forces. Only the
+  // explicitly specified payload's gravity is known, never its net force.
+  getForceVectors:(s,p)=>{
+    if(s.mode!=='rope-pull-boat'&&s.mode!=='dual-rope-pull')return [];
+    const raw=p.payloadMassKg,mass=Math.max(.5,Math.min(10,typeof raw==='number'&&Number.isFinite(raw)?raw:1));
+    return [{id:'payload-weight',label:'载荷重力（非合力）',origin:s.posA,force:{x:0,y:-mass*CLASSROOM_GRAVITY},category:'gravity',unit:'N',color:'#fbbf24'}];
+  },
   referenceFrames:[{id:'block-a',label:'A 端平移参考系',getOrigin:s=>s.posA,getVelocity:s=>s.velA}],
   sceneSerializer:{exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'mech-constrained-velocity',title:'关联速度约束分解',params}),importScene:dsl=>dsl.params as Partial<ConstrainedVelocityParams>},
   exportDiagramIR:(s,p)=>{

@@ -136,7 +136,9 @@ it('shares actual geometry and vector decomposition with print and handle contra
     const p:ConstrainedVelocityParams={mode,driveSpeed:1.5,heightOrLength:3,initialAngleDeg:45,secondarySpeedRatio:.6};
     const s=createInitialState(p),g=constrainedGeometry(s,p),model=mechConstrainedVelocityPlugin;
     expect(model.getControlHandles!(s,p)[0]!.onDrag(model.getControlHandles!(s,p)[0]!.position).initialAngleDeg).toBe(45);
-    expect(model.getForceVectors).toBeUndefined();
+    const forces=model.getForceVectors!(s,{...p,payloadMassKg:2});
+    if(mode==='rope-pull-boat'||mode==='dual-rope-pull'){expect(forces).toHaveLength(1);expect(forces[0]!.origin).toEqual(s.posA);expect(forces[0]!.force.x).toBe(0);expect(forces[0]!.force.y).toBeCloseTo(-19.6,12);expect(forces[0]!.unit).toBe('N');}else expect(forces).toEqual([]);
+    expect(createInitialState({...p,payloadMassKg:2})).toEqual(s);
     expect(model.exportDiagramIR!(s,p).primitives).toEqual([...g.structure,...g.vectors].map(x=>x.primitive));
     expect(g.vectors.some(x=>x.role==='parallel'&&x.primitive.kind==='arrow')).toBe(true);
     expect(g.vectors.some(x=>x.role==='perpendicular'&&x.primitive.kind==='arrow')).toBe(true);

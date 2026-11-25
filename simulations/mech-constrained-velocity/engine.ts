@@ -8,6 +8,8 @@ export type ConstrainedVelocityParams = {
   heightOrLength: number;
   initialAngleDeg: number;
   secondarySpeedRatio?: number;
+  /** Mass of the boat or dual-rope payload, used only for its actual weight. */
+  payloadMassKg?:number;
 };
 export type Point = { x:number; y:number };
 export interface VelocityProjection {
