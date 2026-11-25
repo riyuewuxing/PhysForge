@@ -220,3 +220,38 @@ it('conserves absolute energy and agrees across coarse/fine partition for divers
     expect(fine.coMovingLocked).toBe(coarse.coMovingLocked);expect(fine.plankStopped).toBe(coarse.plankStopped);
   }
 });
+
+import { mechBlockConveyorPlugin } from './plugin.js';
+describe('H23 M05 force and reference contracts',()=>{
+  const model=mechBlockConveyorPlugin;
+  it('displays actual static friction during common acceleration, not a zero force',()=>{
+    const p={...baseParams,systemMode:'plank' as const,externalForcePlank:6,muBlockCarrier:.8,muGround:0};
+    const s=stepBlockConveyor(createInitialState(p),p,.5).nextState;
+    const f=model.getForceVectors!(s,p).find(x=>x.id==='friction');
+    expect(s.coMovingLocked).toBe(true);expect(f?.force.x).toBeCloseTo(2,12);
+  });
+  it('edits initial plank velocity rather than the unused belt parameter',()=>{
+    const p={...baseParams,systemMode:'plank' as const,plankInitialV:2,beltVelocity:4};
+    const s=createInitialState(p),h=model.getControlHandles!(s,p)[0]!;
+    const changed=h.onDrag(h.position);
+    expect(changed.plankInitialV).toBe(2);expect(changed.beltVelocity).toBeUndefined();
+    expect(model.getControlHandles!(stepBlockConveyor(s,p,.1).nextState,p)).toHaveLength(0);
+  });
+  it('supplies actual carrier and block frame velocities',()=>{
+    const p={...baseParams,inclineDeg:37},s=stepBlockConveyor(createInitialState(p),p,.2).nextState;
+    for(const [id,v] of [['carrier',s.vCarrier],['block',s.vBlock]] as const){
+      const frame=model.referenceFrames!.find(x=>x.id===id);
+      expect(frame?.getVelocity?.(s,p)).toEqual({x:v*Math.cos(degToRad(37)),y:v*Math.sin(degToRad(37))});
+    }
+  });
+  it('exports the moved block and actual finite support rather than a fixed initial picture',()=>{
+    const p={...baseParams,beltVelocity:0,blockInitialV:4,muBlockCarrier:0,carrierLengthM:2};
+    const s=stepBlockConveyor(createInitialState(p),p,2).nextState,ir=model.exportDiagramIR!(s,p);
+    const block=ir.primitives.find(x=>x.kind==='block');
+    expect(block?.kind).toBe('block');
+    if(block?.kind!=='block')throw Error('no block');
+    expect(block.cx).toBeCloseTo(1,9);
+    expect(ir.primitives.some(x=>x.kind==='line'&&x.x1===-1&&x.x2===1&&x.y1===0&&x.y2===0)).toBe(true);
+    expect(ir.primitives.some(x=>x.kind==='text'&&x.text.includes('边界'))).toBe(true);
+  });
+});
