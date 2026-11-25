@@ -9,7 +9,7 @@ export interface CollisionRecoilState{
   readonly bulletPhase:'approach'|'penetrating'|'comoving'|'exited';
   readonly heatLostJ:number;readonly penetrationDist:number;readonly xCm0:number;readonly yCm0:number;
   readonly pInitX:number;readonly pInitY:number;readonly kInit:number;readonly events:readonly PhysicsEvent[];
-  readonly impact:SphereImpact|null;
+  readonly impact:SphereImpact|null;readonly entryTime:number|null;readonly phaseEndTime:number|null;
 }
 const v=(x:number,y:number):Vec=>({x,y});
 const dot=(a:Vec,b:Vec)=>a.x*b.x+a.y*b.y;
@@ -32,7 +32,7 @@ export function createInitialState(p:CollisionRecoilParams):CollisionRecoilState
   const x1=boat?-.45*p.blockLength:bullet?-Math.max(2.4,p.blockLength/2+.2):-Math.max(2.6,p.radius1+p.radius2+.2);
   const y1=boat?.35:oblique?p.impactParamB:0,x2=0,y2=0,vx1=boat?0:p.v10,vx2=boat||bullet||oblique?0:p.v20;
   return {t:0,x1,y1,x2,y2,vx1,vy1:0,vx2,vy2:0,collided:false,bulletPhase:'approach',heatLostJ:0,penetrationDist:0,
-    xCm0:p.mass1*x1/M,yCm0:p.mass1*y1/M,pInitX:p.mass1*vx1+p.mass2*vx2,pInitY:0,kInit:.5*(p.mass1*vx1**2+p.mass2*vx2**2),events:[],impact:null};
+    xCm0:p.mass1*x1/M,yCm0:p.mass1*y1/M,pInitX:p.mass1*vx1+p.mass2*vx2,pInitY:0,kInit:.5*(p.mass1*vx1**2+p.mass2*vx2**2),events:[],impact:null,entryTime:null,phaseEndTime:null};
 }
 function linear(s:CollisionRecoilState,h:number):CollisionRecoilState{
   return {...s,t:s.t+h,x1:s.x1+s.vx1*h,y1:s.y1+s.vy1*h,x2:s.x2+s.vx2*h,y2:s.y2+s.vy2*h};
@@ -73,35 +73,36 @@ function penetrate(s:CollisionRecoilState,p:CollisionRecoilParams,h:number,d:num
   return {...s,t:s.t+h,x1:X+p.mass2/M*relative,x2:X-p.mass1/M*relative,vx1:V+p.mass2/M*u,vx2:V-p.mass1/M*u,penetrationDist:d,heatLostJ:p.dragForceF*d};
 }
 function stepBullet(s:CollisionRecoilState,p:CollisionRecoilParams,dt:number):StepResult<CollisionRecoilState>{
-  const L=p.blockLength,f=p.dragForceF,events:PhysicsEvent[]=[];
-  let cur=s,rem=dt;
+  const L=p.blockLength,f=p.dragForceF,end=s.t+dt,events:PhysicsEvent[]=[];
+  let cur=s;
   if(cur.bulletPhase==='approach'){
-    const u=cur.vx1-cur.vx2,gap=cur.x2-L/2-cur.x1;
-    if(u<=0)return {nextState:linear(cur,rem),events};
-    const h=Math.max(0,gap/u);
-    if(h>rem)return {nextState:linear(cur,rem),events};
-    cur=linear(cur,h);rem-=h;
-    const ev:PhysicsEvent={id:'entry-'+cur.events.length,time:cur.t,label:'质点进入木块左端',position:{x:cur.x2-L/2,y:0},metrics:{relativeSpeed:u,penetrationDist:0}};
-    cur={...cur,collided:true,bulletPhase:'penetrating',events:[...cur.events,ev]};events.push(ev);
+    if(p.v10===0)return {nextState:linear(cur,dt),events};
+    const entry=(Math.max(2.4,L/2+.2)-L/2)/p.v10;
+    if(entry>end)return {nextState:linear(cur,dt),events};
+    cur=penetrate({...cur,t:entry},p,0,0,p.v10);
+    const ev:PhysicsEvent={id:'entry-'+cur.events.length,time:entry,label:'质点进入木块左端',position:{x:cur.x1,y:0},metrics:{relativeSpeed:p.v10,penetrationDist:0}};
+    cur={...cur,collided:true,bulletPhase:'penetrating',entryTime:entry,events:[...cur.events,ev]};events.push(ev);
   }
   if(cur.bulletPhase==='penetrating'){
-    const u=cur.vx1-cur.vx2,a=f/reduced(p),d0=cur.penetrationDist,remaining=Math.max(0,L-d0);
-    const stop=a===0?Infinity:u/a,stopDistance=a===0?Infinity:u*u/(2*a);
-    const canExit=remaining<stopDistance-eps(remaining,Number.isFinite(stopDistance)?stopDistance:remaining);
-    const tie=Number.isFinite(stopDistance)&&Math.abs(remaining-stopDistance)<=eps(remaining,stopDistance);
-    const hExit=canExit?(a===0?remaining/u:2*remaining/(u+Math.sqrt(Math.max(0,u*u-2*a*remaining)))):Infinity;
-    const h=Math.min(stop,hExit);
-    if(h<=rem){
-      const isExit=hExit<stop,disp=isExit||tie?L:Math.min(L,d0+stopDistance),speed=isExit?(a===0?u:Math.sqrt(Math.max(0,u*u-2*a*remaining))):0;
-      cur=penetrate(cur,p,h,disp,speed);rem-=h;
-      const ev:PhysicsEvent={id:(isExit?'exit-':'covel-')+cur.events.length,time:cur.t,label:isExit?'质点穿出木块右端':tie?'恰在右端共速':'质点与木块共速',position:{x:cur.x1,y:0},metrics:{heatLostJ:cur.heatLostJ,penetrationDist:cur.penetrationDist,relativeSpeed:speed,vCommon:cur.pInitX/mass(p)}};
-      cur={...cur,bulletPhase:isExit?'exited':'comoving',events:[...cur.events,ev]};events.push(ev);
+    // Determine the ordering ONCE from the immutable entry conditions.
+    // Do not reclassify an exact exit/common-speed tie due to accumulated
+    // per-step rounding of the remaining depth or relative speed.
+    const t0=cur.entryTime!,u=p.v10,a=f/reduced(p),stop=a===0?Infinity:u/a,stopDistance=a===0?Infinity:u*u/(2*a);
+    const canExit=L<stopDistance-eps(L,Number.isFinite(stopDistance)?stopDistance:L);
+    const tie=Number.isFinite(stopDistance)&&Math.abs(L-stopDistance)<=eps(L,stopDistance);
+    const hExit=canExit?(a===0?L/u:2*L/(u+Math.sqrt(Math.max(0,u*u-2*a*L)))):Infinity,h=Math.min(stop,hExit);
+    if(t0+h<=end){
+      const isExit=hExit<stop,disp=isExit||tie?L:stopDistance,speed=isExit?(a===0?u:Math.sqrt(Math.max(0,u*u-2*a*L))):0;
+      cur=penetrate({...cur,t:t0+h},p,0,disp,speed);
+      const ev:PhysicsEvent={id:(isExit?'exit-':'covel-')+cur.events.length,time:cur.t,label:isExit?'质点穿出木块右端':tie?'恰在右端共速':'质点与木块共速',position:{x:cur.x1,y:0},metrics:{heatLostJ:cur.heatLostJ,penetrationDist:disp,relativeSpeed:speed,vCommon:cur.pInitX/mass(p)}};
+      cur={...cur,bulletPhase:isExit?'exited':'comoving',phaseEndTime:cur.t,events:[...cur.events,ev]};events.push(ev);
     }else{
-      cur=penetrate(cur,p,rem,d0+u*rem-.5*a*rem*rem,u-a*rem);
+      const elapsed=end-t0;
+      cur=penetrate({...cur,t:end},p,0,u*elapsed-.5*a*elapsed*elapsed,u-a*elapsed);
       return {nextState:cur,events};
     }
   }
-  return {nextState:linear(cur,rem),events};
+  return {nextState:linear(cur,end-cur.t),events};
 }
 export const boatWalkDuration=(p:CollisionRecoilParams)=>p.v10===0?null:1.8*p.blockLength/p.v10;
 function smoothProgress(u:number){
@@ -116,7 +117,7 @@ function stepBoat(s:CollisionRecoilState,p:CollisionRecoilParams,dt:number):Step
   const x1=s.xCm0+p.mass2/M*relative,x2=s.xCm0-p.mass1/M*relative;
   const events:PhysicsEvent[]=[];
   if(end>=T&&s.bulletPhase!=='comoving')events.push({id:'boat-stop-'+s.events.length,time:T,label:'到达船右端 · 双体平滑静止',position:{x:x1,y:s.y1},metrics:{xCm:s.xCm0,relativeDisplacement:span}});
-  return {nextState:{...s,t:end,x1,x2,vx1:p.mass2/M*speed,vx2:-p.mass1/M*speed,bulletPhase:u===1?'comoving':'approach',events:[...s.events,...events]},events};
+  return {nextState:{...s,t:end,x1,x2,vx1:p.mass2/M*speed,vx2:speed===0?0:-p.mass1/M*speed,bulletPhase:u===1?'comoving':'approach',events:[...s.events,...events]},events};
 }
 export function stepCollisionRecoil(s:CollisionRecoilState,p:CollisionRecoilParams,dt:number):StepResult<CollisionRecoilState>{
   if(!Number.isFinite(dt)||dt<0)throw Error('Invalid dt: '+dt);
@@ -133,7 +134,7 @@ export function computeObservables(s:CollisionRecoilState,p:CollisionRecoilParam
     momentumResidual:Math.hypot(px-s.pInitX,py-s.pInitY),cmResidual:Math.hypot(xCm-s.xCm0-s.pInitX/M*s.t,yCm-s.yCm0-s.pInitY/M*s.t),
     collided:s.collided?1:0,phase:s.bulletPhase==='penetrating'?1:s.bulletPhase==='comoving'?2:s.bulletPhase==='exited'?3:0,
     ...(!boat?{energyResidual:ek+s.heatLostJ-s.kInit}:{}),
-    ...(bullet?{penetrationDist:s.penetrationDist,remainingDepth:p.blockLength-s.penetrationDist}:{}),
+    ...(bullet?{penetrationDist:s.penetrationDist,remainingDepth:p.blockLength-s.penetrationDist,...(s.entryTime!==null?{entryTime:s.entryTime}:{}),...(s.phaseEndTime!==null?{phaseEndTime:s.phaseEndTime}:{})}:{}),
     ...(boat?{walkProgress:(s.x1-s.x2+.45*p.blockLength)/(.9*p.blockLength),...(T===null?{}:{walkDuration:T})}:{}),
     ...(!boat&&!bullet?{gap:Math.hypot(s.x2-s.x1,s.y2-s.y1)-p.radius1-p.radius2}:{}),
     ...(s.impact?{impactTime:s.impact.t,normalImpulse:s.impact.impulse,normalBefore:s.impact.approachNormal,normalAfter:dot(sub(s.impact.after1,s.impact.after2),s.impact.normal)}:{})};

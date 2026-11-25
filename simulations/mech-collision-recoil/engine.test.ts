@@ -114,3 +114,58 @@ describe('H28 M09 exact event and parameter contracts',()=>{
     const end=stepCollisionRecoil(init,p,T+1).nextState;expect(end.x1-end.x2).toBeCloseTo(span/2,12);expect(end.vx1).toBe(0);expect(end.events[0]?.time).toBeCloseTo(T,12);
   });
 });
+
+import { sphereTimeOfImpact,checkInvariants } from './engine.js';
+import { collisionDiagram,collisionBoundsFit,fitCollisionViewport } from './diagram.js';
+describe('H28 exact event boundaries and common diagrams',()=>{
+  it('agrees for coarse and fine oblique collisions and retains actual geometry',()=>{
+    const p=getPreset(0),coarse=stepCollisionRecoil(createInitialState(p),p,2).nextState,fine=simulate(p,2,1/240);
+    for(const key of ['x1','x2','y1','y2','vx1','vx2','vy1','vy2'] as const)expect(coarse[key]).toBeCloseTo(fine[key],10);
+    expect(coarse.impact?.t).toBeCloseTo(.53,12);expect(coarse.impact?.contact.x).toBeCloseTo(-.24,12);expect(coarse.impact?.contact.y).toBeCloseTo(.18,12);
+    const o=computeObservables(coarse,p);expect(o.yCm).toBeCloseTo(.18,12);expect(o.cmResidual).toBeLessThan(1e-10);
+    expect(mechCollisionRecoilPlugin.referenceFrames?.[0]?.getOrigin(coarse,p).y).toBeCloseTo(.18,12);
+    for(const i of checkInvariants(coarse,createInitialState(p),p))expect(i.passed,i.name).toBe(true);
+  });
+  it('finds genuine near grazing contact while exactly tangent and missing paths have no impulse',()=>{
+    const p={...getPreset(0),impactParamB:.6-1e-10},s=createInitialState(p);
+    const h=(2.6-Math.sqrt((.6-p.impactParamB)*(.6+p.impactParamB)))/4;
+    expect(sphereTimeOfImpact(s,p)).toBeCloseTo(h,12);
+    const out=stepCollisionRecoil(s,p,2).nextState;expect(out.collided).toBe(true);expect(out.impact!.impulse).toBeGreaterThan(0);
+    expect(Math.abs(computeObservables(out,p).energyResidual!)).toBeLessThan(1e-10);
+    for(const b of [.6,.6+1e-10])expect(sphereTimeOfImpact(createInitialState({...p,impactParamB:b}),{...p,impactParamB:b})).toBeNull();
+  });
+  it('handles initial touching approaching and separating without penetration',()=>{
+    const p=getPreset(1),base=createInitialState(p),R=p.radius1+p.radius2;
+    const s={...base,x1:-R,x2:0};
+    expect(sphereTimeOfImpact(s,p)).toBe(0);expect(sphereTimeOfImpact({...s,vx1:-3},p)).toBeNull();
+  });
+  it('decides exactly equal and near-equal stop/exit from immutable entry conditions',()=>{
+    const base=getPreset(2);
+    for(const delta of [-1e-8,0,1e-8]){
+      const p={...base,blockLength:1.28+delta},coarse=stepCollisionRecoil(createInitialState(p),p,2).nextState,fine=simulate(p,2,1/240);
+      const phase=delta<0?'exited':'comoving';expect(coarse.bulletPhase).toBe(phase);expect(fine.bulletPhase).toBe(phase);
+      expect(coarse.events).toHaveLength(2);expect(fine.events).toHaveLength(2);expect(coarse.events[1]?.time).toBeCloseTo(fine.events[1]!.time,12);
+      expect(coarse.penetrationDist).toBeCloseTo(Math.min(1.28,p.blockLength),12);
+      expect(Math.abs(computeObservables(fine,p).energyResidual!)).toBeLessThan(1e-9);
+      if(delta===0)expect(coarse.events[1]?.label).toContain('右端共速');
+    }
+  });
+  it('uses actual mode geometry and one shared momentum scale for Canvas and print',()=>{
+    for(const index of [0,2,3]){
+      const p=getPreset(index),s=simulate(p,.8),d=collisionDiagram(s,p),m=d.momentum,o=computeObservables(s,p);
+      expect(m.joint.x-m.origin.x).toBeCloseTo(o.px1!*m.scale,12);expect(m.joint.y-m.origin.y).toBeCloseTo(o.py1!*m.scale,12);
+      expect(m.end.x-m.joint.x).toBeCloseTo(o.px2!*m.scale,12);expect(m.end.y-m.joint.y).toBeCloseTo(o.py2!*m.scale,12);
+      const ir=mechCollisionRecoilPlugin.exportDiagramIR!(s,p);expect(ir.primitives).toEqual(d.items.map(i=>i.primitive));
+      if(index===0)expect(d.items.find(i=>i.role==='body1'&&i.primitive.kind==='circle')?.primitive).toMatchObject({cx:s.x1,cy:s.y1,r:p.radius1});
+      if(index===2)expect(d.items.find(i=>i.role==='block')?.primitive).toMatchObject({kind:'rect',x:s.x2-p.blockLength/2,width:p.blockLength});
+      if(index===3)expect(d.items.find(i=>i.role==='boat')?.primitive.kind).toBe('polyline');
+      const vp={width:1440,height:900,dpr:1,scale:1,offsetX:0,offsetY:0},safe={left:30,right:1120,top:28,bottom:720};
+      expect(collisionBoundsFit(s,p,fitCollisionViewport(s,p,vp,safe)!,safe)).toBe(true);
+    }
+  });
+  it('shows a balanced internal force pair only during actual penetration',()=>{
+    const p=getPreset(2),s=stepCollisionRecoil(createInitialState(p),p,.3).nextState;
+    const fs=mechCollisionRecoilPlugin.getForceVectors!(s,p);expect(fs).toHaveLength(2);expect(fs[0]?.force.x).toBe(-p.dragForceF);expect(fs[1]?.force.x).toBe(p.dragForceF);
+    const end=stepCollisionRecoil(s,p,2).nextState;expect(mechCollisionRecoilPlugin.getForceVectors!(end,p)).toEqual([]);
+  });
+});
