@@ -466,6 +466,11 @@ async function auditM02Equilibrium(page,origin){
   const fixed=await read(),rx=4,ry=19.6-4*Math.sqrt(3),moment=1.2*(Math.sqrt(3)/2*ry-.5*rx);
   if(Math.abs(fixed.force2-8)>1e-10||Math.abs(fixed.reactionXN-rx)>1e-10||Math.abs(fixed.reactionYN-ry)>1e-10||Math.abs(fixed.supportMomentNm-moment)>1e-10||fixed.momentResidualNm>=1e-10||'minPullForceN'in fixed)throw Error('M02 fixed wrench '+JSON.stringify(fixed));
   await page.screenshot({path:path.join(OUT_DIR,'H16_M02_fixed_rod.png')});
+  // Directly measure the actual KaTeX content, not the clipped viewport.
+  const fixedOverflow=await page.locator('[data-testid="formula-card"] .pf-right-formula').evaluateAll(nodes=>nodes.map(n=>({id:n.parentElement.dataset.formulaId,available:n.clientWidth,required:n.scrollWidth})).filter(x=>x.required>x.available+1));
+  console.log('H17 M02 formula overflow '+JSON.stringify(fixedOverflow));
+  if(fixedOverflow.length)throw Error('M02 clipped symbolic formula '+JSON.stringify(fixedOverflow));
+
   await setAnalysis('angle-curve','angle-curve');
   await page.screenshot({path:path.join(OUT_DIR,'H16_M02_fixed_angle_curve.png')});
   console.log('H16 M02 online '+JSON.stringify({minimum,invalid,pulley,sphere,scanned,compression,tension,singular,fixed}));
