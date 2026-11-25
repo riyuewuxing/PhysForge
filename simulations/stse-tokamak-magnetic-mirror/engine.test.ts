@@ -39,7 +39,9 @@ describe('stse-tokamak-magnetic-mirror physics invariants (S01)', () => {
     const keDrift = Math.abs(st.currentKineticJ - st.initialKineticJ) / st.initialKineticJ;
     expect(keDrift).toBeLessThan(1e-8);
     expect(st.escaped).toBe(false);
-    expect(st.reflectionCount).toBeGreaterThanOrEqual(2);
+    // vz can oscillate around zero during gyromotion. A true mirror bounce is
+    // the sign reversal of v parallel to the local B, not every vz reversal.
+    expect(st.reflectionCount).toBe(1);
     expect(st.maxMuRelDev).toBeLessThan(0.05);
   });
 
@@ -93,9 +95,16 @@ describe('stse-tokamak-magnetic-mirror physics invariants (S01)', () => {
     expect(stepTokamakMirror(out.nextState,p,.25).events.filter(e=>e.id==='fusion-escape')).toHaveLength(0);
   });
   it('records actual magnetic reflection without a fabricated velocity kick',()=>{
-    const p=getPreset(0),out=stepTokamakMirror(createInitialState(p),p,3);
+    const p=getPreset(0),out=stepTokamakMirror(createInitialState(p),p,5);
     const reflections=out.events.filter(e=>e.id==='fusion-reflection');
-    expect(reflections.length).toBeGreaterThanOrEqual(2);
+    expect(reflections).toHaveLength(2);
+    // Independent scipy DOP853/RK45 direct Lorentz reference (rtol=1e-10,
+    // atol=1e-12, max step .001 s): 1.19564781, 3.58694310 s.
+    // Event localization is 1e-10 s; physical integration error is separate.
+    expect(Math.abs(reflections[0]!.time-1.19564781)).toBeLessThan(.005);
+    expect(Math.abs(reflections[1]!.time-3.58694310)).toBeLessThan(.005);
+    expect(Math.abs(reflections[0]!.position!.z!- .93639258)).toBeLessThan(.005);
+    expect(Math.abs(reflections[1]!.position!.z!+ .93651151)).toBeLessThan(.005);
     for(const e of reflections){
       expect(Math.abs(e.position!.z!)).toBeLessThan(p.coilHalfSpanM);
       expect(Math.abs(e.metrics!.vParallel!)).toBeLessThan(1e-5);
