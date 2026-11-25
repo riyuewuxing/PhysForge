@@ -261,7 +261,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
         ) : plugin.meta.id==='mech-kinematics-chase' ? (
           <section data-testid="chase-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
             {([['deltaX','有向位置差 xB−xA','m'],['gap','实际间距','m'],['minGap','历史最小间距','m'],['deltaV','A 相对 B 速度','m/s'],['firstCoVelocityTime','首次共速','s'],['firstMeetTime','首次相遇','s']] as const).map(([key,label,unit])=>{const v=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'chase-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}
-            <div className="text-[10px]">质点模型 · 相遇后继续数学轨迹，未模拟碰撞。</div>
+            <div className="text-[10px]">质点模型 · 相遇后继续数学轨迹，未模拟碰撞。合力仅由可调质量与规定加速度推算。</div>
           </section>
         ) : plugin.getTelemetryChannels ? (
           <section data-testid="ode-readouts" className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>{telemetry.observables.solverValid===0&&<div data-testid="ode-invalid" className="text-rose-400">方程未定义或积分失败 · 已停止</div>}{plugin.getTelemetryChannels(params).map(c=>{const v=telemetry.observables[c.key];return <div key={c.key} className="flex justify-between gap-2"><span>{c.label}</span><span className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+c.unit:'—'}</span></div>;})}</section>

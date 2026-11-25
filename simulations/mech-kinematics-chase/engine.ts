@@ -1,7 +1,7 @@
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 
 export type ChaseScenario='accelerate-chase'|'brake-collision-avoid'|'two-stage-overtake';
-export type KinematicsChaseParams={scenario:ChaseScenario;vA0:number;aA:number;reactionTime:number;xB0:number;vB0:number;aB:number};
+export type KinematicsChaseParams={scenario:ChaseScenario;vA0:number;aA:number;reactionTime:number;xB0:number;vB0:number;aB:number;massA?:number;massB?:number};
 export interface KinematicsChaseState {
   readonly t:number;
   readonly xA:number;readonly vA:number;readonly aACurrent:number;readonly aLockedZero:boolean;

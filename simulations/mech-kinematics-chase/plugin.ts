@@ -26,7 +26,9 @@ const paramSchema: readonly ParamFieldSpec<KinematicsChaseParams>[] = [
   { key: 'reactionTime', kind: 'number', label: 'A车反应时间 t反', unit: 's', min: 0, max: 1.5, step: 0.1, defaultValue: 0 },
   { key: 'xB0', kind: 'number', label: '初始间距 xB0', unit: 'm', min: 5, max: 80, step: 1, defaultValue: 16 },
   { key: 'vB0', kind: 'number', label: 'B车初速度 vB0', unit: 'm/s', min: 0, max: 25, step: 1, defaultValue: 8 },
-  { key: 'aB', kind: 'number', label: 'B车加速度 aB', unit: 'm/s²', min: -8, max: 6, step: 0.5, defaultValue: 0 }
+  { key: 'aB', kind: 'number', label: 'B车加速度 aB', unit: 'm/s²', min: -8, max: 6, step: 0.5, defaultValue: 0 },
+  {key:'massA',kind:'number',label:'A车质量（仅合力）',unit:'kg',min:500,max:2500,step:100,defaultValue:1000},
+  {key:'massB',kind:'number',label:'B车质量（仅合力）',unit:'kg',min:500,max:2500,step:100,defaultValue:1000}
 ];
 
 /** View extent is an explicitly labelled ten-second teaching horizon, not a physics limit. */
@@ -55,7 +57,13 @@ export const mechKinematicsChasePlugin=defineSimulationPlugin<KinematicsChasePar
     {key:'aA',label:'A车加速度',unit:'m/s²',color:'#38bdf8'},
     {key:'aB',label:'B车加速度',unit:'m/s²',color:'#f472b6'}
   ],
-  // Kinematics alone does not supply masses or a force decomposition.
+  // Masses are explicit adjustable assumptions, used solely for the inferred net force.
+  getForceVectors:(s,p)=>{
+    const ma=p.massA??1000,mb=p.massB??1000,lane=laneHalf(p);
+    const a=[{id:'net-force-a',label:'A 合力 (mA aA)',origin:{x:s.xA,y:lane},force:{x:ma*s.aACurrent,y:0},color:'#38bdf8',category:'net' as const,unit:'N'},
+      {id:'net-force-b',label:'B 合力 (mB aB)',origin:{x:s.xB,y:-lane},force:{x:mb*s.aBCurrent,y:0},color:'#f472b6',category:'net' as const,unit:'N'}];
+    return a.filter(f=>f.force.x!==0);
+  },
   getControlHandles:(s,p)=>s.t===0?[{id:'initial-gap',label:'初始间距',position:{x:s.xB,y:-laneHalf(p)},handleKind:'point',color:'#f472b6',onDrag:wp=>({xB0:Math.max(5,Math.min(80,Math.round(wp.x)))})}]:[],
   referenceFrames:[{id:'car-a',label:'A车随动坐标（平移）',description:'仅平移原点；A 加速时为非惯性参考系。',getOrigin:s=>({x:s.xA,y:0}),getVelocity:s=>({x:s.vA,y:0})}],
   sceneSerializer:{exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'mech-kinematics-chase',title:'追及相遇多过程',params}),importScene:dsl=>dsl.params as Partial<KinematicsChaseParams>},

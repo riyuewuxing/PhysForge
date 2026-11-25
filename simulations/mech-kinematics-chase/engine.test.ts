@@ -114,7 +114,7 @@ describe('H12 real metre geometry and teaching contracts',()=>{
     const ir=plugin.exportDiagramIR!(later,p),blocks=ir.primitives.filter(x=>x.kind==='block');
     expect(blocks.map(x=>x.cx)).toEqual([144,112]);
     expect(ir.viewBox.maxX).toBeGreaterThan(144);
-    expect(plugin.getForceVectors).toBeUndefined();
+    expect(plugin.getForceVectors!(later,p)[0]!.origin.x).toBe(144);
   });
   it('fits the default ten-second physical extent without scaling metres into fake units',()=>{
     const v={width:1280,height:760,dpr:1,...resolveInitialCameraTransform(mechKinematicsChasePlugin,p,1280,760)};
@@ -133,3 +133,14 @@ describe('H12 real metre geometry and teaching contracts',()=>{
     expect(stop.events.find(e=>e.id.startsWith('co-vel'))?.time).toBeCloseTo(3.9,10);
   });
 });
+
+  it('computes only the net force from explicit masses without changing prescribed trajectories',()=>{
+    const p:KinematicsChaseParams={scenario:'accelerate-chase',vA0:0,aA:2,reactionTime:0,xB0:16,vB0:8,aB:0,massA:1200,massB:900};
+    const a=stepKinematicsChase(createInitialState(p),p,1).nextState;
+    const q={...p,massA:1800,massB:2000};
+    const b=stepKinematicsChase(createInitialState(q),q,1).nextState;
+    expect(a).toEqual(b);
+    const v=mechKinematicsChasePlugin.getForceVectors!(a,p);
+    expect(v).toHaveLength(1);expect(v[0]!.force.x).toBe(2400);expect(v[0]!.origin.x).toBe(1);expect(v[0]!.unit).toBe('N');
+    expect(mechKinematicsChasePlugin.getForceVectors!(b,q)[0]!.force.x).toBe(3600);
+  });
