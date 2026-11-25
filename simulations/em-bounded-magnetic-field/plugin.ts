@@ -289,7 +289,9 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
     const primary = state.particles[0];
     if (!primary) return [];
     const pos = primary.state.position;
-    const vel = primary.state.velocity;
+    // This handle edits the launch parameter, not the instantaneous velocity.
+    const launchAngle=params.launchAngleDeg*Math.PI/180;
+    const vel={x:params.initialSpeed*Math.cos(launchAngle),y:params.initialSpeed*Math.sin(launchAngle)};
     const handles = [
       {
         id: 'launch-velocity',

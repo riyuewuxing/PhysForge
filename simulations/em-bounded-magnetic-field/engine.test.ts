@@ -276,6 +276,39 @@ describe('em-bounded-magnetic-field engine', () => {
     expect(out.nextState.particles[0]!.state.position.x).toBeCloseTo(2,10);
   });
 
+  it('matches the exact focus point for all four charge/field sign combinations',()=>{
+    for(const charge of [-1,1])for(const magneticFieldZ of [-2,2]){
+      const p:BoundedMagneticParams={...baseParams,mode:'circular',family:'focusing',beamCount:9,fieldScale:1,charge,magneticFieldZ};
+      const init=createInitialState(p),s=stepBoundedMagnetic(init,p,3).nextState;
+      const expectedY=-Math.sign(charge*magneticFieldZ);
+      expect(s.particles).toHaveLength(9);
+      for(const t of s.particles){
+        expect(t.hasEntered&&t.hasExited).toBe(true);
+        expect(Math.hypot(t.exitPoint!.x,t.exitPoint!.y-expectedY)).toBeLessThan(1e-8);
+        expect(Math.hypot(t.state.velocity.x,t.state.velocity.y)).toBeCloseTo(2,10);
+        expect(t.state.t).toBeCloseTo(3,12);
+      }
+    }
+  });
+  it('preserves physical state and event times under independent time partitioning across field shapes',()=>{
+    for(const mode of ['half-space','rectangular','circular','crossed-eb'] as const)
+      for(const charge of [-1,0,1])for(const angle of [-35,0,40]){
+        const p:BoundedMagneticParams={...baseParams,mode,charge,launchAngleDeg:angle,fieldScale:.9,initialSpeed:2.7,electricFieldY:3};
+        const init=createInitialState(p),duration=3.217;
+        const whole=stepBoundedMagnetic(init,p,duration).nextState;
+        let pieces=init;
+        for(let j=0;j<101;j++)pieces=stepBoundedMagnetic(pieces,p,duration/101).nextState;
+        const a=whole.particles[0]!,b=pieces.particles[0]!;
+        expect(Math.hypot(a.state.position.x-b.state.position.x,a.state.position.y-b.state.position.y)).toBeLessThan(1e-7);
+        expect(Math.hypot(a.state.velocity.x-b.state.velocity.x,a.state.velocity.y-b.state.velocity.y)).toBeLessThan(1e-7);
+        expect(a.inField).toBe(b.inField);expect(a.hasEntered).toBe(b.hasEntered);expect(a.hasExited).toBe(b.hasExited);
+        if(a.entryTime!==undefined)expect(a.entryTime).toBeCloseTo(b.entryTime!,7);
+        if(a.exitTime!==undefined)expect(a.exitTime).toBeCloseTo(b.exitTime!,7);
+        expect(a.state.t).toBeCloseTo(whole.t,12);expect(b.state.t).toBeCloseTo(pieces.t,12);
+        expect(whole.events.map(x=>x.label)).toEqual(pieces.events.map(x=>x.label));
+      }
+  });
+
   it('handles zero B, zero q, zero v0, and dt=0 without NaN or Infinity', () => {
     const cases: BoundedMagneticParams[] = [
       { ...baseParams, magneticFieldZ: 0 },

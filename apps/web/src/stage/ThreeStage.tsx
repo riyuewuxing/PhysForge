@@ -88,8 +88,8 @@ const magneticAxisColors = [
   { name: 'Z', color: '#38bdf8', direction: { x: 0, y: 0, z: 1 } }
 ] as const;
 
-function updateMagneticAxisWidget(widget: SVGSVGElement, camera: THREE.Camera): void {
-  const directions = magneticAxisColors.map(axis => projectCameraDirection(mapMagneticPoint(axis.direction), camera));
+function updateMagneticAxisWidget(widget: SVGSVGElement, camera: THREE.Camera, directPhysicalAxes=false): void {
+  const directions = magneticAxisColors.map(axis => projectCameraDirection(directPhysicalAxes?new THREE.Vector3(axis.direction.x,axis.direction.y,axis.direction.z):mapMagneticPoint(axis.direction), camera));
   const orientation = directions.map(v => v.toArray().map(x => x.toFixed(3)).join(',')).join(';');
   if (widget.getAttribute('data-axis-orientation') === orientation) return;
   widget.setAttribute('data-axis-orientation', orientation);
@@ -279,13 +279,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const isMag3d = plugin.meta.id === 'em-3d-magnetic-fields';
     const isTokamak3d = plugin.meta.id === 'stse-tokamak-magnetic-mirror';
-    const magneticAxisWidget = isMag3d ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
+    const isBoundedStage=plugin.meta.id==='builder-composite-em-field';
+    const magneticAxisWidget = isMag3d||isBoundedStage ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
 
     const width = Math.max(320, container.clientWidth);
     const height = Math.max(240, container.clientHeight);
     const scene = new THREE.Scene();
     const isDeviceStage=plugin.meta.id==='stse-em-devices-suite';
-    const isBoundedStage=plugin.meta.id==='builder-composite-em-field';
     const magneticBackdrop=isMag3d||isDeviceStage||isBoundedStage?createMagneticBackdrop():null;
     scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
     scene.fog = new THREE.FogExp2('#0b0f17', 0.085);
@@ -810,7 +810,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
       const renderCamera = morph?.getActiveCamera() ?? camera;
-      if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget, renderCamera);
+      if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget, renderCamera,isBoundedStage);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
       if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
@@ -920,7 +920,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         </div>
       )}
       <div aria-hidden="true" data-testid="three-axis-widget" className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-lg border border-white/10 bg-slate-950/70 p-1 shadow-lg backdrop-blur">
-        {plugin.meta.id === 'em-3d-magnetic-fields' ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
+        {(plugin.meta.id === 'em-3d-magnetic-fields'||plugin.meta.id==='builder-composite-em-field') ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
           <circle cx="30" cy="30" r="1.8" fill="#cbd5e1" />
           {magneticAxisColors.map(axis => <g key={axis.name} data-physical-axis={axis.name}>
             <line x1="30" y1="30" x2="30" y2="30" stroke={axis.color} strokeWidth="1.8" strokeLinecap="round" />

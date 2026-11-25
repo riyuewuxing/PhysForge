@@ -493,6 +493,26 @@ async function auditB1Physics(page,origin,screenshot){
     const scope=page.getByTestId('floating-scope-dock');
     await scope.waitFor({state:'visible'});
     if(await scope.getAttribute('data-scope-units')!=='separate')throw Error('B1 mixed physical units share a scope axis');
+    if(preset==='crossed-eb-cycloid'){
+      const workbenchPlay=page.locator('[data-testid="btn-play-pause"]:visible');
+      if(await workbenchPlay.getAttribute('aria-label')==='运行')await workbenchPlay.click();
+      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="topbar"]')?.textContent?.match(/t\s*=\s*([0-9.]+)\s*s/)?.[1])>0.7,null,{timeout:10000});
+      if(await workbenchPlay.getAttribute('aria-label')==='暂停')await workbenchPlay.click();
+      const scopeCanvas=await scope.locator('canvas').first().boundingBox();
+      if(!scopeCanvas||scopeCanvas.height<140||await page.getByTestId('scope-empty').isVisible())throw Error('B1 running chart missing or clipped');
+      if(screenshot)await screenshot('B1_workbench_running');
+      await page.getByTestId('btn-tools-menu').click();
+      await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+      if(screenshot)await screenshot('B1_workbench_projector');
+      await page.getByTestId('btn-tools-menu').click();
+      await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+      if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+      await page.locator('[data-testid="btn-reset"]:visible').click();
+      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="topbar"]')?.textContent?.match(/t\s*=\s*([0-9.]+)\s*s/)?.[1])===0);
+    }
     await page.getByTestId('btn-fullscreen-speech').click();
     const toggle=page.getByTestId('btn-view-3d-fullscreen');
     if((await toggle.textContent())?.includes('3D 空间'))await toggle.click();
@@ -519,6 +539,20 @@ async function auditB1Physics(page,origin,screenshot){
       report.push({preset,t:s.t,error});
     }
     if(screenshot)await screenshot('B1_'+preset+'_3d');
+    if(preset==='circle-magnetic-focusing'){
+      const axis=stage.locator('[data-magnetic-axis-widget]');
+      await axis.waitFor({state:'visible'});
+      const before=await axis.getAttribute('data-axis-orientation');
+      if(!before)throw Error('B1 physical axes not initialized');
+      const bounds=await stage.locator('canvas').boundingBox();
+      if(!bounds)throw Error('B1 orbit canvas missing');
+      const paused=await stage.getAttribute('data-b1-time');
+      await page.mouse.move(bounds.x+bounds.width*.54,bounds.y+bounds.height*.43);
+      await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.64,bounds.y+bounds.height*.49,{steps:8});await page.mouse.up();
+      await page.waitForFunction(old=>document.querySelector('[data-magnetic-axis-widget]')?.getAttribute('data-axis-orientation')!==old,before);
+      if(await stage.getAttribute('data-b1-time')!==paused)throw Error('B1 paused time changed during orbit');
+      if(screenshot)await screenshot('B1_focus_orbit');
+    }
     await toggle.click();await stage.waitFor({state:'detached',timeout:15000});
     await page.getByTestId('simulation-canvas').waitFor({state:'visible'});
     if(screenshot)await screenshot('B1_'+preset+'_flat');
