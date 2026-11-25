@@ -19,5 +19,6 @@ export const constrainedVelocityPresets: readonly PresetSpec<ConstrainedVelocity
     name: '3. 倾斜劈面推竖直轻杆（法向速度相等）',
     description: '斜面以 v_1 右推，两接触点垂直斜面的法向速度分矢量严格相等，得到 v_2 = v_1 tanα。',
     params: { mode: 'wedge-rod', driveSpeed: 2.0, heightOrLength: 2.0, initialAngleDeg: 37 }
-  }
+  },
+  {id:'dual-rope-asymmetric',name:'4. 双绳不等速收绳拉物',description:'两个固定滑轮、两条给定长度的绳；由两个投影方程求物体真实速度。',params:{mode:'dual-rope-pull',driveSpeed:1.5,heightOrLength:3,initialAngleDeg:45,secondarySpeedRatio:.6}}
 ];

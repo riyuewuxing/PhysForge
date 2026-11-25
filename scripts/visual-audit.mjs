@@ -486,6 +486,42 @@ async function auditM02Equilibrium(page,origin){
   return {minimum,invalid,pulley,sphere,scanned,compression,tension,singular,fixed};
 }
 
+async function auditM03Constraints(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-constrained-velocity');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-constrained-velocity',null,{timeout:20000});
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-constrained-rendered'));
+  const waitMode=async(mode)=>page.waitForFunction(mode=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null');return d?.mode===mode&&d.t===0;},mode);
+  const run=async()=>{await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null')?.t>.22);await play.click();return read();};
+  const check=(v,x,name,tol=1e-8)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M03 '+name+' '+JSON.stringify({v,x}));};
+  const residual=d=>{check(d.projSpeedDiff,0,'projection',1e-10);check(d.geometryResidualM,0,'geometry',1e-10);};
+  await selectPreset(page,'ladder-sliding-wall',true);await waitMode('ladder-wall');
+  const ladder=await run(),y=3*Math.sin(55*Math.PI/180)-ladder.t,x=Math.sqrt(9-y*y);
+  check(ladder.yA,y,'ladder y');check(ladder.xB,x,'ladder x');check(ladder.vAy,-1,'ladder vy');check(ladder.vBx,y/x,'ladder vx');residual(ladder);
+  await page.screenshot({path:path.join(OUT_DIR,'H18_M03_ladder.png')});
+  await selectPreset(page,'wedge-vertical-rod',true);await waitMode('wedge-rod');
+  const wedge=await run(),tan=Math.tan(37*Math.PI/180);
+  check(wedge.xA,2*wedge.t,'wedge x');check(wedge.yB,(.5+2*wedge.t)*tan,'rod y');check(wedge.vBy,2*tan,'rod vy');residual(wedge);
+  await page.screenshot({path:path.join(OUT_DIR,'H18_M03_wedge.png')});
+  await selectPreset(page,'dual-rope-asymmetric',true);await waitMode('dual-rope-pull');
+  const dual=await run(),l0=3/Math.sqrt(2),l1=l0-1.5*dual.t,l2=l0-.9*dual.t;
+  check(Math.hypot(dual.xA,dual.yA),l1,'left rope');check(Math.hypot(dual.xA-3,dual.yA),l2,'right rope');
+  check((-dual.xA*dual.vAx-dual.yA*dual.vAy)/l1,1.5,'left material projection',1e-10);
+  check(((3-dual.xA)*dual.vAx-dual.yA*dual.vAy)/l2,.9,'right material projection',1e-10);residual(dual);
+  await page.screenshot({path:path.join(OUT_DIR,'H18_M03_dual.png')});
+  await selectPreset(page,'boat-dock-winch',true);await waitMode('rope-pull-boat');
+  await page.getByTestId('param-slider-initialAngleDeg').fill('75');
+  await page.waitForFunction(()=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null');return d?.t===0&&Math.abs(d.angleDeg-75)<1e-8;});
+  await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null')?.terminal===1);
+  const boat=await read(),time=(1.8/Math.sin(75*Math.PI/180)-1.8/Math.sin(80*Math.PI/180))/1.5;
+  check(boat.t,time,'boat terminal time',1e-7);check(boat.accelBoatMag,1.5**2*1.8**2/boat.xA**3,'boat instantaneous acceleration',1e-5);
+  residual(boat);await page.getByTestId('btn-step').click();const again=await read();check(again.t,boat.t,'terminal frozen time',1e-10);
+  await page.screenshot({path:path.join(OUT_DIR,'H18_M03_boat_terminal.png')});
+  console.log('H18 M03 online '+JSON.stringify({ladder,wedge,dual,boat}));
+  return {ladder,wedge,dual,boat};
+}
+
 async function runWaveBCoordinateAudit(page, origin) {
   const cases = [
     { id: 'em-induction-double-rod', name: 'E04 defaultView' },
@@ -1906,6 +1942,7 @@ async function main() {
     const b5OdeReport=await auditB5Ode(page,origin);
     const m01ChaseReport=await auditM01Chase(page,origin);
     const m02EquilibriumReport=await auditM02Equilibrium(page,origin);
+    const m03ConstraintReport=await auditM03Constraints(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2128,7 +2165,25 @@ async function main() {
       if(m02Errors.length||m02Network.length)throw Error('M02 offline errors '+JSON.stringify({m02Errors,m02Network}));
       Object.assign(m02OfflineReport,{initial,step,fixed,errors:m02Errors,network:m02Network});
     }finally{await m02Context.close();}
-    const summary = { m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+
+    const m03File=path.join(OUT_DIR,'H18_M03_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-constrained-velocity','--preset','dual-rope-asymmetric','--out',m03File],{stdio:'inherit'});
+    const m03Context=await browser.newContext({viewport:VIEWPORT,offline:true});const m03Page=await m03Context.newPage(),m03Errors=[],m03Network=[],m03OfflineReport={};
+    m03Page.on('pageerror',e=>m03Errors.push(e.message));m03Page.on('console',m=>{if(m.type()==='error')m03Errors.push(m.text());});m03Page.on('request',r=>{if(/^https?:/.test(r.url()))m03Network.push(r.url());});
+    try{
+      await m03Page.goto(pathToFileURL(m03File).href);
+      const canvas=m03Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-constrained-rendered'));
+      await m03Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.constrainedRendered||'null')?.mode==='dual-rope-pull');
+      await m03Page.getByRole('button',{name:'单步',exact:true}).click();
+      await m03Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.constrainedRendered||'null')?.t>0);
+      const step=await read(),l0=3/Math.sqrt(2),l1=l0-1.5*step.t,l2=l0-.9*step.t;
+      if(Math.abs(step.t-1/60)>1e-10||Math.abs(Math.hypot(step.xA,step.yA)-l1)>1e-9||Math.abs(Math.hypot(step.xA-3,step.yA)-l2)>1e-9||step.projSpeedDiff>=1e-10)throw Error('M03 offline analytic '+JSON.stringify(step));
+      await m03Page.getByRole('button',{name:'黑板深蓝'}).click();await m03Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await m03Page.screenshot({path:path.join(OUT_DIR,'H18_M03_offline_dual_paper.png')});
+      if(m03Errors.length||m03Network.length)throw Error('M03 offline errors '+JSON.stringify({m03Errors,m03Network}));
+      Object.assign(m03OfflineReport,{step,errors:m03Errors,network:m03Network});
+    }finally{await m03Context.close();}
+    const summary = { m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

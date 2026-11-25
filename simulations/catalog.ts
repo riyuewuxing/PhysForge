@@ -134,7 +134,7 @@ export const simulationCatalog: readonly SimulationCatalogEntry[] = [
       textbookRef: '人教版 必修第二册 第五章 第1–2节',
       curriculumTags: ['物理观念', '科学思维'],
       difficulty: '高三一轮',
-      version: '2.0.0'
+      version: '2.1.0'
     }
   },
   {
