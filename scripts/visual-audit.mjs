@@ -221,6 +221,51 @@ async function selectPreset(page, preset, force = false) {
   return value;
 }
 
+
+async function auditB4Analytic(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','builder-mechanics-lab');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='builder-mechanics-lab',null,{timeout:20000});
+  const canvas=page.getByTestId('simulation-canvas');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-b4-rendered'));
+  const waitMode=async(scenario)=>page.waitForFunction(mode=>{
+    const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b4-rendered')||'null');
+    return d?.scenario===mode&&d.t===0;
+  },scenario,{timeout:5000});
+  const run=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const runTo=async(t)=>{
+    await run.click();
+    await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b4-rendered')||'null')?.t>t,t,{timeout:10000});
+    await run.click();
+    return await read();
+  };
+  await selectPreset(page,'atwood-udwadia-analytical',true);
+  await waitMode('atwood-constrained');
+  const initial=await read();
+  if(initial.rapierActive!==0||Math.abs(initial.constraintTensionN-4*9.8/3)>1e-9)throw Error('B4 initial Atwood tension '+JSON.stringify(initial));
+  if(!await page.getByTestId('param-slider-massRatio').isVisible()||await page.getByTestId('param-slider-restitution').count())throw Error('B4 Atwood mode controls are incorrect');
+  await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('左重物速度')&&document.querySelector('[data-testid="scope-channel-b"]')?.textContent?.includes('右重物速度'));
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_atwood_initial.png')});
+  const atwood=await runTo(.18),a=9.8/3;
+  if(atwood.t>.65||atwood.rapierActive!==0||Math.abs(atwood.primaryY-(.1+.5*a*atwood.t**2))>1e-9||Math.abs(atwood.primaryY+atwood.secondaryY-.2)>1e-9||Math.abs(atwood.primaryVy-a*atwood.t)>1e-9||Math.abs(atwood.primaryVy+atwood.secondaryVy)>1e-9)throw Error('B4 Atwood independent trajectory '+JSON.stringify(atwood));
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_atwood_running.png')});
+  await selectPreset(page,'ideal-spring-oscillator');
+  await waitMode('spring-oscillator');
+  const spring0=await read(),w=Math.sqrt(20);
+  if(spring0.rapierActive!==0||Math.abs(spring0.springMechanicalEnergy-15.625)>1e-9)throw Error('B4 initial spring energy '+JSON.stringify(spring0));
+  if(!await page.getByTestId('param-slider-springK').isVisible()||await page.getByTestId('param-slider-massRatio').count()||await page.getByTestId('param-slider-friction').count())throw Error('B4 spring mode controls incorrect');
+  await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('系统总动能')&&document.querySelector('[data-testid="scope-channel-b"]')?.textContent?.includes('弹性势能'));
+  const spring=await runTo(.35);
+  if(spring.rapierActive!==0||Math.abs(spring.primaryX-(-.45+1.25*Math.cos(w*spring.t)))>1e-8||Math.abs(spring.primaryVx+1.25*w*Math.sin(w*spring.t))>1e-8||Math.abs(spring.springMechanicalEnergy-15.625)>1e-8)throw Error('B4 spring independent trajectory '+JSON.stringify(spring));
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_spring_running.png')});
+  await page.getByTestId('btn-tools-menu').click();
+  await page.getByTestId('btn-auto-fbd').click();
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_spring_fbd.png')});
+  console.log('H10 B4 independent browser '+JSON.stringify({initial,atwood,spring0,spring}));
+  return {initial,atwood,spring0,spring};
+}
+
 async function runWaveBCoordinateAudit(page, origin) {
   const cases = [
     { id: 'em-induction-double-rod', name: 'E04 defaultView' },
@@ -1637,6 +1682,7 @@ async function main() {
     await page.waitForTimeout(200);
     if (Math.abs(Number(await angleSlider.inputValue())-45)>5) throw new Error('Compton canvas handle does not follow momentum endpoint');
     await page.screenshot({path:path.join(OUT_DIR,'N01_06_compton_direct_drag.png')});
+    const b4AnalyticReport=await auditB4Analytic(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -1743,7 +1789,7 @@ async function main() {
       if(b3Errors.length||b3Network.length)throw Error('B3 offline errors '+JSON.stringify({b3Errors,b3Network}));
       Object.assign(b3OfflineReport,{real,focus,slit,errors:b3Errors,network:b3Network});
     }finally{await b3Context.close();}
-    const summary = { b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const summary = { b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

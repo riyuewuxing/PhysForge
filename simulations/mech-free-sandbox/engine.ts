@@ -640,6 +640,12 @@ export function computeObservables(
     totalMomentumX: momentumX,
     primaryX: firstDyn?.x ?? 0,
     primaryVx: firstDyn?.vx ?? 0,
+    ...(params.scenario==='spring-oscillator'?{springPotentialEnergy:springPe,springMechanicalEnergy:ke+springPe}:{}),
+    ...(params.scenario==='atwood-constrained'?{
+      primaryY:firstDyn!.y,primaryVy:firstDyn!.vy,
+      secondaryY:state.bodies.find(b=>b.id==='atwood-right')!.y,
+      secondaryVy:state.bodies.find(b=>b.id==='atwood-right')!.vy
+    }:{}),
     constraintTensionN: state.constraintTensionN ?? 0,
     rapierActive: state.rapierActive ? 1 : 0
   };

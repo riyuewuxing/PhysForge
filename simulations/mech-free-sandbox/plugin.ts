@@ -96,7 +96,11 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     difficulty: '基础新授',
     version: '2.0.0'
   },
-  defaultView: { scale: 0.58, offsetRatioX: 0.05 },
+  defaultView: {
+    scale:(params,{width,height})=>params.scenario==='atwood-constrained'?Math.max(.1,Math.min(1.1,(width-(width>=900?300:0)-40)/(3.6*Math.min(width,height)*.24),(height-180)/(3.5*Math.min(width,height)*.24))):.58,
+    offsetRatioX:(params,{width})=>params.scenario==='atwood-constrained'?(width-(width>=900?280:0))/(2*width)-.45:.05,
+    offsetRatioY:params=>params.scenario==='atwood-constrained'?-.06:0
+  },
   getControlHandles: (state, params) => {
     const id=params.scenario==='elastic-collision'?'b2':params.scenario==='incline-slide'?'target':params.scenario==='atwood-constrained'?'atwood-right':undefined;
     const dyn=state.bodies.find(b=>b.id===id);
@@ -310,7 +314,11 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
   telemetryChannels: [
     { key: 'totalMomentumX', label: '系统水平总动量 Px', unit: 'kg·m/s', color: '#38bdf8' },
     { key: 'kineticEnergy', label: '系统总动能 Ek', unit: 'J', color: '#4ade80' },
-    { key: 'primaryVx', label: '主刚体速度 vx', unit: 'm/s', color: '#fbbf24' }
+    { key: 'primaryVx', label: '主刚体速度 vx', unit: 'm/s', color: '#fbbf24' },
+    { key: 'springPotentialEnergy', label: '弹性势能', unit: 'J', color: '#fbbf24' },
+    { key: 'primaryVy', label: '左重物速度', unit: 'm/s', color: '#38bdf8' },
+    { key: 'secondaryVy', label: '右重物速度', unit: 'm/s', color: '#f472b6' },
+    { key: 'constraintTensionN', label: '轻绳张力', unit: 'N', color: '#4ade80' }
   ],
   formatFormulas: (state, params) => {
     if(params.scenario==='spring-oscillator'){
@@ -421,9 +429,13 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
 
         if (activeLayers.has('velocityLabels') && b.dynamic) {
           ctx.save();
-          ctx.fillStyle = b.color;
+          const paper=viewport.theme==='projector',atwood=params.scenario==='atwood-constrained';
+          ctx.fillStyle = paper?'#334155':b.color;
           ctx.font = 'bold 13px system-ui, sans-serif';
-          ctx.fillText(b.label+(params.scenario==='atwood-constrained'?' vᵧ='+b.vy.toFixed(2):' vₓ='+b.vx.toFixed(2))+' m/s', p.sx - 35, p.sy - b.halfH * pxPerM - 10);
+          ctx.textAlign=atwood?(b.x<0?'right':'left'):'center';
+          const x=atwood?p.sx+Math.sign(b.x)*(b.halfW*pxPerM+9):p.sx;
+          const y=atwood?p.sy+5:p.sy-b.halfH*pxPerM-10;
+          ctx.fillText(b.label+(atwood?' vᵧ='+b.vy.toFixed(2):' vₓ='+b.vx.toFixed(2))+' m/s', x,y);
           ctx.restore();
         }
       }

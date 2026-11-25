@@ -78,6 +78,10 @@ function getDefaultScopeChannels(
     const pairs:Record<string,[string,string]>={'divider-lamp':['totalCurrent','lampCurrent'],'closed-power':['totalCurrent','outputPower'],'series-parallel-dynamic':['branchCurrent1','branchCurrent2'],'rc-transient':['capVoltage','capCurrent'],'rc-bridge-charge':['capVoltage','capCurrent'],'nonlinear-lamp-diode':['totalCurrent','terminalVoltage']};
     const pair=pairs[String(params.topology)];if(pair&&pair.every(k=>channels.some(c=>c.key===k)))return pair;
   }
+  if(modelId==='builder-mechanics-lab'){
+    const pair=params.scenario==='atwood-constrained'?['primaryVy','secondaryVy']:params.scenario==='spring-oscillator'?['kineticEnergy','springPotentialEnergy']:null;
+    if(pair&&pair.every(k=>channels.some(c=>c.key===k)))return [pair[0]!,pair[1]!];
+  }
   const singleRodE04 = modelId === 'em-induction-double-rod' && params.rodMode === 'single';
   const defaultA = singleRodE04
     ? channels.find((channel) => channel.key === 'current')?.key
@@ -264,8 +268,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const allowed:Record<string,string[]>={'divider-lamp':['totalCurrent','lampCurrent','lampVoltage','outputPower'],'closed-power':['totalCurrent','terminalVoltage','outputPower'],'series-parallel-dynamic':['totalCurrent','branchCurrent1','branchCurrent2','terminalVoltage','outputPower'],'rc-transient':['capVoltage','capCurrent'],'rc-bridge-charge':['capVoltage','capCurrent','totalCurrent','branchCurrent1','branchCurrent2'],'nonlinear-lamp-diode':['totalCurrent','terminalVoltage','outputPower']};
       const keys=allowed[String(params.topology)];if(keys)return plugin.telemetryChannels.filter(c=>keys.includes(c.key));
     }
+    if(plugin.meta.id==='builder-mechanics-lab'){
+      const keys=params.scenario==='atwood-constrained'?['primaryVy','secondaryVy','constraintTensionN']:params.scenario==='spring-oscillator'?['kineticEnergy','springPotentialEnergy','primaryVx']:['totalMomentumX','kineticEnergy','primaryVx'];
+      return plugin.telemetryChannels.filter(c=>keys.includes(c.key));
+    }
     return plugin.telemetryChannels;
-  },[plugin.meta.id,plugin.telemetryChannels,params.mode,params.topology]);
+  },[plugin.meta.id,plugin.telemetryChannels,params.mode,params.topology,params.scenario]);
   const [channelA, setChannelA] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[0]);
   const [channelB, setChannelB] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[1]);
 
@@ -274,7 +282,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics'].includes(plugin.meta.id)?params.mode:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -703,6 +711,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if(p.meta.id==='builder-optics-ray'&&frame&&drawState!==null){
       canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...p.engine.computeObservables(drawState,pm)});
     }
+    if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
+      canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...p.engine.computeObservables(drawState,pm)});
+    }
     if(p.meta.id==='builder-circuit-mna'&&frame&&drawState!==null){
       canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...p.engine.computeObservables(drawState,pm)});
     }
@@ -944,10 +955,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
-    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna'].includes(latestRef.current.plugin.meta.id)){
+    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna','builder-mechanics-lab'].includes(latestRef.current.plugin.meta.id)){
       // The final displayed physical sample and chart must agree after pause.
       const current = latestRef.current;
-      if (current.plugin.meta.id === 'builder-circuit-mna' &&
+      if (['builder-circuit-mna','builder-mechanics-lab'].includes(current.plugin.meta.id) &&
           current.scrubTime === null && simStateModelIdRef.current === current.plugin.meta.id &&
           simStateResetNonceRef.current === current.resetNonce && simStateRef.current !== null &&
           simulationTimeRef.current > lastSnapshotTRef.current) {
@@ -1188,7 +1199,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const orbitScope=plugin.meta.id==='astro-orbital-mechanics';
   const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror'||orbitScope;
   const circuitScope=plugin.meta.id==='builder-circuit-mna'&&params.topology!=='divider-lamp';
-  const semanticScope=heroScope||circuitScope;
+  const semanticScope=heroScope||circuitScope||plugin.meta.id==='builder-mechanics-lab';
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {
