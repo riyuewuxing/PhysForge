@@ -119,6 +119,7 @@ export const SingleFileApp: React.FC = () => {
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const uplotWrapRef = useRef<HTMLDivElement | null>(null);
+  const circuitScopeEmptyRef = useRef<HTMLDivElement | null>(null);
   const uplotRef = useRef<uPlot | null>(null);
   const syncingPlotRef = useRef(false);
 
@@ -236,6 +237,9 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (circuitSlice && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
+      const empty = snaps.length < 2;
+      uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
+      if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
     }
   };
 
@@ -638,7 +642,10 @@ export const SingleFileApp: React.FC = () => {
                 ))}
               </select>
             </div>
-            <div ref={uplotWrapRef} data-testid="sf-uplot" />
+            <div className="relative">
+              <div ref={uplotWrapRef} data-testid="sf-uplot" />
+              {circuitSlice && <div ref={circuitScopeEmptyRef} data-testid="sf-scope-empty" className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            </div>
           </div>
         </section>
 

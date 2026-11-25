@@ -1402,6 +1402,10 @@ async function main() {
             const expectedI=tag==='diode'?1e-12*Math.expm1(u/.026):.25*Math.pow(u+1e-6,-.35)*u;
             if(Math.abs(5-10.5*i-u)>.008||Math.abs(expectedI-i)>.012)throw new Error('B2 nonlinear displayed KVL/law mismatch '+JSON.stringify({tag,u,i,expectedI}));
           }
+          if(tag==='rc_charge'||tag==='rc_discharge'||tag==='bridge'||tag==='mixed'){
+            await page.getByTestId('b2-scope-empty').waitFor({state:'visible'});
+            if(await page.getByTestId('uplot-container').isVisible())throw Error('B2 single sample shows spurious time axes');
+          }
           await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'.png')});
           if(tag==='rc_charge'||tag==='rc_discharge'){
             await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')==='capVoltage'&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')==='capCurrent'&&document.querySelector('[data-testid="floating-scope-dock"]')?.getAttribute('data-scope-units')==='separate');
@@ -1434,6 +1438,7 @@ async function main() {
               await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'_pause_failure.png')});
               throw Error('B2 pause alignment failed '+JSON.stringify(probe),{cause:error});
             }
+            if(await page.getByTestId('b2-scope-empty').isVisible()||!await page.getByTestId('uplot-container').isVisible())throw Error('B2 real sampled curve remains hidden');
             const x=JSON.parse(await page.getByTestId('simulation-canvas').getAttribute('data-b2-rendered')||'null');
             const charging=tag==='rc_charge',tau=charging?.5:.45,voltage=charging?10*(-Math.expm1(-x.t/tau)):10*Math.exp(-x.t/tau),current=charging?(10-voltage)/10:-voltage/9;
             if(Math.abs(x.capVoltage-voltage)>1e-8||Math.abs(x.capCurrent-current)>1e-8)throw new Error('B2 RC real rendered state differs from independent law '+JSON.stringify({tag,x,voltage,current}));
@@ -1565,6 +1570,9 @@ async function main() {
       await sf.goto(pathToFileURL(b2File).href);
       await sf.getByTestId('sf-canvas').waitFor({state:'visible'});
       await sf.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='capVoltage'&&document.querySelector('[data-testid="sf-uplot"]')?.getAttribute('data-scope-units')==='separate');
+      await sf.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      if(await sf.getByTestId('sf-uplot').isVisible())throw Error('B2 offline single sample shows spurious time axes');
+      await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_initial.png')});
       await sf.getByTestId('sf-play-pause').click();
       await sf.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.t>.35,null,{timeout:10000});
       await sf.getByTestId('sf-play-pause').click();
@@ -1593,6 +1601,7 @@ async function main() {
         return x;
       };
       const x=await pausedOfflineRC();
+      if(await sf.getByTestId('sf-scope-empty').isVisible()||!await sf.getByTestId('sf-uplot').isVisible())throw Error('B2 offline sampled curve remains hidden');
       await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_rc.png')});
       await sf.getByRole('button',{name:'单步',exact:true}).click();
       await sf.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.t>t,x.t);

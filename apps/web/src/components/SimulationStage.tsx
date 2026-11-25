@@ -254,6 +254,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     else if (!spatial) onMorphProgress?.(0);
   }, [showThree, view3dEnabled, plugin.meta.id, morphInThisView, spatial]);
   const uplotWrapRef = useRef<HTMLDivElement | null>(null);
+  const circuitScopeEmptyRef = useRef<HTMLDivElement | null>(null);
   const uplotInstanceRef = useRef<uPlot | null>(null);
   const lastPlotSyncMsRef = useRef(0);
 
@@ -743,6 +744,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     // Update only the instrument DOM, not React state on every animation frame.
     if (uplotWrapRef.current) {
       uplotWrapRef.current.dataset.sampleCount = String(snaps.length);
+      const emptyCircuit = circuit && latestRef.current.params.topology !== 'divider-lamp' && snaps.length < 2;
+      uplotWrapRef.current.style.visibility = emptyCircuit ? 'hidden' : '';
+      if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = emptyCircuit ? 'grid' : 'none';
       if (circuit) {
         uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
       }
@@ -1681,6 +1685,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : circuitScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {circuitScope && <div ref={circuitScopeEmptyRef} data-testid="b2-scope-empty" className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽

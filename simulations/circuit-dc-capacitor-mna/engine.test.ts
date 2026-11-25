@@ -233,3 +233,39 @@ describe('B2 non-divider independent physical limits', () => {
     expect(s.capEnergy).toBe(0);
   });
 });
+
+
+describe('B2 runtime conservation reports', () => {
+  it('checks RC charging, discharging and bridge transients and rejects corrupt currents', () => {
+    const rc:CircuitParams={...baseParams,topology:'rc-transient',emf:10,internalR:1,r1:9,capacitance:.05};
+    const initial=createInitialState(rc),charged=stepCircuit(initial,rc,.2).nextState;
+    const off={...rc,switchClosed:false};
+    const discharged=stepCircuit(charged,off,.08).nextState;
+    const bridge:CircuitParams={...baseParams,topology:'rc-bridge-charge',internalR:.5,sliderR:2};
+    const b0=createInitialState(bridge),changed={...bridge,sliderR:0};
+    const b1=stepCircuit(b0,changed,.1).nextState;
+    for(const [s,p] of [[charged,rc],[discharged,off],[b1,changed]] as const){
+      const reports=checkInvariants(s,s,p);
+      expect(reports.length).toBeGreaterThanOrEqual(3);
+      expect(reports.every(report=>report.passed)).toBe(true);
+      expect(checkInvariants({...s,capCurrent:s.capCurrent+.1},s,p).some(report=>!report.passed)).toBe(true);
+    }
+    expect(discharged.sourceCurrent).toBe(0);
+  });
+  it('checks nonlinear load law across control extremes and rejects a corrupted branch current', () => {
+    for(const emf of [0,1,5,12,24])for(const internalR of [.2,5])for(const sliderR of [0,.5,20])for(const switchClosed of [false,true]){
+      const p:CircuitParams={...baseParams,topology:'nonlinear-lamp-diode',emf,internalR,sliderR,switchClosed};
+      const s=createInitialState(p),reports=checkInvariants(s,s,p);
+      expect(reports).toHaveLength(4);
+      expect(reports.every(report=>report.passed)).toBe(true);
+      // Independent monotone scalar balance (not NR or MNA iteration output).
+      let lo=0,hi=emf;
+      for(let i=0;i<80;i++){
+        const u=(lo+hi)/2,load=switchClosed?1e-12*Math.expm1(u/.026):.25*Math.pow(u+1e-6,-.35)*u;
+        if((emf-u)/(internalR+sliderR)>load)lo=u;else hi=u;
+      }
+      expect(s.terminalVoltage).toBeCloseTo((lo+hi)/2,8);
+      expect(checkInvariants({...s,branchCurrent1:s.branchCurrent1+.1},s,p).some(report=>!report.passed)).toBe(true);
+    }
+  });
+});

@@ -401,5 +401,43 @@ export function checkInvariants(
       { name: '分压电路功率平衡', measuredError: powerError, tolerance: 1e-8, passed: powerError < 1e-8, unit: 'W' }
     ];
   }
+  const residual = (name: string, value: number, tolerance: number, unit: string): InvariantReport => {
+    const measuredError = Math.abs(value);
+    return { name, measuredError, tolerance, unit, passed: Number.isFinite(measuredError) && measuredError < tolerance };
+  };
+  if (params.topology === 'rc-transient') {
+    const i=state.capCurrent, u=state.capVoltage;
+    const r1=Math.max(params.r1,1e-4), r=params.switchClosed?Math.max(params.internalR,0):0;
+    const drive=params.switchClosed?params.emf:0;
+    const sourceI=state.sourceCurrent ?? NaN;
+    return [
+      residual('RC 回路 KVL',drive-u-i*(r+r1),1e-8,'V'),
+      residual('RC 电源支路 KCL',sourceI-(params.switchClosed?i:0),1e-9,'A'),
+      residual('RC 瞬时功率平衡',params.emf*sourceI-i*i*(r+r1)-u*i,1e-8,'W'),
+    ];
+  }
+  if (params.topology === 'rc-bridge-charge') {
+    const i=state.totalCurrent, il=state.branchCurrent1, ir=state.branchCurrent2, ic=state.capCurrent;
+    const r=Math.max(params.internalR,0), r1=Math.max(params.r1,1e-4), r2=Math.max(params.r2,1e-4), rp=Math.max(params.sliderR,0);
+    const ul=state.nodeVoltages[3]!, ur=state.nodeVoltages[4]!, itl=ul/r2, itr=ur/r2;
+    return [
+      residual('电桥源节点 KCL',i-il-ir,1e-9,'A'),
+      residual('电桥左中点 KCL',il-itl-ic,1e-9,'A'),
+      residual('电桥右中点 KCL',ir+ic-itr,1e-9,'A'),
+      residual('电桥电容端电压',ul-ur-state.capVoltage,1e-8,'V'),
+      residual('电桥瞬时功率平衡',params.emf*i-r*i*i-r1*il*il-rp*ir*ir-r2*(itl*itl+itr*itr)-state.capVoltage*ic,1e-8,'W'),
+    ];
+  }
+  if (params.topology === 'nonlinear-lamp-diode') {
+    const i=state.totalCurrent,u=state.terminalVoltage,r=Math.max(params.internalR,0)+Math.max(params.sliderR,0);
+    // The scene invariant checks the physical load law, not NR's iteration count.
+    const expected=params.switchClosed?1e-12*Math.expm1(u/.026):dividerLampCurrent(u);
+    return [
+      residual('非线性负载 KCL',i-state.branchCurrent1,1e-9,'A'),
+      residual('非线性回路 KVL',params.emf-i*r-u,1e-8,'V'),
+      residual('非线性器件伏安关系',state.branchCurrent1-expected,1e-9,'A'),
+      residual('非线性回路功率平衡',params.emf*i-r*i*i-state.outputPower,1e-8,'W'),
+    ];
+  }
   return [];
 }
