@@ -436,3 +436,8 @@ input[type="range"].pf-slider::-moz-range-thumb {
 [data-theme="projector"] [data-divider-palette="range"] { background:linear-gradient(90deg,#075985 0%,#475569 25%,#92400e 50%,#b91c1c 100%);box-shadow:none; }
 [data-theme="projector"] [data-divider-palette="zero"] { background:#075985;box-shadow:none; }
 [data-theme="projector"] [data-testid="b2-potential-scale"] { color:var(--pf-text); }
+
+/* H17: explicit paper surfaces for M02's real controls; never invert canvas colors. */
+[data-theme="projector"] [data-model-id="mech-dynamic-equilibrium"] [data-testid="right-control-panel"] select,
+[data-theme="projector"] [data-model-id="mech-dynamic-equilibrium"] [data-testid="right-control-panel"] label {background-color:var(--pf-surface-elevated);color:var(--pf-text);border-color:var(--pf-border);}
+[data-theme="projector"] [data-model-id="mech-dynamic-equilibrium"] [data-testid="right-control-panel"] [data-testid="equilibrium-no-solution"] {color:#9f1239;}

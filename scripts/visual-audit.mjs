@@ -466,6 +466,20 @@ async function auditM02Equilibrium(page,origin){
   const fixed=await read(),rx=4,ry=19.6-4*Math.sqrt(3),moment=1.2*(Math.sqrt(3)/2*ry-.5*rx);
   if(Math.abs(fixed.force2-8)>1e-10||Math.abs(fixed.reactionXN-rx)>1e-10||Math.abs(fixed.reactionYN-ry)>1e-10||Math.abs(fixed.supportMomentNm-moment)>1e-10||fixed.momentResidualNm>=1e-10||'minPullForceN'in fixed)throw Error('M02 fixed wrench '+JSON.stringify(fixed));
   await page.screenshot({path:path.join(OUT_DIR,'H16_M02_fixed_rod.png')});
+  // Directly measure the actual KaTeX content, not the clipped viewport.
+  const fixedOverflow=await page.locator('[data-testid="formula-card"] .pf-right-formula').evaluateAll(nodes=>nodes.map(n=>({id:n.parentElement.dataset.formulaId,available:n.clientWidth,required:n.scrollWidth})).filter(x=>x.required>x.available+1));
+  console.log('H17 M02 formula overflow '+JSON.stringify(fixedOverflow));
+  if(fixedOverflow.length)throw Error('M02 clipped symbolic formula '+JSON.stringify(fixedOverflow));
+  // Real drag against the rendered transform; no direct store or engine mutation.
+  const vp=JSON.parse(await canvas.getAttribute('data-equilibrium-viewport')),rect=await canvas.boundingBox();
+  if(!rect||!vp)throw Error('M02 missing actual viewport');
+  const pt=a=>{const rad=a*Math.PI/180,ppm=.24*Math.min(vp.width,vp.height)*vp.scale;return {x:rect.x+.45*vp.width+vp.offsetX-1.48*Math.cos(rad)*ppm,y:rect.y+.5*vp.height+vp.offsetY-1.48*Math.sin(rad)*ppm};};
+  const from=pt(60),to=pt(85);
+  await page.mouse.move(from.x,from.y);await page.mouse.down();await page.mouse.move(to.x,to.y,{steps:5});await page.mouse.up();await waitAngle(85);
+  const dragged=await read();if(dragged.force2!==8||dragged.netResidualN>=1e-10||Math.abs(dragged.reactionXN-8*Math.cos(85*Math.PI/180))>1e-10)throw Error('M02 actual handle '+JSON.stringify(dragged));
+  await page.screenshot({path:path.join(OUT_DIR,'H17_M02_fixed_drag.png')});
+  await selectPreset(page,'fixed-rod-support-moment',true);await waitAngle(60);
+
   await setAnalysis('angle-curve','angle-curve');
   await page.screenshot({path:path.join(OUT_DIR,'H16_M02_fixed_angle_curve.png')});
   console.log('H16 M02 online '+JSON.stringify({minimum,invalid,pulley,sphere,scanned,compression,tension,singular,fixed}));
