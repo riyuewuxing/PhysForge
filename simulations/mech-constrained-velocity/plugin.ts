@@ -110,7 +110,7 @@ function handle(s:ConstrainedVelocityState){
   const position=s.mode==='wedge-rod'?{x:A.x,y:D*Math.tan(a)}:A;
   return {origin,position};
 }
-export const mechConstrainedVelocityPlugin=defineSimulationPlugin<ConstrainedVelocityParams,ConstrainedVelocityState>({
+export const mechConstrainedVelocityPlugin=Object.assign(defineSimulationPlugin<ConstrainedVelocityParams,ConstrainedVelocityState>({
   meta:{id:'mech-constrained-velocity',title:'关联速度（绳拉船 / 靠墙杆 / 接触面分解）(M03)',textbookRef:'人教版 必修第二册 第五章 第1–2节',curriculumTags:['物理观念','科学思维'],difficulty:'高三一轮',version:'2.1.0'},
   defaultView:{scale:(p,v)=>initialCamera(p,v).scale,offsetRatioX:(p,v)=>initialCamera(p,v).offsetRatioX,offsetRatioY:(p,v)=>initialCamera(p,v).offsetRatioY},
   paramSchema,
@@ -177,5 +177,5 @@ export const mechConstrainedVelocityPlugin=defineSimulationPlugin<ConstrainedVel
     }
     resolveAndDrawLabels(ctx,labels,vp.width,vp.height);
   }
-});
+}),{fitConstrainedViewport,constrainedViewBounds});
 export default mechConstrainedVelocityPlugin;
