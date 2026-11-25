@@ -146,3 +146,18 @@ describe('H11 mode presentation and editable expression contract',()=>{
     expect(plugin.getControlHandles!(stepCustomOde(s,p,.02).nextState,p)).toEqual([]);
   });
 });
+
+
+describe('H11 reference trajectory beyond a single sample',()=>{
+  it('matches a harmonic analytic solution over 20 seconds and preserves energy',()=>{
+    const p=resolvePluginParams<CustomOdeParams>(builderCustomOdeLabPlugin.paramSchema,{template:'harmonic-custom',mass:2,stiffness:18,damping:0,driveAmp:0,initialPos:.7,initialVel:-.4});
+    let s=createInitialState(p);const e0=s.initialEnergy;
+    for(let i=0;i<4800;i++){s=stepCustomOde(s,p,1/240).nextState;const t=s.t;expect(Math.abs(s.x-(.7*Math.cos(3*t)-.4/3*Math.sin(3*t)))).toBeLessThan(2e-7);expect(Math.abs(computeObservables(s,p).energy!-e0)).toBeLessThan(1e-7);}
+  });
+  it('uses one continuous potential at the finite-core boundary and permits zero radial angular momentum',()=>{
+    const p=resolvePluginParams<CustomOdeParams>(builderCustomOdeLabPlugin.paramSchema,{template:'kepler-2d',mass:2,stiffness:6,initialPos:.4,initialVel:0});
+    let s=createInitialState(p),inside=false;
+    for(let i=0;i<240;i++){s=stepCustomOde(s,p,1/240).nextState;const o=computeObservables(s,p);inside||=o.insideCore===1;expect(o.angularMomentum).toBeCloseTo(0,12);expect(Number.isFinite(o.energy)).toBe(true);}
+    expect(inside).toBe(true);
+  });
+});

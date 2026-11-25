@@ -39,7 +39,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   const [showLiveSubstituted, setShowLiveSubstituted] = useState(false);
 
   const { coreFields, extraFields } = useMemo(() => {
-    if(plugin.getParamFields){const fields=plugin.getParamFields(params);const core=fields.filter(f=>f.kind!=='number').concat(fields.filter(f=>f.kind==='number').slice(0,3));const keys=new Set(core.map(f=>f.key));return {coreFields:core,extraFields:fields.filter(f=>!keys.has(f.key))};}
+    if(plugin.getParamFields){const fields=plugin.getParamFields(params);const core=[...fields.filter(f=>f.kind!=='number'),...fields.filter(f=>f.kind==='number').slice(0,3)];const keys=new Set(core.map(f=>f.key));return {coreFields:core,extraFields:fields.filter(f=>!keys.has(f.key))};}
     const circuit=plugin.meta.id==='builder-circuit-mna'||plugin.meta.id==='circuit-dc-capacitor-mna';
     const circuitFields:Record<string,string[]>={
       'divider-lamp':['emf','sliderR','internalR','topology'],

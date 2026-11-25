@@ -291,6 +291,42 @@ async function auditB4Analytic(page,origin){
   return {initial,atwood,terminal,slope0,slope,inelastic,cradle,spring0,spring};
 }
 
+async function auditB5Ode(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','builder-custom-ode-lab');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='builder-custom-ode-lab',null,{timeout:20000});
+  const canvas=page.getByTestId('simulation-canvas'),run=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-ode-rendered'));
+  const waitMode=async(template)=>page.waitForFunction(m=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-ode-rendered')||'null');return d?.template===m&&d.t===0;},template,{timeout:5000});
+  await selectPreset(page,'nonlinear-duffing-expr',true);await waitMode('custom-expr');
+  await page.getByTestId('ode-expression-input').fill('-4*x');
+  await page.getByTestId('ode-expression-apply').click();
+  await page.waitForFunction(()=>document.querySelector('[data-testid="formula-card"]')?.textContent?.includes('a = -4*x'));
+  const initial=await read();if(initial.solverValid!==1||'energy' in initial||'angularMomentum' in initial)throw Error('B5 custom false energy '+JSON.stringify(initial));
+  await page.getByTestId('ode-scope-empty').waitFor({state:'visible'});
+  await run.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-ode-rendered')||'null')?.t>.35,null,{timeout:10000});await run.click();
+  const harmonic=await read(),w=2;
+  if(Math.abs(harmonic.x-Math.cos(w*harmonic.t))>1e-7||Math.abs(harmonic.v+w*Math.sin(w*harmonic.t))>1e-7||Math.abs(harmonic.kineticEnergy-.5*harmonic.v**2)>1e-9)throw Error('B5 edited acceleration trajectory '+JSON.stringify(harmonic));
+  await page.screenshot({path:path.join(OUT_DIR,'H11_B5_custom_running.png')});
+  await page.getByTestId('ode-expression-input').fill('1/0');await page.getByTestId('ode-expression-apply').click();
+  await page.getByTestId('ode-invalid').waitFor({state:'visible'});
+  await run.click();await page.waitForTimeout(250);
+  const invalid=await read();if(invalid.t!==0||invalid.solverValid!==0)throw Error('B5 singular formula advanced '+JSON.stringify(invalid));
+  await page.screenshot({path:path.join(OUT_DIR,'H11_B5_invalid.png')});
+  await selectPreset(page,'lagrangian-driven-pendulum',true);await waitMode('lagrangian-pendulum');
+  await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('摆角')&&document.querySelector('[data-testid="scope-channel-b"]')?.textContent?.includes('角速度'));
+  const pend=await read();if(Math.abs(pend.energy-(.5*pend.omega**2+9.8*(1-Math.cos(pend.theta))))>1e-9)throw Error('B5 pendulum energy '+JSON.stringify(pend));
+  if(await page.getByTestId('ode-expression-input').count())throw Error('B5 pendulum shows arbitrary expression editor');
+  await page.screenshot({path:path.join(OUT_DIR,'H11_B5_pendulum_initial.png')});
+  await selectPreset(page,'kepler-elliptical-orbit',true);await waitMode('kepler-2d');
+  const orbit0=await read();
+  await run.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-ode-rendered')||'null')?.t>.5,null,{timeout:10000});await run.click();
+  const orbit=await read();if(Math.abs(orbit.energy-orbit0.energy)>1e-4||Math.abs(orbit.angularMomentum-orbit0.angularMomentum)>1e-8)throw Error('B5 orbital invariants '+JSON.stringify({orbit0,orbit}));
+  await page.screenshot({path:path.join(OUT_DIR,'H11_B5_orbit_running.png')});
+  console.log('H11 B5 online '+JSON.stringify({initial,harmonic,invalid,pend,orbit0,orbit}));
+  return {initial,harmonic,invalid,pend,orbit0,orbit};
+}
+
 async function runWaveBCoordinateAudit(page, origin) {
   const cases = [
     { id: 'em-induction-double-rod', name: 'E04 defaultView' },
@@ -1708,6 +1744,7 @@ async function main() {
     if (Math.abs(Number(await angleSlider.inputValue())-45)>5) throw new Error('Compton canvas handle does not follow momentum endpoint');
     await page.screenshot({path:path.join(OUT_DIR,'N01_06_compton_direct_drag.png')});
     const b4AnalyticReport=await auditB4Analytic(page,origin);
+    const b5OdeReport=await auditB5Ode(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -1856,7 +1893,21 @@ async function main() {
       if(b4Errors.length||b4Network.length)throw Error('B4 offline errors '+JSON.stringify({b4Errors,b4Network}));
       Object.assign(b4OfflineReport,{terminal,spring,collision,errors:b4Errors,network:b4Network});
     }finally{await b4Context.close();}
-    const summary = { b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const b5File=path.join(OUT_DIR,'H11_B5_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','builder-custom-ode-lab','--preset','nonlinear-duffing-expr','--out',b5File],{stdio:'inherit'});
+    const b5Context=await browser.newContext({viewport:VIEWPORT,offline:true});const b5Page=await b5Context.newPage(),b5Errors=[],b5Network=[],b5OfflineReport={};
+    b5Page.on('pageerror',e=>b5Errors.push(e.message));b5Page.on('console',m=>{if(m.type()==='error')b5Errors.push(m.text());});b5Page.on('request',r=>{if(/^https?:/.test(r.url()))b5Network.push(r.url());});
+    try{
+      await b5Page.goto(pathToFileURL(b5File).href);const canvas=b5Page.getByTestId('sf-canvas');const read=async()=>JSON.parse(await canvas.getAttribute('data-ode-rendered'));
+      await b5Page.getByTestId('sf-ode-expression-input').fill('-4*x');await b5Page.getByTestId('sf-ode-expression-apply').click();
+      await b5Page.getByRole('button',{name:'单步',exact:true}).click();await b5Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-ode-rendered')||'null')?.t>0);
+      const step=await read();if(Math.abs(step.t-1/60)>1e-10||Math.abs(step.x-Math.cos(2*step.t))>1e-7||Math.abs(step.v+2*Math.sin(2*step.t))>1e-7||'energy' in step)throw Error('B5 offline edited acceleration '+JSON.stringify(step));
+      await b5Page.getByRole('button',{name:'黑板深蓝'}).click();await b5Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');await b5Page.screenshot({path:path.join(OUT_DIR,'H11_B5_offline_custom_paper.png')});
+      await b5Page.getByTestId('sf-ode-expression-input').fill('sqrt(-1)');await b5Page.getByTestId('sf-ode-expression-apply').click();await b5Page.getByRole('button',{name:'单步',exact:true}).click();await b5Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-ode-rendered')||'null')?.solverValid===0);
+      const invalid=await read();if(invalid.t!==0)throw Error('B5 offline singular formula advanced');await b5Page.screenshot({path:path.join(OUT_DIR,'H11_B5_offline_invalid_paper.png')});
+      if(b5Errors.length||b5Network.length)throw Error('B5 offline errors '+JSON.stringify({b5Errors,b5Network}));Object.assign(b5OfflineReport,{step,invalid,errors:b5Errors,network:b5Network});
+    }finally{await b5Context.close();}
+    const summary = { b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

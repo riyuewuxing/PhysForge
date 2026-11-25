@@ -67,7 +67,7 @@ function modeChannels(p:CustomOdeParams){
 function modeFields(p:CustomOdeParams):readonly AnyParamFieldSpec[]{
   const pend=p.template==='lagrangian-pendulum',orbit=p.template==='kepler-2d',custom=p.template==='custom-expr';
   const keys=orbit?['template','stiffness','initialPos','initialVel','mass']:custom?['template','exprText','initialPos','initialVel','mass','stiffness','damping','driveAmp','driveOmega']:['template','stiffness','initialPos','initialVel','mass','damping','driveAmp','driveOmega'];
-  return keys.flatMap(key=>{
+  return keys.flatMap<AnyParamFieldSpec>(key=>{
     const field=paramSchema.find(f=>f.key===key);
     if(!field)return [];
     if(field.kind!=='number')return [field];
@@ -129,7 +129,7 @@ export const builderCustomOdeLabPlugin = defineSimulationPlugin<CustomOdeParams,
     label:params.template==='kepler-2d'?'初始半径':params.template==='lagrangian-pendulum'?'初始角相点':'初始相点',
     position:{x:state.x,y:params.template==='kepler-2d'?0:state.vx},
     handleKind:'point',color:'#38bdf8',
-    onDrag:wp=>params.template==='kepler-2d'?{initialPos:Math.round(Math.max(.4,Math.min(2.5,wp.x))*10)/10}:{initialPos:Math.round(Math.max(-2.5,Math.min(2.5,wp.x))*10)/10,initialVel:Math.round(Math.max(-4,Math.min(4,wp.y))*10)/10}
+    onDrag:(wp):Record<string,number>=>{if(params.template==='kepler-2d')return {initialPos:Math.round(Math.max(.4,Math.min(2.5,wp.x))*10)/10};return {initialPos:Math.round(Math.max(-2.5,Math.min(2.5,wp.x))*10)/10,initialVel:Math.round(Math.max(-4,Math.min(4,wp.y))*10)/10};}
   }]:[],
   sceneSerializer: {
     exportScene: (_s, params) => ({
