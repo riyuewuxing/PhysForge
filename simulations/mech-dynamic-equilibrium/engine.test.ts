@@ -144,3 +144,40 @@ it('shares physical geometry between handles, canvas vectors and diagram export'
   expect(mechDynamicEquilibriumPlugin.getForceVectors!(s,p)).toHaveLength(1);
   expect(mechDynamicEquilibriumPlugin.exportDiagramIR!(s,p).primitives.filter(x=>x.kind==='arrow')).toHaveLength(1);
 });
+
+describe('H16 independent rod equilibrium specification',()=>{
+  const p={mode:'hinged-rod' as EquilibriumParams['mode'],mass:2,baseAngleDeg:30,sweepAngleDeg:60,autoSweep:false,rodLengthM:1.2,pullForceN:8};
+  it('supports both compression and tension in an ideal hinged two-force rod',()=>{
+    const positive=solveEquilibriumAtAngle(p,60),negative=solveEquilibriumAtAngle(p,120),zero=solveEquilibriumAtAngle(p,90);
+    expect(computeObservables(positive).rodAxialForceN).toBeCloseTo(9.8,10);
+    expect(computeObservables(negative).rodAxialForceN).toBeCloseTo(-19.6,10);
+    expect(computeObservables(zero).rodAxialForceN).toBeCloseTo(0,10);
+    expect(positive.force2.mag).toBeCloseTo(19.6*Math.sqrt(3)/2,10);
+    expect(negative.force2.mag).toBeCloseTo(19.6*Math.sqrt(3),10);
+    expect(positive.netResidualN).toBeLessThan(1e-10);
+    expect(negative.netResidualN).toBeLessThan(1e-10);
+  });
+  it('rejects singular and impossible rope directions even though rod can push or pull',()=>{
+    const singular=solveEquilibriumAtAngle(p,150);
+    const invalid=solveEquilibriumAtAngle({...p,baseAngleDeg:60},135);
+    expect(singular.status).toBe('singular');
+    expect(invalid.status).toBe('infeasible');
+    expect(computeObservables(invalid)).not.toHaveProperty('force2');
+  });
+  it('minimizes hinged rod rope tension at the perpendicular direction',()=>{
+    const optimum=solveEquilibriumAtAngle(p,60);
+    expect(optimum.minPullForceN).toBeCloseTo(19.6*Math.cos(Math.PI/6),10);
+    for(const beta of [0,30,75,90,120,149])expect(solveEquilibriumAtAngle(p,beta).force2.mag).toBeGreaterThan(optimum.force2.mag);
+  });
+  it('balances a fixed support by both its arbitrary-direction resultant and independent moment',()=>{
+    const params={...p,mode:'fixed-rod' as EquilibriumParams['mode'],baseAngleDeg:30,pullForceN:8};
+    const s=solveEquilibriumAtAngle(params,60),o=computeObservables(s);
+    expect(s.force2.mag).toBeCloseTo(8,12);
+    expect(s.force1.x).toBeCloseTo(4,12);
+    expect(s.force1.y).toBeCloseTo(19.6-4*Math.sqrt(3),12);
+    expect(o.supportMomentNm).toBeCloseTo(1.2*(Math.sqrt(3)/2*(19.6-4*Math.sqrt(3))-.5*4),10);
+    expect(o.momentResidualNm).toBeLessThan(1e-10);
+    expect(o).not.toHaveProperty('minPullForceN');
+    expect(checkInvariants(s)).toHaveLength(2);
+  });
+});
