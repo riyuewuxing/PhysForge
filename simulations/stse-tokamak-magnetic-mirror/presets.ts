@@ -39,6 +39,7 @@ export const tokamakMirrorPresets: readonly PresetSpec<TokamakMirrorParams>[] = 
   {
     id: 'tokamak-helical-confinement',
     name: '托卡马克环向与极向场（单粒子示意）',
+    visibleLayers:['conductors','fieldLines3d','eventPins'],
     description: '在给定环向与极向外磁场中观察真实粒子轨迹与螺旋磁感线；有限时段未越过示意室壁不代表长期约束或真实聚变装置稳态',
     curriculumNotes: '选择性必修二 / 必修三 · 人造太阳托卡马克螺旋磁位形',
     params: {

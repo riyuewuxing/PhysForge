@@ -65,6 +65,7 @@ export function evaluateTokamakMirrorField(pos: Vec3, params: TokamakMirrorParam
 }
 
 export const TOKAMAK_MINOR_RADIUS_M=.55;
+export const FUSION_TRAIL_CAP=901;
 export function fusionMinorRadius(pos:Vec3,params:TokamakMirrorParams):number{
   return Math.hypot(Math.hypot(pos.x,pos.y)-Math.max(.8,params.majorRadiusM),pos.z);
 }
@@ -169,6 +170,9 @@ export function stepTokamakMirror(
   let lastB = state.bField;
 
   const events:PhysicsEvent[]=[];
+  const trail=[...state.trail];
+  const pushTrail=(p:Vec3)=>{const last=trail.at(-1);if(!last||Math.hypot(last.x-p.x,last.y-p.y,last.z-p.z)>1e-12)trail.push(p);if(trail.length>FUSION_TRAIL_CAP)trail.splice(0,trail.length-FUSION_TRAIL_CAP);};
+  let lastTrailT=state.t;
   let escapeEvent=state.escapeEvent,lastReflection=state.lastReflection;
   const advance=(p:ChargedParticleState,h:number)=>stepBorisPusher(p,fieldFn,qOverM,1,h);
   const boundary=(p:ChargedParticleState)=>fusionBoundaryDistance(p.position,params);
@@ -191,7 +195,7 @@ export function stepTokamakMirror(
           reflections++;
           lastReflection={id:'fusion-reflection',label:'沿局部磁场平行速度过零',time:hit.time,position:hit.state.position,
             metrics:{vParallel:parallel(hit.state),bracketWidth:hit.bracketWidth}};
-          events.push(lastReflection);
+          events.push(lastReflection);pushTrail(hit.state.position);lastTrailT=hit.time;
         }
         lastSign=sign;
       }
@@ -199,13 +203,15 @@ export function stepTokamakMirror(
         escaped=true;
         escapeEvent={id:'fusion-escape',label:params.mode==='tokamak'?'首次越过示意真空室边界':'首次穿过磁喉',time:exit.time,position:exit.state.position,
           metrics:{boundaryDistance:boundary(exit.state),bracketWidth:exit.bracketWidth}};
-        events.push(escapeEvent);
+        events.push(escapeEvent);pushTrail(exit.state.position);lastTrailT=exit.time;
       }
     }
     lastB = evaluateTokamakMirrorField(particle.position, params);
     const diag = computeMuAndKinetic(particle.velocity, lastB);
     lastMu = diag.mu;
     lastKe = diag.ke;
+    const sampleDt=Math.min(.003,.24/Math.max(1e-12,Math.abs(qOverM)*diag.bMag));
+    if(particle.t-lastTrailT>=sampleDt||particle.t>=endTime){pushTrail(particle.position);lastTrailT=particle.t;}
     if (state.mu0 > 1e-12 && !escaped) {
       const dev = Math.abs(diag.mu - state.mu0) / state.mu0;
       if (dev > maxMuDev) maxMuDev = dev;
@@ -228,7 +234,7 @@ export function stepTokamakMirror(
       reflectionCount: reflections,
       lastVzSign: lastSign,
       ...(escapeEvent?{escapeEvent}:{}),...(lastReflection?{lastReflection}:{}),
-      trail: [...state.trail,...events.map(e=>e.position!).filter((p):p is Vec3=>p.z!==undefined),particle.position].slice(-261)
+      trail
     },
     events
   };

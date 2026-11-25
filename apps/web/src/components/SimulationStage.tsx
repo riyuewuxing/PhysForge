@@ -50,6 +50,10 @@ function getDefaultScopeChannels(
     const b = channels.find(c => c.key === preferred[1])?.key;
     if (a && b) return [a, b];
   }
+  if(modelId==='stse-tokamak-magnetic-mirror'){
+    const pair=params.mode==='tokamak'?['bMagT','minorRadiusM']:['vParallel','vPerp'];
+    if(pair.every(k=>channels.some(c=>c.key===k)))return [pair[0]!,pair[1]!];
+  }
   if(modelId==='stse-em-devices-suite'){
     const preferred:Record<string,readonly [string,string]>={
       'velocity-selector':['selectedSpeed','particleSpeedMps'],
@@ -252,7 +256,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,plugin.meta.id==='stse-tokamak-magnetic-mirror'?params.mode:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -1110,7 +1114,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   );
 
   const deviceScope = plugin.meta.id === 'stse-em-devices-suite';
-  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field';
+  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror';
   const splitScopeUnits = heroScope && !!specA && !!specB && specA.unit !== specB.unit;
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {

@@ -5,9 +5,9 @@ const mirror = {
   mode: 'magnetic-mirror', b0Tesla: 2.5, mirrorLengthM: 1.2, coilHalfSpanM: 1.5,
   pitchAngleDeg: 52, speed0: 2, qOverM: 45, majorRadiusM: 1.4, safetyFactorQ: 2.4
 } as const satisfies TokamakMirrorParams;
-const layers = ['conductors', 'fieldLines3d'] as const;
+const layers = ['conductors', 'fieldLines3d','velocityComponents','eventPins'] as const;
 const camera = (morphT: 0 | 1) => ({
-  view3D: { azimuthRad: 0.5, polarRad: 1.05, target: [0, 0, 0] as [number, number, number], visibleHeight: 6.5, morphT },
+  view3D: { azimuthRad: 0.5, polarRad: 1.05, target: [0, 0, 0] as [number, number, number], visibleHeight: 5.2, morphT },
   durationMs: 750
 });
 

@@ -635,6 +635,59 @@ async function auditB1Physics(page,origin,screenshot){
   return report;
 }
 
+async function auditS01Physics(page,origin,screenshot){
+  const url=new URL(origin);url.searchParams.set('model','stse-tokamak-magnetic-mirror');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='stse-tokamak-magnetic-mirror');
+  const report=[];
+  for(const preset of ['mirror-trapped-bounce','mirror-loss-cone-escape','tokamak-helical-confinement']){
+    await selectPreset(page,preset);
+    const scope=page.getByTestId('floating-scope-dock');await scope.waitFor({state:'visible'});
+    const torus=preset==='tokamak-helical-confinement';
+    if(await scope.getAttribute('data-scope-units')!==(torus?'separate':'shared'))throw Error('S01 physical scope units wrong');
+    await page.getByTestId('btn-fullscreen-speech').click();
+    const toggle=page.getByTestId('btn-view-3d-fullscreen');
+    if((await toggle.textContent())?.includes('3D 空间'))await toggle.click();
+    const stage=page.getByTestId('three-stage-container');await stage.waitFor({state:'visible',timeout:20000});
+    await page.waitForFunction(()=>{const s=document.querySelector('[data-testid="three-stage-container"]');return s?.getAttribute('data-morph-t')==='0'&&JSON.parse(s.getAttribute('data-s01-rendered')||'null')?.t===0;},null,{timeout:15000});
+    const init=JSON.parse(await stage.getAttribute('data-s01-rendered')||'null');
+    if(torus){
+      const v=init.velocity,b=init.bField,speed=Math.hypot(v.x,v.y,v.z),cos=(v.x*b.x+v.y*b.y+v.z*b.z)/(speed*Math.hypot(b.x,b.y,b.z));
+      if(Math.abs(Math.acos(cos)*180/Math.PI-45)>1e-8)throw Error('S01 rendered initial pitch mismatch');
+    }
+    const play=page.locator('[data-testid="btn-play-pause"]:visible');
+    if(await play.getAttribute('aria-label')!=='运行')throw Error('S01 preset did not pause');
+    await play.click();
+    try{
+      await page.waitForFunction(p=>{
+        const el=document.querySelector('[data-testid="three-stage-container"]');
+        const state=JSON.parse(el?.getAttribute('data-s01-rendered')||'null');
+        return state&&(p==='mirror-trapped-bounce'?state.reflectionCount>=1:p==='mirror-loss-cone-escape'?state.escaped:state.t>.7);
+      },preset,{timeout:15000});
+    }catch(error){
+      if(screenshot)await screenshot('S01_failure_'+preset);
+      throw Error('S01 runtime '+preset+': '+(await stage.getAttribute('data-s01-rendered')),{cause:error});
+    }
+    if(await play.getAttribute('aria-label')==='暂停')await play.click();
+    const state=JSON.parse(await stage.getAttribute('data-s01-rendered')||'null');
+    if(preset==='mirror-trapped-bounce'){
+      if(state.escaped||!state.lastReflection||Math.abs(state.lastReflection.time-1.19564781)>.005||Math.abs(state.lastReflection.metrics.vParallel)>1e-5||state.muDev>.05)throw Error('S01 wrong actual reflection '+JSON.stringify(state));
+    }else if(preset==='mirror-loss-cone-escape'){
+      if(!state.escapeEvent||Math.abs(Math.abs(state.escapeEvent.position.z)-1.5)>1e-7)throw Error('S01 wrong localized throat crossing');
+    }
+    if(state.trailLength<30)throw Error('S01 missing actual trail samples');
+    const speed=Math.hypot(state.velocity.x,state.velocity.y,state.velocity.z),initialSpeed=Math.hypot(init.velocity.x,init.velocity.y,init.velocity.z);
+    if(Math.abs(speed-initialSpeed)>1e-8)throw Error('S01 magnetic speed drift');
+    report.push({preset,t:state.t,reflection:state.lastReflection,escape:state.escapeEvent,muDev:state.muDev,trail:state.trailLength});
+    if(screenshot)await screenshot('S01_'+preset+'_3d');
+    await toggle.click();await stage.waitFor({state:'detached',timeout:15000});
+    await page.getByTestId('simulation-canvas').waitFor({state:'visible'});
+    if(screenshot)await screenshot('S01_'+preset+'_flat');
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+  }
+  return report;
+}
+
 async function auditV3DeviceGeometry(page, origin, screenshot) {
   const url = new URL(origin);
   url.searchParams.set('model', 'stse-em-devices-suite');
@@ -1319,7 +1372,8 @@ async function main() {
     const v3StoryFormulaReport = await auditV3StoryAndFormula(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
     const v3DeviceReport = await auditV3DeviceGeometry(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
     const b1PhysicsReport=await auditB1Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
-    const summary = { report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const s01PhysicsReport=await auditS01Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
+    const summary = { s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

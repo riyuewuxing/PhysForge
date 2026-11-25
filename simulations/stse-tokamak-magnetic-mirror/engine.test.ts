@@ -1,6 +1,6 @@
 import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
-import { stseTokamakMagneticMirrorPlugin } from './plugin.js';
+import { stseTokamakMagneticMirrorPlugin,fusionVelocityVectors,fusionEventPoints } from './plugin.js';
 import { tokamakMirrorPresets } from './presets.js';
 import {
   createInitialState,
@@ -10,6 +10,7 @@ import {
   fusionSurfaceWinding,
   fusionParallelVelocity,
   TOKAMAK_MINOR_RADIUS_M,
+  FUSION_TRAIL_CAP,
   type TokamakMirrorParams
 } from './engine.js';
 
@@ -98,7 +99,7 @@ describe('stse-tokamak-magnetic-mirror physics invariants (S01)', () => {
     const p=getPreset(0),out=stepTokamakMirror(createInitialState(p),p,5);
     const reflections=out.events.filter(e=>e.id==='fusion-reflection');
     expect(reflections).toHaveLength(2);
-    // Independent scipy DOP853/RK45 direct Lorentz reference (rtol=1e-10,
+    // Independent scipy RK45 direct Lorentz reference (rtol=1e-10,
     // atol=1e-12, max step .001 s): 1.19564781, 3.58694310 s.
     // Event localization is 1e-10 s; physical integration error is separate.
     expect(Math.abs(reflections[0]!.time-1.19564781)).toBeLessThan(.005);
@@ -136,6 +137,26 @@ describe('stse-tokamak-magnetic-mirror physics invariants (S01)', () => {
     expect(q).toBeCloseTo(integral,11);
     const st=createInitialState(p);
     expect(fusionParallelVelocity(st.velocity,st.bField)).toBeCloseTo(p.speed0*Math.cos(p.pitchAngleDeg*Math.PI/180),12);
+  });
+  it('records bounded actual substep samples and shares the exact velocity sum and event point with DiagramIR',()=>{
+    const plugin=stseTokamakMagneticMirrorPlugin,p=getPreset(0);
+    const init=createInitialState(p),out=stepTokamakMirror(init,p,2).nextState;
+    expect(out.trail.length).toBeGreaterThan(100);expect(out.trail.length).toBeLessThanOrEqual(FUSION_TRAIL_CAP);
+    expect(out.trail.at(-1)).toEqual(out.position);
+    const [v,parallel,perp]=fusionVelocityVectors(out,p);
+    expect(parallel.a).toEqual(v.a);expect(parallel.b).toEqual(perp.a);expect(perp.b).toEqual(v.b);
+    const x=parallel.b.x-parallel.a.x,y=parallel.b.y-parallel.a.y,z=parallel.b.z-parallel.a.z;
+    expect(x*(perp.b.x-perp.a.x)+y*(perp.b.y-perp.a.y)+z*(perp.b.z-perp.a.z)).toBeCloseTo(0,12);
+    const event=fusionEventPoints(out,p)[0]!,ir=plugin.exportDiagramIR!(out,p);
+    expect(event.time).toBeCloseTo(out.lastReflection!.time,12);
+    expect(ir.primitives.some(a=>a.kind==='circle'&&a.cx===event.point.x&&a.cy===event.point.y&&!a.fill)).toBe(true);
+    expect(ir.primitives.some(a=>a.kind==='trajectory')).toBe(true);
+    expect(ir.viewBox.minX).toBeLessThan(event.point.x);expect(ir.viewBox.maxX).toBeGreaterThan(event.point.x);
+    for(const preset of tokamakMirrorPresets){
+      const params=resolvePluginParams(plugin.paramSchema,preset.params),initial=createInitialState(params);
+      const diagram=plugin.exportDiagramIR!(initial,params);
+      expect(diagram.primitives.some(a=>a.kind==='polyline')).toBe(true);
+    }
   });
   it('simulates tokamak helical confinement without NaN and handles dt=0', () => {
     const params = getPreset(2);
