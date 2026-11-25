@@ -560,6 +560,67 @@ async function auditM03Constraints(page,origin){
 
 
 
+
+async function auditM09Collision(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-collision-recoil');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-collision-recoil');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-collision-rendered'));
+  const check=(v,x,label,tol=1e-8)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M09 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode,key,value,first,second)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(([m,k,v])=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.collisionRendered||'null');return s?.mode===m&&s?.[k]===v&&s.t===0;},[mode,key,value]);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(([a,b])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b,[first,second]);
+  };
+  const sync=async()=>{
+    await page.waitForFunction(()=>{
+      const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.collisionRendered||'null'),t=Number(document.querySelector('[data-testid="collision-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);
+      return d&&Math.abs(d.t-t)<1e-10&&Math.abs(d.t-p)<1e-10;
+    },null,{timeout:5000});return read();
+  };
+  const runTo=async(t)=>{
+    await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.collisionRendered||'null')?.t>t,t,{timeout:15000});await play.click();return sync();
+  };
+  await select('oblique-equal-mass-elastic','collision-2d-oblique','impactParamB',.36,'px','py');
+  await page.getByTestId('collision-scope-empty').waitFor({state:'visible'});
+  const init=await read();check(init.y1,.36,'actual aiming offset');check(init.yCm,.18,'true initial CM y');
+  if(await page.getByTestId('floating-scope-dock').getAttribute('data-scope-units')!=='shared')throw Error('M09 momentum axes');
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_oblique_initial.png')});
+  const hit=await runTo(.75);check(hit.impactTime,.53,'oblique hit');check(hit.vx1,1.44,'vx1');check(hit.vy1,1.92,'vy1');check(hit.vx2,2.56,'vx2');check(hit.vy2,-1.92,'vy2');check(hit.yCm,.18,'CM y');check(hit.vDotProduct,0,'orthogonal nonzero velocities');check(hit.energyResidual,0,'elastic energy');
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_oblique_hit.png')});
+  await select('oblique-miss','collision-2d-oblique','impactParamB',.66,'px','py');
+  const miss=await runTo(.85);check(miss.collided,0,'actual miss');check(miss.y1,.66,'no clamp');check(miss.vx1,4,'unchanged velocity');
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_miss.png')});
+  await select('oblique-grazing','collision-2d-oblique','impactParamB',.6,'px','py');
+  const grazing=await runTo(.85);check(grazing.collided,0,'zero impulse grazing');check(grazing.vx1,4,'grazing velocity');
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_grazing.png')});
+  await select('bullet-hits-block','bullet-block','blockLength',1.8,'penetrationDist','heatLostJ');
+  if(await page.getByTestId('param-slider-impactParamB').count()||!await page.getByTestId('param-slider-dragForceF').count())throw Error('M09 bullet mode fields');
+  const embedded=await runTo(.8);check(embedded.phase,2,'common velocity');check(embedded.penetrationDist,1.28,'actual penetration');check(embedded.heatLostJ,12.8,'heat');check(embedded.relativeSpeed,0,'common speed');check(embedded.energyResidual,0,'energy');
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_block_common.png')});
+  await select('bullet-exit','bullet-block','blockLength',1,'penetrationDist','heatLostJ');
+  const exit=await runTo(.6);check(exit.phase,3,'first exit');check(exit.entryTime,.2375,'entry');check(exit.phaseEndTime,.2375+2/(8+Math.sqrt(14)),'exit time');check(exit.penetrationDist,1,'depth');check(exit.heatLostJ,10,'heat');check(exit.relativeSpeed,Math.sqrt(14),'exit relative speed');check(exit.energyResidual,0,'exit energy');
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_block_exit.png')});
+  await select('boat-person-recoil','boat-recoil','v10',2,'relativePosition','relativeSpeed');
+  if(await page.getByTestId('param-slider-dragForceF').count()||!await page.getByTestId('param-slider-blockLength').count())throw Error('M09 boat mode fields');
+  if(await page.getByTestId('floating-scope-dock').getAttribute('data-scope-units')!=='separate')throw Error('M09 boat independent axes');
+  const boat=await runTo(1.1),u=boat.t/2.7;
+  check(boat.relativePosition,-1.35+2.7*(u-Math.sin(2*Math.PI*u)/(2*Math.PI)),'smooth relative motion');check(boat.relativeSpeed,2*Math.sin(Math.PI*u)**2,'smooth relative speed');check(boat.xCm,-.3375,'fixed CM');check(boat.px,0,'zero total momentum');
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_boat_walk.png')});
+  const done=await runTo(2.85);check(done.phase,2,'boat finished');check(done.relativePosition,1.35,'span');check(done.relativeSpeed,0,'smooth stop');check(done.xCm,-.3375,'fixed CM after walk');
+  const theme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+  if(theme!=='projector'){if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');}
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_boat_stop_paper.png')});
+  if(theme!=='projector'){if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();}
+  await select('boat-zero-speed','boat-recoil','v10',0,'relativePosition','relativeSpeed');
+  const rest=await runTo(.35);check(rest.x1,-1.35,'zero walk x1');check(rest.x2,0,'zero walk x2');check(rest.relativeSpeed,0,'zero walk speed');if('walkDuration'in rest)throw Error('M09 fictitious duration at zero speed');
+  await page.screenshot({path:path.join(OUT_DIR,'H28_M09_boat_rest.png')});
+  const report={init,hit,miss,grazing,embedded,exit,boat,done,rest};console.log('H28 M09 online '+JSON.stringify(report));return report;
+}
+
 async function auditM08Spring(page,origin){
   const url=new URL(origin);url.searchParams.set('model','mech-spring-separation');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2308,6 +2369,7 @@ async function main() {
     const m06VerticalReport=await auditM06Vertical(page,origin);
     const m07TurntableReport=await auditM07Turntable(page,origin);
     const m08SpringReport=await auditM08Spring(page,origin);
+    const m09CollisionReport=await auditM09Collision(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2688,7 +2750,35 @@ async function main() {
       Object.assign(m08OfflineReport,{edge,early,errors:m08Errors,network:m08Network});
     }finally{await m08Context.close();}
 
-    const summary = { m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+
+    const m09File=path.join(OUT_DIR,'H28_M09_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-collision-recoil','--preset','oblique-equal-mass-elastic','--out',m09File],{stdio:'inherit'});
+    const m09Context=await browser.newContext({viewport:VIEWPORT,offline:true}),m09Page=await m09Context.newPage(),m09Errors=[],m09Network=[],m09OfflineReport={};
+    m09Page.on('pageerror',e=>m09Errors.push(e.message));m09Page.on('console',m=>{if(m.type()==='error')m09Errors.push(m.text());});m09Page.on('request',r=>{if(/^https?:/.test(r.url()))m09Network.push(r.url());});
+    try{
+      await m09Page.goto(pathToFileURL(m09File).href);
+      const canvas=m09Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-collision-rendered'));
+      await m09Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.collisionRendered||'null')?.mode==='collision-2d-oblique');
+      await m09Page.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      await m09Page.getByTestId('sf-play-pause').click();
+      await m09Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.collisionRendered||'null')?.t>.72);
+      await m09Page.getByTestId('sf-play-pause').click();
+      await m09Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]').dataset.collisionRendered),t=Number(document.querySelector('[data-testid="sf-summary-clock"]').dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]').dataset.lastSampleT);return Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;});
+      const hit=await read();if(Math.abs(hit.impactTime-.53)>1e-8||Math.abs(hit.vx1-1.44)>1e-8||Math.abs(hit.vDotProduct)>1e-8||Math.abs(hit.energyResidual)>1e-8)throw Error('M09 offline hit '+JSON.stringify(hit));
+      await m09Page.screenshot({path:path.join(OUT_DIR,'H28_M09_offline_oblique.png')});
+      await m09Page.locator('[data-preset-id="bullet-exit"]').click();
+      await m09Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.collisionRendered||'null');return s?.mode==='bullet-block'&&s.t===0;});
+      await m09Page.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-b"]')?.value==='heatLostJ'&&document.querySelector('[data-testid="sf-uplot"]')?.getAttribute('data-scope-units')==='separate');
+      if(await m09Page.getByTestId('sf-param-impactParamB').count()||!await m09Page.getByTestId('sf-param-dragForceF').count())throw Error('M09 offline mode fields');
+      await m09Page.getByTestId('sf-play-pause').click();await m09Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.collisionRendered||'null')?.t>.6);await m09Page.getByTestId('sf-play-pause').click();
+      const exit=await read();if(exit.phase!==3||Math.abs(exit.heatLostJ-10)>1e-8||Math.abs(exit.relativeSpeed-Math.sqrt(14))>1e-8)throw Error('M09 offline exit '+JSON.stringify(exit));
+      await m09Page.getByRole('button',{name:'黑板深蓝'}).click();await m09Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await m09Page.screenshot({path:path.join(OUT_DIR,'H28_M09_offline_exit_paper.png')});
+      if(m09Errors.length||m09Network.length)throw Error('M09 offline errors '+JSON.stringify({m09Errors,m09Network}));
+      Object.assign(m09OfflineReport,{hit,exit,errors:m09Errors,network:m09Network});
+    }finally{await m09Context.close();}
+
+    const summary = { m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
