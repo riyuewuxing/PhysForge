@@ -66,3 +66,49 @@ describe('mech-free-sandbox with lazy Rapier2D WASM', () => {
     }
   });
 });
+
+describe('H10 finite mechanical geometry and state isolation',()=>{
+  it('places the slider exactly against the ramp and the lower ramp endpoint on the tabletop',()=>{
+    for(const inclineDeg of [15,20,30,40,45]){
+      const p:SandboxParams={...baseParams,scenario:'incline-slide',inclineDeg};
+      const s=createInitialState(p);
+      const r=s.bodies.find(b=>b.id==='ramp')!,b=s.bodies.find(b=>b.id==='slider')!,f=s.bodies.find(b=>b.id==='floor')!;
+      const nx=-Math.sin(r.angle),ny=Math.cos(r.angle),tx=Math.cos(r.angle),ty=Math.sin(r.angle);
+      expect((b.x-r.x)*nx+(b.y-r.y)*ny-r.halfH-b.halfH).toBeCloseTo(0,12);
+      expect(r.y+r.halfW*ty+r.halfH*ny).toBeCloseTo(f.y+f.halfH,12);
+      expect(Math.abs((b.x-r.x)*tx+(b.y-r.y)*ty)+b.halfW).toBeLessThan(r.halfW);
+      expect(b.angle).toBe(r.angle);
+    }
+  });
+  it('stops the Atwood ideal trajectory at first pulley contact, emits exactly one event and preserves preimpact velocity',()=>{
+    for(const massRatio of [.5,2,3,5]){
+      const p:SandboxParams={...baseParams,scenario:'atwood-constrained',massRatio};
+      const s=createInitialState(p),a=Math.abs((massRatio-1)*p.gravity/(massRatio+1));
+      const up=s.bodies.find(b=>b.id===(massRatio>1?'atwood-left':'atwood-right'))!;
+      const pulley=s.bodies.find(b=>b.id==='pulley')!;
+      const gap=pulley.y-Math.sqrt(pulley.halfW**2-(Math.abs(up.x-pulley.x)-up.halfW)**2)-up.y-up.halfH;
+      const hit=Math.sqrt(2*gap/a);
+      const first=stepSandbox(s,p,2);
+      const b=first.nextState.bodies.find(b=>b.id===up.id)!;
+      expect(first.nextState.t).toBeCloseTo(hit,10);
+      expect(b.y).toBeCloseTo(up.y+gap,10);
+      expect(b.vy).toBeCloseTo(a*hit,10);
+      expect(first.events).toHaveLength(1);
+      expect(first.events[0]!.time).toBeCloseTo(hit,10);
+      const again=stepSandbox(first.nextState,p,1);
+      expect(again.nextState).toEqual(first.nextState);
+      expect(again.events).toHaveLength(0);
+    }
+  });
+  it('advancing a historic rigid-body state does not mutate or reuse the newer world',async()=>{
+    await ensureRapierLoaded();
+    const p={...baseParams,gravity:0};
+    const s=createInitialState(p);
+    const a=stepSandbox(s,p,1/120).nextState;
+    const b=stepSandbox(a,p,1/120).nextState;
+    const replay=stepSandbox(s,p,1/120).nextState;
+    expect(replay.bodies.find(x=>x.id==='b1')!.x).toBeCloseTo(a.bodies.find(x=>x.id==='b1')!.x,6);
+    expect(replay.bodies.find(x=>x.id==='b1')!.vx).toBeCloseTo(a.bodies.find(x=>x.id==='b1')!.vx,6);
+    expect(b.bodies.find(x=>x.id==='b1')!.x).toBeGreaterThan(a.bodies.find(x=>x.id==='b1')!.x);
+  });
+});
