@@ -39,4 +39,6 @@ export const equilibriumPresets: readonly PresetSpec<EquilibriumParams>[] = [
     }
   }
   ,{id:'hemisphere-suspended-rope',name:'4. 光滑半球悬绳：相似三角形',description:'固定悬点与球心，改变接触点；支持力不变，绳张力随绳长变化。',params:{mode:'hemisphere-suspension',mass:2,baseAngleDeg:37,sweepAngleDeg:35,radiusM:1,anchorHeightM:.6,autoSweep:true}}
+  ,{id:'hinged-rod-compression-tension',name:'5. 动杆：二力杆受压与受拉',description:'两端理想铰接；改变绳方向，观察杆轴力正负和垂直时的最小张力。',params:{mode:'hinged-rod',mass:2,baseAngleDeg:30,sweepAngleDeg:60,rodLengthM:1.2,autoSweep:true}}
+  ,{id:'fixed-rod-support-moment',name:'6. 定杆：任意方向支承力与力矩',description:'固定支座同时提供合力和力矩；绳张力为指定量，杆端受力不必沿杆。',params:{mode:'fixed-rod',mass:2,baseAngleDeg:30,sweepAngleDeg:60,rodLengthM:1.2,pullForceN:8,autoSweep:true}}
 ];
