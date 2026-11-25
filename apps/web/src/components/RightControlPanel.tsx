@@ -83,7 +83,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       coreFields: core,
       extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!valid||valid.includes(field.key)))
     };
-  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template,params.radiusM,params.anchorHeightM,params.systemMode]);
+  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template,params.radiusM,params.anchorHeightM,params.systemMode,params.trackMode]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
@@ -271,6 +271,8 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
           </section>
         ) : plugin.meta.id==='mech-block-conveyor' ? (
           <section data-testid="contact-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>{([['xBlock','物块位置 x₁','m'],['xCarrier','带/板材料位移 x₂','m'],['relativeDisplacement','有向相对位移','m'],['relativeScratch','累计相对滑移路程','m'],['scratchSpanM','材料划痕覆盖跨度','m'],['frictionOnBlockN','有向摩擦力 f₁','N'],['groundFrictionN','地面对板摩擦力','N'],['kineticEnergy','系统动能 Eₖ','J'],['potentialEnergy','有向重力势能 Eₚ','J'],['frictionHeat','界面生热 Q₁','J'],['groundHeat','地面生热 Q₂','J'],['carrierWork','外力/电机功 W','J']] as const).filter(([key])=>!['groundHeat','groundFrictionN'].includes(key)||params.systemMode==='plank').map(([key,label,unit])=>{const v=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'contact-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div className="text-[10px]">速度双曲线间阴影为可见采样区间的相对滑移路程近似；累计读数由物理事件积分给出。</div>{telemetry.observables.terminal===1&&<div className="font-semibold text-rose-500">已到承载面端点 · 接触模型结束</div>}</section>
+        ) : plugin.meta.id==='mech-vertical-circular' ? (
+          <section data-testid="vertical-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}><div className="font-semibold">{telemetry.observables.derailed===1?'自由抛体 · 约束已解除':params.trackMode==='light-rod'?'双边约束 · 向内为正':'单边接触'}</div>{([['normalForceN','实际约束力','N'],['speed','速率 v','m/s'],['kineticEnergy','动能 Eₖ','J'],['potentialEnergy','有向势能 Eₚ','J'],['energy','机械能 E','J'],['derailTime','脱轨时刻','s'],['derailAngleDeg','脱轨角','°']] as const).filter(([key])=>!key.startsWith('derail')||telemetry.observables.derailed===1).map(([key,label,unit])=>{const v=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'vertical-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div className="text-[10px]">外凸向外为正；内轨/杆向内为正，杆可为负。脱轨后不模拟再接触或落地。</div></section>
         ) : plugin.getTelemetryChannels ? (
           <section data-testid="ode-readouts" className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>{telemetry.observables.solverValid===0&&<div data-testid="ode-invalid" className="text-rose-400">方程未定义或积分失败 · 已停止</div>}{plugin.getTelemetryChannels(params).map(c=>{const v=telemetry.observables[c.key];return <div key={c.key} className="flex justify-between gap-2"><span>{c.label}</span><span className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+c.unit:'—'}</span></div>;})}</section>
         ) : hasEnergyMetrics ? (
@@ -291,7 +293,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
             <summary className="cursor-pointer list-none py-2 text-[11px] font-medium text-slate-400 hover:text-slate-200">更多参数与图层 <span className="float-right">⌄</span></summary>
             <div className="space-y-2.5 pb-3">
               {extraFields.map(renderField)}
-              {plugin.meta.id==='mech-block-conveyor'?<div className="space-y-1 text-xs">{telemetry.invariants.map(i=><div key={i.name} className={i.passed?'text-emerald-400':'text-rose-400'}>{i.name}：{i.measuredError.toExponential(2)} {i.unit??''}</div>)}</div>:<EnergyBarChart observables={telemetry.observables} invariants={telemetry.invariants} />}
+              {['mech-block-conveyor','mech-vertical-circular'].includes(plugin.meta.id)?<div className="space-y-1 text-xs">{telemetry.invariants.map(i=><div key={i.name} className={i.passed?'text-emerald-400':'text-rose-400'}>{i.name}：{i.measuredError.toExponential(2)} {i.unit??''}</div>)}</div>:<EnergyBarChart observables={telemetry.observables} invariants={telemetry.invariants} />}
               <div className="space-y-1 pt-1">
                 {plugin.layers.map((layer) => (
                   <label key={layer.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[11px] text-slate-300 hover:bg-white/5">

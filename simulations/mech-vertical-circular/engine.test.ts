@@ -88,3 +88,42 @@ describe('H25 M06 unilateral versus bilateral constraints',()=>{
     expect(negative).toBe(true);
   });
 });
+
+import { verticalDiagram,verticalForceVectors,fitVerticalViewport,verticalBoundsFit } from './diagram.js';
+describe('H25 M06 geometric and near-critical contracts',()=>{
+  const p:VerticalCircularParams={trackMode:'outer-dome',mass:1,radius:1.6,vLaunch:1,startAngleDeg:30};
+  it('distinguishes true roots arbitrarily close to the two tangencies in the tested range',()=>{
+    for(const [ratio,t] of [[2.00001,.7484224459293988],[4.99999,.8147199846567162]] as const){
+      const q={...p,trackMode:'inner-loop' as const,vLaunch:Math.sqrt(ratio*9.8*p.radius)};
+      const r=stepVerticalCircular(createInitialState(q),q,1);
+      expect(r.nextState.derailed).toBe(true);expect(r.events[0]?.time).toBeCloseTo(t,6);
+    }
+  });
+  it('uses a real upper semicircle and separate actual constrained/free trails in the common diagram',()=>{
+    const a=stepVerticalCircular(createInitialState(p),p,.2).nextState;
+    const b=stepVerticalCircular(a,p,.4).nextState;
+    const d=verticalDiagram(b,p);
+    expect(d.items.some(i=>i.role==='track'&&i.primitive.kind==='arc'&&i.primitive.startAngle===0&&i.primitive.endAngle===Math.PI)).toBe(true);
+    const contact=d.items.find(i=>i.role==='contact')?.primitive,free=d.items.find(i=>i.role==='free')?.primitive;
+    expect(contact?.kind).toBe('trajectory');expect(free?.kind).toBe('trajectory');
+    if(contact?.kind!=='trajectory'||free?.kind!=='trajectory')throw Error('missing trails');
+    expect(free.dashed).toBe(true);expect(contact.points.at(-1)).toEqual(free.points[0]);
+    expect(free.points.at(-1)).toEqual({x:b.x,y:b.y});
+    expect(verticalForceVectors(b,p).map(f=>f.id)).toEqual(['mg']);
+  });
+  it('keeps the signed compression direction in the force diagram',()=>{
+    const q={...p,trackMode:'light-rod' as const,vLaunch:Math.sqrt(4.5*9.8*p.radius)};
+    let s=createInitialState(q);
+    for(let i=0;i<1500&&s.normalForceN>=-.1;i++)s=stepVerticalCircular(s,q,1/240).nextState;
+    const f=verticalForceVectors(s,q).find(v=>v.id==='fn');
+    expect(s.normalForceN).toBeLessThan(-.1);expect(f).toBeDefined();
+    expect(f!.force.x*s.x+f!.force.y*s.y).toBeCloseTo(-s.normalForceN*q.radius,10);
+  });
+  it('keeps late projectile geometry visible without moving the physical ball',()=>{
+    const s=stepVerticalCircular(createInitialState({...p,vLaunch:5}),{...p,vLaunch:5},6).nextState;
+    const v={width:1280,height:720,dpr:1,scale:1,offsetX:0,offsetY:0},safe={left:30,right:960,top:28,bottom:550};
+    const fit=fitVerticalViewport(s,p,v,safe)!;
+    expect(verticalBoundsFit(s,p,fit,safe)).toBe(true);expect(fit.scale).toBeGreaterThan(.1);
+    expect(s.t).toBe(6);expect(s.trail.length).toBeLessThanOrEqual(1201);
+  });
+});
