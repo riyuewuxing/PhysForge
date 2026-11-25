@@ -640,6 +640,8 @@ export function computeObservables(
     rapierActive: state.rapierActive ? 1 : 0,
     ...(params.scenario==='atwood-constrained'?{atwoodAtLimit:state.terminal==='pulley-contact'?1:0}:{}),
     ...(params.scenario==='incline-slide'?{sliderY:firstDyn!.y,sliderVy:firstDyn!.vy,sliderAngle:firstDyn!.angle}:{}),
+    ...(params.scenario==='elastic-collision'?{secondaryVx:state.bodies.find(b=>b.id==='b2')!.vx}:{}),
+    ...(params.scenario==='newtons-cradle'?{lastBallVx:state.bodies.find(b=>b.id==='c3')!.vx}:{}),
     engineUnavailable:state.terminal==='engine-unavailable'?1:0
   };
 }

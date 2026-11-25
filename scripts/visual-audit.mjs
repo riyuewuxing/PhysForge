@@ -266,6 +266,14 @@ async function auditB4Analytic(page,origin){
   const slope=await runTo(.18),theta=Math.PI/6,acc=9.8*(Math.sin(theta)-.05*Math.cos(theta));
   if(slope.rapierActive!==1||Math.abs(slope.primaryVx*Math.cos(theta)-slope.sliderVy*Math.sin(theta)-acc*slope.t)>.06||Math.abs((slope.primaryX-slope0.primaryX)*Math.sin(theta)+(slope.sliderY-slope0.sliderY)*Math.cos(theta))>.01)throw Error('B4 incline independent contact dynamics '+JSON.stringify({slope0,slope}));
   await page.screenshot({path:path.join(OUT_DIR,'H10_B4_incline_running.png')});
+  await selectPreset(page,'inelastic-collision');await waitMode('elastic-collision');
+  const inelastic=await runTo(1.02),common=2.6/3;
+  if(inelastic.rapierActive!==1||Math.abs(inelastic.primaryVx-common)>.08||Math.abs(inelastic.secondaryVx-common)>.08||Math.abs(inelastic.totalMomentumX-2.6)>.01||Math.abs(inelastic.kineticEnergy-.5*3*common**2)/3.38>.02)throw Error('B4 independent inelastic collision '+JSON.stringify(inelastic));
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_inelastic_running.png')});
+  await selectPreset(page,'newtons-cradle-chain');await waitMode('newtons-cradle');
+  const cradle=await runTo(.8);
+  if(cradle.rapierActive!==1||Math.abs(cradle.totalMomentumX-3)>.01||Math.abs(cradle.kineticEnergy-4.5)/4.5>.02||Math.abs(cradle.lastBallVx-3)>.15)throw Error('B4 independent four-ball transfer '+JSON.stringify(cradle));
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_cradle_running.png')});
   await selectPreset(page,'ideal-spring-oscillator');
   await waitMode('spring-oscillator');
   const spring0=await read(),w=Math.sqrt(20);
@@ -279,8 +287,8 @@ async function auditB4Analytic(page,origin){
   await page.getByTestId('btn-auto-fbd').click();
   if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
   await page.screenshot({path:path.join(OUT_DIR,'H10_B4_spring_fbd.png')});
-  console.log('H10 B4 independent browser '+JSON.stringify({initial,atwood,terminal,slope0,slope,spring0,spring}));
-  return {initial,atwood,terminal,slope0,slope,spring0,spring};
+  console.log('H10 B4 independent browser '+JSON.stringify({initial,atwood,terminal,slope0,slope,inelastic,cradle,spring0,spring}));
+  return {initial,atwood,terminal,slope0,slope,inelastic,cradle,spring0,spring};
 }
 
 async function runWaveBCoordinateAudit(page, origin) {

@@ -141,3 +141,30 @@ describe('H10 contact and angular energy',()=>{
     expect(computeObservables(rotating,q).kineticEnergy!-computeObservables(balls,q).kineticEnergy!).toBeCloseTo(.25*b.mass*b.halfW**2*16,12);
   });
 });
+
+
+describe('H10 independent collision mode contracts',()=>{
+  it('matches unequal-mass head-on momentum and restitution laws before wall impact',async()=>{
+    await ensureRapierLoaded();
+    for(const restitution of [0,.5,1]){
+      const p:SandboxParams={...baseParams,massRatio:2,restitution,friction:0};
+      let s=createInitialState(p);
+      for(let i=0;i<240;i++)s=stepSandbox(s,p,1/240).nextState;
+      const obs=computeObservables(s,p),v1=2.6*(1-2*restitution)/3,v2=2.6*(1+restitution)/3;
+      expect(Math.abs(obs.primaryVx!-v1)).toBeLessThan(.08);
+      expect(Math.abs(obs.secondaryVx!-v2)).toBeLessThan(.08);
+      expect(Math.abs(obs.totalMomentumX!-2.6)).toBeLessThan(.01);
+      expect(Math.abs(obs.kineticEnergy!-(.5*v1*v1+v2*v2))/3.38).toBeLessThan(.02);
+    }
+  });
+  it('transfers momentum through the four separated equal disks without a fabricated pendulum constraint',async()=>{
+    await ensureRapierLoaded();
+    const p:SandboxParams={...baseParams,scenario:'newtons-cradle',restitution:1,friction:0};
+    let s=createInitialState(p);
+    for(let i=0;i<192;i++)s=stepSandbox(s,p,1/240).nextState;
+    const obs=computeObservables(s,p);
+    expect(Math.abs(obs.totalMomentumX!-3)).toBeLessThan(.01);
+    expect(Math.abs(obs.kineticEnergy!-4.5)/4.5).toBeLessThan(.02);
+    expect(Math.abs(obs.lastBallVx!-3)).toBeLessThan(.15);
+  });
+});
