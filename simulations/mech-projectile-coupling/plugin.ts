@@ -2,7 +2,7 @@ import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { projectileCouplingPresets } from './presets.js';
-import { projectileDiagram,projectileInitialView,fitProjectileViewport,projectileBoundsFit,vacuumFarthest,type ProjectileRole } from './diagram.js';
+import { projectileDiagram,projectileInitialView,fitProjectileViewport,projectileBoundsFit,vacuumFarthest,projectileVelocityScale,type ProjectileRole } from './diagram.js';
 import {
   checkInvariants,
   computeObservables,
@@ -149,18 +149,18 @@ export const mechProjectileCouplingPlugin = Object.assign(defineSimulationPlugin
   ],
   getControlHandles: (s, params) => {
     if(s.t>0||s.termination)return [];
-    const a = params.mode === 'incline-flat' ? 0 : degToRad(params.launchAngleDeg);
+    const a = params.mode === 'incline-flat' ? 0 : degToRad(params.launchAngleDeg),k=projectileVelocityScale(s,params);
     return [
       {
         id: 'launch-vec',
         label: `v₀=${params.v0.toFixed(1)}`,
-        position: { x: params.v0 * Math.cos(a) * 0.25, y: params.v0 * Math.sin(a) * 0.25 },
+        position: { x: params.v0 * Math.cos(a) * k, y: params.v0 * Math.sin(a) * k },
         origin: { x: 0, y: 0 },
         handleKind: 'vector',
         color: '#4ade80',
         showWhenIdle:false,
         onDrag: (wp) => ({
-          v0:Math.max(1,Math.min(14,Math.round((params.mode==='incline-flat'?Math.max(0,wp.x):Math.hypot(wp.x,wp.y))/.25*2)/2)),
+          v0:Math.max(1,Math.min(14,Math.round((params.mode==='incline-flat'?Math.max(0,wp.x):Math.hypot(wp.x,wp.y))/k*2)/2)),
           ...(params.mode==='incline-flat'?{}:{launchAngleDeg:Math.max(0,Math.min(85,Math.round(Math.atan2(Math.max(0,wp.y),Math.max(.001,wp.x))*180/Math.PI/5)*5))})
         })
       }

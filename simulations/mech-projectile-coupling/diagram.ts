@@ -57,6 +57,10 @@ export function projectileInitialView(p:ProjectileCouplingParams,v:{width:number
   const f=fitProjectileViewport(p,undefined,full,{left:28,right:v.width>=1200?v.width-300:v.width-28,top:30,bottom:v.height>=650?v.height-170:v.height-28})??full;
   return {scale:f.scale,offsetRatioX:f.offsetX/v.width,offsetRatioY:f.offsetY/v.height};
 }
+export function projectileVelocityScale(s:ProjectileCouplingState,p:ProjectileCouplingParams){
+  const b=projectileBounds(p,s),span=Math.max(.8,(b.maxX-b.minX)/1.34,(b.maxY-b.minY)/1.37);
+  return .13*span/Math.max(p.v0,Math.hypot(s.vx,s.vy),1e-12);
+}
 export function projectileDiagram(s:ProjectileCouplingState,p:ProjectileCouplingParams,options?:DiagramExportOptions){
   const items:ProjectileItem[]=[];
   const push=(primitive:DiagramPrimitive,role:ProjectileRole,layer:ProjectileItem['layer'])=>items.push({primitive,role,layer});
@@ -67,7 +71,7 @@ export function projectileDiagram(s:ProjectileCouplingState,p:ProjectileCoupling
   const P={x:s.x,y:s.y},O={x:0,y:0},a=alpha(p),th=theta(p),R=Math.max(.5,p.troughRadius);
   const v0={x:p.v0*Math.cos(a),y:p.v0*Math.sin(a)};
   // The same instantaneous velocity scale is used for v0 and v.
-  const k=.13*span/Math.max(p.v0,Math.hypot(s.vx,s.vy),1e-12);
+  const k=projectileVelocityScale(s,p);
   const arrow=(from:Point,v:Point,label:string)=>push({kind:'arrow',x1:from.x,y1:from.y,x2:from.x+k*v.x,y2:from.y+k*v.y,label},'velocity','construction');
   if(p.mode==='incline-flat'){
     const endX=Math.max(2*p.v0*p.v0*Math.tan(th)/g,s.x);

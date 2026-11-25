@@ -205,3 +205,15 @@ it('uses the signed normal distance and true perpendicular at the vacuum maximum
     expect(vacuumFarthest({...p,dragCoeff:.1})).toBeNull();
   }
 });
+
+it('anchors the editable initial speed handle to the actual initial arrow, not a fictitious screen point',()=>{
+  for(const mode of ['incline-flat','semicircle-trough','safety-envelope'] as const){
+    const p:ProjectileCouplingParams={mode,v0:6,launchAngleDeg:55,inclineDeg:37,troughRadius:2.5,dragCoeff:0,mass:1};
+    const s=createInitialState(p),h=mechProjectileCouplingPlugin.getControlHandles!(s,p)[0]!;
+    const arrow=projectileDiagram(s,p).items.map(x=>x.primitive).find(d=>d.kind==='arrow'&&d.label==='v₀');
+    if(arrow?.kind!=='arrow')throw Error('missing launch arrow');
+    expect(h.position.x).toBeCloseTo(arrow.x2,12);expect(h.position.y).toBeCloseTo(arrow.y2,12);
+    expect(h.onDrag(h.position).v0).toBe(p.v0);
+    expect(mechProjectileCouplingPlugin.getControlHandles!(stepProjectileCoupling(s,p,.01).nextState,p)).toHaveLength(0);
+  }
+});
