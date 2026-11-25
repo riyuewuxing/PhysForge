@@ -559,6 +559,67 @@ async function auditM03Constraints(page,origin){
 
 
 
+
+async function auditM08Spring(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-spring-separation');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-spring-separation');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),plot=page.getByTestId('uplot-container');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-spring-rendered'));
+  const check=(v,x,label,tol=1e-8)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M08 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,comp,force)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(([c,f])=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.springRendered||'null');return s?.initialComp===c&&s.externalForce===f&&s.t===0;},[comp,force]);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey==='normalForceN'&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey==='a1');
+  };
+  const sync=async()=>{
+    await page.waitForFunction(()=>{
+      const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.springRendered||'null'),t=Number(document.querySelector('[data-testid="spring-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);
+      return d&&Math.abs(d.t-t)<1e-10&&Math.abs(d.t-p)<1e-10;
+    },null,{timeout:5000});return read();
+  };
+  const runTo=async(t)=>{
+    await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.springRendered||'null')?.t>t,t,{timeout:15000});
+    await play.click();return sync();
+  };
+  await select('horizontal-natural-length-sep',1,0);
+  await page.getByTestId('spring-scope-empty').waitFor({state:'visible'});
+  const init=await read();check(init.normalForceN,20,'initial contact');check(init.a1,10,'common a1');check(init.a2,10,'common a2');
+  if(await page.getByTestId('floating-scope-dock').getAttribute('data-scope-units')!=='separate')throw Error('M08 independent N/acceleration axes');
+  await page.screenshot({path:path.join(OUT_DIR,'H27_M08_horizontal_initial.png')});
+  await page.getByTestId('btn-step').click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.springRendered||'null')?.t>0);
+  const step=await sync();check(step.t,1/60,'single step',1e-10);check(step.s1,-Math.cos(Math.sqrt(10)*step.t),'analytic coupled');check(step.gap,0,'contact gap');
+  const mid=await runTo(.68);check(mid.separationTime,Math.PI/(2*Math.sqrt(10)),'horizontal separation');check(mid.separationS,0,'natural length');check(mid.a2,0,'free second mass');check(mid.normalForceN,0,'free N');check(mid.energyResidual,0,'energy');
+  await page.screenshot({path:path.join(OUT_DIR,'H27_M08_horizontal_separated.png')});
+  await select('spring-zero-tangent',.98,0);
+  const tangent=await runTo(1.12);if(tangent.separated||tangent.gap!==0||tangent.normalForceN<0)throw Error('M08 zero tangency '+JSON.stringify(tangent));
+  await page.screenshot({path:path.join(OUT_DIR,'H27_M08_zero_tangent.png')});
+  await select('spring-initial-release',.4,30);
+  const immediate=await read();check(immediate.separated,1,'initial release');check(immediate.separationTime,0,'initial event');check(immediate.normalForceN,0,'initial force');
+  const open=await runTo(.22);if(open.gap<=0)throw Error('M08 failed to open initial contact');
+  check(open.energyResidual,0,'work ledger');
+  await page.screenshot({path:path.join(OUT_DIR,'H27_M08_initial_release.png')});
+  await select('external-pull-early-sep',1,12);
+  const early=await runTo(.65);check(early.separationTime,Math.acos(3/7)/Math.sqrt(10),'early time');check(early.separationS,-.2,'compressed release');check(early.externalWork,12*(early.s2+1),'external work');check(early.energyResidual,0,'work residual');
+  await page.screenshot({path:path.join(OUT_DIR,'H27_M08_early_pull.png')});
+  await select('spring-recontact',1.2,0);
+  const incline=await runTo(.95);check(incline.separationTime,.7375949353217733,'incline separation');check(incline.normalForceN,0,'incline free N');if(incline.gap<=0)throw Error('M08 incline gap');
+  await page.screenshot({path:path.join(OUT_DIR,'H27_M08_incline_free.png')});
+  await play.click();
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.springRendered||'null')?.terminal===1,null,{timeout:15000});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="topbar"] [data-testid="btn-play-pause"]')?.getAttribute('aria-label')==='运行');
+  const edge=await sync();check(edge.t,1.6103797957876382,'recontact time');check(edge.gap,0,'nonpenetration',1e-9);check(edge.relativeVelocity,-3.6548648049950065,'impact relative speed');check(edge.energyResidual,0,'impact energy before collision');
+  await page.getByTestId('btn-step').click();await page.evaluate(()=>new Promise(requestAnimationFrame));check((await read()).t,edge.t,'terminal single step',1e-10);
+  await page.screenshot({path:path.join(OUT_DIR,'H27_M08_recontact.png')});
+  const theme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+  if(theme!=='projector'){if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');}
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  await page.screenshot({path:path.join(OUT_DIR,'H27_M08_recontact_paper.png')});
+  if(theme!=='projector'){if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();}
+  const report={init,step,mid,tangent,immediate,open,early,incline,edge};console.log('H27 M08 online '+JSON.stringify(report));return report;
+}
+
 async function auditM07Turntable(page,origin){
   const url=new URL(origin);url.searchParams.set('model','mech-conical-turntable');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2246,6 +2307,7 @@ async function main() {
     const m05ContactReport=await auditM05Contact(page,origin);
     const m06VerticalReport=await auditM06Vertical(page,origin);
     const m07TurntableReport=await auditM07Turntable(page,origin);
+    const m08SpringReport=await auditM08Spring(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2597,7 +2659,36 @@ async function main() {
       Object.assign(m07OfflineReport,{edge,cone,errors:m07Errors,network:m07Network});
     }finally{await m07Context.close();}
 
-    const summary = { m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+
+    const m08File=path.join(OUT_DIR,'H27_M08_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-spring-separation','--preset','spring-recontact','--out',m08File],{stdio:'inherit'});
+    const m08Context=await browser.newContext({viewport:VIEWPORT,offline:true}),m08Page=await m08Context.newPage(),m08Errors=[],m08Network=[],m08OfflineReport={};
+    m08Page.on('pageerror',e=>m08Errors.push(e.message));m08Page.on('console',m=>{if(m.type()==='error')m08Errors.push(m.text());});m08Page.on('request',r=>{if(/^https?:/.test(r.url()))m08Network.push(r.url());});
+    try{
+      await m08Page.goto(pathToFileURL(m08File).href);
+      const canvas=m08Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-spring-rendered'));
+      await m08Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.springRendered||'null')?.initialComp===1.2);
+      await m08Page.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      await m08Page.getByTestId('sf-play-pause').click();
+      await m08Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.springRendered||'null')?.terminal===1);
+      await m08Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]').dataset.springRendered),t=Number(document.querySelector('[data-testid="sf-summary-clock"]').dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]').dataset.lastSampleT);return Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;});
+      const edge=await read();if(Math.abs(edge.t-1.6103797957876382)>1e-8||Math.abs(edge.gap)>1e-9||Math.abs(edge.energyResidual)>1e-8)throw Error('M08 offline recontact '+JSON.stringify(edge));
+      await m08Page.getByRole('button',{name:'单步',exact:true}).click();await m08Page.evaluate(()=>new Promise(requestAnimationFrame));if(Math.abs((await read()).t-edge.t)>1e-10)throw Error('M08 offline terminal single step');
+      await m08Page.screenshot({path:path.join(OUT_DIR,'H27_M08_offline_recontact.png')});
+      await m08Page.locator('[data-preset-id="external-pull-early-sep"]').click();
+      await m08Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.springRendered||'null');return s?.externalForce===12&&s.t===0;});
+      if(await m08Page.getByTestId('sf-uplot').getAttribute('data-scope-units')!=='separate')throw Error('M08 offline independent units');
+      await m08Page.getByTestId('sf-play-pause').click();
+      await m08Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.springRendered||'null')?.t>.7);
+      await m08Page.getByTestId('sf-play-pause').click();
+      const early=await read();if(Math.abs(early.separationS+.2)>1e-10||Math.abs(early.energyResidual)>1e-8||early.gap<=0)throw Error('M08 offline early release '+JSON.stringify(early));
+      await m08Page.getByRole('button',{name:'黑板深蓝'}).click();await m08Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await m08Page.screenshot({path:path.join(OUT_DIR,'H27_M08_offline_early_paper.png')});
+      if(m08Errors.length||m08Network.length)throw Error('M08 offline errors '+JSON.stringify({m08Errors,m08Network}));
+      Object.assign(m08OfflineReport,{edge,early,errors:m08Errors,network:m08Network});
+    }finally{await m08Context.close();}
+
+    const summary = { m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
