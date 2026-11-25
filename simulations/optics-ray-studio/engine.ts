@@ -45,7 +45,11 @@ export interface OpticsState {
   readonly interfaceReflectance?: number;
   readonly interfaceTransmittance?: number;
   readonly lateralShift: number;
-  readonly prismDeviationDeg: number;
+  readonly prismDeviationDeg?: number;
+  /** Air launch angle limit for a positive-index step fiber. */
+  readonly fiberAcceptanceDeg?: number;
+  /** No finite conjugate when the object lies at the front focus. */
+  readonly imageAtInfinity?: boolean;
   readonly fringeSpacingMm: number;
   readonly imageDistanceM?: number;
   readonly magnification?: number;
@@ -97,16 +101,57 @@ export function refractVector2D(
 }
 
 /** Fresnel power fractions, not electric-field amplitudes or display brightness. */
-export function fresnelPowerUnpolarized(n1: number, n2: number, angleDeg: number): { R: number; T: number } {
+function fresnelPolarized(n1: number, n2: number, angleDeg: number): { Rs: number; Rp: number } {
   const theta = degToRad(Math.max(0, Math.min(90, angleDeg)));
-  if (n1 === n2) return { R: 0, T: 1 };
+  if (n1 === n2) return { Rs: 0, Rp: 0 };
   const sinT = n1 / n2 * Math.sin(theta);
-  if (sinT >= 1 - 1e-12) return { R: 1, T: 0 };
+  if (sinT >= 1 - 1e-12) return { Rs: 1, Rp: 1 };
   const ci = Math.cos(theta), ct = Math.sqrt(Math.max(0, 1 - sinT * sinT));
   const rs = (n1 * ci - n2 * ct) / (n1 * ci + n2 * ct);
   const rp = (n2 * ci - n1 * ct) / (n2 * ci + n1 * ct);
-  const R = Math.max(0, Math.min(1, (rs * rs + rp * rp) / 2));
-  return { R, T: 1 - R };
+  return { Rs: Math.max(0,Math.min(1,rs*rs)), Rp: Math.max(0,Math.min(1,rp*rp)) };
+}
+export function fresnelPowerUnpolarized(n1: number, n2: number, angleDeg: number): { R: number; T: number } {
+  const {Rs,Rp}=fresnelPolarized(n1,n2,angleDeg),R=(Rs+Rp)/2;
+  return {R,T:1-R};
+}
+
+export function prismVertices(apexDeg:number): readonly Vec2[] {
+  const h=1.6,b=h*Math.tan(degToRad(apexDeg)/2);
+  return [vec2(0,.6*h),vec2(-b,-.4*h),vec2(b,-.4*h)];
+}
+const cross=(a:Vec2,b:Vec2)=>a.x*b.y-a.y*b.x;
+const minus=(a:Vec2,b:Vec2)=>vec2(a.x-b.x,a.y-b.y);
+const along=(a:Vec2,d:Vec2,t:number)=>vec2(a.x+d.x*t,a.y+d.y*t);
+/** First intersection with an actual finite prism face, never its infinite extension. */
+function nextPrismFace(origin:Vec2,dir:Vec2,vertices:readonly Vec2[]) {
+  let best:{point:Vec2;normal:Vec2;face:number;t:number}|undefined;
+  for(let i=0;i<vertices.length;i++){
+    const a=vertices[i]!,b=vertices[(i+1)%vertices.length]!,e=minus(b,a),d=cross(dir,e);
+    if(Math.abs(d)<1e-12)continue;
+    const q=minus(a,origin),t=cross(q,e)/d,u=cross(q,dir)/d;
+    if(t<=1e-9||u< -1e-10||u>1+1e-10||best&&t>=best.t)continue;
+    const len=Math.hypot(e.x,e.y);
+    best={point:along(origin,dir,t),normal:vec2(-e.y/len,e.x/len),face:i,t};
+  }
+  return best;
+}
+/** Illustrative normal Cauchy dispersion anchored at the yellow band, not material metrology. */
+export function prismIndex(nYellow:number,wavelengthNm:number):number {
+  const lambda=wavelengthNm/1000;
+  return nYellow+.016*(nYellow-1)*(1/(lambda*lambda)-1/(.589*.589));
+}
+/** Near-axis, equal-amplitude, coherent narrow slits; normalized intensity. */
+export function slitIntensity(yMm:number,spacingMm:number):number {
+  return Math.cos(Math.PI*yMm/spacingMm)**2;
+}
+/** Fixed physical y/x geometry; no unbounded drawing coordinates near focus. */
+function lensEndpoint(from:Vec2,slope:number,direction:1|-1,maxX:number):Vec2 {
+  const boundary=direction>0?2.8:-2.8;
+  let distance=Math.min(Math.abs(boundary-from.x),Math.abs(maxX-from.x));
+  const dy=slope*direction;
+  if(dy!==0)distance=Math.min(distance,((dy>0?1.85:-1.85)-from.y)/dy);
+  return vec2(from.x+direction*distance,from.y+dy*distance);
 }
 
 function solveRayTrace(
@@ -182,10 +227,14 @@ function solveRayTrace(
 
     const first = refractVector2D(incDir, vec2(0, 1), nAir, nGlass);
     const innerDir = first.refracted ?? first.reflected;
+    const {Rs,Rp}=fresnelPolarized(nAir,nGlass,radToDeg(theta1));
+    const internalPower=1-(Rs+Rp)/2;
+    // Direct, incoherent primary beam only; retain polarization through both faces.
+    const directPower=((1-Rs)**2+(1-Rp)**2)/2;
     // 玻璃内底面 y = -0.5 * d
     const tToBottom = d / Math.max(1e-9, -innerDir.y);
     const botHit = vec2(topHit.x + innerDir.x * tToBottom, -0.5 * d);
-    rays.push({ from: topHit, to: botHit, color: '#38bdf8', intensity: 0.95 });
+    rays.push({ from: topHit, to: botHit, color: '#38bdf8', intensity: internalPower });
 
     const second = refractVector2D(innerDir, vec2(0, 1), nGlass, nAir);
     const outDir = second.refracted ?? second.reflected;
@@ -193,7 +242,7 @@ function solveRayTrace(
       from: botHit,
       to: vec2(botHit.x + outDir.x * 1.8, botHit.y + outDir.y * 1.8),
       color: '#4ade80',
-      intensity: 0.95,
+      intensity: directPower,
       label: '出射光'
     });
 
@@ -214,202 +263,89 @@ function solveRayTrace(
   }
 
   if (params.sceneMode === 'prism-dispersion') {
-    const apexRad = degToRad(Math.max(20, Math.min(80, params.prismApexDeg)));
-    const halfA = 0.5 * apexRad;
-    const h = 1.6;
-    const halfBase = h * Math.tan(halfA);
-    const apex = vec2(0, 0.6 * h);
-    const leftBot = vec2(-halfBase, -0.4 * h);
-    const rightBot = vec2(halfBase, -0.4 * h);
-
-    // 左面外法向 (-cos(halfA), sin(halfA))，右面外法向 (+cos(halfA), sin(halfA))
-    const leftNormal = vec2(-Math.cos(halfA), Math.sin(halfA));
-    const rightNormal = vec2(Math.cos(halfA), Math.sin(halfA));
-
-    // 入射光水平（或按入射角微调）击中左腰中点附近
-    const hitLeft = vec2(0.5 * (apex.x + leftBot.x), 0.5 * (apex.y + leftBot.y));
-    const incAngleOnNormal = degToRad(Math.max(5, Math.min(80, activeAngleDeg)));
-    // 左腰沿面方向单位向量 (sin(halfA), cos(halfA))
-    const incDir = vec2(
-      Math.cos(halfA) * Math.cos(incAngleOnNormal) + Math.sin(halfA) * Math.sin(incAngleOnNormal),
-      -Math.sin(halfA) * Math.cos(incAngleOnNormal) + Math.cos(halfA) * Math.sin(incAngleOnNormal)
-    );
-    const incNorm = Math.hypot(incDir.x, incDir.y) || 1;
-    const dir0 = vec2(incDir.x / incNorm, incDir.y / incNorm);
-
-    rays.push({
-      from: vec2(hitLeft.x - dir0.x * 1.6, hitLeft.y - dir0.y * 1.6),
-      to: hitLeft,
-      color: '#f8fafc',
-      intensity: 1,
-      label: '复色白光'
-    });
-
-    const spectrum = [
-      { label: '红', deltaN: -0.025, color: '#ef4444' },
-      { label: '橙', deltaN: -0.012, color: '#f97316' },
-      { label: '黄', deltaN: 0.0, color: '#eab308' },
-      { label: '绿', deltaN: 0.014, color: '#22c55e' },
-      { label: '蓝', deltaN: 0.028, color: '#3b82f6' },
-      { label: '紫', deltaN: 0.042, color: '#a855f7' }
+    const vertices=prismVertices(params.prismApexDeg);
+    const halfA=degToRad(params.prismApexDeg)/2;
+    const apex=vertices[0]!,left=vertices[1]!;
+    const hitLeft=vec2((apex.x+left.x)/2,(apex.y+left.y)/2);
+    const leftNormal=vec2(-Math.cos(halfA),Math.sin(halfA));
+    const angle=degToRad(activeAngleDeg)-halfA,dir0=vec2(Math.cos(angle),Math.sin(angle));
+    rays.push({from:along(hitLeft,dir0,-1.6),to:hitLeft,color:'#f8fafc',intensity:1,label:'复色白光'});
+    const spectrum=[
+      {nm:650,color:'#ef4444'},{nm:610,color:'#f97316'},{nm:589,color:'#eab308'},
+      {nm:530,color:'#22c55e'},{nm:470,color:'#3b82f6'},{nm:420,color:'#a855f7'}
     ];
-
-    let yellowDeviation = 0;
-    for (const band of spectrum) {
-      const nBand = Math.max(1.05, params.n1 + band.deltaN);
-      const r1 = refractVector2D(dir0, leftNormal, 1.0, nBand);
-      const d1 = r1.refracted ?? r1.reflected;
-      // 与右腰线段求交: (hitLeft + t*d1 - apex) · rightNormal = 0
-      const denom = d1.x * rightNormal.x + d1.y * rightNormal.y;
-      if (Math.abs(denom) < 1e-6) continue;
-      const tHit =
-        ((apex.x - hitLeft.x) * rightNormal.x + (apex.y - hitLeft.y) * rightNormal.y) / denom;
-      if (tHit <= 0) continue;
-      const hitRight = vec2(hitLeft.x + tHit * d1.x, hitLeft.y + tHit * d1.y);
-      if (hitRight.y < rightBot.y) continue;
-
-      rays.push({ from: hitLeft, to: hitRight, color: band.color, intensity: 0.8 });
-      const r2 = refractVector2D(d1, rightNormal, nBand, 1.0);
-      const d2 = r2.refracted ?? r2.reflected;
-      rays.push({
-        from: hitRight,
-        to: vec2(hitRight.x + d2.x * 1.8, hitRight.y + d2.y * 1.8),
-        color: band.color,
-        intensity: 0.9
-      });
-
-      if (band.label === '黄') {
-        const dotVal = Math.max(-1, Math.min(1, dir0.x * d2.x + dir0.y * d2.y));
-        yellowDeviation = radToDeg(Math.acos(dotVal));
+    let yellowDeviation:number|undefined;
+    let anyTir=false;
+    for(const band of spectrum){
+      const n=prismIndex(params.n1,band.nm);
+      const entry=refractVector2D(dir0,leftNormal,1,n).refracted;
+      if(!entry)continue;
+      let origin=hitLeft,dir=entry,reflections=0;
+      // A bounded principal path: follow TIR; partial reflected branches are
+      // omitted. If the bounce budget ends, do not fabricate an outgoing ray.
+      for(let bounce=0;bounce<24;bounce++){
+        const face=nextPrismFace(origin,dir,vertices);
+        if(!face)break;
+        rays.push({from:origin,to:face.point,color:band.color,intensity:1,...(reflections?{label:'全反射光'}:{})});
+        const result=refractVector2D(dir,face.normal,n,1);
+        if(result.refracted){
+          rays.push({from:face.point,to:along(face.point,result.refracted,1.6),color:band.color,intensity:1,label:'出射光'});
+          if(band.nm===589&&face.face===2&&reflections===0)
+            yellowDeviation=radToDeg(Math.acos(Math.max(-1,Math.min(1,dir0.x*result.refracted.x+dir0.y*result.refracted.y))));
+          break;
+        }
+        anyTir=true;reflections++;origin=face.point;dir=result.reflected;
       }
     }
-
-    return {
-      activeAngleDeg,
-      rays,
-      criticalAngleDeg,
-      isTotalInternalReflection: false,
-      refractedAngleDeg: null,
-      lateralShift: 0,
-      prismDeviationDeg: yellowDeviation,
-      fringeSpacingMm: 0
-    };
+    return {activeAngleDeg,rays,criticalAngleDeg:null,isTotalInternalReflection:anyTir,refractedAngleDeg:null,
+      lateralShift:0,prismDeviationDeg:yellowDeviation,fringeSpacingMm:0};
   }
 
   if (params.sceneMode === 'optical-fiber') {
-    const hw = Math.max(0.15, params.fiberHalfWidth);
-    const nCore = Math.max(1.1, params.n1);
-    const nClad = Math.min(nCore - 0.01, Math.max(1.0, params.n2));
-    const critDeg = radToDeg(Math.asin(nClad / nCore));
-
-    const entryPt = vec2(-2.4, 0);
-    const thetaAir = degToRad(Math.max(1, Math.min(80, activeAngleDeg)));
-    const extDir = vec2(Math.cos(thetaAir), Math.sin(thetaAir));
-    rays.push({
-      from: vec2(entryPt.x - extDir.x * 0.9, entryPt.y - extDir.y * 0.9),
-      to: entryPt,
-      color: '#fbbf24',
-      intensity: 1
-    });
-
-    const entryRef = refractVector2D(extDir, vec2(-1, 0), 1.0, nCore);
-    let curPt = entryPt;
-    let curDir = entryRef.refracted ?? extDir;
-    let totalTir = true;
-
-    for (let bounce = 0; bounce < 6; bounce++) {
-      if (Math.abs(curDir.y) < 1e-6) {
-        rays.push({ from: curPt, to: vec2(2.4, curPt.y), color: '#38bdf8', intensity: 1 });
+    const hw=params.fiberHalfWidth,nCore=params.n1,nClad=params.n2;
+    const positive=nCore>nClad,critDeg=positive?radToDeg(Math.asin(nClad/nCore)):null;
+    const acceptance=positive?radToDeg(Math.asin(Math.min(1,Math.sqrt(nCore*nCore-nClad*nClad)))):undefined;
+    const thetaAir=degToRad(activeAngleDeg),entryPt=vec2(-2.4,0);
+    const extDir=vec2(Math.cos(thetaAir),Math.sin(thetaAir));
+    rays.push({from:along(entryPt,extDir,-.9),to:entryPt,color:'#fbbf24',intensity:1,label:'入射光'});
+    let origin=entryPt,dir=refractVector2D(extDir,vec2(-1,0),1,nCore).refracted??extDir;
+    const guided=acceptance!==undefined&&activeAngleDeg<=acceptance+1e-10;
+    for(let bounce=0;bounce<64;bounce++){
+      const wallY=dir.y>0?hw:-hw;
+      const wallT=Math.abs(dir.y)<1e-12?Infinity:(wallY-origin.y)/dir.y;
+      const endT=(2.4-origin.x)/dir.x;
+      if(endT<=wallT+1e-10){
+        const end=along(origin,dir,endT);
+        rays.push({from:origin,to:end,color:'#38bdf8',intensity:1});
+        const out=refractVector2D(dir,vec2(-1,0),nCore,1).refracted;
+        if(out)rays.push({from:end,to:along(end,out,.75),color:'#4ade80',intensity:1,label:'端面出射'});
         break;
       }
-      const targetY = curDir.y > 0 ? hw : -hw;
-      const tWall = (targetY - curPt.y) / curDir.y;
-      const nextX = curPt.x + tWall * curDir.x;
-      if (nextX > 2.4) {
-        const tEnd = (2.4 - curPt.x) / Math.max(curDir.x, 1e-6);
-        rays.push({
-          from: curPt,
-          to: vec2(2.4, curPt.y + tEnd * curDir.y),
-          color: '#38bdf8',
-          intensity: 0.95
-        });
+      const hit=along(origin,dir,wallT);
+      rays.push({from:origin,to:hit,color:'#38bdf8',intensity:1});
+      const result=refractVector2D(dir,vec2(0,dir.y>0?-1:1),nCore,nClad);
+      if(result.refracted){
+        rays.push({from:hit,to:along(hit,result.refracted,.9),color:'#f87171',intensity:1,label:'进入包层'});
         break;
       }
-      const hitPt = vec2(nextX, targetY);
-      rays.push({ from: curPt, to: hitPt, color: '#38bdf8', intensity: 0.95 });
-
-      const wallNormal = curDir.y > 0 ? vec2(0, -1) : vec2(0, 1);
-      const bounceRes = refractVector2D(curDir, wallNormal, nCore, nClad);
-      if (bounceRes.refracted !== null) {
-        totalTir = false;
-        rays.push({
-          from: hitPt,
-          to: vec2(hitPt.x + bounceRes.refracted.x * 1.1, hitPt.y + bounceRes.refracted.y * 1.1),
-          color: '#f87171',
-          intensity: 0.85,
-          label: '漏光'
-        });
-        break;
-      }
-      curPt = hitPt;
-      curDir = bounceRes.reflected;
+      origin=hit;dir=result.reflected;
     }
-
-    return {
-      activeAngleDeg,
-      rays,
-      criticalAngleDeg: critDeg,
-      isTotalInternalReflection: totalTir,
-      refractedAngleDeg: null,
-      lateralShift: 0,
-      prismDeviationDeg: 0,
-      fringeSpacingMm: 0
-    };
+    return {activeAngleDeg,rays,criticalAngleDeg:critDeg,isTotalInternalReflection:guided,
+      fiberAcceptanceDeg:acceptance,refractedAngleDeg:null,lateralShift:0,prismDeviationDeg:0,fringeSpacingMm:0};
   }
 
   if (params.sceneMode === 'thin-lens-imaging') {
-    const f = Math.max(0.25, params.focalLengthM ?? 0.65);
-    const u = Math.max(0.15, params.objectDistanceM ?? Math.max(0.25, params.slabThickness));
-    const hObj = 0.55;
-    const objTop = vec2(-u, hObj);
-    const denom = u - f;
-    const v = Math.abs(denom) > 1e-4 ? (u * f) / denom : 50;
-    const magnification = -v / u;
-    const hImg = hObj * magnification;
-    const imgTop = vec2(v, hImg);
-
-    // 三条特殊光线：1) 平行主光轴 -> 过右焦点；2) 过光心直线传播
-    const hitParallel = vec2(0, hObj);
-    rays.push({ from: objTop, to: hitParallel, color: '#fbbf24', intensity: 1, label: '平行光线' });
-    if (v > 0) {
-      rays.push({ from: hitParallel, to: imgTop, color: '#38bdf8', intensity: 0.95 });
-      rays.push({ from: objTop, to: imgTop, color: '#4ade80', intensity: 0.95, label: '过光心光线' });
-    } else {
-      // 虚像延长虚线（u < f）
-      const slopeF = -hObj / f;
-      rays.push({
-        from: hitParallel,
-        to: vec2(2.2, hObj + slopeF * 2.2),
-        color: '#38bdf8',
-        intensity: 0.9
-      });
-      rays.push({ from: hitParallel, to: imgTop, color: '#38bdf8', intensity: 0.55, dashed: true, label: '虚像反向延长线' });
-      rays.push({ from: objTop, to: vec2(2.2, (hObj / -u) * 2.2), color: '#4ade80', intensity: 0.9 });
-      rays.push({ from: objTop, to: imgTop, color: '#4ade80', intensity: 0.55, dashed: true });
+    const f=params.focalLengthM??.65,u=params.objectDistanceM??1.2,h=.55;
+    const object=vec2(-u,h),parallel=vec2(0,h),center=vec2(0,0);
+    const infinity=Math.abs(u-f)<=Number.EPSILON*Math.max(u,f)*4;
+    const v=infinity?undefined:u*f/(u-f),magnification=v===undefined?undefined:-v/u;
+    for(const [hit,slope,color] of [[parallel,-h/f,'#38bdf8'],[center,-h/u,'#4ade80']] as const){
+      rays.push({from:object,to:hit,color:'#fbbf24',intensity:1});
+      rays.push({from:hit,to:lensEndpoint(hit,slope,1,2.8),color,intensity:1});
+      if(v!==undefined&&v<0)rays.push({from:hit,to:lensEndpoint(hit,slope,-1,v),color,intensity:.6,dashed:true});
     }
-
-    return {
-      activeAngleDeg,
-      rays,
-      criticalAngleDeg: null,
-      isTotalInternalReflection: false,
-      refractedAngleDeg: null,
-      lateralShift: 0,
-      prismDeviationDeg: 0,
-      fringeSpacingMm: 0,
-      imageDistanceM: v,
-      magnification
-    };
+    return {activeAngleDeg,rays,criticalAngleDeg:null,isTotalInternalReflection:false,refractedAngleDeg:null,
+      lateralShift:0,prismDeviationDeg:0,fringeSpacingMm:0,imageDistanceM:v,magnification,imageAtInfinity:infinity};
   }
 
   // double-slit 双缝干涉解析：Delta x = (L * lambda) / d
@@ -489,10 +425,13 @@ export function computeObservables(state: OpticsState): Record<string, number> {
     refractedAngleDeg: state.refractedAngleDeg ?? 0,
     criticalAngleDeg: state.criticalAngleDeg ?? 0,
     lateralShift: state.lateralShift,
-    prismDeviationDeg: state.prismDeviationDeg,
+    ...(state.prismDeviationDeg===undefined?{}:{prismDeviationDeg:state.prismDeviationDeg}),
     fringeSpacingMm: state.fringeSpacingMm,
-    imageDistanceM: state.imageDistanceM ?? 0,
-    magnification: state.magnification ?? 0,
+    ...(state.imageDistanceM===undefined?{}:{imageDistanceM:state.imageDistanceM}),
+    ...(state.magnification===undefined?{}:{magnification:state.magnification}),
+    ...(state.imageAtInfinity===undefined?{}:{imageAtInfinity:state.imageAtInfinity?1:0}),
+    ...(state.fiberAcceptanceDeg===undefined?{}:{fiberAcceptanceDeg:state.fiberAcceptanceDeg}),
+    ...(state.fiberAcceptanceDeg!==undefined?{fiberGuided:state.isTotalInternalReflection?1:0}:{}),
     ...(state.interfaceReflectance !== undefined && state.interfaceTransmittance !== undefined
       ? { interfaceReflectance: state.interfaceReflectance, interfaceTransmittance: state.interfaceTransmittance } : {})
   };
@@ -515,6 +454,17 @@ export function checkInvariants(
         passed: err < 1e-6
       }
     ];
+  }
+  const residual=(name:string,value:number,tolerance:number):InvariantReport=>({name,measuredError:Math.abs(value),tolerance,passed:Number.isFinite(value)&&Math.abs(value)<tolerance});
+  if(params.sceneMode==='parallel-slab'){
+    const a=state.rays[0]!,b=state.rays.find(r=>r.label==='出射光')!;
+    const d1=minus(a.to,a.from),d2=minus(b.to,b.from);
+    return [residual('两平行界面出射方向',cross(d1,d2)/(Math.hypot(d1.x,d1.y)*Math.hypot(d2.x,d2.y)),1e-9),
+      residual('侧移量与光路垂距',Math.abs(cross(minus(b.from,a.from),d1))/Math.hypot(d1.x,d1.y)-state.lateralShift,1e-9)];
+  }
+  if(params.sceneMode==='thin-lens-imaging'){
+    const u=params.objectDistanceM??1.2,f=params.focalLengthM??.65;
+    return [residual('薄透镜高斯公式',1/u+(state.imageDistanceM===undefined?0:1/state.imageDistanceM)-1/f,1e-9)];
   }
   return [];
 }
