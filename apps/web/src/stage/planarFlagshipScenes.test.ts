@@ -248,6 +248,10 @@ describe('flagship physical display alignment', () => {
     driver.sync(state,p,layers);
     let glass=0;scene.traverse(o=>{if(o instanceof THREE.Mesh&&o.material instanceof THREE.MeshPhysicalMaterial)glass++;});
     expect(glass).toBe(0);expect(scene.getObjectByName('b1-bounded-field-tint')).toBeUndefined();
+    const particle=scene.getObjectByName('b1-particle-0') as THREE.Mesh;
+    expect(particle.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect((particle.material as THREE.MeshBasicMaterial).toneMapped).toBe(false);
+    expect(scene.getObjectByName('b1-particle-halo-0')).toBeDefined();
     let arrows=0;scene.traverse(o=>{if(o.name==='b1-field-arrow')arrows++;});
     expect(arrows).toBeGreaterThan(0);expect(arrows).toBeLessThanOrEqual(30);
     driver.dispose();

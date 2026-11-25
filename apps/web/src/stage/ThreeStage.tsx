@@ -295,7 +295,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const isDeviceStage=plugin.meta.id==='stse-em-devices-suite';
     const magneticBackdrop=isMag3d||isDeviceStage||isBoundedStage?createMagneticBackdrop():null;
     scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
-    scene.fog = new THREE.FogExp2('#0b0f17', 0.085);
+    // An abstract electromagnetic field has no atmospheric attenuation.
+    // Keep B1's small physical symbols legible when fitting a long trajectory.
+    scene.fog = isBoundedStage?null:new THREE.FogExp2('#0b0f17',0.085);
 
     const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
     const initialMagneticParams = isMag3d ? (getFrameParams?.() ?? params) as Magnetic3dParams : null;

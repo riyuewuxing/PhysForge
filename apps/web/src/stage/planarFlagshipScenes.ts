@@ -179,18 +179,21 @@ const TRAIL_CAP = 900;
 function trackVisual(track: ParticleTrack): TrackVisual {
   const root = new THREE.Group();
   const color = new THREE.Color(track.color);
-  const particle = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.1, roughness: 0.25 }));
+  const particle = new THREE.Mesh(new THREE.SphereGeometry(0.045,16,12),
+    new THREE.MeshBasicMaterial({color,toneMapped:false}));
+  // Primary/secondary beam identity is encoded by color, not scene lighting.
+  const particleHalo=new THREE.Mesh(new THREE.SphereGeometry(.065,12,8),new THREE.MeshBasicMaterial({color,toneMapped:false,transparent:true,opacity:.14,depthWrite:false,blending:THREE.AdditiveBlending}));
+  particle.name='b1-particle-'+track.id;particleHalo.name='b1-particle-halo-'+track.id;particle.add(particleHalo);
   const geometry = new THREE.BufferGeometry();
   const trailBuffer = new THREE.BufferAttribute(new Float32Array(TRAIL_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute('position', trailBuffer); geometry.setDrawRange(0, 0);
-  const trail = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95,toneMapped:false }));
+  const trail = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95,toneMapped:false,fog:false }));
   trail.frustumCulled = false;
   const points = Array.from({ length: 96 }, (_, i) => new THREE.Vector3(Math.cos(i * Math.PI / 48), Math.sin(i * Math.PI / 48), 0));
   const circle = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.45 }));
   // Boundary event positions are provided by the numerical solver, not inferred from the rendered trail.
-  const entry = new THREE.Mesh(new THREE.RingGeometry(0.055, 0.075, 24), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
-  const exit = new THREE.Mesh(new THREE.RingGeometry(0.075, 0.1, 24), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+  const entry = new THREE.Mesh(new THREE.RingGeometry(0.055, 0.075, 24), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide,toneMapped:false }));
+  const exit = new THREE.Mesh(new THREE.RingGeometry(0.075, 0.1, 24), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide,toneMapped:false }));
   entry.name = 'magnetic-entry-' + track.id; exit.name = 'magnetic-exit-' + track.id;
   entry.visible = exit.visible = false;
   const center=new THREE.Mesh(new THREE.SphereGeometry(0.025,12,8),magneticFluxMaterial(color.getHex()));
@@ -282,7 +285,7 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
               });
               const rim = new THREE.LineLoop(
                 new THREE.BufferGeometry().setFromPoints(rimPoints),
-                new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.82 })
+                new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.82,toneMapped:false })
               );
               rim.name = `b1-field-rim-${index}`;
               fixed.add(rim);
