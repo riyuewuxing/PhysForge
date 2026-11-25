@@ -84,7 +84,7 @@ function pairSample(body:readonly number[],p:ConicalTurntableParams,slip:boolean
 function coneSample(p:ConicalTurntableParams,t:number){
   const rotatingCone=p.omega>Math.sqrt(g/p.pendulumLength),L=p.pendulumLength;
   const cos=rotatingCone?g/(p.omega**2*L):1,theta=Math.acos(Math.min(1,cos)),R=L*Math.sin(theta),phi=rotatingCone?p.omega*t:0;
-  const a=v(R*Math.cos(phi),1.1-L*cos),va=v(-R*p.omega*Math.sin(phi),0);
+  const a=v(R*Math.cos(phi),1.1-L*cos),va=v(rotatingCone?-R*p.omega*Math.sin(phi):0,0);
   return {a,b:v(0,1.1),va,vb:v(0,0),fa:v(0,0),fb:v(0,0),direction:v(0,1),rA:R,rB:0,ropeLength:L,body:[],
     tensionN:rotatingCone?p.massA*p.omega**2*L:p.massA*g,frictionAN:0,frictionBN:0,
     staticTMin:0,staticTMax:0,kineticEnergy:.5*p.massA*(p.omega*R)**2,heat:0,diskWork:0,

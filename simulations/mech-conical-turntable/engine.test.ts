@@ -123,19 +123,64 @@ describe('H26 dynamic and energetic checks',()=>{
   });
   it('checks individual bounds, taut length and the disk work/heat ledger through actual sliding',()=>{
     const init=createInitialState(p);let s=init;let lastHeat=0;
-    for(let i=0;i<240&&!s.terminal;i++){
+    for(let i=0;i<480&&!s.terminal;i++){
       const out=stepConicalTurntable(s,p,1/240);s=out.nextState;
       expect(s.heat).toBeGreaterThanOrEqual(lastHeat-1e-12);lastHeat=s.heat;
       for(const report of checkInvariants(s,init,p))expect(report.passed,report.name+': '+report.measuredError).toBe(true);
       const ua={x:s.va.x+p.omega*s.a.y,y:s.va.y-p.omega*s.a.x},ub={x:s.vb.x+p.omega*s.b.y,y:s.vb.y-p.omega*s.b.x};
       expect(s.fa.x*ua.x+s.fa.y*ua.y).toBeLessThanOrEqual(1e-12);expect(s.fb.x*ub.x+s.fb.y*ub.y).toBeLessThanOrEqual(1e-12);
     }
-    expect(s.terminal).not.toBeNull();expect(s.heat).toBeGreaterThan(0);
+    expect(s.terminal).toBe('edge-a');expect(s.heat).toBeGreaterThan(0);
+    expect(s.t).toBeCloseTo(1.0328840546699718,7);expect(s.rA).toBeCloseTo(2.6,8);
+    expect(s.rB).toBeCloseTo(2.575707141884828,7);
+    expect(s.heat).toBeCloseTo(25.77890864,5);expect(s.diskWork).toBeCloseTo(31.11921034,5);
     const stop=stepConicalTurntable(s,p,1);expect(stop.nextState).toBe(s);expect(stop.advancedTime).toBe(0);
   });
   it('does not invent a rotating cone below the stationary-branch threshold',()=>{
     const q={...p,mode:'conical-pendulum' as const,omega:1},s=stepConicalTurntable(createInitialState(q),q,2).nextState;
     expect(s.rotatingCone).toBe(false);expect(s.rA).toBe(0);expect(s.tensionN).toBeCloseTo(q.massA*9.8,12);
     expect(s.a).toEqual({x:0,y:1.1-q.pendulumLength});expect(s.va.x).toBe(0);
+  });
+});
+
+import { staticFeasibility } from './engine.js';
+import { turntableDiagram,staticForceSweep,fitTurntableViewport,turntableBoundsFit } from './diagram.js';
+describe('H26 M07 linked diagrams and parameter-domain contracts',()=>{
+  const p:ConicalTurntableParams={mode:'turntable-dual',omega:1.7,massA:1,massB:2,radiusA:.6,radiusB:1.5,mu:.3,pendulumLength:1.5};
+  it('samples only the real piecewise-linear feasible domain and includes all three thresholds',()=>{
+    const q=staticForceSweep(p),c=computeCriticalOmegas(p);
+    for(const w of [c.omega1,c.omega2!,c.omega3!])expect(q.points.some(x=>Math.abs(x.w2-w*w)<1e-10)).toBe(true);
+    for(const x of q.points){expect(x.w2).toBeLessThanOrEqual(c.omega3!**2+1e-10);expect(x.fa+x.T).toBeCloseTo(p.massA*p.radiusA*x.w2,10);expect(x.fb+x.T).toBeCloseTo(p.massB*p.radiusB*x.w2,10);}
+    expect(q.points.at(-1)?.fa).toBeCloseTo(-p.mu*p.massA*9.8,10);
+  });
+  it('checks both static inequalities across reversed radii, masses and zero friction',()=>{
+    for(const mA of [.5,1,5])for(const mB of [.5,2,5])for(const rA of [.2,1.2])for(const rB of [.8,2.4])for(const mu of [0,.3,.8])for(const w of [0,1,3,6]){
+      const q={...p,massA:mA,massB:mB,radiusA:rA,radiusB:rB,mu,omega:w},f=staticFeasibility(q),s=createInitialState(q);
+      const D=Math.abs(mB*rB-mA*rA),feasible=D*w*w<=mu*9.8*(mA+mB)+1e-10;
+      expect(f.feasible).toBe(feasible);expect(s.slippingOut).toBe(!feasible);
+      if(feasible){
+        expect(Math.abs(s.frictionAN)).toBeLessThanOrEqual(mu*mA*9.8+1e-9);expect(Math.abs(s.frictionBN)).toBeLessThanOrEqual(mu*mB*9.8+1e-9);
+        expect(s.frictionAN+s.tensionN).toBeCloseTo(mA*w*w*rA,9);expect(s.frictionBN+s.tensionN).toBeCloseTo(mB*w*w*rB,9);
+      }
+    }
+  });
+  it('uses identical actual moving A/B and fixed disk geometry in Canvas/IR',()=>{
+    const q={...p,omega:3.2},s=stepConicalTurntable(createInitialState(q),q,.6).nextState,d=turntableDiagram(s,q);
+    expect(s.a.x).toBeCloseTo(.75875488,7);expect(s.a.y).toBeCloseTo(.14791157,7);
+    expect(s.b.x).toBeCloseTo(.04024062,7);expect(s.b.y).toBeCloseTo(2.12116707,7);
+    const rope=d.items.find(i=>i.role==='rope')?.primitive;
+    expect(rope).toMatchObject({kind:'line',x1:s.a.x,y1:s.a.y,x2:s.b.x,y2:s.b.y});
+    expect(d.items.find(i=>i.role==='disk')?.primitive).toMatchObject({kind:'circle',r:2.6});
+    const ir=mechConicalTurntablePlugin.exportDiagramIR!(s,q);
+    expect(ir.primitives).toContainEqual(rope);
+    const v={width:1440,height:900,dpr:1,scale:1,offsetX:0,offsetY:0},safe={left:28,right:1120,top:28,bottom:720};
+    const fit=fitTurntableViewport(s,q,v,safe)!;expect(turntableBoundsFit(s,q,fit,safe)).toBe(true);
+  });
+  it('cone linked top view uses the actual 3D radius while side projection preserves the real bob',()=>{
+    const q={...p,mode:'conical-pendulum' as const,omega:3.6},s=stepConicalTurntable(createInitialState(q),q,Math.PI/(2*q.omega)).nextState,d=turntableDiagram(s,q);
+    expect(d.items.find(i=>i.role==='bob')?.primitive).toMatchObject({kind:'circle',cx:s.a.x,cy:s.a.y});
+    expect(d.items.find(i=>i.role==='orbit')?.primitive).toMatchObject({kind:'circle',r:s.rA});
+    expect(d.items.some(i=>i.role==='top-bob')).toBe(true);
+    expect(d.items.some(i=>i.role==='disk')).toBe(false);
   });
 });
