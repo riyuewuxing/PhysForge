@@ -230,6 +230,52 @@ describe('em-bounded-magnetic-field engine', () => {
     expect(computeObservables(s,p).vDriftX).toBe(0);
   });
 
+  it('matches exact E-only acceleration and the small-B limit without a spurious drift',()=>{
+    const p:BoundedMagneticParams={...baseParams,mode:'crossed-eb',electricFieldY:4,magneticFieldZ:0};
+    const init=createInitialState(p),s=stepBoundedMagnetic(init,p,.75).nextState;
+    const q=s.particles[0]!.state;
+    expect(q.position.x).toBeCloseTo(1.5,12);
+    expect(q.position.y).toBeCloseTo(1.125,12);
+    expect(q.velocity.y).toBeCloseTo(3,12);
+    expect(checkInvariants(s,init,p)[0]?.passed).toBe(true);
+    const tiny={...p,magneticFieldZ:1e-12};
+    const v=stepBoundedMagnetic(createInitialState(tiny),tiny,.75).nextState.particles[0]!.state;
+    expect(v.position.x).toBeCloseTo(q.position.x,10);
+    expect(v.position.y).toBeCloseTo(q.position.y,10);
+  });
+  it('distinguishes selected velocity from magnetic force cancellation for either charge',()=>{
+    for(const charge of [-1,1]){
+      const p:BoundedMagneticParams={...baseParams,mode:'crossed-eb',charge,electricFieldY:4};
+      const init=createInitialState(p),s=stepBoundedMagnetic(init,p,10).nextState;
+      const q=s.particles[0]!.state;
+      expect(q.position.x).toBeCloseTo(20,10);
+      expect(q.position.y).toBeCloseTo(0,10);
+      expect(q.velocity.x).toBeCloseTo(2,10);
+      expect(computeObservables(s,p).larmorRadius).toBeCloseTo(0,10);
+      expect(checkInvariants(s,init,p)[0]?.passed).toBe(true);
+    }
+  });
+  it('does not confuse an entry-face contact with the later exit through another rectangle face',()=>{
+    const p:BoundedMagneticParams={...baseParams,mode:'rectangular',charge:0,fieldScale:1,launchAngleDeg:45};
+    const seed=createInitialState(p),tr=seed.particles[0]!;
+    const initial={...seed,particles:[{...tr,inField:true,hasEntered:true,entryTime:0,entryPoint:{x:0,y:0},state:{...tr.state,position:{x:0,y:0,z:0}},trail:[{x:0,y:0}]}]};
+    const out=stepBoundedMagnetic(initial,p,1);
+    expect(out.events).toHaveLength(1);
+    expect(out.nextState.particles[0]!.exitTime).toBeCloseTo(.8/Math.sqrt(2),8);
+    expect(out.nextState.particles[0]!.state.position.x).toBeCloseTo(Math.sqrt(2),10);
+    expect(out.nextState.particles[0]!.state.position.y).toBeCloseTo(Math.sqrt(2),10);
+  });
+  it('detects a circular same-side traversal at high speed without fixed probe spacing',()=>{
+    const p:BoundedMagneticParams={...baseParams,mode:'circular',charge:0,fieldScale:1};
+    const seed=createInitialState(p),tr=seed.particles[0]!;
+    const initial={...seed,particles:[{...tr,state:{...tr.state,position:{x:-2,y:.9999,z:0}},trail:[{x:-2,y:.9999}]}]};
+    const out=stepBoundedMagnetic(initial,p,2),halfChord=Math.sqrt(1-.9999**2);
+    expect(out.events).toHaveLength(2);
+    expect(out.nextState.particles[0]!.entryTime).toBeCloseTo((2-halfChord)/2,8);
+    expect(out.nextState.particles[0]!.exitTime).toBeCloseTo((2+halfChord)/2,8);
+    expect(out.nextState.particles[0]!.state.position.x).toBeCloseTo(2,10);
+  });
+
   it('handles zero B, zero q, zero v0, and dt=0 without NaN or Infinity', () => {
     const cases: BoundedMagneticParams[] = [
       { ...baseParams, magneticFieldZ: 0 },
