@@ -493,7 +493,26 @@ async function auditM03Constraints(page,origin){
   const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
   const read=async()=>JSON.parse(await canvas.getAttribute('data-constrained-rendered'));
   const waitMode=async(mode)=>page.waitForFunction(mode=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null');return d?.mode===mode&&d.t===0;},mode);
-  const run=async()=>{await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null')?.t>.22);await play.click();return read();};
+  const run=async()=>{
+    const expand=page.getByTestId('btn-expand-oscilloscope');
+    if(await expand.isVisible())await expand.click();
+    await play.click();
+    await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.constrainedRendered||'null')?.t>.22);
+    await play.click();
+    const samples=await page.evaluate(async()=>{
+      const result=[];
+      for(let i=0;i<8;i++){
+        await new Promise(requestAnimationFrame);
+        const state=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]').dataset.constrainedRendered);
+        const timeText=document.querySelector('[data-testid="topbar"]').innerText.match(/t\s*=\s*([\d.]+)\s*s/);
+        result.push({t:state.t,clock:Number(timeText?.[1]),plot:Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT)});
+      }
+      return result;
+    });
+    console.log('H19 M03 paused snapshots '+JSON.stringify(samples));
+    if(samples.some(x=>!Number.isFinite(x.clock)||!Number.isFinite(x.plot)||Math.abs(x.t-x.clock)>.00501||Math.abs(x.t-x.plot)>1e-10))throw Error('M03 paused snapshot mismatch '+JSON.stringify(samples));
+    return read();
+  };
   const check=(v,x,name,tol=1e-8)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M03 '+name+' '+JSON.stringify({v,x}));};
   const residual=d=>{check(d.projSpeedDiff,0,'projection',1e-10);check(d.geometryResidualM,0,'geometry',1e-10);};
   await selectPreset(page,'ladder-sliding-wall',true);await waitMode('ladder-wall');
