@@ -83,3 +83,58 @@ describe('astro-orbital-mechanics ScaleContext & symplectic invariants (M10)', (
     expect(stepAstroOrbital(s0, p0, 0).nextState).toEqual(s0);
   });
 });
+
+describe('M10 physically independent regression gates',()=>{
+  it('emits every complete .55-time sector, at the actual time boundary, even across one large step',()=>{
+    const p={...getPreset(0),v0Ratio:1,simSpeed:1};
+    const s=stepAstroOrbital(createInitialState(p),p,1.4).nextState;
+    expect(s.sectors).toHaveLength(2);
+    expect(s.sectorStartTNorm).toBeCloseTo(1.1,10);
+    for(let i=0;i<2;i++){
+      const sec=s.sectors[i]!,end=sec.vertices.at(-1)!;
+      expect(Math.hypot(end.x-Math.cos(.55*(i+1)),end.y-Math.sin(.55*(i+1)))).toBeLessThan(1e-6);
+      expect(Math.abs(sec.areaDimless-.275)/.275).toBeLessThan(1e-4);
+    }
+    expect(s.currentSectorVerts[0]).toEqual(s.sectors[1]!.vertices.at(-1));
+  });
+  it('has real historical time for each trail sample and preserves the exact initial point',()=>{
+    const p=getPreset(3);
+    const s=stepAstroOrbital(createInitialState(p),p,2).nextState;
+    expect(s.trailNorm.length).toBeGreaterThan(20);
+    let previous=-1;
+    for(const point of s.trailNorm){
+      const t=Number('tNorm' in point?point.tNorm:NaN);
+      expect(Number.isFinite(t)).toBe(true);
+      expect(t).toBeGreaterThan(previous);
+      expect(t).toBeLessThanOrEqual(s.tNorm+1e-10);
+      previous=t;
+    }
+    expect(Number('tNorm' in s.trailNorm[0]!?s.trailNorm[0]!.tNorm:NaN)).toBe(0);
+  });
+  it('propagates the exact Newtonian L4 solution for a full period, not an inconsistent softened force',()=>{
+    const p={...getPreset(3),massRatioQ:.03,simSpeed:1};
+    const x=.5-p.massRatioQ,y=Math.sqrt(3)/2;
+    let s={...createInitialState(p),xNorm:x,yNorm:y,vxNorm:-y,vyNorm:x};
+    for(let i=0;i<480;i++)s=stepAstroOrbital(s,p,2*Math.PI/480).nextState;
+    expect(Math.hypot(s.xNorm-x,s.yNorm-y,s.vxNorm+y,s.vyNorm-x)).toBeLessThan(1e-6);
+  });
+  it('matches independent inertial three-body reference and conserves the physical Jacobi integral',()=>{
+    const p=getPreset(3);let s=createInitialState(p);
+    const jacobi=(v:typeof s)=>{
+      const c=Math.cos(v.tNorm),sin=Math.sin(v.tNorm),q=p.massRatioQ;
+      const d1=Math.hypot(v.xNorm+q*c,v.yNorm+q*sin),d2=Math.hypot(v.xNorm-(1-q)*c,v.yNorm-(1-q)*sin);
+      return 2*((1-q)/d1+q/d2)+v.xNorm**2+v.yNorm**2-(v.vxNorm+v.yNorm)**2-(v.vyNorm-v.xNorm)**2;
+    };
+    const c0=jacobi(s);expect(c0).toBeCloseTo(2.9710356841820307,10);
+    for(let i=0;i<200;i++)s=stepAstroOrbital(s,p,.01).nextState;
+    expect(Math.hypot(s.xNorm+.95455016,s.yNorm-.06437589,s.vxNorm+.05094896,s.vyNorm+1.00075066)).toBeLessThan(2e-7);
+    expect(computeObservables(s,p).jacobiConstant).toBeCloseTo(jacobi(s),9);
+    for(let i=0;i<1000;i++)s=stepAstroOrbital(s,p,.01).nextState;
+    expect(Math.abs(jacobi(s)-c0)).toBeLessThan(1e-7);
+  });
+  it('uses the exact parabolic threshold in the escape preset, not a bound ellipse mislabeled as escape',()=>{
+    const p=getPreset(2);
+    expect(p.v0Ratio).toBe(Math.SQRT2);
+    expect(Math.abs(computeObservables(createInitialState(p),p).energyNorm!)).toBeLessThan(1e-12);
+  });
+});
