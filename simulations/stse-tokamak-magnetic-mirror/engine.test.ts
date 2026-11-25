@@ -6,6 +6,7 @@ import {
   createInitialState,
   evaluateTokamakMirrorField,
   stepTokamakMirror,
+  traceTokamakMirrorLines,
   type TokamakMirrorParams
 } from './engine.js';
 
@@ -48,6 +49,58 @@ describe('stse-tokamak-magnetic-mirror physics invariants (S01)', () => {
     expect(st.escaped).toBe(true);
   });
 
+  it('initializes the stated pitch relative to the local total magnetic field and the exact speed',()=>{
+    for(const angle of [10,45,85]){
+      const p={...getPreset(2),pitchAngleDeg:angle};
+      const s=createInitialState(p),v=s.velocity,b=s.bField;
+      const speed=Math.hypot(v.x,v.y,v.z);
+      const cos=(v.x*b.x+v.y*b.y+v.z*b.z)/(speed*Math.hypot(b.x,b.y,b.z));
+      expect(speed).toBeCloseTo(p.speed0,12);
+      expect(Math.acos(cos)*180/Math.PI).toBeCloseTo(angle,10);
+    }
+  });
+  it('keeps traced field lines on exact magnetic flux surfaces, with the correct tangent direction',()=>{
+    for(const p of [getPreset(0),getPreset(2)]){
+      const flux=(v:{x:number;y:number;z:number})=>p.mode==='tokamak'?
+        Math.hypot(Math.hypot(v.x,v.y)-p.majorRadiusM,v.z):
+        Math.hypot(v.x,v.y)*Math.sqrt(1+v.z*v.z/(p.mirrorLengthM*p.mirrorLengthM));
+      const lines=traceTokamakMirrorLines(p);
+      expect(lines.length).toBeGreaterThan(0);
+      for(const l of lines){
+        const ref=flux(l[0]!);
+        for(let i=1;i<l.length;i++){
+          const v=l[i]!,prev=l[i-1]!,mid={x:(v.x+prev.x)/2,y:(v.y+prev.y)/2,z:(v.z+prev.z)/2};
+          expect(Math.abs(flux(v)-ref)).toBeLessThan(1e-9);
+          const b=evaluateTokamakMirrorField(mid,p),d={x:v.x-prev.x,y:v.y-prev.y,z:v.z-prev.z};
+          const cosine=(b.x*d.x+b.y*d.y+b.z*d.z)/(Math.hypot(b.x,b.y,b.z)*Math.hypot(d.x,d.y,d.z));
+          expect(cosine).toBeGreaterThan(.999);
+        }
+      }
+    }
+  });
+  it('records the first physical magnetic-throat crossing as a unique localized event without dropping the residual time',()=>{
+    const p=getPreset(1),out=stepTokamakMirror(createInitialState(p),p,2);
+    expect(out.nextState.escaped).toBe(true);
+    expect(out.nextState.t).toBeCloseTo(2,12);
+    const hits=out.events.filter(e=>e.id==='fusion-escape');
+    expect(hits).toHaveLength(1);
+    expect(Math.abs(Math.abs(hits[0]!.position!.z!)-p.coilHalfSpanM)).toBeLessThan(1e-7);
+    expect(hits[0]!.time).toBeGreaterThan(0);
+    expect(hits[0]!.time).toBeLessThan(2);
+    expect(stepTokamakMirror(out.nextState,p,.25).events.filter(e=>e.id==='fusion-escape')).toHaveLength(0);
+  });
+  it('records actual magnetic reflection without a fabricated velocity kick',()=>{
+    const p=getPreset(0),out=stepTokamakMirror(createInitialState(p),p,3);
+    const reflections=out.events.filter(e=>e.id==='fusion-reflection');
+    expect(reflections.length).toBeGreaterThanOrEqual(2);
+    for(const e of reflections){
+      expect(Math.abs(e.position!.z!)).toBeLessThan(p.coilHalfSpanM);
+      expect(Math.abs(e.metrics!.vParallel)).toBeLessThan(1e-5);
+    }
+    expect(out.nextState.reflectionCount).toBe(reflections.length);
+    expect(out.nextState.escaped).toBe(false);
+    expect(out.nextState.currentKineticJ).toBeCloseTo(out.nextState.initialKineticJ,8);
+  });
   it('simulates tokamak helical confinement without NaN and handles dt=0', () => {
     const params = getPreset(2);
     let st = createInitialState(params);
