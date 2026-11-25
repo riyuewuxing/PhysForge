@@ -608,15 +608,22 @@ async function auditB1Physics(page,origin,screenshot){
     const e=document.querySelector('[data-testid="simulation-canvas"]'),v=JSON.parse(e?.getAttribute('data-b1-viewport')||'null'),r=e?.getBoundingClientRect();
     return !!v&&!!r&&Math.abs(v.width-r.width)<1&&Math.abs(v.height-r.height)<1&&e.getAttribute('data-b1-auto-fit')==='true';
   });
-  const before=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
   const time=await flat.getAttribute('data-b1-time');
   const rect=await flat.boundingBox();
-  if(!rect||!before||!time)throw Error('B1 flat camera diagnostics missing');
-  const x=rect.x+rect.width*.14,y=rect.y+rect.height*.17;
-  await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+50,y+32,{steps:6});await page.mouse.up();
+  if(!rect||!time)throw Error('B1 flat camera diagnostics missing');
+  const x=Math.round(rect.x+rect.width*.14),y=Math.round(rect.y+rect.height*.17);
+  await page.mouse.move(x,y);
+  const before=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
+  if(!before)throw Error('B1 pre-gesture camera diagnostics missing');
+  await page.mouse.down();
   await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b1-auto-fit')==='false');
+  const locked=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
+  if(Math.abs(locked.offsetX-before.offsetX)>.5||Math.abs(locked.offsetY-before.offsetY)>.5||locked.scale!==before.scale)
+    throw Error('B1 camera changed when taking ownership: '+JSON.stringify({before,locked}));
+  await page.mouse.move(x+50,y+32,{steps:6});await page.mouse.up();
   const moved=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
-  if(Math.abs(moved.offsetX-before.offsetX-50)>.5||Math.abs(moved.offsetY-before.offsetY-32)>.5||moved.scale!==before.scale)throw Error('B1 physical pan differs from pointer delta');
+  if(Math.abs(moved.offsetX-before.offsetX-50)>.5||Math.abs(moved.offsetY-before.offsetY-32)>.5||moved.scale!==before.scale)
+    throw Error('B1 physical pan differs from pointer delta: '+JSON.stringify({before,locked,moved,expected:[50,32]}));
   if(await flat.getAttribute('data-b1-time')!==time)throw Error('B1 pan changed physical time');
   await page.getByTestId('btn-fullscreen-speech').click();
   const toggle=page.getByTestId('btn-view-3d-fullscreen');await toggle.click();
@@ -632,6 +639,95 @@ async function auditB1Physics(page,origin,screenshot){
   if(await flat.getAttribute('data-b1-time')!==time)throw Error('B1 center reset changed physical time');
   report.push({manualPan:true,manualRoundTrip:true,autoRecenter:true});
   if(screenshot)await screenshot('B1_recenter');
+  return report;
+}
+
+async function auditS01Physics(page,origin,screenshot){
+  const url=new URL(origin);url.searchParams.set('model','stse-tokamak-magnetic-mirror');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='stse-tokamak-magnetic-mirror');
+  const report=[];
+  const assertComposition=async(element)=>{
+    const bounds=await element.evaluate(el=>{
+      const b=JSON.parse(el.getAttribute('data-s01-screen-bounds')||'null'),r=el.getBoundingClientRect();
+      const relative=selector=>{const e=document.querySelector(selector);if(!e)return null;const a=e.getBoundingClientRect();return {left:a.left-r.left,right:a.right-r.left,top:a.top-r.top,bottom:a.bottom-r.top};};
+      return {b,width:r.width,height:r.height,chrome:['[data-testid="fullscreen-formula"]','[data-testid="fullscreen-controls"]','[data-testid="fullscreen-title"]','[data-testid="mirror-loss-cone"]','[data-testid="s01-torus-status"]'].map(relative).filter(Boolean)};
+    });
+    const {b,width,height,chrome}=bounds;
+    if(!b?.visible||b.left<10||b.right>width-10||b.top<10||b.bottom>height-10)throw Error('S01 clipped real frame '+JSON.stringify(bounds));
+    for(const rect of chrome)if(b.left<rect.right+8&&b.right>rect.left-8&&b.top<rect.bottom+8&&b.bottom>rect.top-8)throw Error('S01 overlap '+JSON.stringify(bounds));
+    return bounds;
+  };
+  for(const preset of ['mirror-trapped-bounce','mirror-loss-cone-escape','tokamak-helical-confinement']){
+    await selectPreset(page,preset);
+    const scope=page.getByTestId('floating-scope-dock');await scope.waitFor({state:'visible'});
+    const torus=preset==='tokamak-helical-confinement';
+    const expectedChannels=torus?['bMagT','minorRadiusM','separate']:['vParallel','vPerp','shared'];
+    await page.waitForFunction(([a,b,units])=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')===a&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')===b&&document.querySelector('[data-testid="floating-scope-dock"]')?.getAttribute('data-scope-units')===units,expectedChannels);
+    // Inspect an actual sampled plot, not a paused initial empty chart.
+    if(preset==='mirror-trapped-bounce'||torus){
+      const workbenchPlay=page.locator('[data-testid="btn-play-pause"]:visible');
+      if(await workbenchPlay.getAttribute('aria-label')==='运行')await workbenchPlay.click();
+      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-sample-count'))>=5,null,{timeout:10000});
+      if(await workbenchPlay.getAttribute('aria-label')==='暂停')await workbenchPlay.click();
+      const chart=await scope.locator('canvas').first().boundingBox();
+      if(!chart||chart.height<140||await page.getByTestId('scope-empty').isVisible())throw Error('S01 sampled chart missing or clipped');
+      if(screenshot)await screenshot('S01_'+preset+'_workbench_running');
+      await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+      if(screenshot)await screenshot('S01_'+preset+'_workbench_projector');
+      await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+      if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+      await page.locator('[data-testid="btn-reset"]:visible').click();
+      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="topbar"]')?.textContent?.match(/t\s*=\s*([0-9.]+)\s*s/)?.[1])===0);
+    }
+    await page.getByTestId('btn-fullscreen-speech').click();
+    const toggle=page.getByTestId('btn-view-3d-fullscreen');
+    if((await toggle.textContent())?.includes('3D 空间'))await toggle.click();
+    const stage=page.getByTestId('three-stage-container');await stage.waitFor({state:'visible',timeout:20000});
+    await page.waitForFunction(()=>{const s=document.querySelector('[data-testid="three-stage-container"]');return s?.getAttribute('data-morph-t')==='0'&&JSON.parse(s.getAttribute('data-s01-rendered')||'null')?.t===0;},null,{timeout:15000});
+    const init=JSON.parse(await stage.getAttribute('data-s01-rendered')||'null');
+    if(torus){
+      const v=init.velocity,b=init.bField,speed=Math.hypot(v.x,v.y,v.z),cos=(v.x*b.x+v.y*b.y+v.z*b.z)/(speed*Math.hypot(b.x,b.y,b.z));
+      if(Math.abs(Math.acos(cos)*180/Math.PI-45)>1e-8)throw Error('S01 rendered initial pitch mismatch');
+    }
+    const play=page.locator('[data-testid="btn-play-pause"]:visible');
+    if(await play.getAttribute('aria-label')!=='运行')throw Error('S01 preset did not pause');
+    await play.click();
+    try{
+      await page.waitForFunction(p=>{
+        const el=document.querySelector('[data-testid="three-stage-container"]');
+        const state=JSON.parse(el?.getAttribute('data-s01-rendered')||'null');
+        return state&&(p==='mirror-trapped-bounce'?state.reflectionCount>=1:p==='mirror-loss-cone-escape'?state.escaped:state.t>.7);
+      },preset,{timeout:15000});
+    }catch(error){
+      if(screenshot)await screenshot('S01_failure_'+preset);
+      throw Error('S01 runtime '+preset+': '+(await stage.getAttribute('data-s01-rendered')),{cause:error});
+    }
+    if(await play.getAttribute('aria-label')==='暂停')await play.click();
+    const state=JSON.parse(await stage.getAttribute('data-s01-rendered')||'null');
+    if(preset==='mirror-trapped-bounce'){
+      if(state.escaped||!state.lastReflection||Math.abs(state.lastReflection.time-1.19564781)>.005||Math.abs(state.lastReflection.metrics.vParallel)>1e-5||state.muDev>.05)throw Error('S01 wrong actual reflection '+JSON.stringify(state));
+    }else if(preset==='mirror-loss-cone-escape'){
+      if(!state.escapeEvent||Math.abs(Math.abs(state.escapeEvent.position.z)-1.5)>1e-7)throw Error('S01 wrong localized throat crossing');
+    }
+    if(state.trailLength<30)throw Error('S01 missing actual trail samples');
+    const speed=Math.hypot(state.velocity.x,state.velocity.y,state.velocity.z),initialSpeed=Math.hypot(init.velocity.x,init.velocity.y,init.velocity.z);
+    if(Math.abs(speed-initialSpeed)>1e-8)throw Error('S01 magnetic speed drift');
+    report.push({preset,t:state.t,reflection:state.lastReflection,escape:state.escapeEvent,muDev:state.muDev,trail:state.trailLength});
+    // The camera may fit again on the next render after pause; wait for the real frame within the original timeout.
+    await page.waitForFunction(()=>{const el=document.querySelector('[data-testid="three-stage-container"]');const b=JSON.parse(el?.getAttribute('data-s01-screen-bounds')||'null');const r=el?.getBoundingClientRect();return !!b&&!!r&&b.visible&&b.right<r.width-Math.min(360,r.width*.40)&&b.bottom<r.height-Math.min(158,r.height*.41);},null,{timeout:15000});
+    report.at(-1).spatialComposition=await assertComposition(stage);
+    if(screenshot)await screenshot('S01_'+preset+'_3d');
+    await toggle.click();await stage.waitFor({state:'detached',timeout:15000});
+    const flat=page.getByTestId('simulation-canvas');await flat.waitFor({state:'visible'});
+    await page.waitForFunction(()=>{const el=document.querySelector('[data-testid="simulation-canvas"]');const b=JSON.parse(el?.getAttribute('data-s01-screen-bounds')||'null');const r=el?.getBoundingClientRect();return !!b&&!!r&&b.visible&&b.right<r.width-Math.min(360,r.width*.40)&&b.bottom<r.height-Math.min(158,r.height*.41);},null,{timeout:15000});
+    report.at(-1).flatComposition=await assertComposition(flat);
+    if(screenshot)await screenshot('S01_'+preset+'_flat');
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+  }
   return report;
 }
 
@@ -1319,7 +1415,8 @@ async function main() {
     const v3StoryFormulaReport = await auditV3StoryAndFormula(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
     const v3DeviceReport = await auditV3DeviceGeometry(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
     const b1PhysicsReport=await auditB1Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
-    const summary = { report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const s01PhysicsReport=await auditS01Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
+    const summary = { s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

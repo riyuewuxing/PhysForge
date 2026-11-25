@@ -4,6 +4,8 @@ import { ChevronDown, ChevronUp, Crosshair, MoveDiagonal2, RotateCcw, Ruler } fr
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 type B1StagePlugin=typeof import('../../../../simulations/em-bounded-magnetic-field/plugin.js').emBoundedMagneticFieldPlugin;
+import type { TokamakMirrorState,TokamakMirrorParams } from '../../../../simulations/stse-tokamak-magnetic-mirror/engine.js';
+type FusionStagePlugin=typeof import('../../../../simulations/stse-tokamak-magnetic-mirror/plugin.js').stseTokamakMagneticMirrorPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -49,6 +51,10 @@ function getDefaultScopeChannels(
     const a = channels.find(c => c.key === preferred[0])?.key;
     const b = channels.find(c => c.key === preferred[1])?.key;
     if (a && b) return [a, b];
+  }
+  if(modelId==='stse-tokamak-magnetic-mirror'){
+    const pair=params.mode==='tokamak'?['bMagT','minorRadiusM']:['vParallel','vPerp'];
+    if(pair.every(k=>channels.some(c=>c.key===k)))return [pair[0]!,pair[1]!];
   }
   if(modelId==='stse-em-devices-suite'){
     const preferred:Record<string,readonly [string,string]>={
@@ -220,7 +226,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
   const [heldThreeId, setHeldThreeId] = useState<string | null>(() => view3dEnabled ? plugin.meta.id : null);
   const b1Stage=plugin.meta.id==='builder-composite-em-field';
-  const morphInThisView=Boolean((presentationMode||b1Stage)&&spatial);
+  const fusionStage=plugin.meta.id==='stse-tokamak-magnetic-mirror';
+  const autoFrameStage=b1Stage||fusionStage;
+  const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
   const showThreeRef = useRef(showThree);
   showThreeRef.current = showThree;
@@ -252,7 +260,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,plugin.meta.id==='stse-tokamak-magnetic-mirror'?params.mode:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -294,7 +302,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const userTransformedViewRef = useRef<boolean>(false);
   const b1FitKeyRef=useRef('');
   const b1FitAtRef=useRef(-Infinity);
-  const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale]);};
+  const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
     const v2 = latestRef.current.plugin as SimulationPluginV2<ParamRecord, unknown>;
     const initialCamera = resolveInitialCameraTransform(v2, latestRef.current.params, width, height);
@@ -337,8 +345,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     viewportRef.current = aligned;
     // A camera morph transfers ownership, not just its projection. A teacher's
     // orbit remains manual; an automatic camera remains automatic.
-    userTransformedViewRef.current=!(b1Stage&&b1Automatic===true);
-    if(b1Stage){
+    userTransformedViewRef.current=!(autoFrameStage&&b1Automatic===true);
+    if(autoFrameStage){
       b1FitKeyRef.current=b1FitKey(aligned);b1FitAtRef.current=performance.now();
     }
     setZoomPercent(Math.round(100 * aligned.scale / Math.max(1e-6, baseScaleRef.current)));
@@ -512,6 +520,22 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       }
     }
+    const fusionAutomatic=p.meta.id==='stse-tokamak-magnetic-mirror'&&!userTransformedViewRef.current&&
+       !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&scrub===null;
+    const fusionModel=p.meta.id==='stse-tokamak-magnetic-mirror'?p as unknown as FusionStagePlugin:null;
+    const fusionPoints=fusionModel&&drawState!==null?fusionModel.fusionFramePoints(drawState as TokamakMirrorState,pm as TokamakMirrorParams,readDisplayedLayers()):null;
+    if(fusionAutomatic&&fusionModel&&fusionPoints){
+      const cur=latestRef.current,vp=viewportRef.current;
+      const key=b1FitKey(vp),fresh=key!==b1FitKeyRef.current;
+      b1FitKeyRef.current=key;
+      const safe=fusionModel.fusionSafeRect(vp.width,vp.height,cur.presentationMode,!cur.oscilloscopeCollapsed);
+      if(fresh||!fusionModel.fusionScreenFits(fusionModel.fusionFlatScreenBounds(fusionPoints,vp),safe)){
+        const next=fusionModel.fitFusionFlatViewport(fusionPoints,vp,safe);
+        cameraRef.current=next;viewportRef.current=next;
+        if(fresh)baseScaleRef.current=next.scale;
+        setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+      }
+    }
     const baseVp = viewportRef.current;
     ctx.save();
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
@@ -662,6 +686,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
 
     ctx.restore();
+    if(fusionModel&&fusionPoints&&frame){
+      canvas.dataset.s01ScreenBounds=JSON.stringify(fusionModel.fusionFlatScreenBounds(fusionPoints,viewportRef.current));
+      canvas.dataset.s01AutoFit=String(fusionAutomatic);
+      canvas.dataset.s01Time=String(frame.t);
+    }
     if(p.meta.id==='builder-composite-em-field'&&frame){
       const v=viewportRef.current;
       canvas.dataset.b1AutoFit=String(b1Automatic);
@@ -879,7 +908,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
-    } else if(latestRef.current.plugin.meta.id==='builder-composite-em-field'){
+    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror'].includes(latestRef.current.plugin.meta.id)){
       // The final displayed physical sample and chart must agree after pause.
       renderFrameToCanvas();syncUPlotData(true);emitTelemetrySummary(true);
     }
@@ -994,7 +1023,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       };
       // A duplicate ResizeObserver notification is not a change of camera.
       // Preserve the exact B1 orthographic transfer when CSS size is unchanged.
-      if(!userTransformedViewRef.current&&(latestRef.current.plugin.meta.id!=='builder-composite-em-field'||changedSize)){
+      if(!userTransformedViewRef.current&&(!['builder-composite-em-field','stse-tokamak-magnetic-mirror'].includes(latestRef.current.plugin.meta.id)||changedSize)){
         applyDefaultCameraView(width,height);
       }
       setOverlayViewport(viewportRef.current);
@@ -1110,7 +1139,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   );
 
   const deviceScope = plugin.meta.id === 'stse-em-devices-suite';
-  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field';
+  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror';
   const splitScopeUnits = heroScope && !!specA && !!specB && specA.unit !== specB.unit;
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {
@@ -1298,6 +1327,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
+                  if(autoFrameStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -1320,6 +1350,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               }
               canvas.setPointerCapture?.(e.pointerId);
               dragModeRef.current = { kind: 'pan', lastX: e.clientX, lastY: e.clientY };
+              // Like OrbitControls' start, pointer-down establishes camera
+              // ownership before the first movement; a resize/fit cannot race
+              // the teacher between gesture start and its first delta.
+              if(autoFrameStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {

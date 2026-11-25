@@ -8,12 +8,13 @@ import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop } from './spatialMaterials.js';
+import { fitFusionSpatialFrame,projectFusionFrame } from './fusionFraming.js';
 import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
 import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
 import { magnetic3dDisplayPoint, magnetic3dDefaultVisibleHeight } from '@physforge/simulations/em-3d-magnetic-fields';
-import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
+import { fusionDisplayPoint,fusionDisplayGeometry,fusionGeometryKey,fusionVelocityVectors,fusionEventPoints,fusionStatus,fusionFramePoints,fusionSafeRect,fusionScreenFits } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
 import type { EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { flightReadout } from '../../../../simulations/stse-em-devices-suite/particleFlight.js';
 import { cyclotronReadout } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
@@ -27,9 +28,10 @@ import {
   type Magnetic3dState
 } from '@physforge/simulations/em-3d-magnetic-fields/engine';
 import {
-  buildTokamakMirrorSegments,
   computeMirrorLossConeDeg,
-  traceTokamakMirrorLines,
+  fusionParallelVelocity,
+  FUSION_TRAIL_CAP,
+  TOKAMAK_MINOR_RADIUS_M,
   type TokamakMirrorParams,
   type TokamakMirrorState
 } from '@physforge/simulations/stse-tokamak-magnetic-mirror/engine';
@@ -92,8 +94,8 @@ const magneticAxisColors = [
   { name: 'Z', color: '#38bdf8', direction: { x: 0, y: 0, z: 1 } }
 ] as const;
 
-function updateMagneticAxisWidget(widget: SVGSVGElement, camera: THREE.Camera, directPhysicalAxes=false): void {
-  const directions = magneticAxisColors.map(axis => projectCameraDirection(directPhysicalAxes?new THREE.Vector3(axis.direction.x,axis.direction.y,axis.direction.z):mapMagneticPoint(axis.direction), camera));
+function updateMagneticAxisWidget(widget:SVGSVGElement,camera:THREE.Camera,directPhysicalAxes=false,fusionMode?:TokamakMirrorParams['mode']):void{
+  const directions = magneticAxisColors.map(axis => projectCameraDirection(fusionMode?new THREE.Vector3(...Object.values(fusionDisplayPoint(axis.direction,fusionMode)) as [number,number,number]):directPhysicalAxes?new THREE.Vector3(axis.direction.x,axis.direction.y,axis.direction.z):mapMagneticPoint(axis.direction), camera));
   const orientation = directions.map(v => v.toArray().map(x => x.toFixed(3)).join(',')).join(';');
   if (widget.getAttribute('data-axis-orientation') === orientation) return;
   widget.setAttribute('data-axis-orientation', orientation);
@@ -287,17 +289,17 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const isMag3d = plugin.meta.id === 'em-3d-magnetic-fields';
     const isTokamak3d = plugin.meta.id === 'stse-tokamak-magnetic-mirror';
     const isBoundedStage=plugin.meta.id==='builder-composite-em-field';
-    const magneticAxisWidget = isMag3d||isBoundedStage ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
+    const magneticAxisWidget = isMag3d||isBoundedStage||isTokamak3d ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
 
     const width = Math.max(320, container.clientWidth);
     const height = Math.max(240, container.clientHeight);
     const scene = new THREE.Scene();
     const isDeviceStage=plugin.meta.id==='stse-em-devices-suite';
-    const magneticBackdrop=isMag3d||isDeviceStage||isBoundedStage?createMagneticBackdrop():null;
+    const magneticBackdrop=isMag3d||isDeviceStage||isBoundedStage||isTokamak3d?createMagneticBackdrop():null;
     scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
     // An abstract electromagnetic field has no atmospheric attenuation.
     // Keep B1's small physical symbols legible when fitting a long trajectory.
-    scene.fog = isBoundedStage?null:new THREE.FogExp2('#0b0f17',0.085);
+    scene.fog = isBoundedStage||isTokamak3d?null:new THREE.FogExp2('#0b0f17',0.085);
 
     const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
     const initialMagneticParams = isMag3d ? (getFrameParams?.() ?? params) as Magnetic3dParams : null;
@@ -379,15 +381,16 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       const mesh=new THREE.Mesh(magneticTrail.geometry,new THREE.MeshBasicMaterial({ color: 0xffcb75, toneMapped: false }));
       mesh.name='magnetic-particle-trail';mesh.frustumCulled=false;trailGroup.add(mesh);
     }
-    const fusionTrailGeometry = isTokamak3d ? new THREE.BufferGeometry() : null;
-    const fusionTrailBuffer = fusionTrailGeometry ? new THREE.BufferAttribute(new Float32Array(261 * 3), 3).setUsage(THREE.DynamicDrawUsage) : null;
-    if (fusionTrailGeometry && fusionTrailBuffer) {
-      fusionTrailGeometry.setAttribute('position', fusionTrailBuffer);
-      fusionTrailGeometry.setDrawRange(0, 0);
-      const line = new THREE.Line(fusionTrailGeometry, new THREE.LineBasicMaterial({ color: 0x4ade80 }));
-      line.frustumCulled = false; line.name = 'fusion-particle-trail'; trailGroup.add(line);
+    const fusionTrail=isTokamak3d?new DynamicTubeTrail(FUSION_TRAIL_CAP,.009,6):null;
+    const fusionHalo=isTokamak3d?new DynamicTubeTrail(FUSION_TRAIL_CAP,.023,6):null;
+    if(fusionTrail&&fusionHalo){
+      const halo=new THREE.Mesh(fusionHalo.geometry,new THREE.MeshBasicMaterial({color:0xffa445,toneMapped:false,transparent:true,opacity:.15,depthWrite:false,blending:THREE.AdditiveBlending}));
+      const core=new THREE.Mesh(fusionTrail.geometry,new THREE.MeshBasicMaterial({color:0xffcb75,toneMapped:false}));
+      core.name='fusion-particle-trail';halo.name='fusion-particle-trail-halo';core.frustumCulled=halo.frustumCulled=false;trailGroup.add(halo,core);
     }
-
+    const fusionPins=isTokamak3d?new THREE.Group():null;
+    if(fusionPins)scene.add(fusionPins);
+    let fusionPinKey='',lastFusionTrail:TokamakMirrorState['trail']|null=null,lastFusionMode='';
     const sphereGeo = new THREE.SphereGeometry(1, 20, 20);
     const sphereMat = new THREE.MeshStandardMaterial({
       color: isMag3d ? 0xffe8bd : 0x86efac,
@@ -397,7 +400,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       roughness: 0.28
     });
     const marker = new THREE.Mesh(sphereGeo, sphereMat);
-    const particleGlow = isMag3d ? createParticleGlow() : null;
+    const particleGlow = isMag3d||isTokamak3d ? createParticleGlow() : null;
     if (particleGlow) marker.add(particleGlow.sprite);
     scene.add(marker);
     if (planarDriver) marker.visible = false;
@@ -408,9 +411,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     velocityArrow.name = 'particle-velocity-vector';
     lorentzForceArrow.name = 'particle-lorentz-force-vector';
     magneticFieldArrow.name = 'particle-magnetic-field-vector';
-    if (isMag3d) {
+    if (isMag3d||isTokamak3d) {
       addMagneticVectorShaft(velocityArrow,0xffd36b);
-      addMagneticVectorShaft(lorentzForceArrow,0xfb7185);
+      addMagneticVectorShaft(lorentzForceArrow,isTokamak3d?0xf472b6:0xfb7185);
       addMagneticVectorShaft(magneticFieldArrow,0x54d7ed);
     }
     velocityArrow.visible = false;
@@ -453,7 +456,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     let b1AutoFit=initialB1AutoFit,b1FramingKey='',b1FramedAt=-Infinity,b1RenderCount=0;
     let b1LastPolicy=b1PolicyRef.current;
     const lockB1Camera=()=>{b1AutoFit=false;};
-    if(isBoundedStage)controls.addEventListener('start',lockB1Camera);
+    if(isBoundedStage||isTokamak3d)controls.addEventListener('start',lockB1Camera);
 
     const velocityLabelAnchor = new THREE.Vector3();
     const forceLabelAnchor = new THREE.Vector3();
@@ -597,26 +600,40 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
           separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
         } else {
-          marker.scale.setScalar(0.055);
-          const fusion = state as TokamakMirrorState;
-          sphereMat.color.set(fusion.escaped ? 0xf87171 : 0x4ade80);
-          sphereMat.emissive.set(fusion.escaped ? 0x7f1d1d : 0x14532d);
-          if (fusionTrailGeometry && fusionTrailBuffer) {
-            const count = Math.min(261, fusion.trail.length), start = fusion.trail.length - count;
-            for (let i = 0; i < count; i++) { const p = project(fusion.trail[start + i]!); fusionTrailBuffer.setXYZ(i, p.x, p.y, p.z); }
-            fusionTrailBuffer.needsUpdate = true; fusionTrailGeometry.setDrawRange(0, count);
+          marker.scale.setScalar(.038);
+          const fusion=state as TokamakMirrorState;
+          sphereMat.color.set(fusion.escaped?0xfb7185:0xffe9b0);
+          sphereMat.emissive.set(fusion.escaped?0xa5253e:0xffaf4b);
+          if(fusionTrail&&fusionHalo&&(lastFusionTrail!==fusion.trail||lastFusionMode!==fusionParams.mode)){
+            lastFusionTrail=fusion.trail;lastFusionMode=fusionParams.mode;
+            fusionTrail.update(fusion.trail,p=>fusionDisplayPoint(p,fusionParams.mode));
+            fusionHalo.update(fusion.trail,p=>fusionDisplayPoint(p,fusionParams.mode));
           }
-          velocityArrow.visible = false;
-          lorentzForceArrow.visible = false;
-          magneticFieldArrow.visible = false;
-          velocityLabel.visible = false;
-          forceLabel.visible = false;
-          fieldLabel.visible = false;
+          const vectors=fusionVelocityVectors(fusion,fusionParams);
+          for(const [i,arrow] of [velocityArrow,magneticFieldArrow,lorentzForceArrow].entries()){
+            const v=vectors[i]!,origin=new THREE.Vector3(v.a.x,v.a.y,v.a.z),delta=new THREE.Vector3(v.b.x-v.a.x,v.b.y-v.a.y,v.b.z-v.a.z);
+            if(layers.has('velocityComponents')&&delta.length()>1e-8)updateVectorArrow(arrow,origin,delta,delta.length(),1,0,1);
+            else arrow.visible=false;
+          }
+          velocityLabel.visible=forceLabel.visible=fieldLabel.visible=false;
+          if(fusionPins){
+            const pins=layers.has('eventPins')?fusionEventPoints(fusion,fusionParams):[];
+            const key=JSON.stringify([fusionParams.mode,pins]);
+            if(key!==fusionPinKey){
+              fusionPinKey=key;disposeGroupChildren(fusionPins);
+              for(const ev of pins){
+                const color=ev.id==='fusion-escape'?0xfb7185:0x4ade80;
+                const pin=new THREE.Mesh(new THREE.SphereGeometry(.065,12,8),new THREE.MeshBasicMaterial({color,transparent:true,opacity:.75,wireframe:true,toneMapped:false}));
+                pin.name=ev.id;pin.position.set(ev.point.x,ev.point.y,ev.point.z);fusionPins.add(pin);
+              }
+            }
+          }
+
         }
 
         const configSignature = JSON.stringify({
           model: plugin.meta.id,
-          params: isMag3d ? magneticFieldGeometrySignature(curParams as Magnetic3dParams) : curParams,
+          params: isMag3d ? magneticFieldGeometrySignature(curParams as Magnetic3dParams) : fusionGeometryKey(fusionParams),
           conductors: layers.has('conductors'),
           fieldLines: layers.has('fieldLines3d')
         });
@@ -628,7 +645,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           let renderedConductorCount = 0;
           if (layers.has('conductors')) {
             const magneticParams = curParams as Magnetic3dParams;
-            const fusionSegments = isTokamak3d ? buildTokamakMirrorSegments(fusionParams) : [];
+            const fusionSegments=isTokamak3d?fusionDisplayGeometry(fusionParams).segments:[];
             const fusionSize = fusionParams.mode === 'tokamak' ? 24 : 32;
             const paths = isMag3d ? buildMagneticConductorPaths(magneticParams)
               : Array.from({ length: Math.ceil(fusionSegments.length / fusionSize) }, (_, i) => fusionSegments.slice(i*fusionSize, (i+1)*fusionSize));
@@ -638,9 +655,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               const closed = isTokamak3d || (isMag3d && ['single-loop','helmholtz-coil','finite-solenoid'].includes(magneticParams.geometryType));
               if (closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
-              const radius = isMag3d ? Math.min(0.055, 0.063 * Math.max(0.2, magneticParams.radiusR)) : 0.026;
+              const radius = isMag3d ? Math.min(0.055, 0.063 * Math.max(0.2, magneticParams.radiusR)) : .043;
               const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), radius, isMag3d ? 14 : 10, closed);
-              staticGroup.add(new THREE.Mesh(tubeGeo, isMag3d ? coilCopperMaterial() : brushedCopperMaterial()));
+              staticGroup.add(new THREE.Mesh(tubeGeo, coilCopperMaterial()));
               if (isMag3d && !closed) {
                 // The visual finite conductor is a solid cylinder, not an open pipe.
                 for (const [end, adjacent] of [[points[0]!,points[1]!],[points.at(-1)!,points.at(-2)!]] as const) {
@@ -655,7 +672,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
 
           if (isTokamak3d && layers.has('conductors') && fusionParams.mode === 'tokamak') {
-            const chamber = new THREE.Mesh(new THREE.TorusGeometry(fusionParams.majorRadiusM, 0.55, 24, 96), dielectricGlassMaterial());
+            const chamber = new THREE.Mesh(new THREE.TorusGeometry(fusionParams.majorRadiusM,TOKAMAK_MINOR_RADIUS_M,24,96),new THREE.MeshBasicMaterial({color:0x7dd3fc,transparent:true,opacity:.06,depthWrite:false,toneMapped:false}));
             chamber.name = 'tokamak-vacuum-chamber';
             staticGroup.add(chamber);
           }
@@ -663,23 +680,23 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if (layers.has('fieldLines3d')) {
             const lines = isMag3d
               ? getMagneticDisplayFieldLines(curParams as Magnetic3dParams)
-              : traceTokamakMirrorLines(curParams as TokamakMirrorParams);
+              : fusionDisplayGeometry(fusionParams).lines;
             for (const line of lines) {
               if (line.length < 2) continue;
               const points = line.map(project);
-              const closed = points[0]!.distanceTo(points[points.length - 1]!) < 0.06;
+              const closed=isMag3d&&points[0]!.distanceTo(points[points.length-1]!)<.06;
               if (isMag3d && closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
-              const divisions = isMag3d ? Math.min(512, Math.max(32, points.length)) : Math.max(32, points.length * 2);
-              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d ? 0.006 : 0.012, 5, closed);
-              if (isMag3d) applyFluxEndpointFade(geometry,closed);
-              staticGroup.add(new THREE.Mesh(geometry, isMag3d ? coilFluxCoreMaterial(true) : magneticFluxMaterial()));
-              if (isMag3d) {
+              const divisions=Math.min(512,Math.max(32,points.length));
+              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.006:.009, 5, closed);
+              applyFluxEndpointFade(geometry,closed);
+              staticGroup.add(new THREE.Mesh(geometry,coilFluxCoreMaterial(true)));
+              if (isMag3d||isTokamak3d) {
                 const haloGeometry = new THREE.TubeGeometry(curve, divisions, 0.024, 5, closed);
                 applyFluxEndpointFade(haloGeometry,closed);
                 staticGroup.add(new THREE.Mesh(haloGeometry, coilFluxHaloMaterial()));
                 // Tangent of an actual ordered field sample, not a decorative direction.
-                if (renderedFieldCount % 4 === 0) {
+                if (renderedFieldCount % (isTokamak3d?2:4) === 0) {
                   const index = Math.max(1, Math.floor(points.length / 2));
                   const start = points[index-1]!, delta = points[index]!.clone().sub(start);
                   if (delta.lengthSq() > 1e-10) {
@@ -693,7 +710,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               renderedFieldCount++;
             }
           }
-          if (isMag3d) {
+          if(isMag3d||isTokamak3d){
             container.dataset.fieldLineCount = String(renderedFieldCount);
             container.dataset.conductorCount = String(renderedConductorCount);
           }
@@ -732,11 +749,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
-        if(isBoundedStage)controls.removeEventListener('start',lockB1Camera);
+        if(isBoundedStage||isTokamak3d)controls.removeEventListener('start',lockB1Camera);
         planarDriver?.dispose();
         clearDeviceLabels();
         disposeGroupChildren(staticGroup);
         disposeGroupChildren(trailGroup);
+        if(fusionPins){disposeGroupChildren(fusionPins);scene.remove(fusionPins);}
         scene.remove(velocityArrow, lorentzForceArrow, magneticFieldArrow, marker, velocityLabel, forceLabel, fieldLabel);
         disposeObjectResources(velocityArrow);
         disposeObjectResources(lorentzForceArrow);
@@ -779,7 +797,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if (morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
-          if(isBoundedStage)b1AutoFit=false;
+          if(isBoundedStage||isTokamak3d)b1AutoFit=false;
           morph.startKeyframe(command.view, now, command.durationMs);
           if (storyCameraCommandRef) storyCameraCommandRef.current = null;
           lastMorphTarget = target;
@@ -809,7 +827,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       }
 
       const b1Policy=b1PolicyRef.current;
-      if(isBoundedStage){
+      if(isBoundedStage||isTokamak3d){
         if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';b1FramedAt=-Infinity;dirty=true;}
         if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
         b1LastPolicy=b1Policy;
@@ -824,12 +842,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       };
       // B1's tube buffers are computed for a rendered frame, not every rAF
       // callback that the adaptive frame guard is about to discard.
-      if(changed&&!isBoundedStage)syncLatest();
-      if(changed&&isBoundedStage)dirty=true;
+      if(changed&&!isBoundedStage&&!isTokamak3d)syncLatest();
+      if(changed&&(isBoundedStage||isTokamak3d))dirty=true;
       if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) return;
 
       const renderStart = performance.now();
-      if(changed&&isBoundedStage)syncLatest();
+      if(changed&&(isBoundedStage||isTokamak3d))syncLatest();
       const b1=isBoundedStage&&latestState!==null&&latestState!==undefined?latestState as BoundedMagneticState:null;
       const bp=frameParams as BoundedMagneticParams;
       const rw=renderer.domElement.clientWidth||width,rh=renderer.domElement.clientHeight||height;
@@ -847,13 +865,38 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
         }
       }
+      const fusion=isTokamak3d&&latestState!==null&&latestState!==undefined?latestState as TokamakMirrorState:null;
+      const fp=frameParams as TokamakMirrorParams;
+      const fusionPoints=fusion?fusionFramePoints(fusion,fp,frameLayers):null;
+      if(fusionPoints&&morph&&morph.getMorphT()===0&&!morph.isAnimating){
+        const key=JSON.stringify([fusionGeometryKey(fp),rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed,[...frameLayers]]);
+        const fresh=key!==b1FramingKey;
+        if(fresh)b1FramingKey=key;
+        if(b1AutoFit&&b1Policy.allowed){
+          const safe=fusionSafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
+          // Check every actual rendered frame; a final paused frame cannot
+          // be left outside merely because the previous fit was <250 ms ago.
+          if(fresh||!fusionScreenFits(projectFusionFrame(fusionPoints,camera,rw,rh),safe)){
+            morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
+            fitFusionSpatialFrame(morph,fusionPoints,rw,rh,safe);
+            controls.target.copy(morph.getOrbitTarget());controls.update();
+          }
+        }
+      }
       if (isMag3d || isDeviceStage) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
       const renderCamera = morph?.getActiveCamera() ?? camera;
-      if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget, renderCamera,isBoundedStage);
+      if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget,renderCamera,isBoundedStage,isTokamak3d?(frameParams as TokamakMirrorParams).mode:undefined);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
+      if(isTokamak3d&&latestState){
+        const f=latestState as TokamakMirrorState,p=frameParams as TokamakMirrorParams;
+        container.dataset.s01Rendered=JSON.stringify({t:f.t,position:f.position,velocity:f.velocity,bField:f.bField,escaped:f.escaped,reflectionCount:f.reflectionCount,escapeEvent:f.escapeEvent,lastReflection:f.lastReflection,trailLength:f.trail.length,muDev:f.maxMuRelDev,vParallel:fusionParallelVelocity(f.velocity,f.bField),mode:p.mode});
+        container.dataset.s01VelocityVectors=String(frameLayers.has('velocityComponents'));
+        if(fusionPoints)container.dataset.s01ScreenBounds=JSON.stringify(projectFusionFrame(fusionPoints,renderCamera,rw,rh));
+        container.dataset.s01AutoFit=String(b1AutoFit&&b1Policy.allowed);
+      }
       if(b1){
         // Diagnostics and visible caption refer to the state just rendered.
         // No React state is updated at animation frequency.
@@ -868,7 +911,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       }
       if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
         flatNotified = true;
-        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)),isBoundedStage?b1AutoFit:undefined);
+        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)),(isBoundedStage||isTokamak3d)?b1AutoFit:undefined);
       }
       const renderDuration = performance.now() - renderStart;
       performanceGuard.observe(renderDuration);
@@ -915,6 +958,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     ? 0.055 * Math.max(0.2, typeof params.radiusR === 'number' ? params.radiusR : 1)
     : undefined;
 
+  const fusionState=plugin.meta.id==='stse-tokamak-magnetic-mirror'?simState as TokamakMirrorState|null:null;
+  const fusionParams=params as TokamakMirrorParams;
   const lossCone = plugin.meta.id === 'stse-tokamak-magnetic-mirror' && params.mode === 'magnetic-mirror'
     ? computeMirrorLossConeDeg(params as TokamakMirrorParams) : undefined;
   const coneRadius = 23;
@@ -955,13 +1000,18 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       className="relative w-full h-full min-h-[260px] rounded-xl overflow-hidden"
     >
       {b1State&&<div data-testid="b1-field-caption" className={`pointer-events-none absolute ${presentationMode?'bottom-3':'bottom-[78px]'} left-3 z-10 max-w-[38%] rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200`}><div>{b1FieldCaption(b1Params)}</div><div>{b1StateCaption(b1State,b1Params)}</div>{b1Params.mode==='crossed-eb'&&b1Params.charge!==0&&b1Params.magneticFieldZ!==0&&activeLayers.has('speedDecomposition')&&<div><span className="text-emerald-300">v</span> = <span className="text-amber-300">v_d</span> + <span className="text-pink-300">v_rot</span></div>}</div>}
-      {lossCone !== undefined && <div data-testid="mirror-loss-cone" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200">
-        <div>速度空间逃逸锥 θc={lossCone.toFixed(1)}°</div>
+      {lossCone !== undefined && <div data-testid="mirror-loss-cone" className={`pointer-events-none absolute ${presentationMode?'bottom-3':'bottom-[78px]'} left-3 z-10 rounded-lg border border-white/10 bg-slate-950/85 px-3 py-2 text-[11px] text-slate-200`}>
+        <div>中心速度空间 · θc≈{lossCone.toFixed(1)}°</div>
         <svg viewBox="0 0 104 60" width="104" height="60" aria-label="速度空间示意">
           <path d={`M52 30 L${52 + coneX} ${30 - coneY} L${52 + coneX} ${30 + coneY} Z M52 30 L${52 - coneX} ${30 - coneY} L${52 - coneX} ${30 + coneY} Z`} fill="#fbbf2455" stroke="#fbbf24" />
           <path d="M5 30 H99 M52 5 V55" stroke="#94a3b8" strokeWidth="1" />
+          <path d={`M52 30 L${52+coneRadius*Math.cos(fusionParams.pitchAngleDeg*Math.PI/180)} ${30-coneRadius*Math.sin(fusionParams.pitchAngleDeg*Math.PI/180)}`} stroke="#4ade80" strokeWidth="2" />
+          <text x="76" y="15" fontSize="8" fill="#86efac">θ₀</text><text x="85" y="42" fontSize="8" fill="#cbd5e1">v∥</text>
         </svg>
+        <div>{fusionState?fusionStatus(fusionState,fusionParams):''}</div>
+        {activeLayers.has('velocityComponents')&&<div><span className="text-amber-300">v</span> = <span className="text-sky-300">v∥</span> + <span className="text-pink-300">v⊥</span></div>}
       </div>}
+      {fusionState&&fusionParams.mode==='tokamak'&&<div data-testid="s01-torus-status" className={`pointer-events-none absolute ${presentationMode?'bottom-3':'bottom-[78px]'} left-3 z-10 rounded-lg border border-white/10 bg-slate-950/85 px-3 py-2 text-[11px] text-slate-200`}><div>给定外场 · 单粒子教学模型</div><div>{fusionStatus(fusionState,fusionParams)}</div></div>}
       {plugin.meta.id === 'stse-em-devices-suite' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">{deviceFlight?flightReadout(deviceFlight):cyclotron?cyclotronReadout(params as EmDevicesParams,cyclotron):deviceState&&isSensorDevice((params as EmDevicesParams).device)?sensorReadout(deviceState,params as EmDevicesParams)+' · 蓝色箭头 B 出剖面 · 稳态示意': '归一化原理示意 · 蓝色箭头 B 垂直剖面 · 定量值见公式区'}{cyclotron&&cyclotron.arcIndex>=8&&<div className="mt-1 text-amber-200/80">浅色：抽样历史圆弧 · 亮色：最近实际轨迹</div>}</div>}
       {plugin.meta.id === 'astro-orbital-mechanics' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">轨道使用归一化长度 · 天体尺寸为示意{params.mode === 'binary-lagrange' && activeLayers.has('corotatingView') ? ' · 共转系不绘制无逐点时刻的历史轨迹' : params.mode === 'hohmann-transfer' ? ' · 橙色标记为引擎记录的点火' : ''}</div>}
       {vectorsVisible && (
@@ -973,7 +1023,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         </div>
       )}
       <div aria-hidden="true" data-testid="three-axis-widget" className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-lg border border-white/10 bg-slate-950/70 p-1 shadow-lg backdrop-blur">
-        {(plugin.meta.id === 'em-3d-magnetic-fields'||plugin.meta.id==='builder-composite-em-field') ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
+        {(plugin.meta.id === 'em-3d-magnetic-fields'||plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror') ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
           <circle cx="30" cy="30" r="1.8" fill="#cbd5e1" />
           {magneticAxisColors.map(axis => <g key={axis.name} data-physical-axis={axis.name}>
             <line x1="30" y1="30" x2="30" y2="30" stroke={axis.color} strokeWidth="1.8" strokeLinecap="round" />

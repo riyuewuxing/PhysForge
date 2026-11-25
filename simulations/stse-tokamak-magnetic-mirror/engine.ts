@@ -1,5 +1,5 @@
-import { stepBorisPusher, type ChargedParticleState, type Vec3 } from '@physforge/physics-core';
-import type { InvariantReport, StepResult } from '@physforge/sim-sdk';
+import { bisectEvent, stepBorisPusher, type ChargedParticleState, type Vec3 } from '@physforge/physics-core';
+import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 
 export type FusionFieldMode = 'magnetic-mirror' | 'tokamak';
 
@@ -27,7 +27,10 @@ export interface TokamakMirrorState {
   readonly currentKineticJ: number;
   readonly escaped: boolean;
   readonly reflectionCount: number;
+  /** Sign of the velocity parallel to the local total B (legacy field name retained). */
   readonly lastVzSign: number;
+  readonly escapeEvent?:PhysicsEvent;
+  readonly lastReflection?:PhysicsEvent;
   readonly trail: readonly Vec3[];
 }
 
@@ -61,6 +64,25 @@ export function evaluateTokamakMirrorField(pos: Vec3, params: TokamakMirrorParam
   };
 }
 
+export const TOKAMAK_MINOR_RADIUS_M=.55;
+export const FUSION_TRAIL_CAP=901;
+export function fusionMinorRadius(pos:Vec3,params:TokamakMirrorParams):number{
+  return Math.hypot(Math.hypot(pos.x,pos.y)-Math.max(.8,params.majorRadiusM),pos.z);
+}
+export function fusionBoundaryDistance(pos:Vec3,params:TokamakMirrorParams):number{
+  return params.mode==='tokamak'?fusionMinorRadius(pos,params)-TOKAMAK_MINOR_RADIUS_M:Math.abs(pos.z)-params.coilHalfSpanM;
+}
+export function fusionParallelVelocity(v:Vec3,B:Vec3):number{
+  return (v.x*B.x+v.y*B.y+v.z*B.z)/Math.max(1e-12,Math.hypot(B.x,B.y,B.z));
+}
+/** Actual mean toroidal turns per poloidal turn on a given circular flux
+ * surface. safetyFactorQ is the field-strength parameter, not an exact q profile. */
+export function fusionSurfaceWinding(params:TokamakMirrorParams,rho:number):number{
+  const R0=Math.max(.8,params.majorRadiusM),q=Math.max(.8,params.safetyFactorQ);
+  if(rho<0||rho>=R0)throw new RangeError('Surface winding is defined for 0<=rho<R0');
+  return q*R0/Math.sqrt(R0*R0-rho*rho);
+}
+
 export function computeMirrorLossConeDeg(params: TokamakMirrorParams): number {
   const L = Math.max(0.4, params.mirrorLengthM);
   const zc = Math.max(0.5, params.coilHalfSpanM);
@@ -71,7 +93,7 @@ export function computeMirrorLossConeDeg(params: TokamakMirrorParams): number {
 function computeMuAndKinetic(v: Vec3, B: Vec3): { mu: number; ke: number; bMag: number } {
   const vSq = v.x * v.x + v.y * v.y + v.z * v.z;
   const bMag = Math.max(1e-12, Math.hypot(B.x, B.y, B.z));
-  const vPar = (v.x * B.x + v.y * B.y + v.z * B.z) / bMag;
+  const vPar=fusionParallelVelocity(v,B);
   const vPerpSq = Math.max(0, vSq - vPar * vPar);
   return {
     mu: (0.5 * vPerpSq) / bMag,
@@ -94,7 +116,11 @@ export function createInitialState(params: TokamakMirrorParams): TokamakMirrorSt
 
   let vel0: Vec3;
   if (params.mode === 'tokamak') {
-    vel0 = { x: vPerp * 0.7, y: vPar, z: vPerp * 0.714 };
+    const bMag=Math.hypot(b0.x,b0.y,b0.z);
+    // At phi=0, e_R is perpendicular to total B. Complete an orthonormal
+    // basis using e_R × b; do not mistake e_phi for the local field.
+    const by=b0.y/bMag,bz=b0.z/bMag,c=Math.sqrt(1-.7*.7);
+    vel0={x:.7*vPerp,y:vPar*by-c*vPerp*bz,z:vPar*bz+c*vPerp*by};
   } else {
     vel0 = { x: 0, y: vPerp, z: vPar };
   }
@@ -112,7 +138,7 @@ export function createInitialState(params: TokamakMirrorParams): TokamakMirrorSt
     currentKineticJ: ke,
     escaped: false,
     reflectionCount: 0,
-    lastVzSign: Math.sign(vel0.z) || 1,
+    lastVzSign: Math.sign(fusionParallelVelocity(vel0,b0)) || 1,
     trail: [pos0]
   };
 }
@@ -126,8 +152,7 @@ export function stepTokamakMirror(
   if (dt === 0) return { nextState: state, events: [] };
 
   const qOverM = Math.max(2, params.qOverM);
-  const substeps = Math.max(8, Math.ceil(dt / 0.0008));
-  const subDt = dt / substeps;
+  const nominalDt=Math.min(dt/8,.0008);
   const fieldFn = (pos: Vec3) => ({ E: { x: 0, y: 0, z: 0 }, B: evaluateTokamakMirrorField(pos, params) });
 
   let particle: ChargedParticleState = {
@@ -144,31 +169,59 @@ export function stepTokamakMirror(
   let lastKe = state.currentKineticJ;
   let lastB = state.bField;
 
-  for (let i = 0; i < substeps; i++) {
-    particle = stepBorisPusher(particle, fieldFn, qOverM, 1, subDt);
+  const events:PhysicsEvent[]=[];
+  const trail=[...state.trail];
+  const pushTrail=(p:Vec3)=>{const last=trail.at(-1);if(!last||Math.hypot(last.x-p.x,last.y-p.y,last.z-p.z)>1e-12)trail.push(p);if(trail.length>FUSION_TRAIL_CAP)trail.splice(0,trail.length-FUSION_TRAIL_CAP);};
+  let lastTrailT=state.t;
+  let escapeEvent=state.escapeEvent,lastReflection=state.lastReflection;
+  const advance=(p:ChargedParticleState,h:number)=>stepBorisPusher(p,fieldFn,qOverM,1,h);
+  const boundary=(p:ChargedParticleState)=>fusionBoundaryDistance(p.position,params);
+  const parallel=(p:ChargedParticleState)=>fusionParallelVelocity(p.velocity,evaluateTokamakMirrorField(p.position,params));
+  const endTime=state.t+dt;
+  // Bound local gyro phase even at the high-field end of the legal parameter
+  // range; retain the original nominal step for weak fields.
+  while(particle.t<endTime){
+    const subDt=Math.min(nominalDt,endTime-particle.t,.12/Math.max(1e-12,Math.abs(qOverM)*Math.hypot(lastB.x,lastB.y,lastB.z)));
+    if(!(subDt>0)||particle.t+subDt===particle.t)throw new RangeError('S01 substep below time resolution');
+    const prev=particle;
+    particle=advance(prev,subDt);
+    if(!escaped){
+      const g0=boundary(prev),g1=boundary(particle);
+      const exit=g0<=0&&g1>0?bisectEvent(prev,prev.t,subDt,advance,boundary,{timeTolerance:1e-10,triggerOnStartZero:true}):null;
+      const par0=parallel(prev),par1=parallel(particle),sign=Math.sign(par1);
+      if(params.mode==='magnetic-mirror'&&sign!==0&&sign!==lastSign){
+        const hit=par0*par1<=0?bisectEvent(prev,prev.t,subDt,advance,parallel,{timeTolerance:1e-10,triggerOnStartZero:true}):null;
+        if(hit&&boundary(hit.state)<0&&(!exit||hit.time<exit.time)){
+          reflections++;
+          lastReflection={id:'fusion-reflection',label:'沿局部磁场平行速度过零',time:hit.time,position:hit.state.position,
+            metrics:{vParallel:parallel(hit.state),bracketWidth:hit.bracketWidth}};
+          events.push(lastReflection);pushTrail(hit.state.position);lastTrailT=hit.time;
+        }
+        lastSign=sign;
+      }
+      if(exit){
+        escaped=true;
+        escapeEvent={id:'fusion-escape',label:params.mode==='tokamak'?'首次越过示意真空室边界':'首次穿过磁喉',time:exit.time,position:exit.state.position,
+          metrics:{boundaryDistance:boundary(exit.state),bracketWidth:exit.bracketWidth}};
+        events.push(escapeEvent);pushTrail(exit.state.position);lastTrailT=exit.time;
+      }
+    }
     lastB = evaluateTokamakMirrorField(particle.position, params);
     const diag = computeMuAndKinetic(particle.velocity, lastB);
     lastMu = diag.mu;
     lastKe = diag.ke;
+    const sampleDt=Math.min(.003,.24/Math.max(1e-12,Math.abs(qOverM)*diag.bMag));
+    if(particle.t-lastTrailT>=sampleDt||particle.t>=endTime){pushTrail(particle.position);lastTrailT=particle.t;}
     if (state.mu0 > 1e-12 && !escaped) {
       const dev = Math.abs(diag.mu - state.mu0) / state.mu0;
       if (dev > maxMuDev) maxMuDev = dev;
     }
-    if (params.mode === 'magnetic-mirror') {
-      const curSign = Math.sign(particle.velocity.z);
-      if (curSign !== 0 && curSign !== lastSign && Math.abs(particle.position.z) < params.coilHalfSpanM) {
-        reflections++;
-        lastSign = curSign;
-      }
-      if (Math.abs(particle.position.z) > params.coilHalfSpanM) {
-        escaped = true;
-      }
-    }
+
   }
 
   return {
     nextState: {
-      t: particle.t,
+      t: endTime,
       position: particle.position,
       velocity: particle.velocity,
       bField: lastB,
@@ -180,9 +233,10 @@ export function stepTokamakMirror(
       escaped,
       reflectionCount: reflections,
       lastVzSign: lastSign,
-      trail: [...state.trail.slice(-260), particle.position]
+      ...(escapeEvent?{escapeEvent}:{}),...(lastReflection?{lastReflection}:{}),
+      trail
     },
-    events: []
+    events
   };
 }
 
@@ -202,7 +256,7 @@ export function buildTokamakMirrorSegments(params: TokamakMirrorParams): { a: Ve
     }
   } else {
     const R0 = Math.max(0.8, params.majorRadiusM);
-    const rMin = 0.55;
+    const rMin=TOKAMAK_MINOR_RADIUS_M;
     for (let j = 0; j < 12; j++) {
       const phi = (j / 12) * 2 * Math.PI;
       const cx = R0 * Math.cos(phi);
@@ -220,33 +274,35 @@ export function buildTokamakMirrorSegments(params: TokamakMirrorParams): { a: Ve
   return segs;
 }
 
-export function traceTokamakMirrorLines(params: TokamakMirrorParams): Vec3[][] {
-  const lines: Vec3[][] = [];
-  if (params.mode === 'magnetic-mirror') {
-    for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
-      for (const r0 of [0.22, 0.42]) {
-        const pts: Vec3[] = [];
-        let p: Vec3 = { x: r0 * Math.cos(angle), y: r0 * Math.sin(angle), z: -params.coilHalfSpanM * 1.1 };
-        for (let k = 0; k < 60; k++) {
-          pts.push(p);
-          const b = evaluateTokamakMirrorField(p, params);
-          const bm = Math.max(1e-6, Math.hypot(b.x, b.y, b.z));
-          const step = (params.coilHalfSpanM * 2.2) / 58;
-          p = { x: p.x + (b.x / bm) * step, y: p.y + (b.y / bm) * step, z: p.z + (b.z / bm) * step };
-        }
-        lines.push(pts);
+/** Sample the integral curves of the very same analytic field used by
+ * Boris. The mirror flux invariant is exact; toroidal theta is integrated
+ * with RK4 in phi while rho stays exactly on its physical flux surface. */
+export function traceTokamakMirrorLines(params:TokamakMirrorParams):Vec3[][]{
+  const lines:Vec3[][]=[];
+  if(params.mode==='magnetic-mirror'){
+    const L=Math.max(.4,params.mirrorLengthM),half=params.coilHalfSpanM*1.1;
+    for(const angle of [0,Math.PI/2,Math.PI,3*Math.PI/2])for(const centerRadius of [.28,.55]){
+      const points:Vec3[]=[];
+      for(let i=0;i<=128;i++){
+        const z=half*(2*i/128-1),r=centerRadius/Math.sqrt(1+z*z/(L*L));
+        points.push({x:r*Math.cos(angle),y:r*Math.sin(angle),z});
       }
+      lines.push(points);
     }
-  } else {
-    const pts: Vec3[] = [];
-    let p: Vec3 = { x: params.majorRadiusM + 0.35, y: 0, z: 0 };
-    for (let k = 0; k < 180; k++) {
-      pts.push(p);
-      const b = evaluateTokamakMirrorField(p, params);
-      const bm = Math.max(1e-6, Math.hypot(b.x, b.y, b.z));
-      p = { x: p.x + (b.x / bm) * 0.12, y: p.y + (b.y / bm) * 0.12, z: p.z + (b.z / bm) * 0.12 };
+  }else{
+    const R0=Math.max(.8,params.majorRadiusM),q=Math.max(.8,params.safetyFactorQ);
+    const h=4*Math.PI/360;
+    for(const rho of [.22,.40])for(const startTheta of [0,Math.PI]){
+      const points:Vec3[]=[];let theta=startTheta;
+      const slope=(a:number)=>(R0+rho*Math.cos(a))/(q*R0);
+      for(let i=0;i<=360;i++){
+        const phi=i*h,R=R0+rho*Math.cos(theta);
+        points.push({x:R*Math.cos(phi),y:R*Math.sin(phi),z:rho*Math.sin(theta)});
+        const k1=slope(theta),k2=slope(theta+h*k1/2),k3=slope(theta+h*k2/2),k4=slope(theta+h*k3);
+        theta+=h*(k1+2*k2+2*k3+k4)/6;
+      }
+      lines.push(points);
     }
-    lines.push(pts);
   }
   return lines;
 }
@@ -261,6 +317,10 @@ export function computeObservables(state: TokamakMirrorState, params: TokamakMir
     maxMuRelDev: state.maxMuRelDev,
     keDriftRel: keErr,
     reflectionCount: state.reflectionCount,
+    escaped:state.escaped?1:0,
+    vParallel:fusionParallelVelocity(state.velocity,state.bField),
+    vPerp:Math.sqrt(Math.max(0,2*state.currentKineticJ-fusionParallelVelocity(state.velocity,state.bField)**2)),
+    minorRadiusM:fusionMinorRadius(state.position,params),
     lossConeDeg: computeMirrorLossConeDeg(params)
   };
 }
@@ -275,7 +335,7 @@ export function checkInvariants(state: TokamakMirrorState): InvariantReport[] {
       passed: keErr < 1e-8
     },
     {
-      name: '磁矩绝热不变量 μ 相对波动',
+      name: '磁矩绝热近似 μ/m 相对波动（非严格守恒）',
       measuredError: state.maxMuRelDev,
       tolerance: 0.05,
       passed: state.maxMuRelDev < 0.05

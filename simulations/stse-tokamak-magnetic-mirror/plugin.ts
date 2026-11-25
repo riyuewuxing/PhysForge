@@ -1,5 +1,5 @@
 import { fusionStoryDecks } from './storyDecks.js';
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec, type Viewport } from '@physforge/sim-sdk';
 import { tokamakMirrorPresets } from './presets.js';
 import {
   buildTokamakMirrorSegments,
@@ -9,6 +9,10 @@ import {
   createInitialState,
   stepTokamakMirror,
   traceTokamakMirrorLines,
+  fusionParallelVelocity,
+  fusionMinorRadius,
+  fusionSurfaceWinding,
+  TOKAMAK_MINOR_RADIUS_M,
   type TokamakMirrorParams,
   type TokamakMirrorState
 } from './engine.js';
@@ -27,17 +31,103 @@ const paramSchema: readonly ParamFieldSpec<TokamakMirrorParams>[] = [
   { key: 'b0Tesla', kind: 'number', label: '中心磁场 B₀', unit: 'T', defaultValue: 2.5, min: 0.5, max: 5.0, step: 0.2 },
   { key: 'mirrorLengthM', kind: 'number', label: '磁镜特征长度 L', unit: 'm', defaultValue: 1.2, min: 0.6, max: 2.4, step: 0.1 },
   { key: 'coilHalfSpanM', kind: 'number', label: '磁喉半跨距 z_c', unit: 'm', defaultValue: 1.5, min: 0.8, max: 2.5, step: 0.1 },
-  { key: 'pitchAngleDeg', kind: 'number', label: '初速度投射角 θ', unit: '°', defaultValue: 52, min: 10, max: 85, step: 2 },
+  { key: 'pitchAngleDeg', kind: 'number', label: '初速度与局部 B 夹角 θ₀', unit: '°', defaultValue: 52, min: 10, max: 85, step: 2 },
   { key: 'speed0', kind: 'number', label: '粒子速率 v₀', unit: 'm/s', defaultValue: 2.0, min: 0.5, max: 4.0, step: 0.2 },
-  { key: 'qOverM', kind: 'number', label: '荷质比 q/m', defaultValue: 45, min: 10, max: 80, step: 5 },
+  { key: 'qOverM', kind: 'number', label: '荷质比 q/m', unit: 'C/kg', defaultValue: 45, min: 10, max: 80, step: 5 },
   { key: 'majorRadiusM', kind: 'number', label: '托卡马克大半径 R₀', unit: 'm', defaultValue: 1.4, min: 1.0, max: 2.2, step: 0.1 },
-  { key: 'safetyFactorQ', kind: 'number', label: '安全因子 q', defaultValue: 2.5, min: 1.2, max: 5.0, step: 0.2 }
+  { key: 'safetyFactorQ', kind: 'number', label: '极向场参数 q*', description: '调节极向分量；有限磁面真实绕行比依赖小半径', defaultValue: 2.5, min: 1.2, max: 5.0, step: 0.2 }
 ];
 
 /** Shared right-handed physical-to-display rotation. XY is the torus plane;
  * for a mirror the axial z direction is horizontal and depth is -x. */
 export function fusionDisplayPoint(point: { x: number; y: number; z: number }, mode: TokamakMirrorParams['mode']) {
   return mode === 'tokamak' ? { x: point.x, y: point.y, z: point.z } : { x: point.z, y: point.y, z: -point.x };
+}
+type Point3={x:number;y:number;z:number};
+export function fusionGeometryKey(p:TokamakMirrorParams):string{
+  return p.mode==='magnetic-mirror'?[p.mode,p.mirrorLengthM,p.coilHalfSpanM].join(':'):[p.mode,p.majorRadiusM,p.safetyFactorQ].join(':');
+}
+let cachedGeometry:{key:string;segments:ReturnType<typeof buildTokamakMirrorSegments>;lines:ReturnType<typeof traceTokamakMirrorLines>}|null=null;
+export function fusionDisplayGeometry(p:TokamakMirrorParams){
+  const key=fusionGeometryKey(p);
+  if(!cachedGeometry||cachedGeometry.key!==key)cachedGeometry={key,segments:buildTokamakMirrorSegments(p),lines:traceTokamakMirrorLines(p)};
+  return cachedGeometry;
+}
+export function fusionVelocityVectors(s:TokamakMirrorState,p:TokamakMirrorParams){
+  const origin=fusionDisplayPoint(s.position,p.mode),v=fusionDisplayPoint(s.velocity,p.mode);
+  const b=fusionDisplayPoint(s.bField,p.mode),bm=Math.max(1e-12,Math.hypot(b.x,b.y,b.z));
+  const vp=fusionParallelVelocity(s.velocity,s.bField);
+  const scale=Math.min(.27,.80/Math.max(1e-12,Math.hypot(v.x,v.y,v.z)));
+  const add=(a:Point3,d:Point3,k:number)=>({x:a.x+k*d.x,y:a.y+k*d.y,z:a.z+k*d.z});
+  const end=add(origin,v,scale),joint=add(origin,b,scale*vp/bm);
+  return [{id:'v',a:origin,b:end},{id:'parallel',a:origin,b:joint},{id:'perpendicular',a:joint,b:end}] as const;
+}
+export function fusionStatus(s:TokamakMirrorState,p:TokamakMirrorParams):string{
+  if(s.escapeEvent)return p.mode==='magnetic-mirror'?'首次穿过磁喉：'+s.escapeEvent.time.toFixed(3)+' s':'首次越过示意室壁：'+s.escapeEvent.time.toFixed(3)+' s';
+  if(p.mode==='magnetic-mirror')return '真实反射 '+s.reflectionCount+' 次 · 尚未越过磁喉';
+  return '尚未越过示意室壁 · 单粒子模型';
+}
+export function fusionEventPoints(s:TokamakMirrorState,p:TokamakMirrorParams){
+  return [s.lastReflection,s.escapeEvent].flatMap(event=>event?.position&&event.position.z!==undefined?
+    [{id:event.id,time:event.time,point:fusionDisplayPoint({x:event.position.x,y:event.position.y,z:event.position.z},p.mode)}]:[]);
+}
+export type FusionFramePoint=Point3;
+export type FusionSafeRect={left:number;right:number;top:number;bottom:number};
+export type FusionScreenBounds=FusionSafeRect & {visible:boolean};
+/** Actual visible geometric samples in the same right-handed display space.
+ * Include the chamber envelope, not only its coils. No synthetic particle path. */
+let cachedFrameGeometry:{key:string;points:Point3[]}|null=null;
+function fusionStaticFramePoints(p:TokamakMirrorParams,layers:ReadonlySet<string>):readonly Point3[]{
+  const key=[fusionGeometryKey(p),layers.has('conductors'),layers.has('fieldLines3d')].join(':');
+  if(cachedFrameGeometry?.key===key)return cachedFrameGeometry.points;
+  const geometry=fusionDisplayGeometry(p),map=(v:Point3)=>fusionDisplayPoint(v,p.mode);
+  const points:Point3[]=[];
+  if(layers.has('conductors')){
+    for(const seg of geometry.segments)points.push(map(seg.a),map(seg.b));
+    if(p.mode==='tokamak')for(let i=0;i<48;i++)for(let j=0;j<12;j++){
+      const phi=i*2*Math.PI/48,theta=j*2*Math.PI/12,R=p.majorRadiusM+TOKAMAK_MINOR_RADIUS_M*Math.cos(theta);
+      points.push(map({x:R*Math.cos(phi),y:R*Math.sin(phi),z:TOKAMAK_MINOR_RADIUS_M*Math.sin(theta)}));
+    }
+  }
+  if(layers.has('fieldLines3d'))for(const line of geometry.lines)for(const pt of line)points.push(map(pt));
+  cachedFrameGeometry={key,points};
+  return points;
+}
+export function fusionFramePoints(s:TokamakMirrorState,p:TokamakMirrorParams,layers:ReadonlySet<string>):Point3[]{
+  const map=(v:Point3)=>fusionDisplayPoint(v,p.mode);
+  const points:Point3[]=[...fusionStaticFramePoints(p,layers),map(s.position),...s.trail.map(map)];
+  if(layers.has('velocityComponents'))for(const v of fusionVelocityVectors(s,p))points.push(v.a,v.b);
+  if(layers.has('eventPins'))for(const v of fusionEventPoints(s,p))points.push(v.point);
+  return points;
+}
+export function fusionSafeRect(width:number,height:number,presentation:boolean,scope=true):FusionSafeRect{
+  return {left:Math.min(65,width*.075),right:width-Math.min(presentation?360:300,width*.40),
+    top:Math.min(presentation?100:38,height*.17),
+    bottom:height-Math.min(presentation?158:scope?245:112,height*.41)};
+}
+export function fusionScreenFits(b:FusionScreenBounds,safe:FusionSafeRect,margin=18):boolean{
+  return b.visible&&b.left>=safe.left+margin&&b.right<=safe.right-margin&&b.top>=safe.top+margin&&b.bottom<=safe.bottom-margin;
+}
+export function fusionFlatScreenBounds(points:readonly Point3[],viewport:Viewport):FusionScreenBounds{
+  const m=createWorldMapper(viewport);let left=Infinity,right=-Infinity,top=Infinity,bottom=-Infinity;
+  for(const pt of points){const p=m.toScreen(pt.x,pt.y);left=Math.min(left,p.x);right=Math.max(right,p.x);top=Math.min(top,p.y);bottom=Math.max(bottom,p.y);}
+  return {left,right,top,bottom,visible:[left,right,top,bottom].every(Number.isFinite)};
+}
+export function fitFusionFlatViewport(points:readonly Point3[],vp:Viewport,safe:FusionSafeRect):Viewport{
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  for(const pt of points){minX=Math.min(minX,pt.x);maxX=Math.max(maxX,pt.x);minY=Math.min(minY,pt.y);maxY=Math.max(maxY,pt.y);}
+  const cx=(minX+maxX)/2,cy=(minY+maxY)/2;
+  const base=Math.min(vp.width,vp.height)*.24;
+  const ppm=Math.min(base*1.32,Math.max(1,safe.right-safe.left-56)/Math.max(1,maxX-minX+.20),Math.max(1,safe.bottom-safe.top-56)/Math.max(1,maxY-minY+.20));
+  return {...vp,scale:ppm/base,offsetX:(safe.left+safe.right)/2-.45*vp.width-cx*ppm,offsetY:(safe.top+safe.bottom)/2-.5*vp.height+cy*ppm};
+}
+function fusionCanvasArrow(ctx:CanvasRenderingContext2D,a:{x:number;y:number},b:{x:number;y:number},color:string){
+  const dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy);if(len<.5)return;
+  const ux=dx/len,uy=dy/len,head=Math.min(10,len*.28);
+  ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2.1;
+  ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-head*ux+head*.45*uy,b.y-head*uy-head*.45*ux);
+  ctx.lineTo(b.x-head*ux-head*.45*uy,b.y-head*uy+head*.45*ux);ctx.closePath();ctx.fill();
 }
 const liveFormulas: readonly LiveFormulaSpec[] = [
   {
@@ -182,7 +272,11 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
   renderMode: 'three3d',
   paramSchema,
   presets: tokamakMirrorPresets,
-  defaultView: { scale: 0.917, offsetRatioX: 0.05 },
+  defaultView:{scale:(p,size)=>{
+    const w=p.mode==='tokamak'?2*(p.majorRadiusM+TOKAMAK_MINOR_RADIUS_M):2.2*p.coilHalfSpanM;
+    const h=p.mode==='tokamak'?w:1.6;
+    return Math.min(1.32,.68*size.width/(w*Math.min(size.width,size.height)*.24),.66*size.height/(h*Math.min(size.width,size.height)*.24));
+  },offsetRatioX:-.025},
   engine: {
     createInitialState,
     step: stepTokamakMirror,
@@ -191,13 +285,18 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
   },
   layers: [
     { id: 'conductors', label: '3D 线圈 / 真空室骨架', defaultVisible: true },
-    { id: 'fieldLines3d', label: '3D 空间磁感线', defaultVisible: true }
+    { id: 'fieldLines3d', label: '3D 空间磁感线', defaultVisible: true },
+    { id:'velocityComponents',label:'速度及平行/垂直分量',defaultVisible:true },
+    { id:'eventPins',label:'真实反射与越界点',defaultVisible:true }
   ],
   telemetryChannels: [
     { key: 'z', label: '轴向位置 z', unit: 'm', color: '#38bdf8' },
     { key: 'bMagT', label: '所在处磁感应强度 |B|', unit: 'T', color: '#fbbf24' },
     { key: 'muCurrent', label: '单位质量磁矩 μ/m', unit: 'J/(kg·T)', color: '#4ade80' },
-    { key: 'maxMuRelDev', label: 'μ 最大相对波动', unit: '', color: '#f472b6' }
+    { key: 'maxMuRelDev', label: 'μ 最大相对波动', unit: '', color: '#f472b6' },
+    { key:'vParallel',label:'v∥',unit:'m/s',color:'#38bdf8' },
+    { key:'vPerp',label:'v⊥',unit:'m/s',color:'#f472b6' },
+    { key:'minorRadiusM',label:'磁面小半径 ρ',unit:'m',color:'#4ade80' }
   ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
@@ -208,40 +307,54 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
     }),
     importScene: (dsl) => dsl.params as Partial<TokamakMirrorParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      ...(params.mode === 'tokamak' ? [{ kind: 'circle' as const, cx: 0, cy: 0, r: params.majorRadiusM, fill: false }] : [{ kind: 'line' as const, x1: -2.2, y1: 0, x2: 2.2, y2: 0, dashed: true }]),
-      { kind: 'trajectory', points: state.trail.map(p => fusionDisplayPoint(p, params.mode)), strokeWidth: 1.5 },
-      { kind: 'circle', cx: fusionDisplayPoint(state.position, params.mode).x, cy: fusionDisplayPoint(state.position, params.mode).y, r: 0.08, fill: true }
-    ];
-    return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.4, minY: -1.5, maxX: 2.4, maxY: 1.5 },
-      title: '磁镜/托卡马克二维投影轨迹图',
-      primitives
-    };
+  exportDiagramIR:(state,params)=>{
+    const geometry=fusionDisplayGeometry(params),project=(p:Point3)=>fusionDisplayPoint(p,params.mode);
+    const points:Point3[]=[];
+    const primitives:DiagramPrimitive[]=[];
+    for(const seg of geometry.segments){const a=project(seg.a),b=project(seg.b);points.push(a,b);primitives.push({kind:'line',x1:a.x,y1:a.y,x2:b.x,y2:b.y,strokeWidth:1.2});}
+    for(const line of geometry.lines){
+      const p=line.map(project);points.push(...p);primitives.push({kind:'polyline',points:p,dashed:true});
+    }
+    const track=state.trail.map(project),particle=project(state.position);points.push(...track,particle);
+    if(track.length>1)primitives.push({kind:'trajectory',points:track,strokeWidth:1.8});
+    primitives.push({kind:'circle',cx:particle.x,cy:particle.y,r:.045,fill:true});
+    for(const vector of fusionVelocityVectors(state,params)){
+      points.push(vector.a,vector.b);
+      if(Math.hypot(vector.b.x-vector.a.x,vector.b.y-vector.a.y)>1e-8)
+        primitives.push({kind:'arrow',x1:vector.a.x,y1:vector.a.y,x2:vector.b.x,y2:vector.b.y,label:vector.id==='v'?'v':vector.id==='parallel'?'v∥':'v⊥'});
+    }
+    for(const ev of fusionEventPoints(state,params)){
+      points.push(ev.point);primitives.push({kind:'circle',cx:ev.point.x,cy:ev.point.y,r:.065});
+      primitives.push({kind:'text',x:ev.point.x+.1,y:ev.point.y+.13,text:ev.id==='fusion-escape'?'首次越界':'反射点',align:'start'});
+    }
+    let minX=Math.min(-1,...points.map(p=>p.x)),maxX=Math.max(1,...points.map(p=>p.x)),
+      minY=Math.min(-.8,...points.map(p=>p.y)),maxY=Math.max(.8,...points.map(p=>p.y));
+    primitives.push({kind:'text',x:minX,y:minY-.16,text:params.mode==='magnetic-mirror'?'磁镜轴向投影 · 虚线为磁感线':'环形场 XY 投影 · 示意室壁',align:'start'});
+    return {width:720,height:460,viewBox:{minX:minX-.25,maxX:maxX+.45,minY:minY-.40,maxY:maxY+.35},title:'S01 磁镜/托卡马克真实二维投影',primitives};
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
-    const proj = (p: { x: number; y: number; z: number }) => { const v = fusionDisplayPoint(p, params.mode); return m.toScreen(v.x, v.y); };
-    ctx.save();
+    const proj=(p:Point3)=>{const v=fusionDisplayPoint(p,params.mode);return m.toScreen(v.x,v.y);};
+    const paper=viewport.theme==='projector',geometry=fusionDisplayGeometry(params);
+    const copper=paper?'#92400e':'#f6b66d',field=paper?'#0369a1':'#75e5f1';
+    const colors=[paper?'#92400e':'#ffcf78',paper?'#0369a1':'#38bdf8',paper?'#9d174d':'#f472b6'];
+    ctx.save();ctx.lineJoin='round';ctx.lineCap='round';
     if (activeLayers.has('conductors')) {
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle=copper;ctx.lineWidth=paper?2:3.4;
+      if(!paper){ctx.shadowColor='#df8d53';ctx.shadowBlur=5;}
       ctx.beginPath();
-      for (const seg of buildTokamakMirrorSegments(params)) {
+      for (const seg of geometry.segments) {
         const a = proj(seg.a);
         const b = proj(seg.b);
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
       }
-      ctx.stroke();
+      ctx.stroke();ctx.shadowBlur=0;
     }
     if (activeLayers.has('fieldLines3d')) {
-      ctx.strokeStyle = 'rgba(56,189,248,0.45)';
-      ctx.lineWidth = 1.4;
-      for (const line of traceTokamakMirrorLines(params)) {
+      ctx.strokeStyle=field;ctx.lineWidth=1.45;ctx.globalAlpha=.72;
+      if(!paper){ctx.shadowColor='#38bdf8';ctx.shadowBlur=4;}
+      for (const line of geometry.lines) {
         if (line.length < 2) continue;
         ctx.beginPath();
         line.forEach((p, idx) => {
@@ -250,24 +363,32 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
           else ctx.lineTo(pt.x, pt.y);
         });
         ctx.stroke();
+        const j=Math.floor(line.length*.62);
+        fusionCanvasArrow(ctx,proj(line[j-2]!),proj(line[j]!),field);
       }
+      ctx.shadowBlur=0;ctx.globalAlpha=1;
     }
-    if (state.trail.length > 1) {
-      ctx.strokeStyle = '#4ade80';
-      ctx.lineWidth = 2.2;
+    if(state.trail.length>1){
+      ctx.strokeStyle=paper?'#166534':'#ffcb75';ctx.lineWidth=2.6;
+      if(!paper){ctx.shadowColor='#ffad45';ctx.shadowBlur=7;}
       ctx.beginPath();
       state.trail.forEach((p, idx) => {
         const pt = proj(p);
         if (idx === 0) ctx.moveTo(pt.x, pt.y);
         else ctx.lineTo(pt.x, pt.y);
       });
-      ctx.stroke();
+      ctx.stroke();ctx.shadowBlur=0;
     }
     const sp = proj(state.position);
-    ctx.fillStyle = state.escaped ? '#ef4444' : '#4ade80';
-    ctx.beginPath();
-    ctx.arc(sp.x, sp.y, m.len(0.028), 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillStyle=state.escaped?(paper?'#b91c1c':'#fb7185'):(paper?'#92400e':'#fff0bd');
+    if(!paper){ctx.shadowColor=state.escaped?'#fb7185':'#fbbf24';ctx.shadowBlur=10;}
+    ctx.beginPath();ctx.arc(sp.x,sp.y,Math.max(3.2,m.len(.028)),0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+    if(activeLayers.has('velocityComponents'))fusionVelocityVectors(state,params).forEach((v,i)=>fusionCanvasArrow(ctx,m.toScreen(v.a.x,v.a.y),m.toScreen(v.b.x,v.b.y),colors[i]!));
+    if(activeLayers.has('eventPins'))for(const ev of fusionEventPoints(state,params)){
+      const q=m.toScreen(ev.point.x,ev.point.y);
+      ctx.strokeStyle=ev.id==='fusion-escape'?(paper?'#b91c1c':'#fb7185'):(paper?'#166534':'#4ade80');ctx.lineWidth=2.3;
+      ctx.beginPath();ctx.arc(q.x,q.y,7,0,Math.PI*2);ctx.stroke();
+    }
 
     const radiusGuideEnd = params.mode === 'magnetic-mirror'
       ? { x: params.coilHalfSpanM, y: 0 }
@@ -283,17 +404,18 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
     ctx.stroke();
     ctx.setLineDash([]);
 
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 13px ui-sans-serif, system-ui';
-    ctx.textAlign = 'center';
-    const crit = computeMirrorLossConeDeg(params);
-    ctx.fillText(
-      params.mode === 'magnetic-mirror'
-        ? `θ=${params.pitchAngleDeg}° (逃逸锥角 θc=${crit.toFixed(1)}°) | 反射次数=${state.reflectionCount} | μ 波动 ${(state.maxMuRelDev * 100).toFixed(2)}% | ${state.escaped ? '已穿过磁喉' : state.reflectionCount > 0 ? '已记录反射，尚未穿过磁喉' : '尚未穿过磁喉'}`
-        : `托卡马克螺旋约束 | R₀=${params.majorRadiusM.toFixed(1)}m | 安全因子 q=${params.safetyFactorQ}`,
-      viewport.width * 0.5,
-      26
-    );
+    // HUD is a screen-space readout away from title, formula card and scene.
+    ctx.fillStyle=paper?'#334155':'#cbd5e1';ctx.font='600 12px system-ui,sans-serif';ctx.textAlign='left';
+    const y=viewport.height-112;
+    ctx.fillText(params.mode==='magnetic-mirror'?'轴向 z · 线圈为位形示意':'XY 投影 · 非真实等离子体模拟',12,y);
+    ctx.fillText(fusionStatus(state,params),12,y+18);
+    ctx.fillText(params.mode==='magnetic-mirror'?'θ₀='+params.pitchAngleDeg+'° · θc≈'+computeMirrorLossConeDeg(params).toFixed(1)+'°':'q*='+params.safetyFactorQ.toFixed(2)+' · ρ='+fusionMinorRadius(state.position,params).toFixed(3)+' m',12,y+36);
+    if(activeLayers.has('velocityComponents')){
+      ctx.fillStyle=colors[0]!;ctx.fillText('v',12,y-17);
+      ctx.fillStyle=colors[1]!;ctx.fillText('v∥',38,y-17);
+      ctx.fillStyle=colors[2]!;ctx.fillText('v⊥',72,y-17);
+      ctx.fillStyle=paper?'#334155':'#cbd5e1';ctx.fillText('速度分解',105,y-17);
+    }
     ctx.restore();
   },
   getControlHandles: (_state, params) => [
@@ -349,17 +471,17 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
   formatFormulas: (state, params) => {
     const b = Math.hypot(state.bField.x, state.bField.y, state.bField.z);
     const speed = Math.hypot(state.velocity.x, state.velocity.y, state.velocity.z);
-    if (params.mode === 'tokamak') return [{
-      id: 'tokamak-field', label: '环向磁场与粒子状态',
-      latex: 'B_\\phi=B_0 R_0/R',
-      substitutedLatex: `\\begin{aligned}|B|&=${b.toFixed(3)}\\text{ T}\\\\v&=${speed.toFixed(3)}\\text{ m/s}\\end{aligned}`
-    }];
+    if(params.mode==='tokamak'){
+      const rho=fusionMinorRadius(state.position,params);
+      return [{id:'tokamak-field',label:'环向场与单粒子状态',latex:'B_\\phi=B_0R_0/R',
+        substitutedLatex:`\\begin{aligned}|B|&=${b.toFixed(3)}\\text{ T}\\\\v&=${speed.toFixed(3)}\\text{ m/s}\\\\\\rho&=${rho.toFixed(3)}\\text{ m}\\\\q_{\\rm surf}(\\rho_0)&=${fusionSurfaceWinding(params,.28).toFixed(3)}\\end{aligned}`}];
+    }
     return [{
       id: 'magnetic-mirror-mu', label: '轴线磁镜与绝热近似',
       latex: '\\begin{aligned}R_m&=1+(z_c/L)^2\\\\\\sin\\theta_c&=1/\\sqrt{R_m}\\end{aligned}',
       substitutedLatex: `\\begin{aligned}\\theta_c&=${computeMirrorLossConeDeg(params).toFixed(2)}^\\circ\\\\z&=${state.position.z.toFixed(3)}\\text{ m}\\\\N_{\\rm ref}&=${state.reflectionCount}\\\\\\Delta\\mu/\\mu&=${(state.maxMuRelDev * 100).toFixed(2)}\\%\\end{aligned}`
     }];
   }
-}), { storyDecks: fusionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 6.5, sceneDepthRadius: 5, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
+}), { fusionFramePoints,fusionSafeRect,fusionScreenFits,fusionFlatScreenBounds,fitFusionFlatViewport,storyDecks: fusionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 5.2, sceneDepthRadius: 7, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
 
 export default stseTokamakMagneticMirrorPlugin;

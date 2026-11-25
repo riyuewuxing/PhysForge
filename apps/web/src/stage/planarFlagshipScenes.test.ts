@@ -7,9 +7,36 @@ import {inductionDiagramGeometry,inductionDiagramCurrent,inductionFieldPoints,in
 import { emBoundedMagneticFieldPlugin,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { createPlanarFlagshipScene, inductionDisplayPoint, fitB1SpatialFrame,b1ProjectionFits } from './planarFlagshipScenes.js';
+import { stseTokamakMagneticMirrorPlugin,fusionFramePoints,fusionSafeRect,fusionScreenFits,fitFusionFlatViewport,fusionFlatScreenBounds } from '../../../../simulations/stse-tokamak-magnetic-mirror/plugin.js';
+import { fitFusionSpatialFrame,projectFusionFrame } from './fusionFraming.js';
 import { CameraMorphController, alignedCanvasViewport } from './cameraMorphController.js';
 
 describe('flagship physical display alignment', () => {
+  it('frames S01 real coils, toroidal depth, escaped particle and velocity endpoints inside safe regions',()=>{
+    const plugin=stseTokamakMagneticMirrorPlugin;
+    for(const mode of ['magnetic-mirror','tokamak'] as const){
+      const params=resolvePluginParams(plugin.paramSchema,{mode,pitchAngleDeg:22});
+      const initial=plugin.engine.createInitialState(params);
+      const state=plugin.engine.step(initial,params,1.35).nextState;
+      const layers=new Set(['conductors','fieldLines3d','velocityComponents','eventPins']);
+      const points=fusionFramePoints(state,params,layers);
+      const before=JSON.stringify(state);
+      for(const [width,height] of [[1440,900],[1024,768]] as const){
+        for(const presentation of [true,false]){
+          const safe=fusionSafeRect(width,height,presentation);
+          const camera=new CameraMorphController(plugin.spatial3D,width,height);
+          fitFusionSpatialFrame(camera,points,width,height,safe);
+          const framed=projectFusionFrame(points,camera.getActiveCamera(),width,height);
+          expect(fusionScreenFits(framed,safe)).toBe(true);
+          const occupancy=Math.max((framed.right-framed.left)/(safe.right-safe.left-64),(framed.bottom-framed.top)/(safe.bottom-safe.top-64));
+          expect(occupancy).toBeGreaterThan(.80);
+          const vp=fitFusionFlatViewport(points,{width,height,dpr:1,scale:1,offsetX:0,offsetY:0},safe);
+          expect(fusionScreenFits(fusionFlatScreenBounds(points,vp),safe)).toBe(true);
+        }
+      }
+      expect(JSON.stringify(state)).toBe(before);
+    }
+  });
   it('shares the moving E04 origin between actual rod, force and flat projection', () => {
     const p = emInductionDoubleRodPlugin;
     const params = resolvePluginParams<InductionParams>(p.paramSchema, { externalForce: 2 });
