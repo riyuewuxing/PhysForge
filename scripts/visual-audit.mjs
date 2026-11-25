@@ -352,11 +352,13 @@ async function auditM01Chase(page,origin){
   await selectPreset(page,'brake-safe-margin',true);await waitInitial(42);
   const safe=await runTo(5.45);
   if(Math.abs(safe.xA-58)>1e-8||safe.vA!==0||safe.aA!==0||Math.abs(safe.xB-(42+6*safe.t))>1e-8||Math.abs(safe.minGap-11.9)>1e-8||Math.abs(safe.firstCoVelocityTime-3.9)>1e-8||safe.meetCount!==0)throw Error('M01 safe braking '+JSON.stringify(safe));
-  await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+  if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
   await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
   await page.screenshot({path:path.join(OUT_DIR,'H12_M01_safe_paper.png')});
-  await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+  if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
   await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
   await page.locator('[data-testid="topbar"]').getByLabel('播放倍速').selectOption('1');
   console.log('H12 M01 online '+JSON.stringify({initial,catchup,safe}));
   return {initial,catchup,safe};
