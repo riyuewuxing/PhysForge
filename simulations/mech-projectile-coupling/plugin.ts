@@ -1,7 +1,8 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { projectileCouplingPresets } from './presets.js';
+import { projectileDiagram,projectileInitialView,fitProjectileViewport,projectileBoundsFit,vacuumFarthest,projectileVelocityScale,type ProjectileRole } from './diagram.js';
 import {
   checkInvariants,
   computeObservables,
@@ -17,7 +18,7 @@ const paramSchema: readonly ParamFieldSpec<ProjectileCouplingParams>[] = [
     kind: 'select',
     label: '抛体耦合场景',
     options: [
-      { label: '平抛落斜面（极值垂直点）', value: 'incline-flat' },
+      { label: '平抛落斜面（最远距离）', value: 'incline-flat' },
       { label: '平抛落半圆凹槽', value: 'semicircle-trough' },
       { label: '斜抛安全包络与阻尼对比', value: 'safety-envelope' }
     ],
@@ -126,7 +127,8 @@ export const mechProjectileCouplingPlugin = Object.assign(defineSimulationPlugin
     difficulty: '压轴专题',
     version: '2.0.0'
   },
-  defaultView: { scale: 0.42, offsetRatioX: -0.25, offsetRatioY: -0.05 },
+  defaultView:{minScale:.001,scale:(p,v)=>projectileInitialView(p,v).scale,offsetRatioX:(p,v)=>projectileInitialView(p,v).offsetRatioX,offsetRatioY:(p,v)=>projectileInitialView(p,v).offsetRatioY},
+  getParamFields:p=>paramSchema.filter(f=>f.key==='inclineDeg'?p.mode==='incline-flat':f.key==='troughRadius'?p.mode==='semicircle-trough':f.key==='launchAngleDeg'?p.mode!=='incline-flat':true),
   paramSchema,
   presets: projectileCouplingPresets,
   engine: {
@@ -137,26 +139,29 @@ export const mechProjectileCouplingPlugin = Object.assign(defineSimulationPlugin
   },
   layers: [
     { id: 'surface', label: '斜面/半圆槽与安全包络', defaultVisible: true },
-    { id: 'trajectory', label: '抛体轨迹与真空对照', defaultVisible: true }
+    { id: 'trajectory', label: '抛体轨迹与真空对照', defaultVisible: true },
+    { id:'construction',label:'速度与真空几何构造',defaultVisible:true }
   ],
   telemetryChannels: [
     { key: 'x', label: '水平位移 x', unit: 'm', color: '#38bdf8' },
     { key: 'y', label: '竖直位移 y', unit: 'm', color: '#f472b6' },
     { key: 'totalMechanicalEnergy', label: '机械能 E', unit: 'J', color: '#4ade80' }
   ],
-  getControlHandles: (_s, params) => {
-    const a = params.mode === 'incline-flat' ? 0 : degToRad(params.launchAngleDeg);
+  getControlHandles: (s, params) => {
+    if(s.t>0||s.termination)return [];
+    const a = params.mode === 'incline-flat' ? 0 : degToRad(params.launchAngleDeg),k=projectileVelocityScale(s,params);
     return [
       {
         id: 'launch-vec',
         label: `v₀=${params.v0.toFixed(1)}`,
-        position: { x: params.v0 * Math.cos(a) * 0.25, y: params.v0 * Math.sin(a) * 0.25 },
+        position: { x: params.v0 * Math.cos(a) * k, y: params.v0 * Math.sin(a) * k },
         origin: { x: 0, y: 0 },
         handleKind: 'vector',
         color: '#4ade80',
+        showWhenIdle:false,
         onDrag: (wp) => ({
-          v0: Number(Math.max(1, Math.min(14, Math.hypot(wp.x, wp.y) / 0.25)).toFixed(1)),
-          launchAngleDeg: Math.max(0, Math.min(85, Math.round((Math.atan2(Math.max(0, wp.y), Math.max(0.1, wp.x)) * 180) / Math.PI / 5) * 5))
+          v0:Math.max(1,Math.min(14,Math.round((params.mode==='incline-flat'?Math.max(0,wp.x):Math.hypot(wp.x,wp.y))/k*2)/2)),
+          ...(params.mode==='incline-flat'?{}:{launchAngleDeg:Math.max(0,Math.min(85,Math.round(Math.atan2(Math.max(0,wp.y),Math.max(.001,wp.x))*180/Math.PI/5)*5))})
         })
       }
     ];
@@ -188,102 +193,47 @@ export const mechProjectileCouplingPlugin = Object.assign(defineSimulationPlugin
     }),
     importScene: (dsl) => dsl.params as Partial<ProjectileCouplingParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'arrow', x1: 0, y1: 0, x2: 1.2, y2: 0, label: 'v_0' },
-      ...(state.trail.length >= 2 ? [{ kind: 'trajectory' as const, points: state.trail }] : []),
-      { kind: 'circle', cx: state.x, cy: state.y, r: 0.12, fill: true }
-    ];
-    if (params.mode === 'incline-flat') {
-      const th = degToRad(params.inclineDeg);
-      primitives.push({ kind: 'line', x1: 0, y1: 0, x2: 7, y2: -7 * Math.tan(th) });
-    } else {
-      primitives.push({ kind: 'hatchedGround', x1: -1, y1: 0, x2: 7, y2: 0 });
-    }
-    return {
-      width: 720,
-      height: 440,
-      viewBox: { minX: -0.8, minY: -5, maxX: 7.5, maxY: 3.5 },
-      title: '抛体运动与斜面/曲面耦合图解',
-      primitives
-    };
+  formatFormulas:(s,p)=>{
+    const pair=(a:string,b:string)=>'\\begin{gathered}'+a+'\\\\'+b+'\\end{gathered}';
+    const n=(x:number)=>x.toFixed(3);
+    const readout=pair('v_x='+n(s.vx)+'\\,\\mathrm{m/s}','v_y='+n(s.vy)+'\\,\\mathrm{m/s}');
+    const far=vacuumFarthest(p);
+    return [{id:'m04-velocity',label:'当前速度（撞击前瞬时值）',latex:p.dragCoeff===0?'v_x=v_{0x},\\ v_y=v_{0y}-gt':'m\\dot{\\vec v}=m\\vec g-c_d|\\vec v|\\vec v',substitutedLatex:readout},
+      ...(far?[{id:'m04-farthest',label:'真空理论最远点与飞行时间',latex:pair('t_* = v_0\\tan\\theta/g','t_f=2t_*'),substitutedLatex:pair('t_*='+n(far.t)+'\\,\\mathrm s','d_{\\max}='+n(far.distance)+'\\,\\mathrm m')}]:[]),
+      ...(p.mode==='semicircle-trough'?[{id:'m04-trough',label:'真实下半圆槽壁',latex:pair('(x-R)^2+y^2=R^2','y\\le0,\\ 0\\le x\\le2R')}]:[]),
+      ...(p.mode==='safety-envelope'?[{id:'m04-envelope',label:'真空包络（不是当前轨迹）',latex:'y_e=\\frac{v_0^2}{2g}-\\frac{gx^2}{2v_0^2}'}]:[]),
+      ...(s.termination?[{id:'m04-terminal',label:s.landed?'撞击 · 已终止':'飞出槽口 · 已终止',latex:'t='+n(s.t)+'\\,\\mathrm s'}]:[])];
   },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const m = createWorldMapper(viewport);
-    const toScr = (wx: number, wy: number) => {
-      const point = m.toScreen(wx, wy);
-      return { sx: point.x, sy: point.y };
-    };
-
-    ctx.save();
-    if (activeLayers.has('surface')) {
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 2.5;
-      if (params.mode === 'incline-flat') {
-        const th = degToRad(params.inclineDeg);
-        const p1 = toScr(0, 0);
-        const p2 = toScr(9, -9 * Math.tan(th));
-        ctx.beginPath();
-        ctx.moveTo(p1.sx, p1.sy);
-        ctx.lineTo(p2.sx, p2.sy);
-        ctx.stroke();
-      } else if (params.mode === 'semicircle-trough') {
-        const center = toScr(params.troughRadius, 0);
-        ctx.beginPath();
-        ctx.arc(center.sx, center.sy, params.troughRadius * m.ppm, 0, Math.PI, false);
-        ctx.stroke();
-      } else {
-        // Safety envelope parabola y = v0^2/(2g) - g/(2 v0^2) x^2
-        ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        const maxX = (params.v0 * params.v0) / CLASSROOM_GRAVITY;
-        for (let i = 0; i <= 50; i++) {
-          const xw = (maxX * i) / 50;
-          const yw = (params.v0 * params.v0) / (2 * CLASSROOM_GRAVITY) - (CLASSROOM_GRAVITY * xw * xw) / (2 * params.v0 * params.v0);
-          const sp = toScr(xw, yw);
-          if (i === 0) ctx.moveTo(sp.sx, sp.sy);
-          else ctx.lineTo(sp.sx, sp.sy);
+  exportDiagramIR:(s,p,opts)=>{
+    const d=projectileDiagram(s,p,opts);return {width:900,height:560,viewBox:d.bounds,title:'抛体运动 · 真实边界与解析构造',primitives:d.items.map(x=>x.primitive)};
+  },
+  renderCanvas:(ctx,s,p,vp,layers)=>{
+    const d=projectileDiagram(s,p),m=createWorldMapper(vp),paper=vp.theme==='projector';
+    const palette:Record<ProjectileRole,string>=paper?{surface:'#334155',envelope:'#92400e',trajectory:'#0369a1',vacuum:'#64748b',velocity:'#166534',construction:'#6d28d9',event:'#be185d',ink:'#0f172a'}:{surface:'#cbd5e1',envelope:'#fbbf24',trajectory:'#38bdf8',vacuum:'#94a3b8',velocity:'#4ade80',construction:'#c4b5fd',event:'#f472b6',ink:'#e2e8f0'};
+    const labels:Array<{id:string;x:number;y:number;text:string;color:string;font:string}>=[];
+    for(const [i,{primitive:q,role,layer}] of d.items.entries()){
+      if(layer!=='always'&&!layers.has(layer))continue;
+      const color=palette[role];ctx.save();ctx.fillStyle=color;ctx.strokeStyle=color;ctx.lineWidth=role==='surface'||role==='trajectory'?2.5:1.7;
+      if(q.kind==='line'||q.kind==='arrow'){
+        const a=m.toScreen(q.x1,q.y1),b=m.toScreen(q.x2,q.y2);
+        ctx.setLineDash(q.dashed?[5,5]:[]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);
+        if(q.kind==='arrow'){
+          const ang=Math.atan2(b.y-a.y,b.x-a.x);
+          if(Math.hypot(b.x-a.x,b.y-a.y)>2){ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-9*Math.cos(ang-.4),b.y-9*Math.sin(ang-.4));ctx.lineTo(b.x-9*Math.cos(ang+.4),b.y-9*Math.sin(ang+.4));ctx.closePath();ctx.fill();}
+          if(q.label)labels.push({id:'arrow-'+i,x:(a.x+b.x)/2+Math.sin(ang)*15,y:(a.y+b.y)/2-Math.cos(ang)*15,text:q.label,color,font:'bold 13px sans-serif'});
         }
-        ctx.stroke();
-        ctx.setLineDash([]);
+      }else if(q.kind==='arc'){
+        const c=m.toScreen(q.cx,q.cy);ctx.beginPath();ctx.arc(c.x,c.y,m.len(q.r),-q.startAngle,-q.endAngle,true);ctx.stroke();
+      }else if(q.kind==='circle'){
+        const c=m.toScreen(q.cx,q.cy);ctx.beginPath();ctx.arc(c.x,c.y,Math.max(3,m.len(q.r)),0,2*Math.PI);if(q.fill)ctx.fill();else ctx.stroke();
+      }else if(q.kind==='polyline'||q.kind==='trajectory'){
+        ctx.setLineDash(q.dashed?[5,5]:[]);ctx.beginPath();q.points.forEach((p,j)=>{const c=m.toScreen(p.x,p.y);if(j===0)ctx.moveTo(c.x,c.y);else ctx.lineTo(c.x,c.y);});ctx.stroke();
+      }else if(q.kind==='text'){
+        const c=m.toScreen(q.x,q.y);labels.push({id:'text-'+i,x:c.x,y:c.y,text:q.text,color,font:'13px sans-serif'});
       }
+      ctx.restore();
     }
-
-    if (activeLayers.has('trajectory')) {
-      if (params.dragCoeff > 0 && state.vacuumTrail.length >= 2) {
-        ctx.strokeStyle = 'rgba(148, 163, 184, 0.55)';
-        ctx.setLineDash([4, 4]);
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        state.vacuumTrail.forEach((pt, i) => {
-          const sp = toScr(pt.x, pt.y);
-          if (i === 0) ctx.moveTo(sp.sx, sp.sy);
-          else ctx.lineTo(sp.sx, sp.sy);
-        });
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      if (state.trail.length >= 2) {
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        state.trail.forEach((pt, i) => {
-          const sp = toScr(pt.x, pt.y);
-          if (i === 0) ctx.moveTo(sp.sx, sp.sy);
-          else ctx.lineTo(sp.sx, sp.sy);
-        });
-        ctx.stroke();
-      }
-    }
-
-    const ball = toScr(state.x, state.y);
-    ctx.fillStyle = '#f472b6';
-    ctx.beginPath();
-    ctx.arc(ball.sx, ball.sy, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    resolveAndDrawLabels(ctx,labels,vp.width,vp.height);
   }
-}), { liveFormulas });
-
+}), { liveFormulas,fitProjectileViewport,projectileBoundsFit });
 export default mechProjectileCouplingPlugin;

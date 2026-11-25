@@ -35,7 +35,8 @@ const odeSlice=Boolean(targetPlugin.getTelemetryChannels);
 const chaseSlice=targetPlugin.paramSchema.some(f=>f.key==='vA0')&&targetPlugin.paramSchema.some(f=>f.key==='xB0')&&targetPlugin.paramSchema.some(f=>f.key==='reactionTime');
 const equilibriumSlice=targetPlugin.paramSchema.some(f=>f.key==='baseAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='sweepAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='autoSweep');
 const constrainedSlice=targetPlugin.paramSchema.some(f=>f.key==='secondarySpeedRatio')&&targetPlugin.paramSchema.some(f=>f.key==='driveSpeed')&&targetPlugin.paramSchema.some(f=>f.key==='heightOrLength');
-const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice;
+const projectileSlice=targetPlugin.paramSchema.some(f=>f.key==='troughRadius')&&targetPlugin.paramSchema.some(f=>f.key==='inclineDeg')&&targetPlugin.paramSchema.some(f=>f.key==='launchAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='dragCoeff');
+const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -243,6 +244,7 @@ export const SingleFileApp: React.FC = () => {
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
       if(chaseSlice&&frame){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...frame.observables});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(equilibriumSlice&&frame){canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...frame.observables});canvas.dataset.equilibriumView=layerSet.has('angle-curve')?'angle-curve':layerSet.has('aux-circle')?'aux-circle':layerSet.has('triangle')?'triangle':'none';}
+      if(projectileSlice&&frame)canvas.dataset.projectileRendered=JSON.stringify({t:frame.t,mode:pm.mode,...frame.observables});
       if(constrainedSlice&&frame)canvas.dataset.constrainedRendered=JSON.stringify({t:frame.t,mode:pm.mode,...frame.observables});
       if(odeSlice&&frame)canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...frame.observables});
       if(mechanicsSlice&&frame)canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...frame.observables});
@@ -706,7 +708,7 @@ export const SingleFileApp: React.FC = () => {
           className="w-80 shrink-0 border-l p-3 overflow-y-auto space-y-3"
           style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
         >
-          {equilibriumSlice&&<section className="space-y-1 text-xs" data-testid="sf-equilibrium-layers"><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
+          {(equilibriumSlice||projectileSlice)&&<section className="space-y-1 text-xs" data-testid={equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
           <div className="text-xs font-bold" style={{color:"var(--pf-accent)"}}>课堂预设速切</div>
           <div className={equilibriumSlice?"grid grid-cols-2 gap-1.5":"space-y-1.5"}>
             {targetPlugin.presets.map((preset) => (
@@ -743,7 +745,7 @@ export const SingleFileApp: React.FC = () => {
               style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
             >
               <div style={{ color: 'var(--pf-text-muted)' }}>{f.label}</div>
-              {equilibriumSlice&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
+              {(equilibriumSlice||projectileSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
               <div className="overflow-x-auto"
                 dangerouslySetInnerHTML={{
                   __html: katex.renderToString(f.substitutedLatex ?? f.latex, { throwOnError: false })
@@ -779,7 +781,7 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
-                      if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice){setIsPlaying(false);setScrubTime(null);}
+                      if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                     className="w-full h-9"
@@ -821,7 +823,7 @@ export const SingleFileApp: React.FC = () => {
                         [field.key]: e.target.value
                       })
                     );
-                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice){setIsPlaying(false);setScrubTime(null);}
+                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice){setIsPlaying(false);setScrubTime(null);}
                     setResetNonce((n) => n + 1);
                   }}
                   className="w-full rounded border px-2 py-1.5"

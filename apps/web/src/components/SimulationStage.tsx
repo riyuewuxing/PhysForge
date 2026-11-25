@@ -13,6 +13,9 @@ import type { ChaseSafeRect } from '../../../../simulations/mech-kinematics-chas
 type ChaseStagePlugin=typeof import('../../../../simulations/mech-kinematics-chase/plugin.js').mechKinematicsChasePlugin;
 import type { ConstrainedVelocityParams } from '../../../../simulations/mech-constrained-velocity/engine.js';
 type ConstrainedStagePlugin=typeof import('../../../../simulations/mech-constrained-velocity/plugin.js').mechConstrainedVelocityPlugin;
+import type { ProjectileCouplingParams,ProjectileCouplingState } from '../../../../simulations/mech-projectile-coupling/engine.js';
+type ProjectileStagePlugin=typeof import('../../../../simulations/mech-projectile-coupling/plugin.js').mechProjectileCouplingPlugin;
+type ProjectileSafeRect=import('../../../../simulations/mech-projectile-coupling/diagram.js').SafeRect;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -335,6 +338,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const b1FitKeyRef=useRef('');
   const chaseSafeRef=useRef<{key:string;safe:ChaseSafeRect}|null>(null);
   const constrainedFitKeyRef=useRef('');
+  const projectileSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const b1FitAtRef=useRef(-Infinity);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
@@ -343,7 +347,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
-    chaseSafeRef.current=null;constrainedFitKeyRef.current='';
+    chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -614,6 +618,27 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         if(next){constrainedFitKeyRef.current=key;cameraRef.current=next;viewportRef.current=next;baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(100);}
       }
     }
+    const projectileAutomatic=p.meta.id==='mech-projectile-coupling'&&!userTransformedViewRef.current&&
+      !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
+    if(projectileAutomatic&&drawState!==null){
+      const model=p as unknown as ProjectileStagePlugin,cur=latestRef.current,v=viewportRef.current;
+      const pp=pm as ProjectileCouplingParams,ss=drawState as ProjectileCouplingState;
+      const key=JSON.stringify([pp.mode,pp.v0,pp.inclineDeg,pp.troughRadius,pp.launchAngleDeg,pp.dragCoeff,pp.mass,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      const fresh=projectileSafeRef.current?.key!==key;
+      if(fresh){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const right=cur.presentationMode||cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-300):v.width-26;
+        const bottom=cur.presentationMode||!cur.oscilloscopeCollapsed?(dock&&dock.height>0?dock.top-box.top-14:v.height-180):v.height-76;
+        projectileSafeRef.current={key,safe:{left:30,right,top:cur.presentationMode?90:28,bottom}};
+      }
+      const safe=projectileSafeRef.current!.safe;
+      if(fresh||!model.projectileBoundsFit(pp,ss,v,safe)){
+        const next=model.fitProjectileViewport(pp,ss,v,safe);
+        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
+      }
+    }
     const baseVp = viewportRef.current;
     ctx.save();
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
@@ -769,6 +794,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
     if(p.meta.id==='mech-kinematics-chase'&&frame&&drawState!==null){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.chaseAutoFit=String(chaseAutomatic);}
     if(p.meta.id==='mech-dynamic-equilibrium'&&frame&&drawState!==null){const layers=readDisplayedLayers();canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});canvas.dataset.equilibriumView=layers.has('angle-curve')?'angle-curve':layers.has('aux-circle')?'aux-circle':layers.has('triangle')?'triangle':'none';canvas.dataset.equilibriumViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
+    if(p.meta.id==='mech-projectile-coupling'&&frame&&drawState!==null){canvas.dataset.projectileRendered=JSON.stringify({t:frame.t,mode:pm.mode,...p.engine.computeObservables(drawState,pm)});canvas.dataset.projectileViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.projectileAutoFit=String(projectileAutomatic);}
     if(p.meta.id==='mech-constrained-velocity'&&frame&&drawState!==null){canvas.dataset.constrainedRendered=JSON.stringify({t:frame.t,mode:pm.mode,...p.engine.computeObservables(drawState,pm)});canvas.dataset.constrainedViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.constrainedAutoFit=String(constrainedAutomatic);}
     if(p.getTelemetryChannels&&frame&&drawState!==null){canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
@@ -804,7 +830,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
-    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity'].includes(latestRef.current.plugin.meta.id)||Boolean(latestRef.current.plugin.getTelemetryChannels);
+    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling'].includes(latestRef.current.plugin.meta.id)||Boolean(latestRef.current.plugin.getTelemetryChannels);
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
@@ -1021,7 +1047,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   // Publish its paused frame before paint, without changing continuous cadence.
   useLayoutEffect(()=>{
     const current=latestRef.current;
-    if(current.plugin.meta.id!=='mech-constrained-velocity'||isPlaying)return;
+    if(!['mech-constrained-velocity','mech-projectile-coupling'].includes(current.plugin.meta.id)||isPlaying)return;
     if(current.scrubTime===null&&simStateModelIdRef.current===current.plugin.meta.id&&
       simStateResetNonceRef.current===current.resetNonce&&simStateRef.current!==null&&simulationTimeRef.current>lastSnapshotTRef.current){
       const state=simStateRef.current,t=simulationTimeRef.current;
@@ -1089,7 +1115,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     emitTelemetrySummary(true);
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
 
-  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}},[chaseStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
+  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}},[chaseStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
@@ -1292,7 +1318,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const chaseScope=plugin.meta.id==='mech-kinematics-chase';
   const equilibriumScope=plugin.meta.id==='mech-dynamic-equilibrium';
   const constrainedScope=plugin.meta.id==='mech-constrained-velocity';
-  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope;
+  const projectileScope=plugin.meta.id==='mech-projectile-coupling';
+  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope;
   const semanticScope=heroScope||measuredScope;
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
   // Same semantic channel colors on paper, with sufficient contrast on white.
@@ -1606,7 +1633,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (e.pointerType === 'touch') hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = hoveredHandleIdRef.current ? 'pointer' : 'grab';
-              if((chaseStage||plugin.meta.id==='mech-constrained-velocity')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerCancel={(e) => {
               activePointersRef.current.clear();
@@ -1615,7 +1642,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = 'grab';
-              if((chaseStage||plugin.meta.id==='mech-constrained-velocity')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerLeave={(e) => {
               if (e.pointerType === 'touch' || dragModeRef.current) return;
@@ -1797,7 +1824,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : measuredScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
-            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={equilibriumScope?'equilibrium-scope-empty':constrainedScope?'constrained-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={equilibriumScope?'equilibrium-scope-empty':constrainedScope?'constrained-scope-empty':projectileScope?'projectile-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽
