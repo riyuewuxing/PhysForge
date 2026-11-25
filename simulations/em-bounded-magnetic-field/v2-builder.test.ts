@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createWorldMapper, resolvePluginParams } from '@physforge/sim-sdk';
-import { emBoundedMagneticFieldPlugin,b1FrameBounds,b1SafeRect,b1FitViewport,b1BoundsInViewport,b1VelocityDisplay } from './plugin.js';
+import { emBoundedMagneticFieldPlugin,b1FrameBounds,b1SafeRect,b1FitViewport,b1BoundsInViewport,b1VelocityDisplay,b1FieldSampleWindow } from './plugin.js';
 import {
   createInitialState,
   solveCriticalSpeedForRadius,
@@ -9,6 +9,32 @@ import {
 } from './engine.js';
 
 describe('B1 builder-composite-em-field V2 verification', () => {
+  it('keeps the illustrative magnetic lattice and electric arrow centers in physical world coordinates under pan and zoom',()=>{
+    const plugin=emBoundedMagneticFieldPlugin;
+    for(const mode of ['half-space','circular','rectangular','crossed-eb'] as const){
+      const p=resolvePluginParams<BoundedMagneticParams>(plugin.paramSchema,{mode,family:'single',fieldScale:1.2,magneticFieldZ:2,electricFieldY:3});
+      const state=createInitialState(p);
+      const sample=b1FieldSampleWindow(state,p);
+      expect(sample.points.length).toBeGreaterThan(0);
+      const viewport={width:1440,height:900,dpr:1,scale:1,offsetX:0,offsetY:0};
+      const base=createWorldMapper(viewport),pan=createWorldMapper({...viewport,offsetX:140,offsetY:-85}),zoom=createWorldMapper({...viewport,scale:2});
+      for(const pt of [...sample.points,...sample.electricCenters]){
+        const a=base.toScreen(pt.x,pt.y),b=pan.toScreen(pt.x,pt.y),c=zoom.toScreen(pt.x,pt.y);
+        expect(b.x-a.x).toBeCloseTo(140,10);expect(b.y-a.y).toBeCloseTo(-85,10);
+        expect(c.x-.45*viewport.width).toBeCloseTo(2*(a.x-.45*viewport.width),10);
+        expect(c.y-.5*viewport.height).toBeCloseTo(2*(a.y-.5*viewport.height),10);
+      }
+      if(mode==='half-space')expect(sample.points.every(pt=>pt.x>0)).toBe(true);
+      if(mode==='circular')expect(sample.points.every(pt=>Math.hypot(pt.x,pt.y)<p.fieldScale)).toBe(true);
+      if(mode==='rectangular')expect(sample.points.every(pt=>pt.x>0&&pt.x<p.fieldScale&&Math.abs(pt.y)<.8*p.fieldScale)).toBe(true);
+      if(mode==='crossed-eb'){
+        const later=stepBoundedMagnetic(state,p,10).nextState;
+        const next=b1FieldSampleWindow(later,p);
+        const center=next.points.reduce((sum,pt)=>sum+pt.x,0)/next.points.length;
+        expect(Math.abs(center-later.particles[0]!.state.position.x)).toBeLessThanOrEqual(.55/2+1e-9);
+      }
+    }
+  });
   it('fits actual long crossed-field flight and all displayed vector endpoints in both safe workbench and fullscreen views',()=>{
     const p=resolvePluginParams<BoundedMagneticParams>(emBoundedMagneticFieldPlugin.paramSchema,{mode:'crossed-eb',family:'single',initialSpeed:0,magneticFieldZ:2,electricFieldY:3});
     const initial=createInitialState(p),state=stepBoundedMagnetic(initial,p,4).nextState;

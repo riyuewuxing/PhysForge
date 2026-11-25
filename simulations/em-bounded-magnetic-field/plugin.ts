@@ -273,6 +273,34 @@ export function b1StateCaption(s:BoundedMagneticState,p:BoundedMagneticParams):s
   return 't='+s.t.toFixed(3)+' s · 入场 '+s.particles.filter(t=>t.hasEntered).length+'/'+s.particles.length+' · 出场 '+s.particles.filter(t=>t.hasExited).length+'/'+s.particles.length;
 }
 
+/** The illustrative field window is tied to physical coordinates and state,
+ * never to screen pan, zoom or clip order. A marker is not a field source.
+ * Integer lattice indices keep a stationary marker fixed in world space. */
+export function b1FieldSampleWindow(state:BoundedMagneticState,p:BoundedMagneticParams){
+  const pos=state.particles[0]?.state.position??{x:0,y:0};
+  const step=.55;
+  const ix=Math.round(pos.x/step),iy=Math.round(pos.y/step);
+  const points:{x:number;y:number}[]=[];
+  if(p.mode==='circular'||p.mode==='rectangular'){
+    const r=Math.max(p.fieldScale,p.mode==='circular'?.05:.1);
+    const h=Math.max(p.fieldScale*1.6,.2)/2;
+    const spacing=Math.min(step,r/2);
+    const left=p.mode==='circular'?-Math.floor(r/spacing):0,right=Math.floor(r/spacing);
+    const top=Math.floor((p.mode==='circular'?r:h)/spacing);
+    for(let i=left;i<=right;i++)for(let j=-top;j<=top;j++){
+      const x=i*spacing,y=j*spacing;
+      if(fieldSignedDistance({x,y,z:0},p.mode,p.fieldScale)<-Math.min(.05,r*.06))points.push({x,y});
+    }
+    if(points.length===0)points.push({x:p.mode==='circular'?0:r/2,y:0});
+  }else{
+    const left=p.mode==='half-space'?Math.max(1,ix-5):ix-5;
+    for(let i=left;i<=left+10;i++)for(let j=iy-4;j<=iy+4;j++)points.push({x:i*step,y:j*step});
+  }
+  const electricCenters:{x:number;y:number}[]=[];
+  if(p.mode==='crossed-eb')for(let i=-2;i<=2;i++)electricCenters.push({x:(ix+2*i)*step,y:(iy-2)*step});
+  return {points,electricCenters};
+}
+
 export type B1Bounds={minX:number;maxX:number;minY:number;maxY:number};
 export type B1SafeRect={left:number;right:number;top:number;bottom:number};
 /** A common visual scale for the three velocity vectors. Their tip-to-tail sum
@@ -692,14 +720,8 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
         ctx.strokeStyle = paper?'#0369a1':'rgba(125, 211, 252, 0.66)';
         ctx.fillStyle = paper?'#0369a1':'rgba(125, 211, 252, 0.75)';
         ctx.lineWidth = 1.4;
-        // Sample the displayed world, not a static patch at the original origin.
-        const step=Math.max(.55,84/pxPerMeter);
-        const loX=Math.ceil((-originX+12)/pxPerMeter/step)*step,hiX=(viewport.width-originX-12)/pxPerMeter;
-        const loY=Math.ceil((originY-viewport.height+12)/pxPerMeter/step)*step,hiY=(originY-12)/pxPerMeter;
-        for (let wx=loX;wx<=hiX;wx+=step) {
-          for (let wy=loY;wy<=hiY;wy+=step) {
-            if (fieldSignedDistance({ x: wx, y: wy, z: 0 }, params.mode, params.fieldScale) <= -0.05) {
-              const p = toScreen(wx, wy);
+        for(const {x:wx,y:wy} of b1FieldSampleWindow(state,params).points){
+              const p=toScreen(wx,wy);
               ctx.beginPath();
               ctx.arc(p.sx, p.sy, 6, 0, Math.PI * 2);
               ctx.stroke();
@@ -715,19 +737,15 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
                 ctx.lineTo(p.sx - 4, p.sy + 4);
                 ctx.stroke();
               }
-            }
-          }
         }
       }
 
       // 复合场绘制向上的电场线箭头
       if (params.mode === 'crossed-eb' && Math.abs(params.electricFieldY) > 1e-6) {
         const sgn = params.electricFieldY > 0 ? 1 : -1;
-        const step=Math.max(1,150/pxPerMeter);
-        const centerY=(originY-viewport.height*.70)/pxPerMeter;
-        for (let wx=Math.ceil((-originX+30)/pxPerMeter/step)*step;wx<=(viewport.width-originX-30)/pxPerMeter;wx+=step) {
-          const base=toScreen(wx,centerY-.35*sgn);
-          const tip=toScreen(wx,centerY+.35*sgn);
+        for(const {x,y} of b1FieldSampleWindow(state,params).electricCenters){
+          const base=toScreen(x,y-.35*sgn);
+          const tip=toScreen(x,y+.35*sgn);
           drawArrow(ctx, base.sx, base.sy, tip.sx, tip.sy, paper?'#92400e':'rgba(251, 191, 36, 0.78)', 'E');
         }
       }
