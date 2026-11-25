@@ -327,6 +327,26 @@ async function auditB5Ode(page,origin){
   return {initial,harmonic,invalid,pend,orbit0,orbit};
 }
 
+async function assertChaseVisible(page,canvasId,tag){
+  const result=await page.evaluate(({canvasId,tag})=>{
+    const canvas=document.querySelector('[data-testid="'+canvasId+'"]'),v=JSON.parse(canvas.dataset.chaseViewport||'null'),s=JSON.parse(canvas.dataset.chaseRendered||'null');
+    if(!v||!s)throw Error('M01 actual rendered viewport missing: '+tag);
+    const box=canvas.getBoundingClientRect(),panel=document.querySelector('[data-testid="right-control-panel"]')?.getBoundingClientRect();
+    const left=box.left+8,right=Math.min(box.right-8,panel&&panel.width&&panel.left>box.left?panel.left-8:box.right-8);
+    const ppm=.24*Math.min(v.width,v.height)*v.scale,ctx=document.createElement('canvas').getContext('2d');ctx.font='12px ui-monospace,monospace';
+    const cars=['A','B'].map(n=>{
+      const x=box.left+.45*v.width+v.offsetX+s['x'+n]*ppm;
+      const label='x='+s['x'+n].toFixed(2)+' m · v='+s['v'+n].toFixed(2)+' m/s';
+      const half=Math.max(15,ctx.measureText(label).width/2)+2;
+      return {n,x,left:x-half,right:x+half};
+    });
+    return {tag,t:s.t,left,right,cars};
+  },{canvasId,tag});
+  console.log('H14 M01 actual projection '+JSON.stringify(result));
+  if(result.cars.some(c=>c.left<result.left||c.right>result.right))throw Error('M01 actual car or label occluded '+JSON.stringify(result));
+  return result;
+}
+
 async function auditM01Chase(page,origin){
   const url=new URL(origin);url.searchParams.set('model','mech-kinematics-chase');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -341,7 +361,7 @@ async function auditM01Chase(page,origin){
   const initial=await read();if(initial.deltaX!==16||initial.minGap!==16||initial.meetCount!==0)throw Error('M01 initial data '+JSON.stringify(initial));
   await page.screenshot({path:path.join(OUT_DIR,'H12_M01_initial.png')});
   await page.locator('[data-testid="topbar"]').getByLabel('播放倍速').selectOption('2');
-  const catchup=await runTo(12.10);
+  const catchup=await runTo(9.70);
   if(Math.abs(catchup.xA-catchup.t**2)>1e-7||Math.abs(catchup.xB-(16+8*catchup.t))>1e-7||Math.abs(catchup.vA-2*catchup.t)>1e-7||Math.abs(catchup.firstCoVelocityTime-4)>1e-9||Math.abs(catchup.firstMeetTime-(4+4*Math.SQRT2))>1e-9||catchup.meetCount!==1||catchup.minGap!==0||catchup.deltaX>=0)throw Error('M01 analytic crossing '+JSON.stringify(catchup));
   await page.screenshot({path:path.join(OUT_DIR,'H12_M01_catchup_velocity.png')});
   for(const [id,key] of [['scope-channel-a','xA'],['scope-channel-b','xB']]){
@@ -350,6 +370,23 @@ async function auditM01Chase(page,origin){
   }
   await page.waitForFunction(t=>{const d=document.querySelector('[data-testid="uplot-container"]')?.dataset;return d?.plotChannelA==='xA'&&d?.plotChannelB==='xB'&&Number(d.sampleCount)>2&&Math.abs(Number(d.lastSampleT)-t)<1e-10;},catchup.t,{timeout:5000});
   await page.screenshot({path:path.join(OUT_DIR,'H12_M01_catchup_position.png')});
+  const nearVisibility=await assertChaseVisible(page,'simulation-canvas','near-meeting');
+  const long=await runTo(12.10);
+  if(Math.abs(long.xA-long.t**2)>1e-7||Math.abs(long.xB-(16+8*long.t))>1e-7||long.meetCount!==1||long.minGap!==0)throw Error('M01 long analytic trajectory '+JSON.stringify(long));
+  await page.screenshot({path:path.join(OUT_DIR,'H14_M01_long_position.png')});
+  const longVisibility=await assertChaseVisible(page,'simulation-canvas','over-12s');
+  const view=async()=>JSON.parse(await canvas.getAttribute('data-chase-viewport'));
+  const prior=await view(),box=await canvas.boundingBox();
+  if(!box)throw Error('M01 missing canvas for real pan');
+  await page.mouse.move(box.x+80,box.y+120);await page.mouse.down();await page.mouse.move(box.x+140,box.y+145,{steps:4});await page.mouse.up();
+  const manual=await view();
+  if(await canvas.getAttribute('data-chase-auto-fit')!=='false'||Math.abs(manual.offsetX-prior.offsetX-60)>1||Math.abs(manual.offsetY-prior.offsetY-25)>1)throw Error('M01 pan ownership '+JSON.stringify({prior,manual}));
+  const manualTime=await runTo(13.2),afterManual=await view();
+  if(['scale','offsetX','offsetY'].some(k=>Math.abs(afterManual[k]-manual[k])>1e-9))throw Error('M01 manual camera overwritten '+JSON.stringify({manual,afterManual,manualTime}));
+  await page.getByTestId('btn-reset-view').click();
+  await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.dataset.chaseAutoFit==='true');
+  const resetVisibility=await assertChaseVisible(page,'simulation-canvas','reset-after-manual-pan');
+  await page.screenshot({path:path.join(OUT_DIR,'H14_M01_reset_auto.png')});
   await selectPreset(page,'brake-safe-margin',true);await waitInitial(42);
   const safe=await runTo(5.45);
   if(Math.abs(safe.xA-58)>1e-8||safe.vA!==0||safe.aA!==0||Math.abs(safe.xB-(42+6*safe.t))>1e-8||Math.abs(safe.minGap-11.9)>1e-8||Math.abs(safe.firstCoVelocityTime-3.9)>1e-8||safe.meetCount!==0)throw Error('M01 safe braking '+JSON.stringify(safe));
@@ -361,8 +398,8 @@ async function auditM01Chase(page,origin){
   await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
   if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
   await page.locator('[data-testid="topbar"]').getByLabel('播放倍速').selectOption('1');
-  console.log('H12 M01 online '+JSON.stringify({initial,catchup,safe}));
-  return {initial,catchup,safe};
+  console.log('H12 M01 online '+JSON.stringify({initial,catchup,long,safe,nearVisibility,longVisibility,resetVisibility}));
+  return {initial,catchup,long,safe,nearVisibility,longVisibility,resetVisibility};
 }
 
 
@@ -2002,7 +2039,13 @@ async function main() {
       await m01Page.getByLabel('播放倍速').selectOption('2');const play=m01Page.getByTestId('sf-play-pause');await play.click();await m01Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-chase-rendered')||'null')?.t>5.45,null,{timeout:15000});await play.click();
       const stop=await read();if(stop.vA!==0||stop.aA!==0||Math.abs(stop.xA-58)>1e-8||Math.abs(stop.minGap-11.9)>1e-8||Math.abs(stop.firstCoVelocityTime-3.9)>1e-8||stop.meetCount!==0)throw Error('M01 offline braking '+JSON.stringify(stop));
       await m01Page.getByRole('button',{name:'黑板深蓝'}).click();await m01Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');await m01Page.screenshot({path:path.join(OUT_DIR,'H12_M01_offline_safe_paper.png')});
-      if(m01Errors.length||m01Network.length)throw Error('M01 offline errors '+JSON.stringify({m01Errors,m01Network}));Object.assign(m01OfflineReport,{step,stop,errors:m01Errors,network:m01Network});
+      await play.click();
+      await m01Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-chase-rendered')||'null')?.t>18.1,null,{timeout:15000});await play.click();
+      const long=await read();
+      if(long.vA!==0||long.aA!==0||Math.abs(long.xA-58)>1e-8||Math.abs(long.xB-(42+6*long.t))>1e-8||Math.abs(long.minGap-11.9)>1e-8)throw Error('M01 offline long analytic braking '+JSON.stringify(long));
+      const visible=await assertChaseVisible(m01Page,'sf-canvas','offline-over-18s');
+      await m01Page.screenshot({path:path.join(OUT_DIR,'H14_M01_offline_long_paper.png')});
+      if(m01Errors.length||m01Network.length)throw Error('M01 offline errors '+JSON.stringify({m01Errors,m01Network}));Object.assign(m01OfflineReport,{step,stop,long,visible,errors:m01Errors,network:m01Network});
     }finally{await m01Context.close();}
 
     const m02File=path.join(OUT_DIR,'H13_M02_offline.html');

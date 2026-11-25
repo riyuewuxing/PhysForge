@@ -1,4 +1,4 @@
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec, type Viewport } from '@physforge/sim-sdk';
 import { kinematicsChasePresets } from './presets.js';
 import {
   checkInvariants,
@@ -36,12 +36,48 @@ function teachingExtent(p:KinematicsChaseParams):number {
   const q=stepKinematicsChase(createInitialState(p),p,10).nextState;
   return Math.max(30,q.xA,q.xB,p.xB0)*1.12;
 }
-function laneHalf(p:KinematicsChaseParams):number{return teachingExtent(p)*.065;}
+/** Only the horizontal coordinate represents physical displacement. The two
+ * schematic lanes expand with the displayed range to remain legible as the
+ * automatic camera zooms out; Canvas, FBD, handles and DiagramIR share them. */
+export function chaseSceneLayout(s:KinematicsChaseState,p:KinematicsChaseParams){
+  const extent=teachingExtent(p),range=Math.max(extent,s.xA,s.xB);
+  const lane=range*.085;
+  return {extent,lane,minX:-extent*.08,maxX:range*1.04,minY:-lane*2,maxY:lane*2.25};
+}
+export interface ChaseSafeRect {left:number;right:number;top:number;bottom:number}
+export function chaseSafeRect(width:number,height:number,occlusion?:{right?:number;bottom?:number;top?:number}):ChaseSafeRect{
+  return {left:12,right:Math.min(width-12,occlusion?.right??Infinity),
+    top:Math.max(20,occlusion?.top??0),bottom:Math.min(height-20,occlusion?.bottom??Infinity)};
+}
+function carText(x:number,v:number){return 'x='+x.toFixed(2)+' m · v='+v.toFixed(2)+' m/s';}
+function chaseLabelPadding(s:KinematicsChaseState){
+  // 12 px monospace labels: reserve conservatively above their measured
+  // browser width; the real projection audit checks the actual text metrics.
+  const chars=Math.max(carText(s.xA,s.vA).length,carText(s.xB,s.vB).length);
+  return {x:Math.max(94,Math.ceil(chars*4.2)+8),top:24,bottom:28+15*Math.max(0,s.events.length-1)};
+}
+export function chaseBoundsInViewport(s:KinematicsChaseState,p:KinematicsChaseParams,v:Viewport,safe:ChaseSafeRect):boolean{
+  const b=chaseSceneLayout(s,p),m=createWorldMapper(v),pad=chaseLabelPadding(s);
+  return m.toX(b.minX)>=safe.left+pad.x&&m.toX(b.maxX)<=safe.right-pad.x&&
+    m.toY(b.maxY)>=safe.top+pad.top&&m.toY(b.minY)<=safe.bottom-pad.bottom;
+}
+export function chaseFitViewport(s:KinematicsChaseState,p:KinematicsChaseParams,v:Viewport,safe:ChaseSafeRect):Viewport|null{
+  const b=chaseSceneLayout(s,p),pad=chaseLabelPadding(s);
+  // Headroom keeps growth from forcing a React state update on every frame.
+  const left=safe.left+pad.x+12,right=safe.right-pad.x-12;
+  const top=safe.top+pad.top+8,bottom=safe.bottom-pad.bottom-8;
+  if(right-left<16||bottom-top<16)return null; // no fabricated safe area on a tiny occluded viewport
+  const base=.24*Math.min(v.width,v.height),ppm=Math.min(base*20,(right-left)/(b.maxX-b.minX),(bottom-top)/(b.maxY-b.minY));
+  if(!Number.isFinite(ppm)||ppm<=1e-6||base<=0)return null;
+  return {...v,scale:ppm/base,
+    offsetX:(left+right)/2-.45*v.width-(b.minX+b.maxX)*ppm/2,
+    offsetY:(top+bottom)/2-.5*v.height+(b.minY+b.maxY)*ppm/2};
+}
 function tickStep(span:number):number{
   const raw=span/8,pow=10**Math.floor(Math.log10(raw)),r=raw/pow;
   return (r<=1?1:r<=2?2:r<=5?5:10)*pow;
 }
-export const mechKinematicsChasePlugin=defineSimulationPlugin<KinematicsChaseParams,KinematicsChaseState>({
+export const mechKinematicsChasePlugin=Object.assign(defineSimulationPlugin<KinematicsChaseParams,KinematicsChaseState>({
   meta:{id:'mech-kinematics-chase',title:'运动学追及相遇与多过程图像 (M01)',textbookRef:'人教版 必修第一册 第二章 第4节',curriculumTags:['物理观念','科学思维','科学探究'],difficulty:'高三一轮',version:'2.0.0'},
   defaultView:{minScale:.001,scale:(p,{width,height})=>.58*width/(teachingExtent(p)*.24*Math.min(width,height)),offsetRatioX:-.30,offsetRatioY:-.07},
   paramSchema,presets:kinematicsChasePresets,
@@ -59,16 +95,16 @@ export const mechKinematicsChasePlugin=defineSimulationPlugin<KinematicsChasePar
   ],
   // Masses are explicit adjustable assumptions, used solely for the inferred net force.
   getForceVectors:(s,p)=>{
-    const ma=p.massA??1000,mb=p.massB??1000,lane=laneHalf(p);
+    const ma=p.massA??1000,mb=p.massB??1000,lane=chaseSceneLayout(s,p).lane;
     const a=[{id:'net-force-a',label:'A 合力 (mA aA)',origin:{x:s.xA,y:lane},force:{x:ma*s.aACurrent,y:0},color:'#38bdf8',category:'net' as const,unit:'N'},
       {id:'net-force-b',label:'B 合力 (mB aB)',origin:{x:s.xB,y:-lane},force:{x:mb*s.aBCurrent,y:0},color:'#f472b6',category:'net' as const,unit:'N'}];
     return a.filter(f=>f.force.x!==0);
   },
-  getControlHandles:(s,p)=>s.t===0?[{id:'initial-gap',label:'初始间距',position:{x:s.xB,y:-laneHalf(p)},handleKind:'point',color:'#f472b6',onDrag:wp=>({xB0:Math.max(5,Math.min(80,Math.round(wp.x)))})}]:[],
+  getControlHandles:(s,p)=>s.t===0?[{id:'initial-gap',label:'初始间距',position:{x:s.xB,y:-chaseSceneLayout(s,p).lane},handleKind:'point',showWhenIdle:false,color:'#f472b6',onDrag:wp=>({xB0:Math.max(5,Math.min(80,Math.round(wp.x)))})}]:[],
   referenceFrames:[{id:'car-a',label:'A车随动坐标（平移）',description:'仅平移原点；A 加速时为非惯性参考系。',getOrigin:s=>({x:s.xA,y:0}),getVelocity:s=>({x:s.vA,y:0})}],
   sceneSerializer:{exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'mech-kinematics-chase',title:'追及相遇多过程',params}),importScene:dsl=>dsl.params as Partial<KinematicsChaseParams>},
   exportDiagramIR:(s,p,options)=>{
-    const span=Math.max(teachingExtent(p),s.xA,s.xB),lane=laneHalf(p),w=teachingExtent(p)*.035,h=w*.56,margin=span*.10;
+    const {extent,lane,maxX:span}=chaseSceneLayout(s,p),w=extent*.035,h=w*.56,margin=span*.10;
     const primitives:DiagramPrimitive[]=[
       {kind:'line',x1:-margin,y1:0,x2:span+margin,y2:0},
       {kind:'line',x1:s.xA,y1:-lane,x2:s.xA,y2:lane,dashed:true},
@@ -91,7 +127,7 @@ export const mechKinematicsChasePlugin=defineSimulationPlugin<KinematicsChasePar
     {id:'chase-gap',label:'实际间距与历史最小间距',latex:String.raw`d=|\Delta x|,\quad d_{\min}=\min_{0\le u\le t}d(u)`,substitutedLatex:`d_{\\min}=${s.minGap.toFixed(3)}\\,\\mathrm m`}
   ],
   renderCanvas:(ctx,s,p,vp,layers)=>{
-    const m=createWorldMapper(vp),paper=vp.theme==='projector',extent=teachingExtent(p),lane=laneHalf(p),span=Math.max(extent,s.xA,s.xB)*1.04;
+    const m=createWorldMapper(vp),paper=vp.theme==='projector',{extent,lane,maxX:span}=chaseSceneLayout(s,p);
     const axis=paper?'#64748b':'#64748b',ink=paper?'#1e293b':'#e2e8f0',blue=paper?'#0369a1':'#38bdf8',pink=paper?'#be185d':'#f472b6',amber=paper?'#92400e':'#fbbf24';
     const line=(x1:number,y1:number,x2:number,y2:number,color:string,width=1,dashed=false)=>{const a=m.toScreen(x1,y1),b=m.toScreen(x2,y2);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dashed?[5,5]:[]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);};
     const text=(x:number,y:number,label:string,color:string,align:CanvasTextAlign='center')=>{const q=m.toScreen(x,y);ctx.fillStyle=color;ctx.font='12px system-ui';ctx.textAlign=align;ctx.fillText(label,q.x,q.y);};
@@ -110,7 +146,7 @@ export const mechKinematicsChasePlugin=defineSimulationPlugin<KinematicsChasePar
         line(car.x,0,car.x,car.y,car.c,1,true);
         ctx.fillStyle=car.c;ctx.beginPath();ctx.roundRect(q.x-size*.5,q.y-height*.5,size,height,Math.min(4,height*.2));ctx.fill();
         ctx.fillStyle=paper?'#fff':'#0f172a';ctx.font='bold 11px system-ui';ctx.textAlign='center';ctx.fillText(car.name,q.x,q.y+4);
-        ctx.fillStyle=car.c;ctx.font='12px ui-monospace,monospace';ctx.fillText(`x=${car.x.toFixed(2)} m · v=${car.v.toFixed(2)} m/s`,q.x,q.y+(car.name==='A'?-height*.5-10:height*.5+16));
+        ctx.fillStyle=car.c;ctx.font='12px ui-monospace,monospace';ctx.fillText(carText(car.x,car.v),q.x,q.y+(car.name==='A'?-height*.5-10:height*.5+16));
       }
       if(Math.abs(s.xB-s.xA)>0)line(Math.min(s.xA,s.xB),lane*2,Math.max(s.xA,s.xB),lane*2,amber,2);
       text((s.xA+s.xB)/2,lane*2.25,`d = ${Math.abs(s.xB-s.xA).toFixed(2)} m`,amber);
@@ -134,5 +170,5 @@ export const mechKinematicsChasePlugin=defineSimulationPlugin<KinematicsChasePar
     }
     ctx.restore();
   }
-});
+}),{chaseSceneLayout,chaseSafeRect,chaseBoundsInViewport,chaseFitViewport});
 export default mechKinematicsChasePlugin;

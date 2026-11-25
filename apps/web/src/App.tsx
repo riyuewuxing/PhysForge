@@ -728,6 +728,7 @@ const ClassroomApp: React.FC = () => {
             view3dEnabled={store.view3dEnabled}
             oscilloscopeCollapsed={store.oscilloscopeCollapsed}
             presentationMode={store.fullscreenPresentation}
+            rightSidebarOpen={store.rightSidebarOpen}
             resetViewNonce={store.resetViewNonce}
             resetNonce={store.resetNonce}
             stepOnceNonce={store.stepOnceNonce}
