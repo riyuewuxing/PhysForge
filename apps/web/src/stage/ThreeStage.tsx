@@ -872,9 +872,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         const key=JSON.stringify([fusionGeometryKey(fp),rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed,[...frameLayers]]);
         const fresh=key!==b1FramingKey;
         if(fresh)b1FramingKey=key;
-        if(b1AutoFit&&b1Policy.allowed&&(fresh||now-b1FramedAt>=250)){
-          b1FramedAt=now;
+        if(b1AutoFit&&b1Policy.allowed){
           const safe=fusionSafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
+          // Check every actual rendered frame; a final paused frame cannot
+          // be left outside merely because the previous fit was <250 ms ago.
           if(fresh||!fusionScreenFits(projectFusionFrame(fusionPoints,camera,rw,rh),safe)){
             morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
             fitFusionSpatialFrame(morph,fusionPoints,rw,rh,safe);

@@ -655,7 +655,27 @@ async function auditS01Physics(page,origin,screenshot){
     await selectPreset(page,preset);
     const scope=page.getByTestId('floating-scope-dock');await scope.waitFor({state:'visible'});
     const torus=preset==='tokamak-helical-confinement';
-    if(await scope.getAttribute('data-scope-units')!==(torus?'separate':'shared'))throw Error('S01 physical scope units wrong');
+    const expectedChannels=torus?['bMagT','minorRadiusM','separate']:['vParallel','vPerp','shared'];
+    await page.waitForFunction(([a,b,units])=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')===a&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')===b&&document.querySelector('[data-testid="floating-scope-dock"]')?.getAttribute('data-scope-units')===units,expectedChannels);
+    // Inspect an actual sampled plot, not a paused initial empty chart.
+    if(preset==='mirror-trapped-bounce'||torus){
+      const workbenchPlay=page.locator('[data-testid="btn-play-pause"]:visible');
+      if(await workbenchPlay.getAttribute('aria-label')==='运行')await workbenchPlay.click();
+      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-sample-count'))>=5,null,{timeout:10000});
+      if(await workbenchPlay.getAttribute('aria-label')==='暂停')await workbenchPlay.click();
+      const chart=await scope.locator('canvas').first().boundingBox();
+      if(!chart||chart.height<140||await page.getByTestId('scope-empty').isVisible())throw Error('S01 sampled chart missing or clipped');
+      if(screenshot)await screenshot('S01_'+preset+'_workbench_running');
+      await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+      if(screenshot)await screenshot('S01_'+preset+'_workbench_projector');
+      await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+      if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+      await page.locator('[data-testid="btn-reset"]:visible').click();
+      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="topbar"]')?.textContent?.match(/t\s*=\s*([0-9.]+)\s*s/)?.[1])===0);
+    }
     await page.getByTestId('btn-fullscreen-speech').click();
     const toggle=page.getByTestId('btn-view-3d-fullscreen');
     if((await toggle.textContent())?.includes('3D 空间'))await toggle.click();

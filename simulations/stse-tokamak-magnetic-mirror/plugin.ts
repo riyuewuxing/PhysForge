@@ -76,9 +76,12 @@ export type FusionSafeRect={left:number;right:number;top:number;bottom:number};
 export type FusionScreenBounds=FusionSafeRect & {visible:boolean};
 /** Actual visible geometric samples in the same right-handed display space.
  * Include the chamber envelope, not only its coils. No synthetic particle path. */
-export function fusionFramePoints(s:TokamakMirrorState,p:TokamakMirrorParams,layers:ReadonlySet<string>):Point3[]{
+let cachedFrameGeometry:{key:string;points:Point3[]}|null=null;
+function fusionStaticFramePoints(p:TokamakMirrorParams,layers:ReadonlySet<string>):readonly Point3[]{
+  const key=[fusionGeometryKey(p),layers.has('conductors'),layers.has('fieldLines3d')].join(':');
+  if(cachedFrameGeometry?.key===key)return cachedFrameGeometry.points;
   const geometry=fusionDisplayGeometry(p),map=(v:Point3)=>fusionDisplayPoint(v,p.mode);
-  const points:Point3[]=[map(s.position),...s.trail.map(map)];
+  const points:Point3[]=[];
   if(layers.has('conductors')){
     for(const seg of geometry.segments)points.push(map(seg.a),map(seg.b));
     if(p.mode==='tokamak')for(let i=0;i<48;i++)for(let j=0;j<12;j++){
@@ -87,6 +90,12 @@ export function fusionFramePoints(s:TokamakMirrorState,p:TokamakMirrorParams,lay
     }
   }
   if(layers.has('fieldLines3d'))for(const line of geometry.lines)for(const pt of line)points.push(map(pt));
+  cachedFrameGeometry={key,points};
+  return points;
+}
+export function fusionFramePoints(s:TokamakMirrorState,p:TokamakMirrorParams,layers:ReadonlySet<string>):Point3[]{
+  const map=(v:Point3)=>fusionDisplayPoint(v,p.mode);
+  const points:Point3[]=[...fusionStaticFramePoints(p,layers),map(s.position),...s.trail.map(map)];
   if(layers.has('velocityComponents'))for(const v of fusionVelocityVectors(s,p))points.push(v.a,v.b);
   if(layers.has('eventPins'))for(const v of fusionEventPoints(s,p))points.push(v.point);
   return points;

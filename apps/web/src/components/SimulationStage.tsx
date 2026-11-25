@@ -522,19 +522,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
     const fusionAutomatic=p.meta.id==='stse-tokamak-magnetic-mirror'&&!userTransformedViewRef.current&&
        !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&scrub===null;
-    if(fusionAutomatic&&drawState!==null){
-      const model=p as unknown as FusionStagePlugin,cur=latestRef.current,vp=viewportRef.current;
-      const key=b1FitKey(vp),now=performance.now(),fresh=key!==b1FitKeyRef.current;
-      if(fresh||now-b1FitAtRef.current>=250){
-        b1FitKeyRef.current=key;b1FitAtRef.current=now;
-        const points=model.fusionFramePoints(drawState as TokamakMirrorState,pm as TokamakMirrorParams,readDisplayedLayers());
-        const safe=model.fusionSafeRect(vp.width,vp.height,cur.presentationMode,!cur.oscilloscopeCollapsed);
-        if(fresh||!model.fusionScreenFits(model.fusionFlatScreenBounds(points,vp),safe)){
-          const next=model.fitFusionFlatViewport(points,vp,safe);
-          cameraRef.current=next;viewportRef.current=next;
-          if(fresh)baseScaleRef.current=next.scale;
-          setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
-        }
+    const fusionModel=p.meta.id==='stse-tokamak-magnetic-mirror'?p as unknown as FusionStagePlugin:null;
+    const fusionPoints=fusionModel&&drawState!==null?fusionModel.fusionFramePoints(drawState as TokamakMirrorState,pm as TokamakMirrorParams,readDisplayedLayers()):null;
+    if(fusionAutomatic&&fusionModel&&fusionPoints){
+      const cur=latestRef.current,vp=viewportRef.current;
+      const key=b1FitKey(vp),fresh=key!==b1FitKeyRef.current;
+      b1FitKeyRef.current=key;
+      const safe=fusionModel.fusionSafeRect(vp.width,vp.height,cur.presentationMode,!cur.oscilloscopeCollapsed);
+      if(fresh||!fusionModel.fusionScreenFits(fusionModel.fusionFlatScreenBounds(fusionPoints,vp),safe)){
+        const next=fusionModel.fitFusionFlatViewport(fusionPoints,vp,safe);
+        cameraRef.current=next;viewportRef.current=next;
+        if(fresh)baseScaleRef.current=next.scale;
+        setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
       }
     }
     const baseVp = viewportRef.current;
@@ -687,10 +686,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
 
     ctx.restore();
-    if(p.meta.id==='stse-tokamak-magnetic-mirror'&&frame&&drawState!==null){
-      const model=p as unknown as FusionStagePlugin;
-      const points=model.fusionFramePoints(drawState as TokamakMirrorState,pm as TokamakMirrorParams,readDisplayedLayers());
-      canvas.dataset.s01ScreenBounds=JSON.stringify(model.fusionFlatScreenBounds(points,viewportRef.current));
+    if(fusionModel&&fusionPoints&&frame){
+      canvas.dataset.s01ScreenBounds=JSON.stringify(fusionModel.fusionFlatScreenBounds(fusionPoints,viewportRef.current));
       canvas.dataset.s01AutoFit=String(fusionAutomatic);
       canvas.dataset.s01Time=String(frame.t);
     }
