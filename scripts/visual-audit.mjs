@@ -375,6 +375,18 @@ async function auditM01Chase(page,origin){
   if(Math.abs(long.xA-long.t**2)>1e-7||Math.abs(long.xB-(16+8*long.t))>1e-7||long.meetCount!==1||long.minGap!==0)throw Error('M01 long analytic trajectory '+JSON.stringify(long));
   await page.screenshot({path:path.join(OUT_DIR,'H14_M01_long_position.png')});
   const longVisibility=await assertChaseVisible(page,'simulation-canvas','over-12s');
+  const view=async()=>JSON.parse(await canvas.getAttribute('data-chase-viewport'));
+  const prior=await view(),box=await canvas.boundingBox();
+  if(!box)throw Error('M01 missing canvas for real pan');
+  await page.mouse.move(box.x+80,box.y+120);await page.mouse.down();await page.mouse.move(box.x+140,box.y+145,{steps:4});await page.mouse.up();
+  const manual=await view();
+  if(await canvas.getAttribute('data-chase-auto-fit')!=='false'||Math.abs(manual.offsetX-prior.offsetX-60)>1||Math.abs(manual.offsetY-prior.offsetY-25)>1)throw Error('M01 pan ownership '+JSON.stringify({prior,manual}));
+  const manualTime=await runTo(13.2),afterManual=await view();
+  if(['scale','offsetX','offsetY'].some(k=>Math.abs(afterManual[k]-manual[k])>1e-9))throw Error('M01 manual camera overwritten '+JSON.stringify({manual,afterManual,manualTime}));
+  await page.getByTestId('btn-reset-view').click();
+  await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.dataset.chaseAutoFit==='true');
+  const resetVisibility=await assertChaseVisible(page,'simulation-canvas','reset-after-manual-pan');
+  await page.screenshot({path:path.join(OUT_DIR,'H14_M01_reset_auto.png')});
   await selectPreset(page,'brake-safe-margin',true);await waitInitial(42);
   const safe=await runTo(5.45);
   if(Math.abs(safe.xA-58)>1e-8||safe.vA!==0||safe.aA!==0||Math.abs(safe.xB-(42+6*safe.t))>1e-8||Math.abs(safe.minGap-11.9)>1e-8||Math.abs(safe.firstCoVelocityTime-3.9)>1e-8||safe.meetCount!==0)throw Error('M01 safe braking '+JSON.stringify(safe));
@@ -386,8 +398,8 @@ async function auditM01Chase(page,origin){
   await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
   if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
   await page.locator('[data-testid="topbar"]').getByLabel('播放倍速').selectOption('1');
-  console.log('H12 M01 online '+JSON.stringify({initial,catchup,long,safe,nearVisibility,longVisibility}));
-  return {initial,catchup,long,safe,nearVisibility,longVisibility};
+  console.log('H12 M01 online '+JSON.stringify({initial,catchup,long,safe,nearVisibility,longVisibility,resetVisibility}));
+  return {initial,catchup,long,safe,nearVisibility,longVisibility,resetVisibility};
 }
 
 
@@ -2027,7 +2039,13 @@ async function main() {
       await m01Page.getByLabel('播放倍速').selectOption('2');const play=m01Page.getByTestId('sf-play-pause');await play.click();await m01Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-chase-rendered')||'null')?.t>5.45,null,{timeout:15000});await play.click();
       const stop=await read();if(stop.vA!==0||stop.aA!==0||Math.abs(stop.xA-58)>1e-8||Math.abs(stop.minGap-11.9)>1e-8||Math.abs(stop.firstCoVelocityTime-3.9)>1e-8||stop.meetCount!==0)throw Error('M01 offline braking '+JSON.stringify(stop));
       await m01Page.getByRole('button',{name:'黑板深蓝'}).click();await m01Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');await m01Page.screenshot({path:path.join(OUT_DIR,'H12_M01_offline_safe_paper.png')});
-      if(m01Errors.length||m01Network.length)throw Error('M01 offline errors '+JSON.stringify({m01Errors,m01Network}));Object.assign(m01OfflineReport,{step,stop,errors:m01Errors,network:m01Network});
+      await play.click();
+      await m01Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-chase-rendered')||'null')?.t>18.1,null,{timeout:15000});await play.click();
+      const long=await read();
+      if(long.vA!==0||long.aA!==0||Math.abs(long.xA-58)>1e-8||Math.abs(long.xB-(42+6*long.t))>1e-8||Math.abs(long.minGap-11.9)>1e-8)throw Error('M01 offline long analytic braking '+JSON.stringify(long));
+      const visible=await assertChaseVisible(m01Page,'sf-canvas','offline-over-18s');
+      await m01Page.screenshot({path:path.join(OUT_DIR,'H14_M01_offline_long_paper.png')});
+      if(m01Errors.length||m01Network.length)throw Error('M01 offline errors '+JSON.stringify({m01Errors,m01Network}));Object.assign(m01OfflineReport,{step,stop,long,visible,errors:m01Errors,network:m01Network});
     }finally{await m01Context.close();}
 
     const m02File=path.join(OUT_DIR,'H13_M02_offline.html');
