@@ -257,9 +257,7 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
               core.position.z=halo.position.z=zPlane;fixed.add(core,halo);
             }
           } else if(params.mode==='rectangular') {
-            const width = params.mode === 'rectangular' ? radius : params.mode === 'half-space' ? 4 : 8;
-            const height = params.mode === 'rectangular' ? Math.max(params.fieldScale * 1.6, 0.2) : 5;
-            const centerX = params.mode === 'crossed-eb' ? 0 : width / 2;
+            const width=radius,height=Math.max(params.fieldScale*1.6,.2),centerX=width/2;
             const box = new THREE.BoxGeometry(width, height, 0.44);
             const edges = new THREE.EdgesGeometry(box);
             box.dispose();
