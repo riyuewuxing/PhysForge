@@ -75,3 +75,42 @@ describe('mech-collision-recoil physics invariants (M09)', () => {
     expect(Number.isFinite(s2.x1)).toBe(true);
   });
 });
+
+describe('H28 M09 exact event and parameter contracts',()=>{
+  it('captures an entire oblique collision inside a coarse step with no endpoint overlap',()=>{
+    const p=getPreset(0),r=stepCollisionRecoil(createInitialState(p),p,2),s=r.nextState;
+    expect(s.collided).toBe(true);expect(r.events).toHaveLength(1);expect(r.events[0]?.time).toBeCloseTo(.53,12);
+    expect(s.vx1).toBeCloseTo(1.44,12);expect(s.vy1).toBeCloseTo(1.92,12);
+    expect(s.vx2).toBeCloseTo(2.56,12);expect(s.vy2).toBeCloseTo(-1.92,12);
+    expect(s.t).toBe(2);
+  });
+  it('honors the actual aiming offset for a miss and an exact grazing trajectory',()=>{
+    for(const b of [.61,.6,-.61,-.6]){
+      const p={...getPreset(0),impactParamB:b},init=createInitialState(p),s=stepCollisionRecoil(init,p,1.5).nextState;
+      expect(init.y1).toBe(b);expect(s.collided).toBe(false);expect(s.vx1).toBe(4);expect(s.vy1).toBe(0);expect(s.events).toHaveLength(0);
+    }
+  });
+  it('chooses the earliest block exit even when a coarse step passes the turning point',()=>{
+    const p={...getPreset(2),blockLength:1},r=stepCollisionRecoil(createInitialState(p),p,2),s=r.nextState;
+    expect(s.bulletPhase).toBe('exited');expect(r.events).toHaveLength(2);
+    expect(r.events[0]?.time).toBeCloseTo(.2375,12);
+    expect(r.events[1]?.time).toBeCloseTo(.2375+2/(8+Math.sqrt(14)),12);
+    expect(s.penetrationDist).toBeCloseTo(1,12);expect(s.heatLostJ).toBeCloseTo(10,12);
+    expect(s.vx1-s.vx2).toBeCloseTo(Math.sqrt(14),12);
+  });
+  it('respects zero resistance without manufacturing heat',()=>{
+    const p={...getPreset(2),dragForceF:0,blockLength:1},s=stepCollisionRecoil(createInitialState(p),p,2).nextState;
+    expect(s.bulletPhase).toBe('exited');expect(s.heatLostJ).toBe(0);expect(s.vx1).toBe(8);expect(s.vx2).toBe(0);
+  });
+  it('zero relative walking speed means no motion, not a hidden 0.2 m/s minimum',()=>{
+    const p={...getPreset(3),v10:0},init=createInitialState(p),s=stepCollisionRecoil(init,p,5).nextState;
+    expect(s.x1).toBe(init.x1);expect(s.x2).toBe(init.x2);expect(s.vx1).toBe(0);expect(s.vx2).toBe(0);expect(s.events).toHaveLength(0);
+  });
+  it('boat velocity starts continuously and the requested speed is the peak of a smooth walk',()=>{
+    const p=getPreset(3),init=createInitialState(p),h=1e-5,s=stepCollisionRecoil(init,p,h).nextState;
+    expect(Math.abs(s.vx1-s.vx2)).toBeLessThan(1e-7);
+    const span=.9*p.blockLength,T=2*span/p.v10,mid=stepCollisionRecoil(init,p,T/2).nextState;
+    expect(mid.vx1-mid.vx2).toBeCloseTo(p.v10,12);expect(mid.x1-mid.x2).toBeCloseTo(0,12);
+    const end=stepCollisionRecoil(init,p,T+1).nextState;expect(end.x1-end.x2).toBeCloseTo(span/2,12);expect(end.vx1).toBe(0);expect(end.events[0]?.time).toBeCloseTo(T,12);
+  });
+});
