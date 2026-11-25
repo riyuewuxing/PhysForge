@@ -135,3 +135,48 @@ it('preserves exact flight and impact under different outer step sizes, with or 
     expect(Math.hypot(a.vx-b.vx,a.vy-b.vy)).toBeLessThan(1e-6);
   }
 });
+
+import { mechProjectileCouplingPlugin } from './plugin.js';
+describe('H21 independent classroom geometry and print contracts',()=>{
+  const p:ProjectileCouplingParams={mode:'incline-flat',v0:6,launchAngleDeg:0,inclineDeg:37,troughRadius:2.5,dragCoeff:0,mass:1};
+  const model=mechProjectileCouplingPlugin;
+  it('exports the actual lower semicircle instead of a fictitious horizontal floor',()=>{
+    const q={...p,mode:'semicircle-trough' as const,launchAngleDeg:0};
+    const ir=model.exportDiagramIR!(createInitialState(q),q);
+    const arc=ir.primitives.find(d=>d.kind==='arc'&&d.cx===2.5&&d.cy===0&&d.r===2.5);
+    expect(arc).toMatchObject({startAngle:Math.PI,endAngle:2*Math.PI});
+    expect(ir.primitives.some(d=>d.kind==='hatchedGround')).toBe(false);
+  });
+  it('constructs the vacuum tangent intercept at the midpoint and the true farthest-point perpendicular',()=>{
+    const t=6*Math.tan(37*Math.PI/180)/9.8,s=stepProjectileCoupling(createInitialState(p),p,t).nextState;
+    const ir=model.exportDiagramIR!(s,p),mid={x:s.x/2,y:0};
+    const tangent=ir.primitives.find(d=>d.kind==='line'&&d.dashed&&Math.abs(d.x1-mid.x)<1e-8&&Math.abs(d.y1)<1e-8&&Math.abs(d.x2-s.x)<1e-8&&Math.abs(d.y2-s.y)<1e-8);
+    expect(tangent).toBeDefined();
+    const th=37*Math.PI/180,n={x:Math.sin(th),y:Math.cos(th)},distance=s.x*n.x+s.y*n.y;
+    const foot={x:s.x-distance*n.x,y:s.y-distance*n.y};
+    expect(ir.primitives.some(d=>d.kind==='line'&&d.dashed&&Math.abs(d.x1-s.x)<1e-8&&Math.abs(d.y1-s.y)<1e-8&&Math.abs(d.x2-foot.x)<1e-8&&Math.abs(d.y2-foot.y)<1e-8)).toBe(true);
+    expect(s.vx*n.x+s.vy*n.y).toBeCloseTo(0,10);
+  });
+  it('draws the analytical safety envelope and correct initial launch direction in print',()=>{
+    const q={...p,mode:'safety-envelope' as const,launchAngleDeg:55,v0:8};
+    const ir=model.exportDiagramIR!(createInitialState(q),q),envelope=ir.primitives.find(d=>d.kind==='polyline'&&d.dashed);
+    expect(envelope?.kind).toBe('polyline');
+    if(envelope?.kind!=='polyline')throw Error('missing envelope');
+    expect(envelope.points.length).toBeGreaterThan(20);
+    for(const pt of envelope.points)expect(pt.y).toBeCloseTo(64/19.6-9.8*pt.x**2/128,10);
+    const v=ir.primitives.find(d=>d.kind==='arrow'&&d.label==='v₀');
+    expect(v?.kind).toBe('arrow');
+    if(v?.kind!=='arrow')throw Error('missing v0');
+    expect(Math.atan2(v.y2-v.y1,v.x2-v.x1)).toBeCloseTo(55*Math.PI/180,10);
+  });
+  it('does not present the vacuum midpoint property under drag and includes the actual terminal geometry',()=>{
+    const q={...p,dragCoeff:.1};
+    const s=stepProjectileCoupling(createInitialState(q),q,10).nextState;
+    const ir=model.exportDiagramIR!(s,q);
+    expect(s.landed).toBe(true);
+    expect(ir.primitives.some(d=>d.kind==='text'&&d.text.includes('撞击'))).toBe(true);
+    expect(ir.primitives.some(d=>d.kind==='text'&&d.text.includes('中点'))).toBe(false);
+    expect(ir.viewBox.minX).toBeLessThan(s.x);expect(ir.viewBox.maxX).toBeGreaterThan(s.x);
+    expect(ir.viewBox.minY).toBeLessThan(s.y);expect(ir.viewBox.maxY).toBeGreaterThan(s.y);
+  });
+});
