@@ -32,7 +32,7 @@ describe('B4 builder-mechanics-lab V2 verification', () => {
     expect(bRight.vy).toBeCloseTo(-0.5 * 9.8 * dt, 10);
   });
 
-  it('conserves mechanical energy < 1e-4 over 20s in spring-oscillator Velocity-Verlet fallback', () => {
+  it('conserves mechanical energy < 1e-4 over 20s in ideal spring-oscillator', () => {
     const params = resolvePluginParams<SandboxParams>(mechFreeSandboxPlugin.paramSchema, {
       scenario: 'spring-oscillator',
       springK: 25

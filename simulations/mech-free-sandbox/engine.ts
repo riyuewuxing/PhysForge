@@ -48,17 +48,20 @@ export interface SandboxState {
 interface RapierRuntime {
   world: RAPIER.World;
   bodyHandles: Map<string, RAPIER.RigidBody>;
-  springRestLength?: number;
-  springAnchorX?: number;
-  springTargetId?: string;
+ }
+
+const runtimeMap = new WeakMap<SandboxState, RapierRuntime>();
+
+export const SPRING_EQUILIBRIUM_X = -.45;
+export function usesAnalyticSolver(scenario:SandboxScenario):boolean {
+  return scenario==='spring-oscillator'||scenario==='atwood-constrained';
 }
-
-const runtimeMap = new WeakMap<object, RapierRuntime>();
-const stateTokenMap = new Map<number, RapierRuntime>();
-let nextToken = 1;
-
-// 给 SandboxState 绑定一个不可变令牌便于复用或重建 Rapier 世界
-const stateToToken = new WeakMap<SandboxState, number>();
+function solveAtwood(m1:number,m2:number,g:number){
+  return solveUdwadiaKalaba({
+    massDiagonal:[m1,m2],unconstrainedAccel:[-g,-g],
+    constraintMatrixA:[[1,1]],constraintVectorB:[0]
+  });
+}
 
 function createInitialBodies(params: SandboxParams): SandboxBodySnapshot[] {
   const m1 = 1.0;
@@ -233,7 +236,7 @@ function createInitialBodies(params: SandboxParams): SandboxBodySnapshot[] {
         label: '固定墙',
         shape: 'box',
         x: -3.2,
-        y: floorY + 0.4,
+        y: floorY + 0.24,
         vx: 0,
         vy: 0,
         angle: 0,
@@ -431,13 +434,7 @@ function buildRapierRuntime(
     bodyHandles.set(b.id, rb);
   }
 
-  return {
-    world,
-    bodyHandles,
-    springAnchorX: -3.05,
-    springRestLength: 2.6,
-    springTargetId: params.scenario === 'spring-oscillator' ? 'mass-block' : undefined
-  };
+  return { world, bodyHandles };
 }
 
 function computeTotalEnergy(
@@ -456,8 +453,7 @@ function computeTotalEnergy(
     pe += b.mass * params.gravity * (b.y - floorRef);
     momentumX += b.mass * b.vx;
     if (params.scenario === 'spring-oscillator' && b.id === 'mass-block') {
-      const eqX = -0.45;
-      const dx = b.x - eqX;
+      const dx = b.x - SPRING_EQUILIBRIUM_X;
       springPe += 0.5 * params.springK * dx * dx;
     }
   }
@@ -466,23 +462,24 @@ function computeTotalEnergy(
 
 export function createInitialState(params: SandboxParams): SandboxState {
   const bodies = createInitialBodies(params);
-  const rapier = getLoadedRapier();
+  const rapier = usesAnalyticSolver(params.scenario)?null:getLoadedRapier();
   const energy = computeTotalEnergy(bodies, params);
+  const tension=params.scenario==='atwood-constrained'
+    ?solveAtwood(bodies.find(b=>b.id==='atwood-left')!.mass,bodies.find(b=>b.id==='atwood-right')!.mass,params.gravity).constraintForce[0]!
+    :undefined;
 
   const state: SandboxState = {
     t: 0,
     bodies,
     rapierActive: rapier !== null,
     initialEnergy: energy.ke + energy.pe + energy.springPe,
+    ...(tension===undefined?{}:{constraintTensionN:tension}),
     events: []
   };
 
   if (rapier) {
     const rt = buildRapierRuntime(rapier, bodies, params);
-    const token = nextToken++;
-    stateTokenMap.set(token, rt);
-    stateToToken.set(state, token);
-    runtimeMap.set(state, rt);
+     runtimeMap.set(state, rt);
   }
   return state;
 }
@@ -499,22 +496,25 @@ export function stepSandbox(
     return { nextState: state, events: [] };
   }
 
-  const rapier = getLoadedRapier();
-  let rt = runtimeMap.get(state);
-  if (!rt && rapier) {
-    rt = buildRapierRuntime(rapier, state.bodies, params);
+  // These ideal constrained systems have a fixed solver; WASM readiness
+  // must not alter their trajectory or allocate an unused rigid-body world.
+  if(params.scenario==='spring-oscillator'){
+    const bodies=state.bodies.map(b=>{
+      if(b.id!=='mass-block')return b;
+      const w=Math.sqrt(Math.max(0,params.springK)/b.mass);
+      const q=b.x-SPRING_EQUILIBRIUM_X;
+      if(w===0)return {...b,x:b.x+b.vx*dt};
+      const c=Math.cos(w*dt),s=Math.sin(w*dt);
+      return {...b,x:SPRING_EQUILIBRIUM_X+q*c+b.vx*s/w,vx:b.vx*c-q*w*s};
+    });
+    return {nextState:{...state,t:state.t+dt,bodies,rapierActive:false},events:[]};
   }
 
   if (params.scenario === 'atwood-constrained') {
     const left = state.bodies.find((b) => b.id === 'atwood-left');
     const right = state.bodies.find((b) => b.id === 'atwood-right');
     if (left && right) {
-      const uk = solveUdwadiaKalaba({
-        massDiagonal: [left.mass, right.mass],
-        unconstrainedAccel: [-params.gravity, -params.gravity],
-        constraintMatrixA: [[1, 1]],
-        constraintVectorB: [0]
-      });
+      const uk = solveAtwood(left.mass,right.mass,params.gravity);
       const ay1 = uk.acceleration[0]!;
       const ay2 = uk.acceleration[1]!;
       const nextVy1 = left.vy + ay1 * dt;
@@ -543,21 +543,13 @@ export function stepSandbox(
     }
   }
 
+  const rapier = getLoadedRapier();
+  let rt = runtimeMap.get(state);
+  if (!rt && rapier) rt = buildRapierRuntime(rapier,state.bodies,params);
+
   if (rt && rapier) {
     rt.world.gravity = { x: 0, y: -params.gravity };
     rt.world.timestep = dt;
-
-    if (params.scenario === 'spring-oscillator' && rt.springTargetId) {
-      const rb = rt.bodyHandles.get(rt.springTargetId);
-      if (rb) {
-        const pos = rb.translation();
-        const eqX = -0.45;
-        const fx = -params.springK * (pos.x - eqX);
-        rb.resetForces(true);
-        rb.addForce({ x: fx, y: 0 }, true);
-      }
-    }
-
     rt.world.step();
 
     const nextBodies = state.bodies.map((b) => {
@@ -590,17 +582,7 @@ export function stepSandbox(
   // Rapier WASM 尚未懒加载就绪前的纯 TS 确定性辛/弹性碰撞推进
   const updated = state.bodies.map((b) => {
     if (!b.dynamic) return b;
-    if (params.scenario === 'spring-oscillator' && b.id === 'mass-block') {
-      // Velocity-Verlet 对称辛步进保证无阻尼弹簧振子 20s 机械能漂移 < 1e-6
-      const xEq = -0.45;
-      const mEff = Math.max(b.mass, 1e-3);
-      const ax0 = (-params.springK * (b.x - xEq)) / mEff;
-      const nextX = b.x + b.vx * dt + 0.5 * ax0 * dt * dt;
-      const ax1 = (-params.springK * (nextX - xEq)) / mEff;
-      const nextVx = b.vx + 0.5 * (ax0 + ax1) * dt;
-      return { ...b, x: nextX, vx: nextVx };
-    }
-    let ax = 0;
+     let ax = 0;
     let ay = 0;
     if (params.scenario === 'incline-slide') {
       ay = -params.gravity;
@@ -668,6 +650,26 @@ export function checkInvariants(
   initial: SandboxState,
   params: SandboxParams
 ): InvariantReport[] {
+  const residual=(name:string,value:number,tolerance:number,unit?:string):InvariantReport=>({
+    name,measuredError:Math.abs(value),tolerance,unit,passed:Number.isFinite(value)&&Math.abs(value)<tolerance
+  });
+  if(params.scenario==='spring-oscillator'){
+    const a=computeTotalEnergy(initial.bodies,params),b=computeTotalEnergy(state.bodies,params);
+    const e0=a.ke+a.springPe,e=b.ke+b.springPe;
+    return [residual('理想弹簧振子机械能相对误差',(e-e0)/Math.max(e0,1e-9),1e-6)];
+  }
+  if(params.scenario==='atwood-constrained'){
+    const a=initial.bodies.find(b=>b.id==='atwood-left')!,b=initial.bodies.find(b=>b.id==='atwood-right')!;
+    const l=state.bodies.find(b=>b.id==='atwood-left')!,r=state.bodies.find(b=>b.id==='atwood-right')!;
+    const t=2*l.mass*r.mass*params.gravity/(l.mass+r.mass);
+    const e=computeTotalEnergy(state.bodies,params),e0=computeTotalEnergy(initial.bodies,params);
+    return [
+      residual('不可伸长绳位置约束',l.y+r.y-a.y-b.y,1e-9,'m'),
+      residual('不可伸长绳速度约束',l.vy+r.vy,1e-9,'m/s'),
+      residual('理想轻绳张力',(state.constraintTensionN??NaN)-t,1e-9,'N'),
+      residual('阿特伍德系统机械能相对误差',(e.ke+e.pe-e0.ke-e0.pe)/Math.max(Math.abs(e0.ke+e0.pe),1e-9),1e-6)
+    ];
+  }
   if (params.scenario === 'elastic-collision') {
     const p0 = computeTotalEnergy(initial.bodies, params).momentumX;
     const p1 = computeTotalEnergy(state.bodies, params).momentumX;

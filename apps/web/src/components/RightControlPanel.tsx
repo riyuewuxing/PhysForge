@@ -57,7 +57,15 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       'double-slit':['wavelengthNm','slitSeparationMm','screenDistanceM','sceneMode'],
       'thin-lens-imaging':['objectDistanceM','focalLengthM','sceneMode']
     };
-    const valid=circuit?circuitFields[String(params.topology)]:optics?opticsFields[String(params.sceneMode)]:undefined;
+    const mechanics=plugin.meta.id==='builder-mechanics-lab';
+    const mechanicsFields:Record<string,string[]>={
+      'elastic-collision':['restitution','massRatio','gravity','scenario'],
+      'incline-slide':['inclineDeg','friction','massRatio','restitution','gravity','scenario'],
+      'spring-oscillator':['springK','gravity','scenario'],
+      'newtons-cradle':['restitution','gravity','scenario'],
+      'atwood-constrained':['massRatio','gravity','scenario']
+    };
+    const valid=circuit?circuitFields[String(params.topology)]:optics?opticsFields[String(params.sceneMode)]:mechanics?mechanicsFields[String(params.scenario)]:undefined;
     const preferred = valid ?? (plugin.meta.id === 'modern-photoelectric-compton'
       ? params.mode === 'compton' ? ['xrayWavelengthNm', 'scatterAngleDeg'] : ['wavelengthNm', 'intensityRel', 'anodeVoltageV']
       : CONTEXT_CORE_KEYS[plugin.meta.id]);
@@ -73,7 +81,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       coreFields: core,
       extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!valid||valid.includes(field.key)))
     };
-  }, [plugin, params.mode, params.topology, params.sceneMode]);
+  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
