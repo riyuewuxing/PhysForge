@@ -8,6 +8,9 @@ import type { TokamakMirrorState,TokamakMirrorParams } from '../../../../simulat
 type FusionStagePlugin=typeof import('../../../../simulations/stse-tokamak-magnetic-mirror/plugin.js').stseTokamakMagneticMirrorPlugin;
 import type { AstroOrbitalState,AstroOrbitalParams } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 type OrbitStagePlugin=typeof import('../../../../simulations/astro-orbital-mechanics/plugin.js').astroOrbitalMechanicsPlugin;
+import type { KinematicsChaseParams,KinematicsChaseState } from '../../../../simulations/mech-kinematics-chase/engine.js';
+import type { ChaseSafeRect } from '../../../../simulations/mech-kinematics-chase/plugin.js';
+type ChaseStagePlugin=typeof import('../../../../simulations/mech-kinematics-chase/plugin.js').mechKinematicsChasePlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -126,6 +129,7 @@ interface SimulationStageProps {
   view3dEnabled: boolean;
   oscilloscopeCollapsed: boolean;
   presentationMode: boolean;
+  rightSidebarOpen?: boolean;
   resetViewNonce: number;
   resetNonce: number;
   stepOnceNonce: number;
@@ -214,6 +218,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   view3dEnabled,
   oscilloscopeCollapsed,
   presentationMode,
+  rightSidebarOpen=true,
   resetViewNonce,
   resetNonce,
   stepOnceNonce,
@@ -238,6 +243,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const b1Stage=plugin.meta.id==='builder-composite-em-field';
   const fusionStage=plugin.meta.id==='stse-tokamak-magnetic-mirror';
   const autoFrameStage=b1Stage||fusionStage;
+  const chaseStage=plugin.meta.id==='mech-kinematics-chase';
   const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
   const showThreeRef = useRef(showThree);
@@ -325,6 +331,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const baseScaleRef = useRef<number>(1);
   const userTransformedViewRef = useRef<boolean>(false);
   const b1FitKeyRef=useRef('');
+  const chaseSafeRef=useRef<{key:string;safe:ChaseSafeRect}|null>(null);
   const b1FitAtRef=useRef(-Infinity);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
@@ -333,6 +340,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
+    chaseSafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -430,6 +438,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     resetNonce,
     oscilloscopeCollapsed,
     presentationMode,
+    rightSidebarOpen,
     channelA,
     channelB,
     onUpdateParamsBatch,
@@ -452,6 +461,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     resetNonce,
     oscilloscopeCollapsed,
     presentationMode,
+    rightSidebarOpen,
     channelA,
     channelB,
     onUpdateParamsBatch,
@@ -558,6 +568,32 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         cameraRef.current=next;viewportRef.current=next;
         if(fresh)baseScaleRef.current=next.scale;
         setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+      }
+    }
+    const chaseAutomatic=p.meta.id==='mech-kinematics-chase'&&!userTransformedViewRef.current&&
+      !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
+    if(chaseAutomatic&&drawState!==null){
+      const model=p as unknown as ChaseStagePlugin,cur=latestRef.current,v=viewportRef.current;
+      const state=drawState as KinematicsChaseState,params=pm as KinematicsChaseParams;
+      const key=JSON.stringify([v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed,cur.resetNonce]);
+      const fresh=chaseSafeRef.current?.key!==key;
+      if(fresh){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const panelOn=cur.presentationMode||cur.rightSidebarOpen;
+        const right=panelOn?(panel&&panel.width>0?panel.left-box.left-10:v.width-(cur.presentationMode?Math.min(320,v.width*.38)+24:284)-10):undefined;
+        const bottom=cur.presentationMode||!cur.oscilloscopeCollapsed?(dock&&dock.height>0?dock.top-box.top-12:v.height-(cur.presentationMode?100:170)):v.height-76;
+        chaseSafeRef.current={key,safe:model.chaseSafeRect(v.width,v.height,{right,bottom,top:cur.presentationMode?90:20})};
+      }
+      const safe=chaseSafeRef.current!.safe;
+      if(fresh||!model.chaseBoundsInViewport(state,params,v,safe)){
+        const next=model.chaseFitViewport(state,params,v,safe);
+        if(next){
+          cameraRef.current=next;viewportRef.current=next;
+          if(fresh)baseScaleRef.current=next.scale;
+          setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+        }
       }
     }
     const baseVp = viewportRef.current;
@@ -713,7 +749,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if(p.meta.id==='builder-optics-ray'&&frame&&drawState!==null){
       canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...p.engine.computeObservables(drawState,pm)});
     }
-    if(p.meta.id==='mech-kinematics-chase'&&frame&&drawState!==null){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
+    if(p.meta.id==='mech-kinematics-chase'&&frame&&drawState!==null){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.chaseAutoFit=String(chaseAutomatic);}
     if(p.meta.id==='mech-dynamic-equilibrium'&&frame&&drawState!==null){canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});}
     if(p.getTelemetryChannels&&frame&&drawState!==null){canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
@@ -1019,6 +1055,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     renderFrameToCanvas();
     emitTelemetrySummary(true);
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
+
+  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}},[chaseStage,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
@@ -1414,7 +1452,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
-                  if(autoFrameStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+                  if(autoFrameStage||chaseStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -1440,7 +1478,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               // Like OrbitControls' start, pointer-down establishes camera
               // ownership before the first movement; a resize/fit cannot race
               // the teacher between gesture start and its first delta.
-              if(autoFrameStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+              if(autoFrameStage||chaseStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {
@@ -1534,6 +1572,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (e.pointerType === 'touch') hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = hoveredHandleIdRef.current ? 'pointer' : 'grab';
+              if(chaseStage&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerCancel={(e) => {
               activePointersRef.current.clear();
@@ -1542,6 +1581,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = 'grab';
+              if(chaseStage&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerLeave={(e) => {
               if (e.pointerType === 'touch' || dragModeRef.current) return;

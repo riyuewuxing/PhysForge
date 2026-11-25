@@ -144,3 +144,40 @@ describe('H12 real metre geometry and teaching contracts',()=>{
     expect(v).toHaveLength(1);expect(v[0]!.force.x).toBe(2400);expect(v[0]!.origin.x).toBe(1);expect(v[0]!.unit).toBe('N');
     expect(mechKinematicsChasePlugin.getForceVectors!(b,q)[0]!.force.x).toBe(3600);
   });
+
+describe('H14 safe camera and real metre coordinates',()=>{
+  const p:KinematicsChaseParams={scenario:'accelerate-chase',vA0:0,aA:2,reactionTime:0,xB0:16,vB0:8,aB:0};
+  const model=mechKinematicsChasePlugin;
+  it('fits cars, axis and label margins across actual long runs and viewport sizes',()=>{
+    for(const params of [p,{...p,vA0:35,aA:8,vB0:25,aB:6,xB0:80},{...p,vA0:20,aA:-4,reactionTime:.4,xB0:42,vB0:6}])
+    for(const [width,height,right,bottom] of [[1392,850,1098,680],[976,720,682,550],[776,1050,482,880],[800,460,788,440],[1024,768,680,655]] as const)
+    for(const t of [0,4,9.7,12.2,30,60]){
+      const s=stepKinematicsChase(createInitialState(params),params,t).nextState;
+      const safe=model.chaseSafeRect(width,height,{right,bottom}),v={width,height,dpr:1,scale:1,offsetX:0,offsetY:0};
+      const fit=model.chaseFitViewport(s,params,v,safe);
+      expect(fit).not.toBeNull();if(!fit)throw Error('no viewport');
+      expect(model.chaseBoundsInViewport(s,params,fit,safe)).toBe(true);
+      const layout=model.chaseSceneLayout(s,params),a=worldToScreen(s.xA,layout.lane,fit),b=worldToScreen(s.xB,-layout.lane,fit);
+      expect(a.x).toBeGreaterThan(safe.left+90);expect(a.x).toBeLessThan(safe.right-90);
+      expect(b.x).toBeGreaterThan(safe.left+90);expect(b.x).toBeLessThan(safe.right-90);
+      expect(a.y).toBeGreaterThan(safe.top);expect(b.y).toBeLessThan(safe.bottom);
+      expect(screenToWorld(a.x,a.y,fit).x).toBeCloseTo(s.xA,7);
+      expect(screenToWorld(b.x,b.y,fit).x).toBeCloseTo(s.xB,7);
+      const blocks=model.exportDiagramIR!(s,params).primitives.filter(x=>x.kind==='block');
+      expect(blocks.map(x=>x.cy)).toEqual([layout.lane,-layout.lane]);
+      const fbd=model.getForceVectors!(s,params);
+      if(s.aACurrent!==0)expect(fbd.find(x=>x.id==='net-force-a')?.origin.y).toBe(layout.lane);
+      if(s.aBCurrent!==0)expect(fbd.find(x=>x.id==='net-force-b')?.origin.y).toBe(-layout.lane);
+    }
+  });
+  it('reports no fit for a completely obstructed narrow canvas',()=>{
+    const s=createInitialState(p),v={width:360,height:600,dpr:1,scale:1,offsetX:0,offsetY:0};
+    expect(model.chaseFitViewport(s,p,v,model.chaseSafeRect(360,600,{right:60}))).toBeNull();
+  });
+  it('preserves a camera inside the padding until actual extent requires expansion',()=>{
+    const v={width:1392,height:850,dpr:1,scale:1,offsetX:0,offsetY:0},safe=model.chaseSafeRect(v.width,v.height,{right:1098,bottom:680});
+    const initial=createInitialState(p),fit=model.chaseFitViewport(initial,p,v,safe)!;
+    expect(model.chaseBoundsInViewport(stepKinematicsChase(initial,p,9.7).nextState,p,fit,safe)).toBe(true);
+    expect(model.chaseBoundsInViewport(stepKinematicsChase(initial,p,12.2).nextState,p,fit,safe)).toBe(false);
+  });
+});

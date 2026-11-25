@@ -3,6 +3,8 @@ import katex from 'katex';
 import uPlot from 'uplot';
 import { Play, Pause, RotateCcw, StepForward, Eye, EyeOff, SunMoon, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
 import targetPlugin from '@physforge/target-plugin';
+import type { KinematicsChaseState,KinematicsChaseParams } from '../../../simulations/mech-kinematics-chase/engine.js';
+type ChaseSlicePlugin=typeof import('../../../simulations/mech-kinematics-chase/plugin.js').mechKinematicsChasePlugin;
 import {
   resolvePluginParams,
   resolveInitialCameraTransform,
@@ -208,17 +210,24 @@ export const SingleFileApp: React.FC = () => {
 
     const { params: pm, activeLayers: layers, strobeEnabled: strobe, poeMasked: masked, theme: th, scrubTime: scrub } =
       latestRef.current;
+    const frame =
+      scrub !== null
+        ? findClosestSnapshot(snapshotsRef.current, scrub)
+        : snapshotsRef.current[snapshotsRef.current.length - 1] ?? null;
+    const drawState = frame ? frame.state : simStateRef.current;
+    if(chaseSlice&&drawState!==null){
+      const model=targetPlugin as unknown as ChaseSlicePlugin,v=viewportRef.current;
+      const s=drawState as KinematicsChaseState,p=pm as KinematicsChaseParams,safe=model.chaseSafeRect(v.width,v.height);
+      if(!model.chaseBoundsInViewport(s,p,v,safe)){
+        const next=model.chaseFitViewport(s,p,v,safe);if(next)viewportRef.current=next;
+      }
+    }
     const vp = viewportRef.current;
     ctx.save();
     ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
     ctx.fillStyle = th === 'projector' ? '#ffffff' : '#091220';
     ctx.fillRect(0, 0, vp.width, vp.height);
 
-    const frame =
-      scrub !== null
-        ? findClosestSnapshot(snapshotsRef.current, scrub)
-        : snapshotsRef.current[snapshotsRef.current.length - 1] ?? null;
-    const drawState = frame ? frame.state : simStateRef.current;
     if (drawState !== null) {
       const layerSet = new Set(layers);
       if (masked) {
@@ -231,7 +240,7 @@ export const SingleFileApp: React.FC = () => {
       targetPlugin.renderCanvas(ctx, drawState, pm, measuredScope||opticalSlice?{...vp,theme:th}:vp, layerSet);
       if(opticalSlice&&frame)canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...frame.observables});
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
-      if(chaseSlice&&frame)canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...frame.observables});
+      if(chaseSlice&&frame){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...frame.observables});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(equilibriumSlice&&frame)canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...frame.observables});
       if(odeSlice&&frame)canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...frame.observables});
       if(mechanicsSlice&&frame)canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...frame.observables});
