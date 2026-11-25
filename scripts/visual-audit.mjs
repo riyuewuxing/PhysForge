@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath,pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -1529,7 +1530,40 @@ async function main() {
     const b1PhysicsReport=await auditB1Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
     const s01PhysicsReport=await auditS01Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
     const m10PhysicsReport=await auditM10Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
-    const summary = { m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    // Build and actually open one isolated B2 slice with network disabled.
+    const b2File=path.join(OUT_DIR,'H8_B2_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','builder-circuit-mna','--preset','rc-charging-curve','--out',b2File],{stdio:'inherit'});
+    const offline=await browser.newContext({viewport:VIEWPORT,offline:true});
+    const sf=await offline.newPage(),offlineErrors=[],network=[];
+    sf.on('pageerror',e=>offlineErrors.push(e.message));sf.on('console',m=>{if(m.type()==='error')offlineErrors.push(m.text());});sf.on('request',r=>{if(/^https?:/.test(r.url()))network.push(r.url());});
+    const b2OfflineReport={};
+    try{
+      await sf.goto(pathToFileURL(b2File).href);
+      await sf.getByTestId('sf-canvas').waitFor({state:'visible'});
+      await sf.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='capVoltage'&&document.querySelector('[data-testid="sf-uplot"]')?.getAttribute('data-scope-units')==='separate');
+      await sf.getByTestId('sf-play-pause').click();
+      await sf.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.t>.35,null,{timeout:10000});
+      await sf.getByTestId('sf-play-pause').click();
+      const x=JSON.parse(await sf.getByTestId('sf-canvas').getAttribute('data-b2-rendered'));
+      if(Math.abs(x.capVoltage-10*(-Math.expm1(-x.t/.5)))>1e-8)throw Error('B2 offline RC failed independent exact law '+JSON.stringify(x));
+      b2OfflineReport.rc={t:x.t,u:x.capVoltage};
+      await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_rc.png')});
+      await sf.locator('[data-preset-id="series-parallel-branches"]').click();
+      await sf.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='branchCurrent1'&&document.querySelector('[data-testid="sf-scope-channel-b"]')?.value==='branchCurrent2');
+      const mixed=JSON.parse(await sf.getByTestId('sf-canvas').getAttribute('data-b2-rendered'));
+      if(Math.abs(mixed.totalCurrent-1.5)>1e-9||Math.abs(mixed.branchCurrent1-.5)>1e-9||Math.abs(mixed.branchCurrent2-1)>1e-9)throw Error('B2 offline mixed KCL failed');
+      b2OfflineReport.mixed={i:mixed.totalCurrent,i2:mixed.branchCurrent1,ip:mixed.branchCurrent2};
+      await sf.getByRole('button',{name:'黑板深蓝'}).click();
+      await sf.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_mixed_paper.png')});
+      await sf.locator('[data-preset-id="closed-power-short-circuit"]').click();
+      await sf.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.solutionDefined===0);
+      const fault=JSON.parse(await sf.getByTestId('sf-canvas').getAttribute('data-b2-rendered'));
+      if('totalCurrent' in fault)throw Error('B2 offline invalid solution reports current');
+      if(offlineErrors.length||network.length)throw Error('B2 offline errors '+JSON.stringify({offlineErrors,network}));
+      b2OfflineReport.errors=offlineErrors;b2OfflineReport.network=network;
+    }finally{await offline.close();}
+    const summary = { b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

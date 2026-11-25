@@ -44,3 +44,7 @@
 * H3 #39 b52cd9e：仅分压灯泡预设，0/20Ω、内阻后路端电压、KCL/KVL/功率平衡、实际功率辉光、电势/手柄/DiagramIR同源；其余拓扑待验，灯泡和面板仍有质感差距。bcd6651 artifact14946080956为历史已实审证据。
 * H4 #40 8c63dcc：E10 单/双导线真实合场、RK4场线、零场、矢量可见性、相机物理轴、v/B标签安全区、铜PBR与局部光晕；04质感未终验。初版c642d64标签间隙失败，保留修复记录。
 * H5 #41 337c5e9 选速/质谱真实粒子、边界/探测器、SI与慢放明确；#42 5207b5d 回旋加速器真实RF功、相对论半周、失谐/触壁/离散终能、抽样历史圆弧。#42两套CI成功，artifact14949978649（77图/32变化图实审）；S02整体金标准与总控终验仍待。各分支不得自行合并。
+
+## 2026-11-25 H8 B2 (stack #47, draft)
+- Base #46 cfe6177; only non-divider B2 plus contextual web/offline shell integration. Red 03173ff: five independent physical failures; 6e3dc37 exact zero-ohm constraints, RC exponential and MNA Thevenin bridge pass routine CI. Explicit ideal short / diode model-domain validity, no numeric placeholder observables; no clamp at zero series R. Shared actual branch/symbol geometry for canvas and SVG/TikZ; fixed mixed/diode formulas, drag anchor, contextual controls/scope and offline network-disabled test. Generic old circuitElement existence assertion replaced by stricter triangle/cathode/no-fake-lamp assertion (old failure 43b4268). Existing divider geometry and all numerical tolerances untouched.
+- Web/offline preset or parameter changes still reset time; continuous switch only verified at engine fixed-C segment level. Free arbitrary topology editing, quantitative IV/power scans, gold-reference visuals, full 8 dimensions and real classroom/GPU remain open. Same-SHA run/artifact and review evidence to be attached to PR; no merge, deploy, tag or Key.

@@ -24,6 +24,29 @@ interface SnapshotFrame {
 const FIXED_DT = 1 / 240;
 const SNAPSHOT_INTERVAL = 1 / 60;
 const MAX_SNAPSHOTS = 2400;
+// Capability detection avoids embedding an unrelated model ID into every
+// isolated singlefile bundle (the exporter explicitly rejects those IDs).
+const circuitSlice=targetPlugin.paramSchema.some(f=>f.key==='topology'&&f.kind==='select'&&f.options.some(o=>o.value==='divider-lamp'));
+const CIRCUIT_FIELDS:Record<string,string[]>={
+  'divider-lamp':['emf','sliderR','internalR','topology'],
+  'closed-power':['emf','sliderR','internalR','topology'],
+  'series-parallel-dynamic':['emf','sliderR','internalR','r1','r2','topology'],
+  'rc-transient':['emf','r1','capacitance','internalR','switchClosed','topology'],
+  'rc-bridge-charge':['emf','sliderR','internalR','r1','r2','capacitance','topology'],
+  'nonlinear-lamp-diode':['emf','sliderR','internalR','switchClosed','topology']
+};
+const CIRCUIT_CHANNELS:Record<string,string[]>={
+  'divider-lamp':['totalCurrent','lampCurrent','lampVoltage','outputPower'],
+  'closed-power':['totalCurrent','outputPower','terminalVoltage'],
+  'series-parallel-dynamic':['branchCurrent1','branchCurrent2','totalCurrent','terminalVoltage','outputPower'],
+  'rc-transient':['capVoltage','capCurrent'],
+  'rc-bridge-charge':['capVoltage','capCurrent','totalCurrent','branchCurrent1','branchCurrent2'],
+  'nonlinear-lamp-diode':['totalCurrent','terminalVoltage','outputPower']
+};
+function channelsFor(params:ParamRecord){
+  const keys=circuitSlice?CIRCUIT_CHANNELS[String(params.topology)]:undefined;
+  return keys?keys.flatMap(key=>targetPlugin.telemetryChannels.filter(c=>c.key===key)):targetPlugin.telemetryChannels;
+}
 
 function findClosestSnapshot(snapshots: readonly SnapshotFrame[], targetT: number): SnapshotFrame | null {
   if (snapshots.length === 0) return null;
@@ -88,9 +111,10 @@ export const SingleFileApp: React.FC = () => {
     formulas: FormulaDisplayItem[];
   }>({ t: 0, observables: {}, events: [], invariants: [], formulas: [] });
 
-  const channels = targetPlugin.telemetryChannels;
+  const channels = useMemo(()=>channelsFor(params),[params.topology]);
   const [channelA, setChannelA] = useState(channels[0]?.key ?? '');
   const [channelB, setChannelB] = useState(channels[1]?.key ?? channels[0]?.key ?? '');
+  useEffect(()=>{if(circuitSlice){setChannelA(channels[0]?.key??'');setChannelB(channels[1]?.key??channels[0]?.key??'');}},[channels]);
 
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -171,7 +195,8 @@ export const SingleFileApp: React.FC = () => {
         layerSet.delete('vibrationGraph');
         layerSet.delete('eventPins');
       }
-      targetPlugin.renderCanvas(ctx, drawState, pm, vp, layerSet);
+      targetPlugin.renderCanvas(ctx, drawState, pm, circuitSlice?{...vp,theme:th}:vp, layerSet);
+      if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
 
       if (strobe && !masked && snapshotsRef.current.length > 2) {
         const curT = frame ? frame.t : 0;
@@ -200,8 +225,8 @@ export const SingleFileApp: React.FC = () => {
     const { channelA: chA, channelB: chB } = latestRef.current;
     plot.setData([
       snaps.map((s) => s.t),
-      snaps.map((s) => (chA ? s.observables[chA] ?? 0 : 0)),
-      snaps.map((s) => (chB ? s.observables[chB] ?? 0 : 0))
+      snaps.map((s) => (chA ? s.observables[chA] ?? (circuitSlice?null:0) : (circuitSlice?null:0))),
+      snaps.map((s) => (chB ? s.observables[chB] ?? (circuitSlice?null:0) : (circuitSlice?null:0)))
     ]);
   };
 
@@ -366,6 +391,10 @@ export const SingleFileApp: React.FC = () => {
     if (!wrap) return;
     const specA = channels.find((c) => c.key === channelA) ?? channels[0];
     const specB = channels.find((c) => c.key === channelB) ?? channels[1] ?? channels[0];
+    const split=circuitSlice&&specA?.unit!==specB?.unit;
+    const colors:Record<string,string>={'#38bdf8':'#0369a1','#fbbf24':'#92400e','#f472b6':'#9d174d','#4ade80':'#166534'};
+    const paint=(c:string)=>circuitSlice&&theme==='projector'?colors[c]??'#334155':c;
+    wrap.dataset.scopeUnits=split?'separate':'shared';
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15,23,42,0.12)' : 'rgba(148,163,184,0.16)';
 
@@ -373,14 +402,16 @@ export const SingleFileApp: React.FC = () => {
       {
         width: Math.max(280, wrap.clientWidth),
         height: 150,
+        ...(split?{scales:{x:{time:false},y:{auto:true},y2:{auto:true}}}:{}),
         axes: [
           { stroke: textColor, grid: { stroke: gridColor } },
-          { stroke: textColor, grid: { stroke: gridColor } }
+          { stroke: textColor, grid: { stroke: gridColor } },
+          ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false}}]:[])
         ],
         series: [
           { label: 't (s)' },
-          { label: specA?.label ?? 'A', stroke: specA?.color ?? '#38bdf8', width: 2 },
-          { label: specB?.label ?? 'B', stroke: specB?.color ?? '#f472b6', width: 2 }
+          { label: specA?.label ?? 'A', stroke: paint(specA?.color ?? '#38bdf8'), width: 2 },
+          { label: specB?.label ?? 'B', stroke: paint(specB?.color ?? '#f472b6'), width: 2,...(split?{scale:'y2'}:{}) }
         ],
         hooks: {
           setCursor: [
@@ -407,7 +438,7 @@ export const SingleFileApp: React.FC = () => {
       plot.destroy();
       uplotRef.current = null;
     };
-  }, [channelA, channelB, theme]);
+  }, [channelA, channelB, theme,channels]);
 
   return (
     <div
@@ -542,6 +573,7 @@ export const SingleFileApp: React.FC = () => {
           >
             <div className="flex items-center gap-2 text-xs mb-1">
               <select
+                data-testid="sf-scope-channel-a"
                 value={channelA}
                 onChange={(e) => setChannelA(e.target.value)}
                 className="rounded border px-2 py-1"
@@ -549,11 +581,12 @@ export const SingleFileApp: React.FC = () => {
               >
                 {channels.map((c) => (
                   <option key={c.key} value={c.key}>
-                    {c.label}
+                    {c.label}{circuitSlice&&c.unit?' ('+c.unit+')':''}
                   </option>
                 ))}
               </select>
               <select
+                data-testid="sf-scope-channel-b"
                 value={channelB}
                 onChange={(e) => setChannelB(e.target.value)}
                 className="rounded border px-2 py-1"
@@ -561,7 +594,7 @@ export const SingleFileApp: React.FC = () => {
               >
                 {channels.map((c) => (
                   <option key={c.key} value={c.key}>
-                    {c.label}
+                    {c.label}{circuitSlice&&c.unit?' ('+c.unit+')':''}
                   </option>
                 ))}
               </select>
@@ -579,12 +612,14 @@ export const SingleFileApp: React.FC = () => {
             {targetPlugin.presets.map((preset) => (
               <button
                 key={preset.id}
+                data-preset-id={preset.id}
                 type="button"
                 onClick={() => {
                   setActivePresetId(preset.id);
                   setParams(resolvePluginParams(targetPlugin.paramSchema, preset.params));
                   if (preset.visibleLayers?.length) setActiveLayers([...preset.visibleLayers]);
                   setIsPlaying(false);
+                  setScrubTime(null);
                   setResetNonce((n) => n + 1);
                 }}
                 className="pf-touch-target w-full text-left rounded-xl border p-2 text-xs cursor-pointer"
@@ -614,7 +649,7 @@ export const SingleFileApp: React.FC = () => {
           ))}
 
           <div className="text-xs font-bold text-sky-400">参数调节</div>
-          {targetPlugin.paramSchema.map((field) => {
+          {targetPlugin.paramSchema.filter(field=>!circuitSlice||(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key)).map((field) => {
             const val = params[field.key] ?? field.defaultValue;
             if (field.kind === 'number') {
               return (
