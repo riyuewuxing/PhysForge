@@ -249,6 +249,20 @@ async function auditB4Analytic(page,origin){
   const atwood=await runTo(.18),a=9.8/3;
   if(atwood.t>.65||atwood.rapierActive!==0||Math.abs(atwood.primaryY-(.1+.5*a*atwood.t**2))>1e-9||Math.abs(atwood.primaryY+atwood.secondaryY-.2)>1e-9||Math.abs(atwood.primaryVy-a*atwood.t)>1e-9||Math.abs(atwood.primaryVy+atwood.secondaryVy)>1e-9)throw Error('B4 Atwood independent trajectory '+JSON.stringify(atwood));
   await page.screenshot({path:path.join(OUT_DIR,'H10_B4_atwood_running.png')});
+  await run.click();
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b4-rendered')||'null')?.atwoodAtLimit===1,null,{timeout:10000});
+  const terminal=await read(),limit=Math.sqrt(2*(1.4-Math.sqrt(.28**2-(.28-.22)**2)-.1-.22)/a);
+  if(Math.abs(terminal.t-limit)>1e-9||Math.abs(terminal.primaryVy-a*limit)>1e-9||Math.abs(terminal.primaryY+terminal.secondaryY-.2)>1e-9)throw Error('B4 terminal event '+JSON.stringify(terminal));
+  await page.waitForTimeout(150);
+  if((await read()).t!==terminal.t)throw Error('B4 terminal physical time continued');
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_atwood_terminal.png')});
+  await selectPreset(page,'incline-slide-impact');
+  await waitMode('incline-slide');
+  const slope0=await read();
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_incline_initial.png')});
+  const slope=await runTo(.18),theta=Math.PI/6,acc=9.8*(Math.sin(theta)-.05*Math.cos(theta));
+  if(slope.rapierActive!==1||Math.abs(slope.primaryVx*Math.cos(theta)-slope.sliderVy*Math.sin(theta)-acc*slope.t)>.06||Math.abs((slope.primaryX-slope0.primaryX)*Math.sin(theta)+(slope.sliderY-slope0.sliderY)*Math.cos(theta))>.01)throw Error('B4 incline independent contact dynamics '+JSON.stringify({slope0,slope}));
+  await page.screenshot({path:path.join(OUT_DIR,'H10_B4_incline_running.png')});
   await selectPreset(page,'ideal-spring-oscillator');
   await waitMode('spring-oscillator');
   const spring0=await read(),w=Math.sqrt(20);
@@ -262,8 +276,8 @@ async function auditB4Analytic(page,origin){
   await page.getByTestId('btn-auto-fbd').click();
   if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
   await page.screenshot({path:path.join(OUT_DIR,'H10_B4_spring_fbd.png')});
-  console.log('H10 B4 independent browser '+JSON.stringify({initial,atwood,spring0,spring}));
-  return {initial,atwood,spring0,spring};
+  console.log('H10 B4 independent browser '+JSON.stringify({initial,atwood,terminal,slope0,slope,spring0,spring}));
+  return {initial,atwood,terminal,slope0,slope,spring0,spring};
 }
 
 async function runWaveBCoordinateAudit(page, origin) {

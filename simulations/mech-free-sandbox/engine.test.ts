@@ -112,3 +112,32 @@ describe('H10 finite mechanical geometry and state isolation',()=>{
     expect(b.bodies.find(x=>x.id==='b1')!.x).toBeGreaterThan(a.bodies.find(x=>x.id==='b1')!.x);
   });
 });
+
+
+describe('H10 contact and angular energy',()=>{
+  it('measures the initial downhill acceleration on the frictional slope',async()=>{
+    await ensureRapierLoaded();
+    for(const friction of [0,.2]){
+      const p:SandboxParams={...baseParams,scenario:'incline-slide',inclineDeg:30,friction,restitution:0};
+      const s=createInitialState(p),b0=s.bodies.find(b=>b.id==='slider')!;
+      let next=s;
+      for(let i=0;i<48;i++)next=stepSandbox(next,p,1/240).nextState;
+      const b=next.bodies.find(b=>b.id==='slider')!,c=Math.cos(Math.PI/6),si=.5;
+      const expected=9.8*(si-friction*c)*.2;
+      expect(Math.abs(b.vx*c-b.vy*si-expected)).toBeLessThan(.04);
+      expect(Math.abs((b.x-b0.x)*c-(b.y-b0.y)*si-.5*expected*.2)).toBeLessThan(.008);
+      expect(Math.abs((b.x-b0.x)*si+(b.y-b0.y)*c)).toBeLessThan(.008);
+    }
+  });
+  it('includes the rotational kinetic energy of uniform disks and rectangular blocks',()=>{
+    const p:SandboxParams={...baseParams,scenario:'incline-slide'};
+    const s=createInitialState(p),base=computeObservables(s,p).kineticEnergy!;
+    const slider=s.bodies.find(b=>b.id==='slider')!;
+    const spun={...s,bodies:s.bodies.map(b=>b.id==='slider'?{...b,angularVelocity:4}:b)};
+    expect(computeObservables(spun,p).kineticEnergy!-base).toBeCloseTo(.5*slider.mass*(slider.halfW**2+slider.halfH**2)/3*16,12);
+    const q={...baseParams},balls=createInitialState(q);
+    const b=balls.bodies.find(x=>x.id==='b1')!;
+    const rotating={...balls,bodies:balls.bodies.map(x=>x.id==='b1'?{...x,angularVelocity:4}:x)};
+    expect(computeObservables(rotating,q).kineticEnergy!-computeObservables(balls,q).kineticEnergy!).toBeCloseTo(.25*b.mass*b.halfW**2*16,12);
+  });
+});
