@@ -99,7 +99,7 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
     const result:ForceVectorItem[]=[{id:'mg',label:'mg',origin:s.point,force:s.gravity,color:'#fbbf24',category:'gravity',unit:'N'}];
     if(s.status==='balanced')result.unshift(
       {id:'f1',label:name1(s),origin:s.point,force:s.force1,color:'#38bdf8',category:isSupport(s)?'normal':'tension',unit:'N'},
-      {id:'f2',label:name2(s),origin:s.point,force:s.force2,color:'#f472b6',category:'tension',unit:'N'});
+      {id:'f2',label:name2(s),origin:s.point,force:s.force2,color:'#f472b6',category:s.mode==='hemisphere-similar'?'other':'tension',unit:'N'});
     return result;
   },
   sceneSerializer:{exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'mech-dynamic-equilibrium',title:'动态平衡图解',params}),
@@ -122,7 +122,7 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
       {id:'eq-law',label:s.status==='balanced'?'解析力值':statusLabel(s),latex:law,substitutedLatex:s.status==='balanced'?
         'F_1='+s.force1.mag.toFixed(2)+'\\,\\mathrm N,\\quad F_2='+s.force2.mag.toFixed(2)+'\\,\\mathrm N':
         '\\text{无可靠有限平衡解}'},
-      {id:'eq-bound',label:'理论拉力下界'+(s.mode==='active-pulley-knot'?'（水平极限不在滑块范围内）':s.sphere?'（球顶连续极限）':''),latex:'F_{2,\\min}='+s.minPullForceN.toFixed(2)+'\\,\\mathrm N'}
+      {id:'eq-bound',label:'理论拉力下界'+(s.mode==='active-pulley-knot'?'（竖直绳极限不在滑块范围内）':s.sphere?'（球顶连续极限）':''),latex:'F_{2,\\min}='+s.minPullForceN.toFixed(2)+'\\,\\mathrm N'}
     ];
   },
   renderCanvas:(ctx,s,_p,vp,layers)=>{

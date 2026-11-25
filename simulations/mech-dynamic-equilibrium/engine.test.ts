@@ -120,3 +120,27 @@ it('keeps the hemisphere rope outside the solid sphere and avoids the nonunique 
     }
   }
 });
+
+import { mechDynamicEquilibriumPlugin, equilibriumGeometry } from './plugin.js';
+it('shares physical geometry between handles, canvas vectors and diagram export',()=>{
+  for(const mode of ['dead-knot-rotate','active-pulley-knot','hemisphere-similar','hemisphere-suspension'] as const){
+    const p:EquilibriumParams={mode,mass:2,baseAngleDeg:37,sweepAngleDeg:35,autoSweep:false};
+    const s=createInitialState(p),g=equilibriumGeometry(s);
+    const h=mechDynamicEquilibriumPlugin.getControlHandles!(s,p)[0]!;
+    expect(h.onDrag(h.position).sweepAngleDeg).toBe(35);
+    const fbd=mechDynamicEquilibriumPlugin.getForceVectors!(s,p);
+    expect(fbd).toHaveLength(3);
+    for(const a of [...g.arrows,...g.triangle]){
+      expect(a.to.x-a.from.x).toBeCloseTo(a.force.x*g.scale,12);
+      expect(a.to.y-a.from.y).toBeCloseTo(a.force.y*g.scale,12);
+    }
+    expect(g.triangle[2]!.to.x).toBeCloseTo(g.triangle[0]!.from.x,12);
+    expect(g.triangle[2]!.to.y).toBeCloseTo(g.triangle[0]!.from.y,12);
+    expect(mechDynamicEquilibriumPlugin.exportDiagramIR!(s,p).primitives.filter(x=>x.kind==='arrow')).toHaveLength(6);
+  }
+  const p:EquilibriumParams={mode:'dead-knot-rotate',mass:2,baseAngleDeg:75,sweepAngleDeg:-30,autoSweep:false};
+  const s=createInitialState(p),g=equilibriumGeometry(s);
+  expect(g.triangle).toHaveLength(0);expect(g.arrows).toHaveLength(1);
+  expect(mechDynamicEquilibriumPlugin.getForceVectors!(s,p)).toHaveLength(1);
+  expect(mechDynamicEquilibriumPlugin.exportDiagramIR!(s,p).primitives.filter(x=>x.kind==='arrow')).toHaveLength(1);
+});

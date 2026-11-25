@@ -715,6 +715,7 @@ export const SingleFileApp: React.FC = () => {
             ))}
           </div>
 
+          {equilibriumSlice&&<section data-testid="sf-equilibrium-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{summary.observables.solutionDefined===0&&<div data-testid="sf-equilibrium-no-solution" className="font-semibold text-rose-500">当前构型无可靠有限平衡解</div>}{([['angleDeg','实际角','°'],['force1','F₁','N'],['force2','F₂','N'],['minPullForceN','理论拉力下界','N'],['ropeLengthM','实际绳长','m']] as const).filter(([key])=>key!=='ropeLengthM'||params.mode==='hemisphere-suspension').map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-equilibrium-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>准静态演示；无解处曲线留空。</div></section>}
           {chaseSlice&&<section data-testid="sf-chase-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{([['deltaX','有向位置差','m'],['gap','实际间距','m'],['minGap','历史最小间距','m'],['firstCoVelocityTime','首次共速','s'],['firstMeetTime','首次相遇','s']] as const).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-chase-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>质点模型 · 不模拟碰撞。</div></section>}
           {summary.formulas.map((f) => (
             <div

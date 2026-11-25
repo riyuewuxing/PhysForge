@@ -1262,7 +1262,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
           values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
-          ...((deviceScope||equilibriumScope) ? { label: '演示时间（非物理运动时间）', labelSize: 13 } : {}),
+          ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : equilibriumScope ? { label: '准静态演示时间', labelSize: 13 } : {}),
           ...(heroScope ? { size: 30 } : measuredScope ? { size: 24 } : {})
         },
         {
