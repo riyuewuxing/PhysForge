@@ -131,9 +131,9 @@ describe('H26 dynamic and energetic checks',()=>{
       expect(s.fa.x*ua.x+s.fa.y*ua.y).toBeLessThanOrEqual(1e-12);expect(s.fb.x*ub.x+s.fb.y*ub.y).toBeLessThanOrEqual(1e-12);
     }
     expect(s.terminal).toBe('edge-a');expect(s.heat).toBeGreaterThan(0);
-    expect(s.t).toBeCloseTo(1.0328840546699718,7);expect(s.rA).toBeCloseTo(2.6,8);
-    expect(s.rB).toBeCloseTo(2.575707141884828,7);
-    expect(s.heat).toBeCloseTo(25.77890864,5);expect(s.diskWork).toBeCloseTo(31.11921034,5);
+    expect(s.t).toBeCloseTo(1.03331744326271,7);expect(s.rA).toBeCloseTo(2.6,8);
+    expect(s.rB).toBeCloseTo(2.5757195066690546,7);
+    expect(s.heat).toBeCloseTo(25.779116693071362,5);expect(s.diskWork).toBeCloseTo(31.11955606419061,5);
     const stop=stepConicalTurntable(s,p,1);expect(stop.nextState).toBe(s);expect(stop.advancedTime).toBe(0);
   });
   it('does not invent a rotating cone below the stationary-branch threshold',()=>{
@@ -166,8 +166,8 @@ describe('H26 M07 linked diagrams and parameter-domain contracts',()=>{
   });
   it('uses identical actual moving A/B and fixed disk geometry in Canvas/IR',()=>{
     const q={...p,omega:3.2},s=stepConicalTurntable(createInitialState(q),q,.6).nextState,d=turntableDiagram(s,q);
-    expect(s.a.x).toBeCloseTo(.75875488,7);expect(s.a.y).toBeCloseTo(.14791157,7);
-    expect(s.b.x).toBeCloseTo(.04024062,7);expect(s.b.y).toBeCloseTo(2.12116707,7);
+    expect(s.a.x).toBeCloseTo(.75746123,7);expect(s.a.y).toBeCloseTo(.14735106,7);
+    expect(s.b.x).toBeCloseTo(.03894696,7);expect(s.b.y).toBeCloseTo(2.12060656,7);
     const rope=d.items.find(i=>i.role==='rope')?.primitive;
     expect(rope).toMatchObject({kind:'line',x1:s.a.x,y1:s.a.y,x2:s.b.x,y2:s.b.y});
     expect(d.items.find(i=>i.role==='disk')?.primitive).toMatchObject({kind:'circle',r:2.6});
@@ -183,4 +183,23 @@ describe('H26 M07 linked diagrams and parameter-domain contracts',()=>{
     expect(d.items.some(i=>i.role==='top-bob')).toBe(true);
     expect(d.items.some(i=>i.role==='disk')).toBe(false);
   });
+});
+
+it('uses exact Coulomb onset and near-critical motion without low-speed drag regularization',()=>{
+  const p:ConicalTurntableParams={mode:'turntable-dual',omega:Math.sqrt(8.82/2.4)*1.001,massA:1,massB:2,radiusA:.6,radiusB:1.5,mu:.3,pendulumLength:1.5};
+  const init=createInitialState(p);expect(init.slippingOut).toBe(true);
+  expect(Math.hypot(init.fa.x,init.fa.y)).toBeCloseTo(2.94,12);
+  expect(Math.hypot(init.fb.x,init.fb.y)).toBeCloseTo(5.88,12);
+  let s=init;for(let i=0;i<480;i++)s=stepConicalTurntable(s,p,1/240).nextState;
+  // Independent high-accuracy inertial-frame SciPy integration, exact Coulomb.
+  const u={x:s.va.x+p.omega*s.a.y,y:s.va.y-p.omega*s.a.x};
+  expect(Math.hypot(u.x,u.y)).toBeCloseTo(.06741013813709107,7);
+  expect(s.heat).toBeCloseTo(.3046509164868411,7);
+  expect(s.diskWork).toBeCloseTo(.5966871046979096,7);
+  expect(s.rA).toBeCloseTo(.565504129400,7);
+  expect(s.rB).toBeCloseTo(1.53449869406,7);
+  expect(Math.hypot(s.fa.x,s.fa.y)).toBeCloseTo(2.94,11);
+  expect(Math.hypot(s.fb.x,s.fb.y)).toBeCloseTo(5.88,11);
+  expect(Math.abs(s.kineticEnergy-s.initialEnergy+s.heat-s.diskWork)).toBeLessThan(1e-9);
+  expect(s.terminal).toBeNull();
 });

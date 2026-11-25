@@ -1,9 +1,9 @@
-import { CLASSROOM_GRAVITY as g, bisectEvent, stepRK4, type Vec2 } from '@physforge/physics-core';
+import { CLASSROOM_GRAVITY as g, bisectEvent, type Vec2 } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 export type TurntableMode='turntable-dual'|'conical-pendulum';
 export type ConicalTurntableParams={mode:TurntableMode;omega:number;massA:number;massB:number;radiusA:number;radiusB:number;mu:number;pendulumLength:number};
 export type Termination='edge-a'|'edge-b'|'slack';
-export const KINETIC_REGULARIZATION_MPS=.005;
+export const MAX_KINETIC_STEP_S=.0001;
 export const diskRadius=(p:ConicalTurntableParams)=>Math.max(2.6,p.radiusA+.1,p.radiusB+.1);
 type Critical={omega1:number;omega2:number|null;omega3:number|null};
 export interface ConicalTurntableState extends Critical{
@@ -49,27 +49,30 @@ export function staticFeasibility(p:ConicalTurntableParams,omega=p.omega){
   const T=feasible?Math.min(lo,hi):null;
   return {lo,hi,feasible,tensionN:T,frictionAN:T===null?null:qa-T,frictionBN:T===null?null:qb-T};
 }
+const rotate=(q:Vec2,phi:number)=>v(q.x*Math.cos(phi)-q.y*Math.sin(phi),q.x*Math.sin(phi)+q.y*Math.cos(phi));
+// Equal kinetic coefficients and initially equal relative velocities imply
+// identical friction accelerations; relative motion is a uniform rigid
+// rotation at Ω, and the common relative velocity belongs to the center.
+// Body coordinates are now in the disk frame: X,Y,Ux,Uy,phase,spin,Q,W.
 export function initialBody(p:ConicalTurntableParams,angle=0){
-  const c=delta(p)/mass(p),C=v(c*Math.cos(angle),c*Math.sin(angle)),V=scale(perp(C),p.omega);
-  return [C.x,C.y,V.x,V.y,angle,p.omega,0,0];
+  return [delta(p)/mass(p),0,0,0,angle,p.omega,0,0];
 }
 export function pairGeometry(body:readonly number[],p:ConicalTurntableParams){
-  const C=v(body[0]!,body[1]!),V=v(body[2]!,body[3]!),e=v(Math.cos(body[4]!),Math.sin(body[4]!)),ep=perp(e),L=length(p),w=body[5]!;
+  const X=v(body[0]!,body[1]!),U=v(body[2]!,body[3]!),phi=body[4]!,w=body[5]!,L=length(p);
+  const C=rotate(X,phi),V=rotate(add(U,scale(perp(X),p.omega)),phi),e=v(Math.cos(phi),Math.sin(phi)),ep=perp(e);
   const da=-p.massB*L/mass(p),db=p.massA*L/mass(p);
   const a=add(C,scale(e,da)),b=add(C,scale(e,db)),va=add(V,scale(ep,da*w)),vb=add(V,scale(ep,db*w));
-  return {a,b,va,vb,e,ep,L,w,V};
+  return {a,b,va,vb,e,ep,L,w,V,C,X,U,phi};
 }
 export function kineticEvaluation(body:readonly number[],p:ConicalTurntableParams){
-  const q=pairGeometry(body,p),ua=sub(q.va,scale(perp(q.a),p.omega)),ub=sub(q.vb,scale(perp(q.b),p.omega));
-  // Smooth kinetic Coulomb law, explicitly an approximation within 5 mm/s;
-  // not a static capture solver. No fictional outward force or forced co-rotation.
-  const fa=scale(ua,-forceLimit(p.massA,p)/Math.hypot(norm(ua),KINETIC_REGULARIZATION_MPS));
-  const fb=scale(ub,-forceLimit(p.massB,p)/Math.hypot(norm(ub),KINETIC_REGULARIZATION_MPS));
-  const relative=sub(scale(fb,1/p.massB),scale(fa,1/p.massA)),reduced=p.massA*p.massB/mass(p);
-  const tensionN=reduced*(q.L*q.w*q.w+dot(relative,q.e));
-  const acc=scale(add(fa,fb),1/mass(p)),alpha=dot(relative,q.ep)/q.L;
-  const heatRate=-dot(fa,ua)-dot(fb,ub),workRate=dot(fa,scale(perp(q.a),p.omega))+dot(fb,scale(perp(q.b),p.omega));
-  return {...q,fa,fb,tensionN,derivative:[q.V.x,q.V.y,acc.x,acc.y,q.w,alpha,heatRate,workRate]};
+  const q=pairGeometry(body,p),speed=norm(q.U);
+  // At the initial instant the exact incipient sliding direction is radial
+  // outward from the center of the pair; there is no fictitious zero drag.
+  const dir=speed>0?scale(q.U,1/speed):norm(q.X)>0?scale(q.X,1/norm(q.X)):v(0,0);
+  const force=rotate(scale(dir,-p.mu*g),q.phi);
+  const fa=scale(force,p.massA),fb=scale(force,p.massB);
+  const tensionN=p.massA*p.massB/mass(p)*q.L*q.w*q.w;
+  return {...q,fa,fb,tensionN};
 }
 const energy=(a:Vec2,b:Vec2,p:ConicalTurntableParams)=>.5*(p.massA*dot(a,a)+p.massB*dot(b,b));
 function pairSample(body:readonly number[],p:ConicalTurntableParams,slip:boolean){
@@ -103,7 +106,31 @@ export function createInitialState(p:ConicalTurntableParams):ConicalTurntableSta
 }
 type TimedBody={t:number;body:readonly number[]};
 function advance(s:TimedBody,p:ConicalTurntableParams,h:number):TimedBody{
-  return {t:s.t+h,body:stepRK4(s.body,s.t,h,(_t,y)=>kineticEvaluation(y,p).derivative)};
+  const X=v(s.body[0]!,s.body[1]!),U=v(s.body[2]!,s.body[3]!),w=p.omega,phi=w*(s.t+h),Q=s.body[6]!,W=s.body[7]!;
+  if(p.mu===0){
+    // Analytic frictionless center motion in the inertial frame.
+    const q=pairGeometry(s.body,p),X1=rotate(add(q.C,scale(q.V,h)),-phi),U1=sub(rotate(q.V,-phi),scale(perp(X1),w));
+    return {t:s.t+h,body:[X1.x,X1.y,U1.x,U1.y,phi,w,Q,W]};
+  }
+  // Exact nonsmooth Coulomb force at the implicit midpoint, no velocity
+  // regularization. Let z=(U0+U1)/2. The rotating-frame equations give
+  // (A I+B J)z + h μg z/|z| = b. Solve its scalar norm quadratic using
+  // a cancellation-resistant positive root, then reconstruct direction.
+  const A=2-.5*h*h*w*w,B=2*h*w,ha=h*p.mu*g,b=add(scale(U,2),scale(X,h*w*w)),n=norm(b),disc=(n-ha)*(n+ha);
+  let z:Vec2,acc:Vec2;
+  if(disc<=0){
+    // Midpoint stick inclusion. The initial infeasible branch has
+    // |X|>=|X0| by rotating energy dissipation, so it cannot regain a
+    // physically feasible static state merely from the rounding of z.
+    z=v(0,0);acc=scale(b,-1/h);
+  }else{
+    const r=disc/(A*ha+Math.sqrt((A*ha)**2+(A*A+B*B)*disc)),D=A*r+ha,E=B*r;
+    z=scale(sub(scale(b,D),scale(perp(b),E)),r/(D*D+E*E));
+    acc=scale(z,-p.mu*g/r);
+  }
+  const Xm=add(X,scale(z,.5*h)),X1=add(X,scale(z,h)),U1=sub(scale(z,2),U);
+  const Q1=Q-h*mass(p)*dot(acc,z),W1=W+h*mass(p)*dot(acc,scale(perp(Xm),w));
+  return {t:s.t+h,body:[X1.x,X1.y,U1.x,U1.y,phi,w,Q1,W1]};
 }
 function guard(s:TimedBody,p:ConicalTurntableParams,id:Termination){
   const q=kineticEvaluation(s.body,p);
@@ -118,9 +145,9 @@ export function stepConicalTurntable(state:ConicalTurntableState,p:ConicalTurnta
   if(!state.slippingOut)return {nextState:{...state,...pairSample(initialBody(p,p.omega*end),p,false),t:end,angleRad:p.omega*end},events:[]};
   let s:TimedBody={t:state.t,body:state.body};
   const events:PhysicsEvent[]=state.t===0?state.events.slice(0,1):[];
-  // Bound the numerical step by the friction regularization time scale as well
-  // as the angular scale; all guards are bisected on the same RK advance.
-  const maxH=Math.min(.0005,KINETIC_REGULARIZATION_MPS/(8*Math.max(.001,p.mu*g)),.02/(1+p.omega));
+  // Implicit midpoint remains stable at vanishing slip; guard bisection
+  // uses the same integrator, with the same fixed physical coefficients.
+  const maxH=Math.min(MAX_KINETIC_STEP_S,.02/(1+p.omega));
   let count=0;
   while(s.t<end){
     if(++count>200000)throw Error('M07 kinetic substep budget exceeded');
@@ -152,7 +179,7 @@ export function computeObservables(s:ConicalTurntableState):Record<string,number
     omega1:s.omega1,...(s.omega2===null?{}:{omega2:s.omega2}),...(s.omega3===null?{}:{omega3:s.omega3}),
     kineticEnergy:s.kineticEnergy,heat:s.heat,diskWork:s.diskWork,energyResidual:s.kineticEnergy-s.initialEnergy+s.heat-s.diskWork,
     slippingOut:s.slippingOut?1:0,terminal:s.terminal?1:0,rotatingCone:s.rotatingCone?1:0,
-    ...(s.rotatingCone?{period:2*Math.PI*Math.sqrt(s.ropeLength*Math.cos(s.coneAngleDeg*Math.PI/180)/g)}:{}),phaseRad:s.angleRad,
+    ...(s.rotatingCone?{period:2*Math.PI*Math.sqrt(s.ropeLength*Math.cos(s.coneAngleDeg*Math.PI/180)/g)}:{}),phaseRad:s.angleRad,relativeSpeed:s.body.length?Math.hypot(s.body[2]!,s.body[3]!):0,
     ...(s.body.length===0?{coneTensionY:s.tensionN*(1.1-s.a.y)/s.ropeLength,coneNetY:s.tensionN*(1.1-s.a.y)/s.ropeLength-s.tensionN*Math.cos(s.coneAngleDeg*Math.PI/180)}:{})};
 }
 export function checkInvariants(s:ConicalTurntableState,_init:ConicalTurntableState,p:ConicalTurntableParams):InvariantReport[]{

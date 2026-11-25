@@ -599,7 +599,7 @@ async function auditM07Turntable(page,origin){
   await page.screenshot({path:path.join(OUT_DIR,'H26_M07_sliding.png')});
   await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.turntableRendered||'null')?.terminal===1,null,{timeout:15000});
   await page.waitForFunction(()=>document.querySelector('[data-testid="topbar"] [data-testid="btn-play-pause"]')?.getAttribute('aria-label')==='运行');
-  const edge=await sync();check(edge.t,1.0328840546699718,'first edge time');check(edge.rA,2.6,'fixed disk edge');check(edge.rB,2.575707141884828,'other radius');check(edge.actualSeparation,2.1,'edge string',1e-10);check(edge.heat,25.77890864,'heat',1e-5);check(edge.diskWork,31.11921034,'disk work',1e-5);
+  const edge=await sync();check(edge.t,1.03331744326271,'first edge time');check(edge.rA,2.6,'fixed disk edge');check(edge.rB,2.5757195066690546,'other radius');check(edge.actualSeparation,2.1,'edge string',1e-10);check(edge.heat,25.779116693071362,'heat',1e-5);check(edge.diskWork,31.11955606419061,'disk work',1e-5);
   await page.getByTestId('btn-step').click();await page.evaluate(()=>new Promise(requestAnimationFrame));check((await read()).t,edge.t,'terminal step',1e-10);
   await page.screenshot({path:path.join(OUT_DIR,'H26_M07_edge.png')});
   await select('conical-pendulum-steady','conical-pendulum');
@@ -2581,7 +2581,7 @@ async function main() {
       await m07Page.getByTestId('sf-play-pause').click();
       await m07Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.turntableRendered||'null')?.terminal===1);
       await m07Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]').dataset.turntableRendered),t=Number(document.querySelector('[data-testid="sf-summary-clock"]').dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]').dataset.lastSampleT);return Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;});
-      const edge=await read();if(Math.abs(edge.t-1.0328840546699718)>1e-7||Math.abs(edge.rA-2.6)>1e-7||Math.abs(edge.actualSeparation-2.1)>1e-10||Math.abs(edge.energyResidual)>1e-6)throw Error('M07 offline edge '+JSON.stringify(edge));
+      const edge=await read();if(Math.abs(edge.t-1.03331744326271)>1e-7||Math.abs(edge.rA-2.6)>1e-7||Math.abs(edge.actualSeparation-2.1)>1e-10||Math.abs(edge.energyResidual)>1e-6)throw Error('M07 offline edge '+JSON.stringify(edge));
       await m07Page.getByRole('button',{name:'单步',exact:true}).click();await m07Page.evaluate(()=>new Promise(requestAnimationFrame));if(Math.abs((await read()).t-edge.t)>1e-10)throw Error('M07 offline terminal single step');
       await m07Page.screenshot({path:path.join(OUT_DIR,'H26_M07_offline_edge.png')});
       await m07Page.locator('[data-preset-id="conical-pendulum-steady"]').click();

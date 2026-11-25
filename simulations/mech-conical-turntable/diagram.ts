@@ -77,7 +77,7 @@ export function turntableDiagram(s:ConicalTurntableState,p:ConicalTurntableParam
     if(s.terminal){
       const q=s.terminal==='edge-a'?s.a:s.terminal==='edge-b'?s.b:{x:(s.a.x+s.b.x)/2,y:(s.a.y+s.b.y)/2};
       dot(q,.15*R,'event','always',false);txt({x:0,y:-1.1*R},s.terminal==='slack'?'张力归零 · 停于松绳边界':'盘边事件 · 接触模型停止','event','always');
-    }else txt({x:0,y:-1.1*R},s.slippingOut?'二维滑移 · 动摩擦低速正则化':'共转静摩擦 · 向内为正','ink','always');
+    }else txt({x:0,y:-1.1*R},s.slippingOut?'二维滑移 · 精确库仑摩擦':'共转静摩擦 · 向内为正','ink','always');
     if(opts?.showVelocityVectors!==false&&s.slippingOut){
       const u=[{x:s.va.x+p.omega*s.a.y,y:s.va.y-p.omega*s.a.x},{x:s.vb.x+p.omega*s.b.y,y:s.vb.y-p.omega*s.b.x}],k=.38*R/Math.max(.1,...u.map(q=>Math.hypot(q.x,q.y)));
       for(const [i,a] of [s.a,s.b].entries()){const f=u[i]!;if(Math.hypot(f.x,f.y)>1e-6)arrow(a,f,k,i===0?'u_A':'u_B','velocity','construction');}
