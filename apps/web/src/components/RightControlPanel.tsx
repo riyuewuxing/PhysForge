@@ -83,7 +83,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       coreFields: core,
       extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!valid||valid.includes(field.key)))
     };
-  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template]);
+  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template,params.radiusM,params.anchorHeightM]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
@@ -261,7 +261,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
         ) : plugin.meta.id==='mech-dynamic-equilibrium' ? (
           <section data-testid="equilibrium-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
             {telemetry.observables.solutionDefined===0&&<div data-testid="equilibrium-no-solution" className="font-semibold text-rose-500">当前构型无可靠有限平衡解</div>}
-            {([['angleDeg','实际角','°'],['force1','F₁','N'],['force2','F₂','N'],['minPullForceN','理论拉力下界','N'],['ropeLengthM','实际绳长','m']] as const).filter(([key])=>key!=='ropeLengthM'||params.mode==='hemisphere-suspension').map(([key,label,unit])=>{const v=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'equilibrium-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}
+            {([['requestedInitialAngleDeg','初始请求角','°'],['initialAngleDeg','限幅后初始角','°'],['angleDeg','当前实际角','°'],['force1','F₁ 大小','N'],['force2','F₂ 大小','N'],['minPullForceN','理论拉力下界','N'],['ropeLengthM','实际绳长','m'],['rodAxialForceN','轴力 C（压正）','N'],['reactionXN','支承力 Rₓ','N'],['reactionYN','支承力 Rᵧ','N'],['supportMomentNm','固支力矩 M','N·m']] as const).filter(([key])=>key==='ropeLengthM'?params.mode==='hemisphere-suspension':key==='rodAxialForceN'?params.mode==='hinged-rod':['reactionXN','reactionYN','supportMomentNm'].includes(key)?params.mode==='fixed-rod':key==='minPullForceN'?params.mode!=='fixed-rod':true).map(([key,label,unit])=>{const v=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'equilibrium-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}
             <div className="text-[10px]">演示时间仅用于准静态扫描；无解处曲线留空。</div>
           </section>
         ) : plugin.meta.id==='mech-kinematics-chase' ? (
@@ -293,7 +293,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
               <div className="space-y-1 pt-1">
                 {plugin.layers.map((layer) => (
                   <label key={layer.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[11px] text-slate-300 hover:bg-white/5">
-                    <input type="checkbox" checked={activeLayers.includes(layer.id)} onChange={() => onToggleLayer(layer.id)} className="h-3.5 w-3.5 accent-sky-400" />
+                    <input type="checkbox" data-testid={plugin.meta.id==='mech-dynamic-equilibrium'?'equilibrium-layer-'+layer.id:undefined} checked={activeLayers.includes(layer.id)} onChange={() => onToggleLayer(layer.id)} className="h-3.5 w-3.5 accent-sky-400" />
                     <span>{layer.label}</span>
                   </label>
                 ))}

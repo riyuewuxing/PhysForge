@@ -241,7 +241,7 @@ export const SingleFileApp: React.FC = () => {
       if(opticalSlice&&frame)canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...frame.observables});
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
       if(chaseSlice&&frame){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...frame.observables});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
-      if(equilibriumSlice&&frame)canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...frame.observables});
+      if(equilibriumSlice&&frame){canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...frame.observables});canvas.dataset.equilibriumView=layerSet.has('angle-curve')?'angle-curve':layerSet.has('aux-circle')?'aux-circle':layerSet.has('triangle')?'triangle':'none';}
       if(odeSlice&&frame)canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...frame.observables});
       if(mechanicsSlice&&frame)canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...frame.observables});
 
@@ -715,6 +715,7 @@ export const SingleFileApp: React.FC = () => {
                   setActivePresetId(preset.id);
                   setParams(resolvePluginParams(targetPlugin.paramSchema, preset.params));
                   if (preset.visibleLayers?.length) setActiveLayers([...preset.visibleLayers]);
+                  else if(equilibriumSlice)setActiveLayers(targetPlugin.layers.filter(l=>l.defaultVisible).map(l=>l.id));
                   setIsPlaying(false);
                   setScrubTime(null);
                   setResetNonce((n) => n + 1);
@@ -730,7 +731,7 @@ export const SingleFileApp: React.FC = () => {
             ))}
           </div>
 
-          {equilibriumSlice&&<section data-testid="sf-equilibrium-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{summary.observables.solutionDefined===0&&<div data-testid="sf-equilibrium-no-solution" className="font-semibold text-rose-500">当前构型无可靠有限平衡解</div>}{([['angleDeg','实际角','°'],['force1','F₁','N'],['force2','F₂','N'],['minPullForceN','理论拉力下界','N'],['ropeLengthM','实际绳长','m']] as const).filter(([key])=>key!=='ropeLengthM'||params.mode==='hemisphere-suspension').map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-equilibrium-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>准静态演示；无解处曲线留空。</div></section>}
+          {equilibriumSlice&&<section data-testid="sf-equilibrium-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{summary.observables.solutionDefined===0&&<div data-testid="sf-equilibrium-no-solution" className="font-semibold text-rose-500">当前构型无可靠有限平衡解</div>}{([['requestedInitialAngleDeg','初始请求角','°'],['initialAngleDeg','限幅后初始角','°'],['angleDeg','当前实际角','°'],['force1','F₁ 大小','N'],['force2','F₂ 大小','N'],['minPullForceN','理论拉力下界','N'],['ropeLengthM','实际绳长','m'],['rodAxialForceN','轴力 C（压正）','N'],['reactionXN','支承力 Rₓ','N'],['reactionYN','支承力 Rᵧ','N'],['supportMomentNm','固支力矩 M','N·m']] as const).filter(([key])=>key==='ropeLengthM'?params.mode==='hemisphere-suspension':key==='rodAxialForceN'?params.mode==='hinged-rod':['reactionXN','reactionYN','supportMomentNm'].includes(key)?params.mode==='fixed-rod':key==='minPullForceN'?params.mode!=='fixed-rod':true).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-equilibrium-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>准静态演示；无解处曲线留空。</div></section>}
           {chaseSlice&&<section data-testid="sf-chase-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{([['deltaX','有向位置差','m'],['gap','实际间距','m'],['minGap','历史最小间距','m'],['firstCoVelocityTime','首次共速','s'],['firstMeetTime','首次相遇','s']] as const).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-chase-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>质点模型 · 不模拟碰撞。</div></section>}
           {summary.formulas.map((f) => (
             <div
@@ -747,6 +748,7 @@ export const SingleFileApp: React.FC = () => {
             </div>
           ))}
 
+          {equilibriumSlice&&<section className="space-y-1 text-xs" data-testid="sf-equilibrium-layers"><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
           <div className="text-xs font-bold text-sky-400">参数调节</div>
           {(targetPlugin.getParamFields?.(params)??targetPlugin.paramSchema).filter(field=>circuitSlice?(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key):opticalSlice?(OPTICAL_FIELDS[String(params.sceneMode)]??[]).includes(field.key):mechanicsSlice?(MECHANICS_FIELDS[String(params.scenario)]??[]).includes(field.key):true).map((field) => {
             const val = params[field.key] ?? field.defaultValue;
@@ -773,7 +775,7 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
-                      if(odeSlice||chaseSlice){setIsPlaying(false);setScrubTime(null);}
+                      if(odeSlice||chaseSlice||equilibriumSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                     className="w-full h-9"
@@ -795,6 +797,7 @@ export const SingleFileApp: React.FC = () => {
                           [field.key]: e.target.checked
                         })
                       );
+                      if(equilibriumSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                   />
@@ -814,7 +817,7 @@ export const SingleFileApp: React.FC = () => {
                         [field.key]: e.target.value
                       })
                     );
-                    if(odeSlice||chaseSlice){setIsPlaying(false);setScrubTime(null);}
+                    if(odeSlice||chaseSlice||equilibriumSlice){setIsPlaying(false);setScrubTime(null);}
                     setResetNonce((n) => n + 1);
                   }}
                   className="w-full rounded border px-2 py-1.5"

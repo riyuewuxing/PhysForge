@@ -750,7 +750,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...p.engine.computeObservables(drawState,pm)});
     }
     if(p.meta.id==='mech-kinematics-chase'&&frame&&drawState!==null){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.chaseAutoFit=String(chaseAutomatic);}
-    if(p.meta.id==='mech-dynamic-equilibrium'&&frame&&drawState!==null){canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});}
+    if(p.meta.id==='mech-dynamic-equilibrium'&&frame&&drawState!==null){const layers=readDisplayedLayers();canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});canvas.dataset.equilibriumView=layers.has('angle-curve')?'angle-curve':layers.has('aux-circle')?'aux-circle':layers.has('triangle')?'triangle':'none';}
     if(p.getTelemetryChannels&&frame&&drawState!==null){canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
       canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...p.engine.computeObservables(drawState,pm)});
@@ -1300,7 +1300,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
           values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
-          ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : equilibriumScope ? { label: '准静态演示时间', labelSize: 13 } : {}),
+          ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : {}),
           ...(heroScope ? { size: 30 } : measuredScope ? { size: 24 } : {})
         },
         {
@@ -1714,7 +1714,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       {!presentationMode && !oscilloscopeCollapsed && (
         <div data-testid="floating-scope-dock" data-scope-units={splitScopeUnits ? 'separate' : 'shared'} className={`pf-floating-glass pf-compact-scope absolute bottom-3 left-1/2 z-10 w-[min(410px,calc(100%-24px))] -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 px-3 pt-2 shadow-2xl ${heroScope ? 'pf-hero-scope' : ''}`}>
           <div className="mb-1 flex h-7 items-center justify-between gap-2 text-xs">
-            <span className="shrink-0 font-semibold text-sky-200">示波器</span>
+            <span className="shrink-0 font-semibold" style={{color:equilibriumScope?'var(--pf-text-muted)':undefined}} title={equilibriumScope?'准静态参数扫描时间，不是物体运动时间':undefined}>{equilibriumScope?'示波器 · 演示':'示波器'}</span>
             <div className="flex min-w-0 items-center gap-1.5">
               <button
                 type="button"
