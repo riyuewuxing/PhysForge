@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
-import { solveEquilibriumAtAngle, type EquilibriumParams } from './engine.js';
+import { createInitialState, solveEquilibriumAtAngle, stepEquilibrium, type EquilibriumParams } from './engine.js';
 
 describe('M02 mech-dynamic-equilibrium verification', () => {
   it('maintains vector equilibrium residual < 1e-10 N across all angles and equal active-knot tension', () => {
@@ -31,5 +31,50 @@ describe('M02 mech-dynamic-equilibrium verification', () => {
     expect(atOpt.netResidualN).toBeLessThan(1e-10);
     expect(solveEquilibriumAtAngle(deadParams, 15).force2.mag).toBeGreaterThan(atOpt.force2.mag);
     expect(solveEquilibriumAtAngle(deadParams, 65).force2.mag).toBeGreaterThan(atOpt.force2.mag);
+  });
+});
+
+describe('M02 independent boundary and initial-state regressions', () => {
+  const p: EquilibriumParams = { mode: 'dead-knot-rotate', mass: 2, baseAngleDeg: 75, sweepAngleDeg: -30, autoSweep: false };
+  it('cannot balance a weight by making either of two ropes push', () => {
+    const s = solveEquilibriumAtAngle(p, -30);
+    expect(s.force1.x).toBeLessThanOrEqual(0);
+    expect(s.force2.x).toBeGreaterThanOrEqual(0);
+    expect(s.netResidualN).toBeGreaterThan(1e-10);
+  });
+  it('does not invent enormous rope forces at the collinear singularity', () => {
+    const s = solveEquilibriumAtAngle({ ...p, baseAngleDeg: 60 }, -30);
+    expect(s.force1.mag).toBe(0);
+    expect(s.force2.mag).toBe(0);
+    expect(s.netResidualN).toBeCloseTo(p.mass * CLASSROOM_GRAVITY, 10);
+  });
+  it('reports the same support angle used by the actual normal force', () => {
+    const s = solveEquilibriumAtAngle({ ...p, mode: 'hemisphere-similar' }, 10);
+    const normalTilt = Math.atan2(-s.force1.x, s.force1.y) * 180 / Math.PI;
+    expect(s.activeAngleDeg).toBeCloseTo(normalTilt, 10);
+  });
+  it('reports the same angle as the actual active-pulley rope direction', () => {
+    const s = solveEquilibriumAtAngle({ ...p, mode: 'active-pulley-knot' }, 0);
+    const ropeAngle = Math.atan2(s.force2.y, s.force2.x) * 180 / Math.PI;
+    expect(s.activeAngleDeg).toBeCloseTo(ropeAngle, 10);
+  });
+  it('does not jump from the selected initial angle on the first automatic step', () => {
+    const params = { ...p, baseAngleDeg: 37, sweepAngleDeg: 65, autoSweep: true };
+    const init = createInitialState(params);
+    const s = stepEquilibrium(init, params, 1e-6).nextState;
+    expect(Math.abs(s.activeAngleDeg - init.activeAngleDeg)).toBeLessThan(0.001);
+  });
+  it('matches independently projected force magnitudes across the feasible dead-knot domain', () => {
+    for (const alpha of [15, 37, 75]) {
+      for (const beta of [-30, 0, 20, 55, 75]) {
+        const cosine = Math.cos(degToRad(alpha - beta));
+        if (cosine <= 1e-8) continue;
+        const s = solveEquilibriumAtAngle({ ...p, baseAngleDeg: alpha }, beta);
+        const mg = p.mass * CLASSROOM_GRAVITY;
+        expect(s.force1.mag).toBeCloseTo(mg * Math.cos(degToRad(beta)) / cosine, 8);
+        expect(s.force2.mag).toBeCloseTo(mg * Math.sin(degToRad(alpha)) / cosine, 8);
+        expect(s.netResidualN).toBeLessThan(1e-10);
+      }
+    }
   });
 });
