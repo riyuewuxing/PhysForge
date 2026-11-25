@@ -1,7 +1,7 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
-import { incline,world,blockCenter,contactDiagram,contactInitialView,type ContactRole } from './diagram.js';
+import { incline,world,blockCenter,contactDiagram,contactInitialView,contactBoundsFit,fitContactViewport,drawRelativeVelocityBand,type ContactRole } from './diagram.js';
 import {
   checkInvariants,
   computeObservables,
@@ -283,7 +283,7 @@ export const mechBlockConveyorPlugin = Object.assign(defineSimulationPlugin<
   telemetryChannels: [
     { key: 'vBlock', label: '物块速度 v物', unit: 'm/s', color: '#38bdf8' },
     { key: 'vCarrier', label: '带/板速度 v带', unit: 'm/s', color: '#fbbf24' },
-    { key: 'relativeScratch', label: '累计划痕 Δx_rel', unit: 'm', color: '#f472b6' },
+    { key: 'relativeScratch', label: '累计相对滑移路程 s_rel', unit: 'm', color: '#f472b6' },
     { key: 'frictionHeat', label: '摩擦生热 Q', unit: 'J', color: '#fb7185' },
     { key: 'kineticEnergy', label: '总动能 Ek', unit: 'J', color: '#4ade80' },
     {key:'groundHeat',label:'地面生热 Q₂',unit:'J',color:'#fb7185'},
@@ -356,5 +356,5 @@ export const mechBlockConveyorPlugin = Object.assign(defineSimulationPlugin<
     }
     resolveAndDrawLabels(ctx,labels,vp.width,vp.height);
   }
-}),{liveFormulas});
+}),{liveFormulas,contactBoundsFit,fitContactViewport,drawRelativeVelocityBand});
 export default mechBlockConveyorPlugin;

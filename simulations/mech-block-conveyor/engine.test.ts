@@ -256,7 +256,7 @@ describe('H23 M05 force and reference contracts',()=>{
   });
 });
 
-import { contactSupport, contactInitialView } from './diagram.js';
+import { contactSupport, contactInitialView, contactBoundsFit, fitContactViewport, relativeVelocityStrips, sampledSlipDistance } from './diagram.js';
 describe('H24 long-run contact viewport',()=>{
   it('keeps a bounded visible interval around the actual block on ideal infinite support',()=>{
     const initial=createInitialState(baseParams);
@@ -285,4 +285,20 @@ describe('H24 long-run contact viewport',()=>{
       expect(s.coMovingLocked).toBe(delta<0);
     }
   });
+});
+
+it('fits the long-run world position without changing the physical state',()=>{
+  const s=stepBlockConveyor(createInitialState(baseParams),baseParams,30).nextState;
+  const v={width:1280,height:720,dpr:1,scale:1,offsetX:0,offsetY:0};
+  const safe={left:30,right:960,top:30,bottom:550};
+  expect(contactBoundsFit(s,baseParams,v,safe)).toBe(false);
+  const next=fitContactViewport(s,baseParams,v,safe)!;
+  expect(contactBoundsFit(s,baseParams,next,safe)).toBe(true);
+  expect(s.t).toBeCloseTo(30,10);
+});
+it('integrates both sides of a velocity crossing and never invents missing samples',()=>{
+  const strips=relativeVelocityStrips([0,2,3,4,5],[2,-2,null,2,2],[0,0,0,0,0]);
+  expect(strips).toHaveLength(3);
+  expect(sampledSlipDistance(strips)).toBeCloseTo(4,12);
+  expect(sampledSlipDistance(relativeVelocityStrips([0,1],[2,2],[1,1]))).toBeCloseTo(1,12);
 });
