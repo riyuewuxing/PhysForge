@@ -714,6 +714,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...p.engine.computeObservables(drawState,pm)});
     }
     if(p.meta.id==='mech-kinematics-chase'&&frame&&drawState!==null){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});}
+    if(p.meta.id==='mech-dynamic-equilibrium'&&frame&&drawState!==null){canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...p.engine.computeObservables(drawState,pm)});}
     if(p.getTelemetryChannels&&frame&&drawState!==null){canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
       canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...p.engine.computeObservables(drawState,pm)});
@@ -748,7 +749,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
-    const mechanics=['builder-mechanics-lab','mech-kinematics-chase'].includes(latestRef.current.plugin.meta.id)||Boolean(latestRef.current.plugin.getTelemetryChannels);
+    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium'].includes(latestRef.current.plugin.meta.id)||Boolean(latestRef.current.plugin.getTelemetryChannels);
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
@@ -965,10 +966,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
-    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna','builder-mechanics-lab','builder-custom-ode-lab','mech-kinematics-chase'].includes(latestRef.current.plugin.meta.id)){
+    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna','builder-mechanics-lab','builder-custom-ode-lab','mech-kinematics-chase','mech-dynamic-equilibrium'].includes(latestRef.current.plugin.meta.id)){
       // The final displayed physical sample and chart must agree after pause.
       const current = latestRef.current;
-      if (['builder-circuit-mna','builder-mechanics-lab','builder-custom-ode-lab','mech-kinematics-chase'].includes(current.plugin.meta.id) &&
+      if (['builder-circuit-mna','builder-mechanics-lab','builder-custom-ode-lab','mech-kinematics-chase','mech-dynamic-equilibrium'].includes(current.plugin.meta.id) &&
           current.scrubTime === null && simStateModelIdRef.current === current.plugin.meta.id &&
           simStateResetNonceRef.current === current.resetNonce && simStateRef.current !== null &&
           simulationTimeRef.current > lastSnapshotTRef.current) {
@@ -1218,7 +1219,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const mechanicsScope=plugin.meta.id==='builder-mechanics-lab';
   const odeScope=Boolean(plugin.getTelemetryChannels);
   const chaseScope=plugin.meta.id==='mech-kinematics-chase';
-  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope;
+  const equilibriumScope=plugin.meta.id==='mech-dynamic-equilibrium';
+  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope;
   const semanticScope=heroScope||measuredScope;
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
   // Same semantic channel colors on paper, with sufficient contrast on white.
@@ -1260,7 +1262,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
           values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
-          ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : {}),
+          ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : equilibriumScope ? { label: '准静态演示时间', labelSize: 13 } : {}),
           ...(heroScope ? { size: 30 } : measuredScope ? { size: 24 } : {})
         },
         {
@@ -1721,7 +1723,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : measuredScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
-            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={equilibriumScope?'equilibrium-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽

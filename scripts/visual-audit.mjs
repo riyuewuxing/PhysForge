@@ -341,7 +341,7 @@ async function auditM01Chase(page,origin){
   const initial=await read();if(initial.deltaX!==16||initial.minGap!==16||initial.meetCount!==0)throw Error('M01 initial data '+JSON.stringify(initial));
   await page.screenshot({path:path.join(OUT_DIR,'H12_M01_initial.png')});
   await page.locator('[data-testid="topbar"]').getByLabel('播放倍速').selectOption('2');
-  const catchup=await runTo(9.70);
+  const catchup=await runTo(12.10);
   if(Math.abs(catchup.xA-catchup.t**2)>1e-7||Math.abs(catchup.xB-(16+8*catchup.t))>1e-7||Math.abs(catchup.vA-2*catchup.t)>1e-7||Math.abs(catchup.firstCoVelocityTime-4)>1e-9||Math.abs(catchup.firstMeetTime-(4+4*Math.SQRT2))>1e-9||catchup.meetCount!==1||catchup.minGap!==0||catchup.deltaX>=0)throw Error('M01 analytic crossing '+JSON.stringify(catchup));
   await page.screenshot({path:path.join(OUT_DIR,'H12_M01_catchup_velocity.png')});
   for(const [id,key] of [['scope-channel-a','xA'],['scope-channel-b','xB']]){
@@ -363,6 +363,49 @@ async function auditM01Chase(page,origin){
   await page.locator('[data-testid="topbar"]').getByLabel('播放倍速').selectOption('1');
   console.log('H12 M01 online '+JSON.stringify({initial,catchup,safe}));
   return {initial,catchup,safe};
+}
+
+
+async function auditM02Equilibrium(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-dynamic-equilibrium');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-dynamic-equilibrium',null,{timeout:20000});
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-equilibrium-rendered'));
+  const waitAngle=async(a)=>page.waitForFunction(a=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-equilibrium-rendered')||'null');return d?.t===0&&Math.abs(d.angleDeg-a)<1e-8;},a,{timeout:5000});
+  await selectPreset(page,'dead-knot-triangle',true);await waitAngle(37);
+  const minimum=await read();
+  if(Math.abs(minimum.force2-19.6*Math.sin(37*Math.PI/180))>1e-9||minimum.netResidualN>=1e-10)throw Error('M02 minimum '+JSON.stringify(minimum));
+  await page.screenshot({path:path.join(OUT_DIR,'H13_M02_minimum.png')});
+  await page.getByTestId('param-slider-baseAngleDeg').fill('75');
+  await page.getByTestId('param-slider-sweepAngleDeg').fill('-30');await waitAngle(-30);
+  await page.getByTestId('equilibrium-no-solution').waitFor({state:'visible'});
+  const invalid=await read();if(invalid.solutionDefined!==0||'force1' in invalid||'force2' in invalid)throw Error('M02 invalid invented force '+JSON.stringify(invalid));
+  await page.screenshot({path:path.join(OUT_DIR,'H13_M02_infeasible.png')});
+  await selectPreset(page,'active-pulley-symmetry',true);await waitAngle(45);
+  const pulley=await read();if(Math.abs(pulley.force1-19.6/Math.SQRT2)>1e-9||pulley.force1!==pulley.force2)throw Error('M02 unequal pulley '+JSON.stringify(pulley));
+  await page.screenshot({path:path.join(OUT_DIR,'H13_M02_pulley.png')});
+  await selectPreset(page,'hemisphere-suspended-rope',true);await waitAngle(35);
+  const sphere=await read();
+  const checkSphere=d=>{const L=Math.sqrt(1+1.6**2-3.2*Math.cos(d.angleDeg*Math.PI/180));if(Math.abs(d.force1-19.6/1.6)>1e-9||Math.abs(d.force2-19.6*L/1.6)>1e-9||Math.abs(d.ropeLengthM-L)>1e-9||d.netResidualN>=1e-10)throw Error('M02 hemisphere '+JSON.stringify(d));};
+  checkSphere(sphere);
+  const expand=page.getByTestId('btn-expand-oscilloscope');
+  if(await expand.isVisible())await expand.click();
+  await page.getByTestId('uplot-container').waitFor({state:'attached'});
+  await page.getByTestId('equilibrium-scope-empty').waitFor({state:'visible'});
+  await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-equilibrium-rendered')||'null')?.t>.8,null,{timeout:10000});await play.click();
+  const scanned=await read();checkSphere(scanned);if(Math.abs(scanned.angleDeg-sphere.angleDeg)<1)throw Error('M02 scan did not change');
+  await page.waitForFunction(t=>Math.abs(Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-last-sample-t'))-t)<1e-10,scanned.t,{timeout:5000});
+  await page.screenshot({path:path.join(OUT_DIR,'H13_M02_hemisphere_running.png')});
+  if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+  await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  await page.screenshot({path:path.join(OUT_DIR,'H13_M02_hemisphere_paper.png')});
+  if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+  await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  console.log('H13 M02 online '+JSON.stringify({minimum,invalid,pulley,sphere,scanned}));
+  return {minimum,invalid,pulley,sphere,scanned};
 }
 
 async function runWaveBCoordinateAudit(page, origin) {
@@ -1784,6 +1827,7 @@ async function main() {
     const b4AnalyticReport=await auditB4Analytic(page,origin);
     const b5OdeReport=await auditB5Ode(page,origin);
     const m01ChaseReport=await auditM01Chase(page,origin);
+    const m02EquilibriumReport=await auditM02Equilibrium(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -1960,7 +2004,26 @@ async function main() {
       await m01Page.getByRole('button',{name:'黑板深蓝'}).click();await m01Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');await m01Page.screenshot({path:path.join(OUT_DIR,'H12_M01_offline_safe_paper.png')});
       if(m01Errors.length||m01Network.length)throw Error('M01 offline errors '+JSON.stringify({m01Errors,m01Network}));Object.assign(m01OfflineReport,{step,stop,errors:m01Errors,network:m01Network});
     }finally{await m01Context.close();}
-    const summary = { m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+
+    const m02File=path.join(OUT_DIR,'H13_M02_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-dynamic-equilibrium','--preset','hemisphere-suspended-rope','--out',m02File],{stdio:'inherit'});
+    const m02Context=await browser.newContext({viewport:VIEWPORT,offline:true});const m02Page=await m02Context.newPage(),m02Errors=[],m02Network=[],m02OfflineReport={};
+    m02Page.on('pageerror',e=>m02Errors.push(e.message));m02Page.on('console',m=>{if(m.type()==='error')m02Errors.push(m.text());});m02Page.on('request',r=>{if(/^https?:/.test(r.url()))m02Network.push(r.url());});
+    try{
+      await m02Page.goto(pathToFileURL(m02File).href);
+      const canvas=m02Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-equilibrium-rendered'));
+      await m02Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-equilibrium-rendered')||'null')?.angleDeg===35);
+      const initial=await read();
+      await m02Page.getByRole('button',{name:'单步',exact:true}).click();
+      await m02Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-equilibrium-rendered')||'null')?.t>0);
+      const step=await read(),L=Math.sqrt(1+1.6**2-3.2*Math.cos(step.angleDeg*Math.PI/180));
+      if(Math.abs(step.t-1/60)>1e-10||Math.abs(step.force1-19.6/1.6)>1e-9||Math.abs(step.force2-19.6*L/1.6)>1e-9||step.netResidualN>=1e-10)throw Error('M02 offline independent geometry '+JSON.stringify(step));
+      await m02Page.getByRole('button',{name:'黑板深蓝'}).click();
+      await m02Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');await m02Page.screenshot({path:path.join(OUT_DIR,'H13_M02_offline_paper.png')});
+      if(m02Errors.length||m02Network.length)throw Error('M02 offline errors '+JSON.stringify({m02Errors,m02Network}));
+      Object.assign(m02OfflineReport,{initial,step,errors:m02Errors,network:m02Network});
+    }finally{await m02Context.close();}
+    const summary = { m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

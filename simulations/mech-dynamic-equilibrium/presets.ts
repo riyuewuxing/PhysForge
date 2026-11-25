@@ -28,8 +28,8 @@ export const equilibriumPresets: readonly PresetSpec<EquilibriumParams>[] = [
   },
   {
     id: 'similar-triangle-support',
-    name: '3. 共点力平衡动态变化（辅助几何分析）',
-    description: '连续增大推角观察支持力与水平拉力单调协同变化规律。',
+    name: '3. 光滑斜面与水平拉力',
+    description: '改变法线与竖直的夹角，观察 N=mg/cosθ 与 F=mg tanθ；保留原预设标识。',
     params: {
       mode: 'hemisphere-similar',
       mass: 2.0,
@@ -38,4 +38,5 @@ export const equilibriumPresets: readonly PresetSpec<EquilibriumParams>[] = [
       autoSweep: true
     }
   }
+  ,{id:'hemisphere-suspended-rope',name:'4. 光滑半球悬绳：相似三角形',description:'固定悬点与球心，改变接触点；支持力不变，绳张力随绳长变化。',params:{mode:'hemisphere-suspension',mass:2,baseAngleDeg:37,sweepAngleDeg:35,radiusM:1,anchorHeightM:.6,autoSweep:true}}
 ];

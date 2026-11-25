@@ -1,142 +1,139 @@
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 
-export type EquilibriumMode =
-  | 'active-pulley-knot'
-  | 'dead-knot-rotate'
-  | 'hemisphere-similar';
-
+export type EquilibriumMode = 'active-pulley-knot' | 'dead-knot-rotate' | 'hemisphere-similar' | 'hemisphere-suspension';
 export type EquilibriumParams = {
   mode: EquilibriumMode;
   mass: number;
   baseAngleDeg: number;
   sweepAngleDeg: number;
   autoSweep: boolean;
+  radiusM?: number;
+  anchorHeightM?: number;
 };
-
+export type Point = { x: number; y: number };
+export type Force = Point & { mag: number };
+export type EquilibriumStatus = 'balanced' | 'infeasible' | 'singular' | 'ill-conditioned';
+export interface SphereGeometry {
+  readonly radius: number;
+  readonly height: number;
+  readonly anchor: Point;
+  readonly ropeLength: number;
+}
 export interface EquilibriumState {
   readonly t: number;
+  readonly mode: EquilibriumMode;
   readonly activeAngleDeg: number;
-  readonly force1: { x: number; y: number; mag: number };
-  readonly force2: { x: number; y: number; mag: number };
-  readonly gravity: { x: number; y: number; mag: number };
+  readonly requestedAngleDeg: number;
+  readonly direction1: Point;
+  readonly direction2: Point;
+  readonly point: Point;
+  readonly sphere?: SphereGeometry;
+  readonly force1: Force;
+  readonly force2: Force;
+  readonly gravity: Force;
+  readonly status: EquilibriumStatus;
   readonly netResidualN: number;
   readonly minPullForceN: number;
   readonly events: readonly PhysicsEvent[];
 }
-
-export function solveEquilibriumAtAngle(
-  params: EquilibriumParams,
-  angleDeg: number
-): Omit<EquilibriumState, 't' | 'events'> {
-  const m = Math.max(0.1, params.mass);
-  const g = CLASSROOM_GRAVITY;
-  const mg = m * g;
-  const gravity = { x: 0, y: -mg, mag: mg };
-
+type Solution = Omit<EquilibriumState, 't' | 'events'>;
+const finite = (x: number | undefined, fallback: number): number =>
+  typeof x === 'number' && Number.isFinite(x) ? x : fallback;
+const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, x));
+const scaled = (v: Point, mag: number): Force => ({ x: v.x * mag, y: v.y * mag, mag });
+const zero = (): Force => ({ x: 0, y: 0, mag: 0 });
+const RESIDUAL_TOLERANCE = 1e-10;
+export function sphereDimensions(p?: Partial<EquilibriumParams>) {
+  return {radius:clamp(finite(p?.radiusM,1),0.5,1.5),height:clamp(finite(p?.anchorHeightM,0.6),0.2,1.2)};
+}
+export function angleRange(mode: EquilibriumMode,p?: Partial<EquilibriumParams>): readonly [number, number] {
+  if (mode === 'dead-knot-rotate') return [-30, 75];
+  if (mode === 'active-pulley-knot') return [10, 85];
+  if (mode === 'hemisphere-suspension') {
+    const {radius,height}=sphereDimensions(p);
+    // A straight rope must remain outside the sphere. At the pole the force split is nonunique.
+    return [1, Math.floor(Math.acos(radius/(radius+height))*180/Math.PI)];
+  }
+  return [10, 75];
+}
+export function boundedAngle(mode: EquilibriumMode, angle: number,p?:Partial<EquilibriumParams>): number {
+  const [lo, hi] = angleRange(mode,p);
+  return clamp(finite(angle, 37), lo, hi);
+}
+export function solveEquilibriumAtAngle(params: EquilibriumParams, angleDeg: number): Solution {
+  const mg = Math.max(0.1, finite(params.mass, 2)) * CLASSROOM_GRAVITY;
+  const gravity: Force = { x: 0, y: -mg, mag: mg };
+  const actual = boundedAngle(params.mode, angleDeg,params);
+  const theta = degToRad(actual);
+  const c = Math.cos(theta), sn = Math.sin(theta);
+  const base = { mode: params.mode, activeAngleDeg: actual, requestedAngleDeg: finite(angleDeg, actual), gravity };
+  let direction1: Point, direction2: Point, minPullForceN: number;
+  let point: Point = { x: 0, y: 0 };
+  let sphere: SphereGeometry | undefined;
+  let mag1: number, mag2: number;
+  let status: EquilibriumStatus = 'balanced';
   if (params.mode === 'active-pulley-knot') {
-    // 对称轻滑轮活结：两段绳对称与水平方向成 theta 角，T1 = T2 = mg / (2 sin(theta))
-    const theta = degToRad(Math.max(10, Math.min(85, angleDeg)));
-    const T = mg / (2 * Math.sin(theta));
-    const f1 = { x: -T * Math.cos(theta), y: T * Math.sin(theta), mag: T };
-    const f2 = { x: T * Math.cos(theta), y: T * Math.sin(theta), mag: T };
-    const netX = f1.x + f2.x + gravity.x;
-    const netY = f1.y + f2.y + gravity.y;
-    return {
-      activeAngleDeg: angleDeg,
-      force1: f1,
-      force2: f2,
-      gravity,
-      netResidualN: Math.hypot(netX, netY),
-      minPullForceN: mg / 2
-    };
+    direction1 = { x: -c, y: sn }; direction2 = { x: c, y: sn };
+    mag1 = mag2 = mg / (2 * sn); minPullForceN = mg / 2;
+  } else if (params.mode === 'dead-knot-rotate') {
+    const alpha = degToRad(clamp(finite(params.baseAngleDeg, 37), 15, 75));
+    direction1 = { x: -Math.sin(alpha), y: Math.cos(alpha) }; direction2 = { x: c, y: sn };
+    minPullForceN = mg * Math.sin(alpha);
+    const cosine = Math.cos(alpha - theta);
+    if (Math.abs(cosine) <= 1e-12) { status = 'singular'; mag1 = mag2 = 0; }
+    else if (cosine < 0) { status = 'infeasible'; mag1 = mag2 = 0; }
+    else { mag1 = mg * c / cosine; mag2 = minPullForceN / cosine; }
+  } else if (params.mode === 'hemisphere-suspension') {
+    const {radius,height}=sphereDimensions(params);
+    point = { x: -radius * sn, y: radius * c };
+    const anchor = { x: 0, y: radius + height };
+    const rope = { x: anchor.x - point.x, y: anchor.y - point.y };
+    const ropeLength = Math.hypot(rope.x, rope.y);
+    direction1 = { x: -sn, y: c }; direction2 = { x: rope.x / ropeLength, y: rope.y / ropeLength };
+    mag1 = mg * radius / (radius + height); mag2 = mg * ropeLength / (radius + height);
+    minPullForceN = mg * height / (radius + height);
+    sphere = { radius, height, anchor, ropeLength };
+  } else {
+    direction1 = { x: -sn, y: c }; direction2 = { x: 1, y: 0 };
+    mag1 = mg / c; mag2 = mg * Math.tan(theta); minPullForceN = 0;
   }
-
-  if (params.mode === 'dead-knot-rotate') {
-    // 死结：F1 固定在左上方（与竖直方向成 alpha），F2 方向在右半侧以与水平成 beta 逆时针旋转
-    // 方向单位矢量 u1 = (-sin alpha, cos alpha), u2 = (cos beta, sin beta)
-    const alpha = degToRad(Math.max(15, Math.min(75, params.baseAngleDeg)));
-    const beta = degToRad(Math.max(-30, Math.min(75, angleDeg)));
-    const u1x = -Math.sin(alpha);
-    const u1y = Math.cos(alpha);
-    const u2x = Math.cos(beta);
-    const u2y = Math.sin(beta);
-    // 求解 [u1x u2x; u1y u2y] [T1; F2] = [0; mg]
-    const det = u1x * u2y - u2x * u1y;
-    const safeDet = Math.abs(det) > 1e-6 ? det : 1e-6;
-    const T1 = (-u2x * mg) / safeDet;
-    const F2 = (u1x * mg) / safeDet;
-    const f1 = { x: T1 * u1x, y: T1 * u1y, mag: Math.abs(T1) };
-    const f2 = { x: F2 * u2x, y: F2 * u2y, mag: Math.abs(F2) };
-    const netX = f1.x + f2.x + gravity.x;
-    const netY = f1.y + f2.y + gravity.y;
-    return {
-      activeAngleDeg: angleDeg,
-      force1: f1,
-      force2: f2,
-      gravity,
-      netResidualN: Math.hypot(netX, netY),
-      // 当 F2 垂直于 F1（即 beta = alpha）时取得理论最小拉力 mg * sin(alpha)
-      minPullForceN: mg * Math.sin(alpha)
-    };
+  let force1 = scaled(direction1, mag1), force2 = scaled(direction2, mag2);
+  let netResidualN = Math.hypot(force1.x + force2.x, force1.y + force2.y - mg);
+  if (status === 'balanced' && (!Number.isFinite(netResidualN) || netResidualN >= RESIDUAL_TOLERANCE || mag1 < 0 || mag2 < 0)) {
+    status = 'ill-conditioned';
   }
-
-  // hemisphere-similar：光滑半径 R 球面上物块，绳长 L 从顶悬点 h 拉住（简化按角度呈现相似三角形关系）
-  const theta = degToRad(Math.max(15, Math.min(75, angleDeg)));
-  const FN = mg / Math.cos(theta);
-  const T = mg * Math.tan(theta);
-  const f1 = { x: FN * Math.sin(theta) * -1, y: FN * Math.cos(theta), mag: FN };
-  const f2 = { x: T, y: 0, mag: T };
-  const netX = f1.x + f2.x + gravity.x;
-  const netY = f1.y + f2.y + gravity.y;
-  return {
-    activeAngleDeg: angleDeg,
-    force1: f1,
-    force2: f2,
-    gravity,
-    netResidualN: Math.hypot(netX, netY),
-    minPullForceN: 0
-  };
+  if (status !== 'balanced') {
+    force1 = zero(); force2 = zero();
+    // Residual of the available vectors only, NOT a predicted acceleration.
+    netResidualN = mg;
+  }
+  return { ...base, point, ...(sphere ? { sphere } : {}), direction1, direction2, force1, force2, status, netResidualN, minPullForceN };
 }
-
 export function createInitialState(params: EquilibriumParams): EquilibriumState {
-  const solved = solveEquilibriumAtAngle(params, params.sweepAngleDeg);
-  return { t: 0, ...solved, events: [] };
+  return { t: 0, ...solveEquilibriumAtAngle(params, params.sweepAngleDeg), events: [] };
 }
-
-export function stepEquilibrium(
-  state: EquilibriumState,
-  params: EquilibriumParams,
-  dt: number
-): StepResult<EquilibriumState> {
-  if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
+export function stepEquilibrium(state: EquilibriumState, params: EquilibriumParams, dt: number): StepResult<EquilibriumState> {
+  if (!Number.isFinite(dt) || dt < 0) throw new Error('Invalid dt: ' + dt);
   if (dt === 0) return { nextState: state, events: [] };
   const nextT = state.t + dt;
-  const angle = params.autoSweep ? 40 + 25 * Math.sin(nextT * 0.9) : params.sweepAngleDeg;
-  const solved = solveEquilibriumAtAngle(params, angle);
-  return {
-    nextState: { t: nextT, ...solved, events: state.events },
-    events: []
-  };
+  const [lo, hi] = angleRange(params.mode,params);
+  const mid = (lo + hi) / 2, amplitude = (hi - lo) / 2;
+  const initial = boundedAngle(params.mode, params.sweepAngleDeg,params);
+  const phase = Math.asin(clamp((initial - mid) / amplitude, -1, 1));
+  const angle = params.autoSweep ? mid + amplitude * Math.sin(nextT * 0.9 + phase) : params.sweepAngleDeg;
+  return { nextState: { t: nextT, ...solveEquilibriumAtAngle(params, angle), events: state.events }, events: [] };
 }
-
 export function computeObservables(state: EquilibriumState): Record<string, number> {
   return {
-    force1: state.force1.mag,
-    force2: state.force2.mag,
     angleDeg: state.activeAngleDeg,
-    netResidualN: state.netResidualN,
-    minPullForceN: state.minPullForceN
+    solutionDefined: state.status === 'balanced' ? 1 : 0,
+    minPullForceN: state.minPullForceN,
+    ...(state.status === 'balanced' ? { force1: state.force1.mag, force2: state.force2.mag, netResidualN: state.netResidualN } : {}),
+    ...(state.sphere ? { ropeLengthM: state.sphere.ropeLength } : {})
   };
 }
-
 export function checkInvariants(state: EquilibriumState): InvariantReport[] {
-  return [
-    {
-      name: '矢量闭合静力平衡残差 ||ΣF||',
-      measuredError: state.netResidualN,
-      tolerance: 1e-10,
-      passed: state.netResidualN < 1e-10
-    }
-  ];
+  return [{ name: '矢量闭合静力平衡残差 ||ΣF||', measuredError: state.netResidualN,
+    tolerance: RESIDUAL_TOLERANCE, passed: state.status === 'balanced' && state.netResidualN < RESIDUAL_TOLERANCE }];
 }

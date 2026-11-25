@@ -31,7 +31,8 @@ const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind=
 const mechanicsSlice=targetPlugin.paramSchema.some(f=>f.key==='scenario'&&f.kind==='select'&&f.options.some(o=>o.value==='atwood-constrained'));
 const odeSlice=Boolean(targetPlugin.getTelemetryChannels);
 const chaseSlice=targetPlugin.paramSchema.some(f=>f.key==='vA0')&&targetPlugin.paramSchema.some(f=>f.key==='xB0')&&targetPlugin.paramSchema.some(f=>f.key==='reactionTime');
-const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice;
+const equilibriumSlice=targetPlugin.paramSchema.some(f=>f.key==='baseAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='sweepAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='autoSweep');
+const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -231,6 +232,7 @@ export const SingleFileApp: React.FC = () => {
       if(opticalSlice&&frame)canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...frame.observables});
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
       if(chaseSlice&&frame)canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...frame.observables});
+      if(equilibriumSlice&&frame)canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...frame.observables});
       if(odeSlice&&frame)canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...frame.observables});
       if(mechanicsSlice&&frame)canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...frame.observables});
 
@@ -483,7 +485,7 @@ export const SingleFileApp: React.FC = () => {
           ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false}}]:[])
         ],
         series: [
-          { label: 't (s)' },
+          { label: equilibriumSlice?'演示时间 (s)':'t (s)' },
           { label: specA?.label ?? 'A', stroke: paint(specA?.color ?? '#38bdf8'), width: 2 },
           { label: specB?.label ?? 'B', stroke: paint(specB?.color ?? '#f472b6'), width: 2,...(split?{scale:'y2'}:{}) }
         ],
@@ -714,6 +716,7 @@ export const SingleFileApp: React.FC = () => {
             ))}
           </div>
 
+          {equilibriumSlice&&<section data-testid="sf-equilibrium-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{summary.observables.solutionDefined===0&&<div data-testid="sf-equilibrium-no-solution" className="font-semibold text-rose-500">当前构型无可靠有限平衡解</div>}{([['angleDeg','实际角','°'],['force1','F₁','N'],['force2','F₂','N'],['minPullForceN','理论拉力下界','N'],['ropeLengthM','实际绳长','m']] as const).filter(([key])=>key!=='ropeLengthM'||params.mode==='hemisphere-suspension').map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-equilibrium-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>准静态演示；无解处曲线留空。</div></section>}
           {chaseSlice&&<section data-testid="sf-chase-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{([['deltaX','有向位置差','m'],['gap','实际间距','m'],['minGap','历史最小间距','m'],['firstCoVelocityTime','首次共速','s'],['firstMeetTime','首次相遇','s']] as const).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-chase-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>质点模型 · 不模拟碰撞。</div></section>}
           {summary.formulas.map((f) => (
             <div
