@@ -99,3 +99,53 @@ describe('H27 unilateral spring contact physical regressions',()=>{
     expect(r.nextState.s2-r.nextState.s1).toBeGreaterThan(0);expect(r.nextState.t).toBe(2);
   });
 });
+
+import { computeObservables,springAnchor } from './engine.js';
+import { springDiagram,springCoordinates,springForceVectors,BLOCK_WIDTH,BLOCK_HEIGHT,fitSpringViewport,springBoundsFit } from './diagram.js';
+describe('H27 exact dynamics and shared spring geometry',()=>{
+  const p:SpringSepParams={mass1:1,mass2:2,springK:30,inclineDeg:30,initialComp:1.2,externalForce:0};
+  it('coarse and fine stepping give the same first recontact, without consuming time beyond the collision',()=>{
+    const init=createInitialState(p),coarse=stepSpringSeparation(init,p,5).nextState;
+    let s=init;for(let i=0;i<1200&&!s.terminal;i++)s=stepSpringSeparation(s,p,1/240).nextState;
+    expect(s.terminal).toBe('recontact');expect(coarse.terminal).toBe('recontact');expect(s.t).toBeCloseTo(coarse.t,10);
+    expect(s.s1).toBeCloseTo(coarse.s1,10);expect(s.v2).toBeCloseTo(coarse.v2,10);expect(s.events).toHaveLength(2);
+    for(const report of checkInvariants(s,init,p))expect(report.passed,report.name).toBe(true);
+  });
+  it('handles exact initial zero-force equilibrium and outward acceleration separately',()=>{
+    const q={...p,mass2:1,springK:10,initialComp:.49,externalForce:4.9};
+    const s=stepSpringSeparation(createInitialState(q),q,10).nextState;
+    expect(s.separated).toBe(false);expect(s.s1).toBeCloseTo(-.49,12);expect(s.v1).toBeCloseTo(0,12);
+    const u={...q,inclineDeg:0},r=stepSpringSeparation(createInitialState(u),u,.2).nextState;
+    expect(r.separated).toBe(true);expect(r.separationTime).toBe(0);expect(r.s2-r.s1).toBeGreaterThan(0);
+  });
+  it('separates in compression with external work, preserving energy and the exact critical force',()=>{
+    const q={...p,inclineDeg:0,initialComp:1,externalForce:12},init=createInitialState(q),s=stepSpringSeparation(init,q,2).nextState;
+    expect(s.separationTime).toBeCloseTo(Math.acos(3/7)/Math.sqrt(10),11);expect(s.separationPosS).toBeCloseTo(-.2,12);
+    expect(s.release?.requiredNormalForce).toBe(0);expect(s.externalWork).toBeCloseTo(12*(s.s2+1),12);
+    expect(Math.abs(computeObservables(s,q).energyResidual!)).toBeLessThan(1e-10);
+  });
+  it('checks the actual mechanical energy, external work and nonnegative gap over 100 oscillations',()=>{
+    const q={...p,inclineDeg:0,initialComp:1,externalForce:0},init=createInitialState(q);
+    const s=stepSpringSeparation(init,q,100*2*Math.PI/Math.sqrt(30)).nextState;
+    expect(s.separated).toBe(true);expect(s.terminal).toBeNull();expect(s.s2-s.s1).toBeGreaterThan(300);
+    expect(Math.abs(computeObservables(s,q).energyResidual!)).toBeLessThan(1e-10);
+  });
+  it('rotates actual block corners, spring endpoints and FBD origins together in Canvas and print',()=>{
+    const s=stepSpringSeparation(createInitialState(p),p,1).nextState,d=springDiagram(s,p),{point}=springCoordinates(p);
+    const a=d.items.find(i=>i.role==='block1')?.primitive,b=d.items.find(i=>i.role==='block2')?.primitive,coil=d.items.find(i=>i.role==='spring'&&i.primitive.kind==='polyline')?.primitive;
+    expect(a?.kind).toBe('polyline');expect(b?.kind).toBe('polyline');expect(coil?.kind).toBe('polyline');
+    if(a?.kind!=='polyline'||b?.kind!=='polyline'||coil?.kind!=='polyline')throw Error('geometry');
+    expect(a.closed).toBe(true);expect(a.points[0]).toEqual(point(s.s1-BLOCK_WIDTH/2));expect(a.points[2]).toEqual(point(s.s1+BLOCK_WIDTH/2,BLOCK_HEIGHT));
+    expect(b.points[0]).toEqual(point(s.s2+BLOCK_WIDTH/2));
+    expect(coil.points[0]).toEqual(point(springAnchor(p),BLOCK_HEIGHT/2));expect(coil.points.at(-1)).toEqual(point(s.s1-BLOCK_WIDTH/2,BLOCK_HEIGHT/2));
+    const fs=springForceVectors(s,p);expect(fs.find(f=>f.id==='gravity-1')?.origin).toEqual(point(s.s1,BLOCK_HEIGHT/2));
+    expect(fs.some(f=>f.id==='contact-12')).toBe(false);
+    const ir=mechSpringSeparationPlugin.exportDiagramIR!(s,p);expect(ir.primitives).toContainEqual(a);expect(ir.primitives).toContainEqual(coil);
+  });
+  it('keeps both blocks and fixed spring anchor inside the safe fitted viewport',()=>{
+    const q={...p,inclineDeg:0},s=stepSpringSeparation(createInitialState(q),q,5).nextState;
+    const vp={width:1440,height:900,dpr:1,scale:1,offsetX:0,offsetY:0},safe={left:30,right:1120,top:28,bottom:720};
+    const fit=fitSpringViewport(s,q,vp,safe)!;expect(springBoundsFit(s,q,fit,safe)).toBe(true);
+    expect(s.s2-s.s1).toBeGreaterThan(10);
+  });
+});

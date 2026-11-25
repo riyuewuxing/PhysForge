@@ -32,6 +32,13 @@ function firstRelease(p:SpringSepParams,q:Physical):Release|null{
   const A=s-q.eq,x=(q.crit-q.eq)/A,t=Math.acos(Math.max(-1,Math.min(1,x)))/q.w;
   return {t,s:q.crit,v:-A*q.w*Math.sin(q.w*t),requiredNormalForce:0};
 }
+// Fixed anchor outside the complete ideal leftmost excursion, not a wall
+// collision model. Its position depends only on the run parameters.
+export function springAnchor(p:SpringSepParams){
+  const q=physical(p),r=firstRelease(p,q);
+  const low=r?Math.min(q.s0,q.eq1-Math.hypot(r.s-q.eq1,r.v/q.w1)):q.eq-Math.abs(q.s0-q.eq);
+  return Math.min(-.9,low-.85);
+}
 function releaseEvent(r:Release):PhysicsEvent{
   return {id:'sep-'+r.t.toFixed(9),time:r.t,label:r.t===0&&r.requiredNormalForce<0?'初始接触不可行 · 立即分离':'临界分离 · 接触力归零',position:{x:r.s,y:0},metrics:{separationS:r.s,normalForceAtSep:0,requiredNormalForce:r.requiredNormalForce,velocity:r.v}};
 }
