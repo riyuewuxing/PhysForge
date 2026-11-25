@@ -1329,9 +1329,95 @@ async function main() {
         await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
         if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
         await page.screenshot({path:path.join(OUT_DIR,'H2_B3_projector.png')});
+        await selectPreset(page,'thin-lens-real-image');
+        await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b3-rendered')||'null')?.mode==='thin-lens-imaging');
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_lens_projector.png')});
+        await selectPreset(page,'double-slit-interference');
+        await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b3-rendered')||'null')?.mode==='double-slit');
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_slit_projector.png')});
         await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
         await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
         if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+        const readB3=async(mode)=>{
+          await page.waitForFunction(m=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b3-rendered')||'null')?.mode===m,mode);
+          return JSON.parse(await page.getByTestId('simulation-canvas').getAttribute('data-b3-rendered'));
+        };
+        const checkReadout=async(key,value)=>{
+          try{
+            await page.waitForFunction(({key,value})=>Math.abs(parseFloat(document.querySelector('[data-testid="b3-'+key+'"]')?.textContent||'')-value)<.000501,{key,value},{timeout:5000});
+          }catch(error){
+            const probe=await page.evaluate(key=>({readout:document.querySelector('[data-testid="b3-'+key+'"]')?.textContent,canvas:document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b3-rendered'),sliders:[...document.querySelectorAll('[data-testid^="param-slider-"]')].map(el=>({id:el.getAttribute('data-testid'),value:el.value}))}),key);
+            await page.screenshot({path:path.join(OUT_DIR,'H9_B3_'+key+'_failure.png')});
+            throw Error('B3 readout mismatch '+JSON.stringify({key,value,probe}),{cause:error});
+          }
+        };
+        // Actual pointer drag and exact parameter boundary are distinct tests:
+        // keyboard steps set a quantized input without guessing thumb geometry.
+        const exactRange=async(slider,target)=>{
+          const spec=await slider.evaluate(el=>({min:Number(el.min),step:Number(el.step),value:Number(el.value)}));
+          if(!Number.isFinite(spec.step)||spec.step<=0)throw Error('Invalid B3 range step');
+          await slider.focus();
+          const count=Math.round((target-spec.value)/spec.step);
+          for(let k=0;k<Math.abs(count);k++)await slider.press(count>0?'ArrowRight':'ArrowLeft');
+          const actual=Number(await slider.inputValue());
+          if(Math.abs(actual-target)>1e-10)throw Error('B3 exact keyboard parameter mismatch '+JSON.stringify({target,actual,spec}));
+          return actual;
+        };
+        const checkTitle=async(title)=>{
+          if(!(await page.getByTestId('topbar').innerText()).includes(title))throw Error('B3 stale mode title '+title);
+        };
+        await selectPreset(page,'parallel-glass-slab');
+        await checkTitle('几何光学·平行玻璃砖');
+        const slab=await readB3('parallel-slab'),th=50*Math.PI/180,r=Math.asin(Math.sin(th)/1.5),shift=Math.sin(th-r)/Math.cos(r);
+        if(Math.abs(slab.lateralShift-shift)>1e-9)throw Error('B3 slab geometry differs from independent displacement');
+        await checkReadout('lateralShift',shift);
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_slab.png')});
+        await selectPreset(page,'prism-dispersion');
+        const prism=await readB3('prism-dispersion'),i=Math.PI/4,A=Math.PI/3,rr=Math.asin(Math.sin(i)/1.52),dev=(i+Math.asin(1.52*Math.sin(A-rr))-A)*180/Math.PI;
+        if(Math.abs(prism.prismDeviationDeg-dev)>1e-8)throw Error('B3 prism deviation incorrect');
+        await checkReadout('prismDeviationDeg',dev);
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_prism.png')});
+        await selectPreset(page,'optical-fiber');
+        const fiber=await readB3('optical-fiber'),accept=Math.asin(Math.sqrt(1.6**2-1.4**2))*180/Math.PI;
+        if(Math.abs(fiber.fiberAcceptanceDeg-accept)>1e-8||fiber.fiberGuided!==1)throw Error('B3 fiber acceptance mismatch');
+        await checkReadout('fiberAcceptanceDeg',accept);
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_fiber.png')});
+        await dragRangeTo(page,page.getByTestId('param-slider-n2'),1.8);
+        await page.waitForFunction(()=>{const x=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b3-rendered')||'null');return x&&x.mode==='optical-fiber'&&!('fiberAcceptanceDeg' in x);});
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_fiber_no_guiding.png')});
+        await selectPreset(page,'double-slit-interference');
+        const slit=await readB3('double-slit');if(Math.abs(slit.fringeSpacingMm-1.8)>1e-9)throw Error('B3 slit spacing incorrect');
+        await checkReadout('fringeSpacingMm',1.8);
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_slit.png')});
+        await checkTitle('波动光学·双缝干涉');
+        const pre=await canvasFingerprint(page),waveSlider=page.getByTestId('param-slider-wavelengthNm');
+        await dragRangeTo(page,waveSlider,500);
+        const actualLambda=Number(await waveSlider.inputValue());
+        if(!Number.isFinite(actualLambda)||actualLambda===600)throw Error('B3 wavelength pointer drag did not update');
+        await checkReadout('fringeSpacingMm',1.5*actualLambda/500);
+        const dragged=await readB3('double-slit');
+        if(Math.abs(dragged.fringeSpacingMm-1.5*actualLambda/500)>1e-9)throw Error('B3 dragged wavelength and physical state disagree');
+        const post=await canvasFingerprint(page);
+        await exactRange(waveSlider,500);
+        await checkReadout('fringeSpacingMm',1.5);
+        if(!pre||!post||pre.hash===post.hash)throw Error('B3 physical slit profile did not react to wavelength');
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_slit_changed.png')});
+        await selectPreset(page,'thin-lens-real-image');
+        const lens=await readB3('thin-lens-imaging'),v=1.5*.65/(1.5-.65);
+        if(Math.abs(lens.imageDistanceM-v)>1e-9)throw Error('B3 real lens mismatch');
+        await checkReadout('imageDistanceM',v);
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_lens_real.png')});
+        await checkTitle('几何光学·薄凸透镜成像');
+        await exactRange(page.getByTestId('param-slider-objectDistanceM'),.45);
+        await checkReadout('imageDistanceM',.45*.65/(.45-.65));
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_lens_virtual.png')});
+        await exactRange(page.getByTestId('param-slider-objectDistanceM'),.65);
+        await page.getByTestId('b3-focus-infinity').waitFor({state:'visible'});
+        const focus=await readB3('thin-lens-imaging');
+        if(focus.imageAtInfinity!==1||'imageDistanceM' in focus||'magnification' in focus)throw Error('B3 focus fabricated finite image');
+        await page.screenshot({path:path.join(OUT_DIR,'H9_B3_lens_focus.png')});
+        console.log('H9 B3 quantitative browser '+JSON.stringify({slab,prism,fiber,slit,lens,focus}));
+        await selectPreset(page,'tir-water-air');
       }
       if (testCase.id === 'builder-circuit-mna') {
         await selectPreset(page,'divider-lamp-measurement');
@@ -1628,7 +1714,36 @@ async function main() {
       if(offlineErrors.length||network.length)throw Error('B2 offline errors '+JSON.stringify({offlineErrors,network}));
       b2OfflineReport.errors=offlineErrors;b2OfflineReport.network=network;
     }finally{await offline.close();}
-    const summary = { b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const b3File=path.join(OUT_DIR,'H9_B3_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','builder-optics-ray','--preset','thin-lens-real-image','--out',b3File],{stdio:'inherit'});
+    const b3Context=await browser.newContext({viewport:VIEWPORT,offline:true});
+    const b3Page=await b3Context.newPage(),b3Errors=[],b3Network=[],b3OfflineReport={};
+    b3Page.on('pageerror',e=>b3Errors.push(e.message));b3Page.on('console',m=>{if(m.type()==='error')b3Errors.push(m.text());});b3Page.on('request',r=>{if(/^https?:/.test(r.url()))b3Network.push(r.url());});
+    try{
+      await b3Page.goto(pathToFileURL(b3File).href);
+      await b3Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b3-rendered')||'null')?.mode==='thin-lens-imaging');
+      const read=async()=>JSON.parse(await b3Page.getByTestId('sf-canvas').getAttribute('data-b3-rendered'));
+      const real=await read();if(Math.abs(real.imageDistanceM-1.5*.65/(1.5-.65))>1e-9)throw Error('B3 offline real image mismatch');
+      if(await b3Page.getByTestId('sf-uplot').isVisible())throw Error('B3 static offline time scope visible');
+      await b3Page.screenshot({path:path.join(OUT_DIR,'H9_B3_offline_lens.png')});
+      const uSlider=b3Page.getByTestId('sf-param-objectDistanceM');
+      await uSlider.focus();
+      const uSpec=await uSlider.evaluate(el=>({value:Number(el.value),step:Number(el.step)}));
+      for(let k=0;k<Math.round((uSpec.value-.65)/uSpec.step);k++)await uSlider.press('ArrowLeft');
+      if(Math.abs(Number(await uSlider.inputValue())-.65)>1e-10)throw Error('B3 offline exact focal input mismatch');
+      await b3Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b3-rendered')||'null')?.imageAtInfinity===1);
+      const focus=await read();if('imageDistanceM' in focus)throw Error('B3 offline finite image at focus');
+      await b3Page.getByRole('button',{name:'黑板深蓝'}).click();
+      await b3Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await b3Page.screenshot({path:path.join(OUT_DIR,'H9_B3_offline_focus_paper.png')});
+      await b3Page.locator('[data-preset-id="double-slit-interference"]').click();
+      await b3Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b3-rendered')||'null')?.mode==='double-slit');
+      const slit=await read();if(Math.abs(slit.fringeSpacingMm-1.8)>1e-9)throw Error('B3 offline fringe mismatch');
+      await b3Page.screenshot({path:path.join(OUT_DIR,'H9_B3_offline_slit_paper.png')});
+      if(b3Errors.length||b3Network.length)throw Error('B3 offline errors '+JSON.stringify({b3Errors,b3Network}));
+      Object.assign(b3OfflineReport,{real,focus,slit,errors:b3Errors,network:b3Network});
+    }finally{await b3Context.close();}
+    const summary = { b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

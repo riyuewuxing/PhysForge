@@ -27,6 +27,15 @@ const MAX_SNAPSHOTS = 2400;
 // Capability detection avoids embedding an unrelated model ID into every
 // isolated singlefile bundle (the exporter explicitly rejects those IDs).
 const circuitSlice=targetPlugin.paramSchema.some(f=>f.key==='topology'&&f.kind==='select'&&f.options.some(o=>o.value==='divider-lamp'));
+const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind==='select'&&f.options.some(o=>o.value==='thin-lens-imaging'));
+const OPTICAL_FIELDS:Record<string,string[]>={
+  'tir-interface':['sceneMode','incidentAngleDeg','n1','n2','animateSweep'],
+  'parallel-slab':['sceneMode','incidentAngleDeg','n1','slabThickness','animateSweep'],
+  'prism-dispersion':['sceneMode','incidentAngleDeg','n1','prismApexDeg','animateSweep'],
+  'optical-fiber':['sceneMode','incidentAngleDeg','n1','n2','fiberHalfWidth','animateSweep'],
+  'double-slit':['sceneMode','wavelengthNm','slitSeparationMm','screenDistanceM'],
+  'thin-lens-imaging':['sceneMode','focalLengthM','objectDistanceM']
+};
 const CIRCUIT_FIELDS:Record<string,string[]>={
   'divider-lamp':['emf','sliderR','internalR','topology'],
   'closed-power':['emf','sliderR','internalR','topology'],
@@ -199,7 +208,8 @@ export const SingleFileApp: React.FC = () => {
         layerSet.delete('vibrationGraph');
         layerSet.delete('eventPins');
       }
-      targetPlugin.renderCanvas(ctx, drawState, pm, circuitSlice?{...vp,theme:th}:vp, layerSet);
+      targetPlugin.renderCanvas(ctx, drawState, pm, circuitSlice||opticalSlice?{...vp,theme:th}:vp, layerSet);
+      if(opticalSlice&&frame)canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...frame.observables});
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
 
       if (strobe && !masked && snapshotsRef.current.length > 2) {
@@ -612,6 +622,7 @@ export const SingleFileApp: React.FC = () => {
           </div>
           <div
             className="rounded-xl border p-2 shrink-0"
+            hidden={opticalSlice}
             style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
           >
             <div className="flex items-center gap-2 text-xs mb-1">
@@ -695,7 +706,7 @@ export const SingleFileApp: React.FC = () => {
           ))}
 
           <div className="text-xs font-bold text-sky-400">参数调节</div>
-          {targetPlugin.paramSchema.filter(field=>!circuitSlice||(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key)).map((field) => {
+          {targetPlugin.paramSchema.filter(field=>circuitSlice?(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key):opticalSlice?(OPTICAL_FIELDS[String(params.sceneMode)]??[]).includes(field.key):true).map((field) => {
             const val = params[field.key] ?? field.defaultValue;
             if (field.kind === 'number') {
               return (
@@ -708,6 +719,7 @@ export const SingleFileApp: React.FC = () => {
                   </div>
                   <input
                     type="range"
+                    data-testid={'sf-param-'+field.key}
                     min={field.min}
                     max={field.max}
                     step={field.step}

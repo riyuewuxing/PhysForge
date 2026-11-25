@@ -1,4 +1,5 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
+import { opticalScene, SLIT_SCREEN, type OpticalMark } from './sceneGeometry.js';
 import { degToRad } from '@physforge/physics-core';
 import {
   createWorldMapper,
@@ -131,6 +132,60 @@ function renderTirInterface(ctx:CanvasRenderingContext2D,state:OpticsState,param
     }
     ctx.strokeStyle=warm;ctx.lineWidth=2.5;ctx.fillStyle=paper?'#fff':'#14191f';if(!paper){ctx.shadowColor=warm;ctx.shadowBlur=15;}
     ctx.beginPath();ctx.arc(p.x,p.y,10*scale,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
+  }
+  drawInterfaceLabels(ctx,labels,obstacles,viewport);ctx.restore();
+}
+
+
+/** All non-interface geometry comes from the same scene used by DiagramIR. */
+function renderOpticalScene(ctx:CanvasRenderingContext2D,state:OpticsState,params:OpticsParams,viewport:Viewport,layers:ReadonlySet<string>):void{
+  const scene=opticalScene(state,params),m=createWorldMapper(viewport),paper=viewport.theme==='projector';
+  const palette={glass:paper?'#0369a1':'#7dd3fc',clad:paper?'#64748b':'#64748b',axis:paper?'#475569':'#94a3b8',warm:paper?'#92400e':'#fcd58b',cool:paper?'#075985':'#67e8f9',image:paper?'#166534':'#86efac',virtual:paper?'#9d174d':'#f0abfc',text:paper?'#334155':'#cbd5e1',spectral:paper?'#334155':'#f8fafc'};
+  const spectral:Record<string,string>={'#f8fafc':'#334155','#ef4444':'#b91c1c','#f97316':'#c2410c','#eab308':'#a16207','#22c55e':'#15803d','#3b82f6':'#1d4ed8','#a855f7':'#7e22ce','#60a5fa':'#1d4ed8','#4ade80':'#166534','#fbbf24':'#92400e','#f87171':'#b91c1c'};
+  const color=(mark:OpticalMark)=>mark.tone==='spectral'&&mark.color?(paper?spectral[mark.color]??palette.spectral:mark.color):palette[mark.tone];
+  const labels:OpticalLabel[]=[],obstacles:Segment[]=[],scale=Math.max(.72,Math.min(1.15,viewport.height/850));
+  const font='500 '+Math.round(15*scale)+'px system-ui, sans-serif';
+  ctx.save();
+  for(const mark of scene.marks){
+    if(!layers.has(mark.layer))continue;
+    const g=mark.primitive,c=color(mark);
+    if(g.kind==='text'){
+      const p=m.toScreen(g.x,g.y);
+      if(mark.fixedLabel){ctx.save();ctx.font=font;ctx.fillStyle=c;ctx.textBaseline='middle';ctx.textAlign=g.align==='end'?'right':g.align==='start'?'left':'center';ctx.fillText(g.text,p.x,p.y);ctx.restore();}
+      else labels.push({...p,text:g.text,color:c,font});
+      continue;
+    }
+    ctx.save();ctx.strokeStyle=c;ctx.fillStyle=c;ctx.lineWidth=1.5;ctx.lineCap='round';ctx.lineJoin='round';
+    if(g.kind==='polyline'){
+      const pts=g.points.map(p=>m.toScreen(p.x,p.y));
+      if(pts.length){ctx.beginPath();ctx.moveTo(pts[0]!.x,pts[0]!.y);for(const p of pts.slice(1))ctx.lineTo(p.x,p.y);
+        if(g.closed){ctx.closePath();const top=Math.min(...pts.map(p=>p.y)),bottom=Math.max(...pts.map(p=>p.y));const grad=ctx.createLinearGradient(0,top,0,bottom);grad.addColorStop(0,paper?'rgba(56,189,248,.07)':'rgba(125,211,252,.17)');grad.addColorStop(1,paper?'rgba(56,189,248,.16)':'rgba(56,189,248,.055)');ctx.fillStyle=grad;ctx.fill();if(!paper&&mark.tone==='glass'){ctx.shadowColor=c;ctx.shadowBlur=8;}ctx.stroke();}
+        else {ctx.lineWidth=2;ctx.stroke();}
+      }
+    }else if(g.kind==='circle'){
+      const p=m.toScreen(g.cx,g.cy);ctx.beginPath();ctx.arc(p.x,p.y,m.len(g.r),0,Math.PI*2);if(g.fill)ctx.fill();else ctx.stroke();
+    }else if(g.kind==='line'||g.kind==='arrow'){
+      const a=m.toScreen(g.x1,g.y1),b=m.toScreen(g.x2,g.y2);
+      if(mark.layer==='rays'&&!g.dashed&&g.kind==='arrow'){
+        drawInterfaceRay(ctx,a,b,c,mark.power??1,true,paper,scale*.68);
+      }else{
+        ctx.setLineDash(g.dashed?[6,5]:[]);ctx.lineWidth=mark.layer==='medium'?2.2:1.4;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);
+        if(g.kind==='arrow'){const dx=b.x-a.x,dy=b.y-a.y,l=Math.hypot(dx,dy);if(l>1){const ux=dx/l,uy=dy/l;ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-10*ux-5*uy,b.y-10*uy+5*ux);ctx.lineTo(b.x-10*ux+5*uy,b.y-10*uy-5*ux);ctx.closePath();if(!g.dashed)ctx.fill();else ctx.stroke();}}
+      }
+      obstacles.push({a,b});
+    }
+    ctx.restore();
+  }
+  if(scene.profile&&layers.has('rays')){
+    const samples=scene.profile,mark=scene.marks.find(z=>z.tone==='spectral');
+    const c=mark?color(mark):palette.warm;
+    // Screen strip and quantitative graph share precisely the same samples.
+    for(let i=0;i<samples.length-1;i++){
+      const a=samples[i]!,b=samples[i+1]!;
+      ctx.fillStyle=c;ctx.globalAlpha=paper?.08+.92*a.intensity:.035+.965*a.intensity;
+      ctx.fillRect(m.toX(SLIT_SCREEN.x-SLIT_SCREEN.halfWidth),m.toY(b.y),m.len(2*SLIT_SCREEN.halfWidth),m.len(b.y-a.y)+.2);
+    }
+    ctx.globalAlpha=1;
   }
   drawInterfaceLabels(ctx,labels,obstacles,viewport);ctx.restore();
 }
@@ -390,7 +445,7 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
   },
   {
     "id": "fiber-critical-angle",
-    "title": "纤芯/包层有效折射率（模型限制 n包<n芯）",
+    "title": "全反射临界角（仅 n芯>n包 时）",
     "latex": "\\sin C=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=n2}{n_{\\rm clad}}}}{\\htmlClass{pf-live-var}{\\htmlData{param=n1}{n_{\\rm core}}}}",
     "bindings": [
       {
@@ -506,12 +561,26 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
   },
   defaultView: {
     scale: (params,{width,height}) => {
-      if(params.sceneMode!=='tir-interface')return 1;
+      if(params.sceneMode!=='tir-interface'){
+        const b=opticalScene(createInitialState(params),params).bounds,base=Math.min(width,height)*.24,usable=width-(width>=900?300:0);
+        return Math.max(.1,Math.min(1.3,(usable-36)/((b.maxX-b.minX)*base),(height-70)/((b.maxY-b.minY)*base)));
+      }
       const base=Math.min(width,height)*.24,usable=width-(width>=900?300:0);
       return Math.max(.1,Math.min(1.3,(usable-30)/(2*TIR_WINDOW.halfWidth*base),(height-84)/(2*TIR_WINDOW.halfHeight*base)));
     },
-    offsetRatioX: (params,{width}) => params.sceneMode==='tir-interface'?(width-(width>=900?280:0))/(2*width)-.45:0,
-    offsetRatioY: (params) => params.sceneMode==='tir-interface'?-.025:0
+    offsetRatioX: (params,{width,height}) => {
+      const center=(width-(width>=900?280:0))/(2*width)-.45;
+      if(params.sceneMode==='tir-interface')return center;
+      const b=opticalScene(createInitialState(params),params).bounds,base=Math.min(width,height)*.24,usable=width-(width>=900?300:0);
+      const scale=Math.max(.1,Math.min(1.3,(usable-36)/((b.maxX-b.minX)*base),(height-70)/((b.maxY-b.minY)*base)));
+      return center-(b.minX+b.maxX)*.5*base*scale/width;
+    },
+    offsetRatioY: (params,{width,height}) => {
+      if(params.sceneMode==='tir-interface')return -.025;
+      const b=opticalScene(createInitialState(params),params).bounds,base=Math.min(width,height)*.24,usable=width-(width>=900?300:0);
+      const scale=Math.max(.1,Math.min(1.3,(usable-36)/((b.maxX-b.minX)*base),(height-70)/((b.maxY-b.minY)*base)));
+      return (b.minY+b.maxY)*.5*base*scale/height;
+    }
   },
   getControlHandles: (state, params) => {
     if (params.sceneMode === 'thin-lens-imaging') {
@@ -522,6 +591,7 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
           label: `物距 u=${u.toFixed(2)}m`,
           position: { x: -u, y: 0.55 },
           handleKind: 'point',
+          showWhenIdle: false,
           color: '#fbbf24',
           onDrag: (wp) => ({
             objectDistanceM: Number(Math.max(0.25, Math.min(2.5, -wp.x)).toFixed(2))
@@ -529,7 +599,15 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
         }
       ];
     }
-    const rad = degToRad(state.activeAngleDeg);
+    if(params.sceneMode==='double-slit')return [];
+    if(params.sceneMode!=='tir-interface'){
+      const ray=state.rays[0];if(!ray)return [];
+      return [{id:'incident-angle',label:'入射角 '+state.activeAngleDeg.toFixed(0)+'°',position:ray.from,handleKind:'point',color:'#fbbf24',showWhenIdle:false,onDrag:wp=>{
+        const dx=ray.to.x-wp.x,dy=ray.to.y-wp.y;
+        const angle=params.sceneMode==='parallel-slab'?Math.atan2(dx,-dy):params.sceneMode==='optical-fiber'?Math.atan2(dy,dx):Math.atan2(dy,dx)+degToRad(params.prismApexDeg)/2;
+        return {incidentAngleDeg:Math.max(0,Math.min(85,Math.round(angle*180/Math.PI))),animateSweep:false};
+      }}];
+    }
     return [
       {
         id: 'incident-angle',
@@ -555,8 +633,12 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
     importScene: (dsl) => dsl.params as Partial<OpticsParams>
   },
   exportDiagramIR: (state, params) => {
+    if(params.sceneMode!=='tir-interface'){
+      const scene=opticalScene(state,params);
+      return {width:720,height:440,viewBox:scene.bounds,title:'光学实验 · '+params.sceneMode,primitives:scene.marks.map(m=>m.primitive)};
+    }
     const primitives: DiagramPrimitive[] = [
-      { kind: 'line', x1: -2.6, y1: 0, x2: 2.6, y2: 0, dashed: params.sceneMode === 'thin-lens-imaging' }
+      { kind: 'line', x1: -2.6, y1: 0, x2: 2.6, y2: 0, dashed: false }
     ];
     if (params.sceneMode === 'tir-interface') {
       primitives.push({ kind: 'line', x1: 0, y1: -1.8, x2: 0, y2: 1.8, dashed: true });
@@ -573,10 +655,6 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
         kind:'arcAngle',cx:0,cy:0,r:.55,startAngle:-Math.PI/2,endAngle:-Math.PI/2+degToRad(state.refractedAngleDeg),
         label:`θ_2=${state.refractedAngleDeg.toFixed(1)}°`
       });
-    } else if (params.sceneMode === 'thin-lens-imaging') {
-      primitives.push({ kind: 'line', x1: 0, y1: -1.2, x2: 0, y2: 1.2, strokeWidth: 2 });
-      const u = params.objectDistanceM ?? 1.2;
-      primitives.push({ kind: 'arrow', x1: -u, y1: 0, x2: -u, y2: 0.55, label: '物' });
     }
     for (const r of state.rays) {
       primitives.push({ kind: 'arrow', x1: r.from.x, y1: r.from.y, x2: r.to.x, y2: r.to.y, dashed: r.dashed, label: r.label });
@@ -711,256 +789,24 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
         latex:'\\begin{gathered}'+base+critical+'\\end{gathered}',
         substitutedLatex:'\\begin{gathered}\\theta_1='+state.activeAngleDeg.toFixed(1)+'^\\circ\\\\'+result+(c===null?'':'\\\\ C='+c.toFixed(1)+'^\\circ')+'\\end{gathered}'}];
     }
-    const critStr =
-      state.criticalAngleDeg !== null ? `${state.criticalAngleDeg.toFixed(1)}^\\circ` : '\\text{无}';
-    return [
-      {
-        id: 'snell-eq',
-        label: '斯涅尔折射定律与全反射临界角',
-        latex: '\\begin{aligned}n_1 \\sin\\theta_1 &= n_2 \\sin\\theta_2 \\\\ \\sin C &= \\frac{n_2}{n_1}\\end{aligned}',
-        substitutedLatex: `\\theta_1 = ${state.activeAngleDeg.toFixed(1)}^\\circ,\\; C = ${critStr},\\; ${
-          state.isTotalInternalReflection ? '\\text{已全反射}' : `\\theta_2 = ${(state.refractedAngleDeg ?? 0).toFixed(1)}^\\circ`
-        }`
-      }
-    ];
+    if(params.sceneMode==='thin-lens-imaging'){
+      const v=state.imageDistanceM,m=state.magnification;
+      return [{id:'thin-lens-eq',label:'理想薄凸透镜 · 近轴',
+        latex:'\\frac1u+\\frac1v=\\frac1f,\\quad m=-\\frac vu',
+        substitutedLatex:state.imageAtInfinity?'u=f,\\quad v\\to\\infty':v===undefined||m===undefined?'\\text{无有限像}':'v='+v.toFixed(3)+'\\,\\mathrm{m},\\quad m='+m.toFixed(3)}];
+    }
+    if(params.sceneMode==='optical-fiber'){
+      return [{id:'fiber-eq',label:'空气端面入射 · 几何光学',
+        latex:state.criticalAngleDeg===null?'n_1\\le n_2:\\ \\text{无全反射导光}':'\\begin{gathered}\\sin C=n_2/n_1\\\\\\sin\\theta_{\\max}=\\min(1,\\sqrt{n_1^2-n_2^2})\\end{gathered}',
+        substitutedLatex:state.fiberAcceptanceDeg===undefined?'\\text{无接受角}':'C='+state.criticalAngleDeg?.toFixed(1)+'^\\circ,\\quad\\theta_{\\max}='+state.fiberAcceptanceDeg.toFixed(1)+'^\\circ'}];
+    }
+    return [{id:'prism-eq',label:'示例 Cauchy 色散 · 直接穿过两腰时',
+      latex:'\\begin{gathered}r_1+r_2=A\\\\\\delta=i_1+i_2-A\\end{gathered}',
+      substitutedLatex:state.prismDeviationDeg===undefined?'\\text{黄光无直接两腰出射}':'\\delta_{589}='+state.prismDeviationDeg.toFixed(2)+'^\\circ'}];
   },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    if(params.sceneMode==='tir-interface'){renderTirInterface(ctx,state,params,viewport,activeLayers);return;}
-    const m = createWorldMapper(viewport);
-    const basePpm = Math.min(viewport.width, viewport.height) * 0.24;
-    const toScreen = (wx: number, wy: number) => {
-      const point = m.toScreen(wx, wy);
-      return { sx: point.x, sy: point.y };
-    };
-
-    if (params.sceneMode === 'double-slit') {
-      // 双缝干涉专属屏面渲染
-      const barrierX = m.toX(-1.5);
-      const screenX = m.toX(1.6);
-      const midY = m.toY(0);
-      const slitGap = Math.max(14, params.slitSeparationMm * 28) / basePpm;
-      const slitHalfWidth = 5 / basePpm;
-      const worldYExtent = Math.max(0.1, viewport.height * 0.5 - 40) / basePpm;
-      const sampleCount = Math.ceil((worldYExtent * 2 * basePpm) / 2);
-
-      ctx.save();
-      // 挡板与双缝
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 6;
-      ctx.beginPath();
-      ctx.moveTo(barrierX, m.toY(worldYExtent));
-      ctx.lineTo(barrierX, m.toY(slitGap + slitHalfWidth));
-      ctx.moveTo(barrierX, m.toY(slitGap - slitHalfWidth));
-      ctx.lineTo(barrierX, m.toY(-slitGap + slitHalfWidth));
-      ctx.moveTo(barrierX, m.toY(-slitGap - slitHalfWidth));
-      ctx.lineTo(barrierX, m.toY(-worldYExtent));
-      ctx.stroke();
-
-      // 光屏干涉明暗条纹与右侧光强分布曲线
-      const wavelengthColor =
-        params.wavelengthNm < 490
-          ? '#60a5fa'
-          : params.wavelengthNm < 570
-            ? '#4ade80'
-            : params.wavelengthNm < 605
-              ? '#fbbf24'
-              : '#f87171';
-
-      const spacingPx = Math.max(8, state.fringeSpacingMm * 22);
-
-      for (let i = 0; i <= sampleCount; i += 1) {
-        const worldY = worldYExtent - (i * 2) / basePpm;
-        const intensity = Math.pow(Math.cos((Math.PI * worldY * basePpm) / spacingPx), 2);
-        ctx.fillStyle = wavelengthColor;
-        ctx.globalAlpha = 0.08 + 0.92 * intensity;
-        ctx.fillRect(m.toX(1.6 - 10 / basePpm), m.toY(worldY), m.len(20 / basePpm), m.len(2.5 / basePpm));
-      }
-      ctx.globalAlpha = 1;
-
-      // 光强曲线 I(y)
-      ctx.strokeStyle = wavelengthColor;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      for (let i = 0; i <= sampleCount; i += 1) {
-        const worldY = worldYExtent - (i * 2) / basePpm;
-        const intensity = Math.pow(Math.cos((Math.PI * worldY * basePpm) / spacingPx), 2);
-        const ix = m.toX(1.6 + (24 + intensity * 120) / basePpm);
-        const iy = m.toY(worldY);
-        if (i === 0) ctx.moveTo(ix, iy);
-        else ctx.lineTo(ix, iy);
-      }
-      ctx.stroke();
-
-      // 示例相干路径线
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.45)';
-      ctx.setLineDash([5, 5]);
-      ctx.lineWidth = 1.5;
-      for (const slitY of [-slitGap, slitGap]) {
-        const sourceY = m.toY(slitY);
-        ctx.beginPath();
-        ctx.moveTo(barrierX, sourceY);
-        ctx.lineTo(screenX, midY);
-        ctx.moveTo(barrierX, sourceY);
-        ctx.lineTo(screenX, m.toY(spacingPx / basePpm));
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      ctx.fillText(
-        `条纹间距 Δx = ${state.fringeSpacingMm.toFixed(2)} mm`,
-        m.toX(1.6 - 10 / basePpm),
-        m.toY((viewport.height * 0.5 - 26) / basePpm)
-      );
-      ctx.restore();
-      return;
-    }
-
-    // 1. 绘制介质边界
-    if (activeLayers.has('medium')) {
-      ctx.save();
-      if (params.sceneMode === 'parallel-slab') {
-        const d = params.slabThickness;
-        const tl = toScreen(-2.2, 0.5 * d);
-        const br = toScreen(2.2, -0.5 * d);
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-        ctx.fillRect(tl.sx, tl.sy, br.sx - tl.sx, br.sy - tl.sy);
-        ctx.strokeRect(tl.sx, tl.sy, br.sx - tl.sx, br.sy - tl.sy);
-      } else if (params.sceneMode === 'prism-dispersion') {
-        const halfA = 0.5 * degToRad(params.prismApexDeg);
-        const h = 1.6;
-        const halfBase = h * Math.tan(halfA);
-        const pTop = toScreen(0, 0.6 * h);
-        const pL = toScreen(-halfBase, -0.4 * h);
-        const pR = toScreen(halfBase, -0.4 * h);
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(pTop.sx, pTop.sy);
-        ctx.lineTo(pL.sx, pL.sy);
-        ctx.lineTo(pR.sx, pR.sy);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      } else if (params.sceneMode === 'optical-fiber') {
-        const hw = params.fiberHalfWidth;
-        const tl = toScreen(-2.4, hw);
-        const br = toScreen(2.4, -hw);
-        ctx.fillStyle = 'rgba(148, 163, 184, 0.14)';
-        ctx.fillRect(tl.sx, tl.sy - 16, br.sx - tl.sx, br.sy - tl.sy + 32);
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-        ctx.fillRect(tl.sx, tl.sy, br.sx - tl.sx, br.sy - tl.sy);
-        ctx.strokeRect(tl.sx, tl.sy, br.sx - tl.sx, br.sy - tl.sy);
-      } else if (params.sceneMode === 'thin-lens-imaging') {
-        const axisL = toScreen(-2.8, 0);
-        const axisR = toScreen(2.8, 0);
-        const lensTop = toScreen(0, 1.3);
-        const lensBot = toScreen(0, -1.3);
-        ctx.strokeStyle = '#94a3b8';
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        ctx.moveTo(axisL.sx, axisL.sy);
-        ctx.lineTo(axisR.sx, axisR.sy);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(lensTop.sx, lensTop.sy);
-        ctx.lineTo(lensBot.sx, lensBot.sy);
-        ctx.stroke();
-        const f = params.focalLengthM ?? 0.65;
-        const u = params.objectDistanceM ?? 1.2;
-        const fL = toScreen(-f, 0);
-        const fR = toScreen(f, 0);
-        ctx.fillStyle = '#38bdf8';
-        for (const fp of [fL, fR]) {
-          ctx.beginPath();
-          ctx.arc(fp.sx, fp.sy, 4, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        const oB = toScreen(-u, 0);
-        const oT = toScreen(-u, 0.55);
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(oB.sx, oB.sy);
-        ctx.lineTo(oT.sx, oT.sy);
-        ctx.stroke();
-        if (state.imageDistanceM !== undefined && state.magnification !== undefined) {
-          const iB = toScreen(state.imageDistanceM, 0);
-          const iT = toScreen(state.imageDistanceM, 0.55 * state.magnification);
-          ctx.strokeStyle = state.imageDistanceM > 0 ? '#4ade80' : '#f472b6';
-          ctx.setLineDash(state.imageDistanceM > 0 ? [] : [5, 4]);
-          ctx.beginPath();
-          ctx.moveTo(iB.sx, iB.sy);
-          ctx.lineTo(iT.sx, iT.sy);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      }
-      ctx.restore();
-    }
-
-    // 3. 光路射线
-    if (activeLayers.has('rays')) {
-      for (const ray of state.rays) {
-        const p1 = toScreen(ray.from.x, ray.from.y);
-        const p2 = toScreen(ray.to.x, ray.to.y);
-        ctx.save();
-        ctx.strokeStyle = ray.color;
-        ctx.globalAlpha = ray.intensity;
-        ctx.shadowColor = ray.color;
-        ctx.shadowBlur = 14;
-        const reflection = ray.label === '反射光' || ray.label?.startsWith('全反射光');
-        ctx.lineWidth = reflection ? 10 : 7;
-        ctx.beginPath();
-        ctx.moveTo(p1.sx, p1.sy);
-        ctx.lineTo(p2.sx, p2.sy);
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-        ctx.globalAlpha = ray.intensity;
-        ctx.lineWidth = reflection ? 3.5 : 2.8;
-        ctx.stroke();
-
-        // 线段中点箭头
-        const mx = 0.5 * (p1.sx + p2.sx);
-        const my = 0.5 * (p1.sy + p2.sy);
-        const ang = Math.atan2(p2.sy - p1.sy, p2.sx - p1.sx);
-        ctx.fillStyle = ray.color;
-        ctx.beginPath();
-        ctx.moveTo(mx + 6 * Math.cos(ang), my + 6 * Math.sin(ang));
-        ctx.lineTo(mx - 6 * Math.cos(ang - 0.5), my - 6 * Math.sin(ang - 0.5));
-        ctx.lineTo(mx - 6 * Math.cos(ang + 0.5), my - 6 * Math.sin(ang + 0.5));
-        ctx.closePath();
-        ctx.fill();
-
-        if (ray.label) {
-          ctx.font = 'bold 13px system-ui, sans-serif';
-          if (ray.label === '入射光') {
-            ctx.fillText(ray.label, mx + 12, my - 14);
-          } else {
-            const labelSign = p2.sy < p1.sy ? -1 : 1;
-            ctx.fillText(ray.label, p2.sx + 8, p2.sy + labelSign * 16);
-          }
-        }
-        ctx.restore();
-      }
-    }
-
-    {
-      ctx.save();
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      const critInfo = state.criticalAngleDeg !== null ? `  |  临界角 C = ${state.criticalAngleDeg.toFixed(1)}°` : '';
-      ctx.fillText(`θ₁ = ${state.activeAngleDeg.toFixed(1)}°${critInfo}`, 20, 30);
-      ctx.restore();
-    }
+  renderCanvas: (ctx,state,params,viewport,layers) => {
+    if(params.sceneMode==='tir-interface')renderTirInterface(ctx,state,params,viewport,layers);
+    else renderOpticalScene(ctx,state,params,viewport,layers);
   }
 }), { liveFormulas });
 

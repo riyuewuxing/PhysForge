@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createWorldMapper, resolveInitialCameraTransform, resolvePluginParams } from '@physforge/sim-sdk';
 import { opticsRayStudioPlugin } from './plugin.js';
-import { createInitialState, type OpticsParams } from './engine.js';
+import { createInitialState, slitIntensity, type OpticsParams } from './engine.js';
+import { opticalScene, SLIT_SCREEN } from './sceneGeometry.js';
 
 describe('B3 builder-optics-ray V2 verification', () => {
   it('fits real interface rays in the desktop workbench without distorting angles', () => {
@@ -70,5 +71,44 @@ describe('B3 builder-optics-ray V2 verification', () => {
     expect(handle?.showWhenIdle).toBe(false);
     expect(handle?.onDrag({ x: -Math.sin((35 * Math.PI) / 180), y: Math.cos((35 * Math.PI) / 180) }).incidentAngleDeg)
       .toBe(35);
+  });
+});
+
+describe('H9 shared optical scene',()=>{
+  it('keeps all five presets finite and their physical rays in the exported geometry',()=>{
+    for(const preset of opticsRayStudioPlugin.presets.slice(1)){
+      const p=resolvePluginParams<OpticsParams>(opticsRayStudioPlugin.paramSchema,preset.params);
+      const state=createInitialState(p),scene=opticalScene(state,p),ir=opticsRayStudioPlugin.exportDiagramIR!(state,p);
+      expect(ir.primitives).toEqual(scene.marks.map(m=>m.primitive));
+      for(const ray of state.rays)expect(ir.primitives.some(q=>(q.kind==='line'||q.kind==='arrow')&&q.x1===ray.from.x&&q.y1===ray.from.y&&q.x2===ray.to.x&&q.y2===ray.to.y&&Boolean(q.dashed)===Boolean(ray.dashed))).toBe(true);
+      expect(scene.marks.length).toBeGreaterThan(5);
+      if(p.sceneMode==='double-slit')expect(opticsRayStudioPlugin.getControlHandles!(state,p)).toEqual([]);
+      else if(p.sceneMode==='thin-lens-imaging'){
+        const handle=opticsRayStudioPlugin.getControlHandles!(state,p)[0]!;
+        expect(handle.position).toEqual({x:-(p.objectDistanceM??1.2),y:.55});
+        expect(handle.showWhenIdle).toBe(false);
+        expect(handle.onDrag({x:-.65,y:.55}).objectDistanceM).toBe(.65);
+      }else{
+        const handle=opticsRayStudioPlugin.getControlHandles!(state,p)[0]!;
+        expect(handle.position).toEqual(state.rays[0]!.from);
+        expect(handle.onDrag(handle.position).incidentAngleDeg).toBe(state.activeAngleDeg);
+      }
+    }
+  });
+  it('uses one fixed mm scale for the screen profile and normalized interference curve',()=>{
+    const p=resolvePluginParams<OpticsParams>(opticsRayStudioPlugin.paramSchema,{sceneMode:'double-slit',wavelengthNm:600,slitSeparationMm:.5,screenDistanceM:1.5});
+    const state=createInitialState(p),scene=opticalScene(state,p);
+    expect(slitIntensity(0,state.fringeSpacingMm)).toBe(1);
+    expect(slitIntensity(state.fringeSpacingMm/2,state.fringeSpacingMm)).toBeCloseTo(0,12);
+    expect(slitIntensity(state.fringeSpacingMm,state.fringeSpacingMm)).toBeCloseTo(1,12);
+    for(const q of scene.profile!)expect((q.x-SLIT_SCREEN.curveX)/SLIT_SCREEN.curveWidth).toBeCloseTo(Math.cos(Math.PI*q.y*2.5/state.fringeSpacingMm)**2,12);
+    for(const mm of [-4,-2,0,2,4]){
+      const mark=scene.marks.find(m=>m.primitive.kind==='text'&&m.primitive.text===String(mm)+' mm');
+      expect(mark?.fixedLabel).toBe(true);
+      if(mark?.primitive.kind!=='text')throw Error('Missing metric tick');
+      expect(mark.primitive.y).toBe(mm/2.5);
+      expect(mark.primitive.align).toBe('end');
+    }
+    expect(scene.profile![0]!.y).toBe(-1.6);expect(scene.profile!.at(-1)!.y).toBe(1.6);
   });
 });
