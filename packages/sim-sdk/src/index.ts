@@ -350,6 +350,8 @@ export interface SimulationPlugin<TParams extends ParamRecord, TState> {
  * PhysForge V2.0 仿真插件扩展契约（100% 向后兼容 V1.0 插件）
  */
 export interface PluginDefaultViewSpec<TParams extends ParamRecord = ParamRecord> {
+  /** Opt-in minimum absolute zoom for models using large physical world coordinates. */
+  minScale?: number;
   /** Relative scale against the standard 0.24 * min(W, H) world mapping. */
   scale?: number | ((params: TParams, viewport: { width: number; height: number }) => number);
   /** Pixel offset as a fraction of viewport width from the standard 0.45W origin. */

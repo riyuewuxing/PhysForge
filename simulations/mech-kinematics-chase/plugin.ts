@@ -26,151 +26,113 @@ const paramSchema: readonly ParamFieldSpec<KinematicsChaseParams>[] = [
   { key: 'reactionTime', kind: 'number', label: 'A车反应时间 t反', unit: 's', min: 0, max: 1.5, step: 0.1, defaultValue: 0 },
   { key: 'xB0', kind: 'number', label: '初始间距 xB0', unit: 'm', min: 5, max: 80, step: 1, defaultValue: 16 },
   { key: 'vB0', kind: 'number', label: 'B车初速度 vB0', unit: 'm/s', min: 0, max: 25, step: 1, defaultValue: 8 },
-  { key: 'aB', kind: 'number', label: 'B车加速度 aB', unit: 'm/s²', min: -8, max: 6, step: 0.5, defaultValue: 0 }
+  { key: 'aB', kind: 'number', label: 'B车加速度 aB', unit: 'm/s²', min: -8, max: 6, step: 0.5, defaultValue: 0 },
+  {key:'massA',kind:'number',label:'A车质量（仅合力）',unit:'kg',min:500,max:2500,step:100,defaultValue:1000},
+  {key:'massB',kind:'number',label:'B车质量（仅合力）',unit:'kg',min:500,max:2500,step:100,defaultValue:1000}
 ];
 
-export const mechKinematicsChasePlugin = defineSimulationPlugin<
-  KinematicsChaseParams,
-  KinematicsChaseState
->({
-  meta: {
-    id: 'mech-kinematics-chase',
-    title: '运动学追及相遇与多过程图像 (M01)',
-    textbookRef: '人教版 必修第一册 第二章 第4节',
-    curriculumTags: ['物理观念', '科学思维', '科学探究'],
-    difficulty: '高三一轮',
-    version: '2.0.0'
+/** View extent is an explicitly labelled ten-second teaching horizon, not a physics limit. */
+function teachingExtent(p:KinematicsChaseParams):number {
+  const q=stepKinematicsChase(createInitialState(p),p,10).nextState;
+  return Math.max(30,q.xA,q.xB,p.xB0)*1.12;
+}
+function laneHalf(p:KinematicsChaseParams):number{return teachingExtent(p)*.065;}
+function tickStep(span:number):number{
+  const raw=span/8,pow=10**Math.floor(Math.log10(raw)),r=raw/pow;
+  return (r<=1?1:r<=2?2:r<=5?5:10)*pow;
+}
+export const mechKinematicsChasePlugin=defineSimulationPlugin<KinematicsChaseParams,KinematicsChaseState>({
+  meta:{id:'mech-kinematics-chase',title:'运动学追及相遇与多过程图像 (M01)',textbookRef:'人教版 必修第一册 第二章 第4节',curriculumTags:['物理观念','科学思维','科学探究'],difficulty:'高三一轮',version:'2.0.0'},
+  defaultView:{minScale:.001,scale:(p,{width,height})=>.58*width/(teachingExtent(p)*.24*Math.min(width,height)),offsetRatioX:-.30,offsetRatioY:-.07},
+  paramSchema,presets:kinematicsChasePresets,
+  engine:{createInitialState,step:stepKinematicsChase,computeObservables,checkInvariants},
+  layers:[{id:'cars',label:'A/B 质点示意',defaultVisible:true},{id:'eventPins',label:'精确临界事件',defaultVisible:true}],
+  telemetryChannels:[
+    {key:'vA',label:'A车速度 vA',unit:'m/s',color:'#38bdf8'},
+    {key:'vB',label:'B车速度 vB',unit:'m/s',color:'#f472b6'},
+    {key:'xA',label:'A车位置 xA',unit:'m',color:'#38bdf8'},
+    {key:'xB',label:'B车位置 xB',unit:'m',color:'#f472b6'},
+    {key:'deltaX',label:'有向位置差 xB−xA',unit:'m',color:'#4ade80'},
+    {key:'minGap',label:'历史最小间距',unit:'m',color:'#fbbf24'},
+    {key:'aA',label:'A车加速度',unit:'m/s²',color:'#38bdf8'},
+    {key:'aB',label:'B车加速度',unit:'m/s²',color:'#f472b6'}
+  ],
+  // Masses are explicit adjustable assumptions, used solely for the inferred net force.
+  getForceVectors:(s,p)=>{
+    const ma=p.massA??1000,mb=p.massB??1000,lane=laneHalf(p);
+    const a=[{id:'net-force-a',label:'A 合力 (mA aA)',origin:{x:s.xA,y:lane},force:{x:ma*s.aACurrent,y:0},color:'#38bdf8',category:'net' as const,unit:'N'},
+      {id:'net-force-b',label:'B 合力 (mB aB)',origin:{x:s.xB,y:-lane},force:{x:mb*s.aBCurrent,y:0},color:'#f472b6',category:'net' as const,unit:'N'}];
+    return a.filter(f=>f.force.x!==0);
   },
-  defaultView: { scale: 0.833, offsetRatioX: -0.2, offsetRatioY: 0.05 },
-  paramSchema,
-  presets: kinematicsChasePresets,
-  engine: {
-    createInitialState,
-    step: stepKinematicsChase,
-    computeObservables,
-    checkInvariants
-  },
-  layers: [
-    { id: 'cars', label: 'A/B 两车实时位置', defaultVisible: true },
-    { id: 'eventPins', label: '共速与相遇临界钉点', defaultVisible: true }
-  ],
-  telemetryChannels: [
-    { key: 'vA', label: 'A车速度 vA', unit: 'm/s', color: '#38bdf8' },
-    { key: 'vB', label: 'B车速度 vB', unit: 'm/s', color: '#f472b6' },
-    { key: 'deltaX', label: '两车间距 Δx', unit: 'm', color: '#4ade80' },
-    { key: 'xA', label: 'A车位移 xA', unit: 'm', color: '#fbbf24' }
-  ],
-  getForceVectors: (state) => [
-    { id: 'net-force-a', label: 'F_A (m=1 kg)', origin: { x: state.xA * 0.05, y: 0 }, force: { x: state.aACurrent, y: 0 }, color: '#38bdf8', category: 'net', unit: 'N' },
-    { id: 'net-force-b', label: 'F_B (m=1 kg)', origin: { x: state.xB * 0.05, y: 0 }, force: { x: state.aBCurrent, y: 0 }, color: '#f472b6', category: 'net', unit: 'N' }
-  ],
-  getControlHandles: (_state, params) => [
-    {
-      id: 'initial-gap',
-      label: `Δx₀=${params.xB0}m`,
-      position: { x: params.xB0 * 0.05, y: 0.2 },
-      handleKind: 'point',
-      color: '#f472b6',
-      onDrag: (wp) => ({ xB0: Math.max(5, Math.min(80, Math.round(wp.x / 0.05))) })
-    }
-  ],
-  referenceFrames: [
-    {
-      id: 'car-a',
-      label: 'A 车随动参考系',
-      getOrigin: (state) => ({ x: state.xA * 0.05, y: 0 })
-    }
-  ],
-  sceneSerializer: {
-    exportScene: (_s, params) => ({
-      schemaVersion: '2.0',
-      modelId: 'mech-kinematics-chase',
-      title: '追及相遇多过程',
-      params
-    }),
-    importScene: (dsl) => dsl.params as Partial<KinematicsChaseParams>
-  },
-  exportDiagramIR: (state, params) => {
-    const xa = Math.max(-2.5, Math.min(2.2, -1.8 + state.xA * 0.04));
-    const xb = Math.max(-2.2, Math.min(2.5, -1.8 + state.xB * 0.04));
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'hatchedGround', x1: -2.8, y1: -0.5, x2: 2.8, y2: -0.5 },
-      { kind: 'block', cx: xa, cy: -0.25, width: 0.6, height: 0.36, label: 'A' },
-      { kind: 'block', cx: xb, cy: -0.25, width: 0.6, height: 0.36, label: 'B' },
-      { kind: 'arrow', x1: xa, y1: 0.15, x2: xa + Math.max(0.2, state.vA * 0.04), y2: 0.15, label: 'v_A' },
-      { kind: 'arrow', x1: xb, y1: 0.15, x2: xb + Math.max(0.2, state.vB * 0.04), y2: 0.15, label: 'v_B' },
-      { kind: 'mathLabel', x: 0, y: 0.9, text: `x_0 = ${params.xB0} m, \\Delta x = ${(state.xB - state.xA).toFixed(2)} m`, align: 'middle' }
+  getControlHandles:(s,p)=>s.t===0?[{id:'initial-gap',label:'初始间距',position:{x:s.xB,y:-laneHalf(p)},handleKind:'point',color:'#f472b6',onDrag:wp=>({xB0:Math.max(5,Math.min(80,Math.round(wp.x)))})}]:[],
+  referenceFrames:[{id:'car-a',label:'A车随动坐标（平移）',description:'仅平移原点；A 加速时为非惯性参考系。',getOrigin:s=>({x:s.xA,y:0}),getVelocity:s=>({x:s.vA,y:0})}],
+  sceneSerializer:{exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'mech-kinematics-chase',title:'追及相遇多过程',params}),importScene:dsl=>dsl.params as Partial<KinematicsChaseParams>},
+  exportDiagramIR:(s,p,options)=>{
+    const span=Math.max(teachingExtent(p),s.xA,s.xB),lane=laneHalf(p),w=teachingExtent(p)*.035,h=w*.56,margin=span*.10;
+    const primitives:DiagramPrimitive[]=[
+      {kind:'line',x1:-margin,y1:0,x2:span+margin,y2:0},
+      {kind:'line',x1:s.xA,y1:-lane,x2:s.xA,y2:lane,dashed:true},
+      {kind:'line',x1:s.xB,y1:-lane,x2:s.xB,y2:lane,dashed:true},
+      {kind:'block',cx:s.xA,cy:lane,width:w,height:h,label:'A'},
+      {kind:'block',cx:s.xB,cy:-lane,width:w,height:h,label:'B'},
+      {kind:'mathLabel',x:s.xA,y:lane+h*1.4,text:'x_A='+s.xA.toFixed(2)+' m',align:'middle'},
+      {kind:'mathLabel',x:s.xB,y:-lane-h*1.4,text:'x_B='+s.xB.toFixed(2)+' m',align:'middle'},
+      {kind:'mathLabel',x:span*.5,y:lane*2.3,text:'|\\Delta x|='+Math.abs(s.xB-s.xA).toFixed(2)+' m',align:'middle'}
     ];
-    return {
-      width: 720,
-      height: 360,
-      viewBox: { minX: -3, minY: -1.2, maxX: 3, maxY: 1.4 },
-      title: '追及相遇过程示意图',
-      primitives
-    };
+    if(options?.showVelocityVectors!==false){
+      if(s.vA>0)primitives.push({kind:'arrow',x1:s.xA,y1:lane+h,x2:s.xA+s.vA*.5,y2:lane+h,label:'v_A'});
+      if(s.vB>0)primitives.push({kind:'arrow',x1:s.xB,y1:-lane+h,x2:s.xB+s.vB*.5,y2:-lane+h,label:'v_B'});
+    }
+    return {width:900,height:440,viewBox:{minX:-margin,maxX:span+margin+Math.max(s.vA,s.vB)*.5,minY:-lane*2.9,maxY:lane*2.9},title:'一维质点追及相遇（分行仅为示意）',primitives};
   },
-  formatFormulas: (state) => [
-    {
-      id: 'chase-eq',
-      label: '实时追及间距与相对速度',
-      latex: '\\Delta x = x_B - x_A, \\quad \\Delta v = v_A - v_B',
-      substitutedLatex: `\\Delta x = ${(state.xB - state.xA).toFixed(2)}\\text{ m},\\; v_A=${state.vA.toFixed(2)},\\; v_B=${state.vB.toFixed(2)}\\text{ m/s}`
-    }
+  formatFormulas:(s,p)=>[
+    {id:'chase-eq',label:'有向位置差与相对速度',latex:String.raw`\Delta x=x_B-x_A,\quad\dot{\Delta x}=v_B-v_A`,substitutedLatex:`\\Delta x=${(s.xB-s.xA).toFixed(3)}\\,\\mathrm m`},
+    {id:'chase-kinematics',label:'每个恒加速度段独立求解；停止后 a=0',latex:String.raw`x=x_s+v_s\tau+\tfrac12a\tau^2`,substitutedLatex:`v_A=${s.vA.toFixed(2)},\\;v_B=${s.vB.toFixed(2)}\\,\\mathrm{m/s}`},
+    {id:'chase-gap',label:'实际间距与历史最小间距',latex:String.raw`d=|\Delta x|,\quad d_{\min}=\min_{0\le u\le t}d(u)`,substitutedLatex:`d_{\\min}=${s.minGap.toFixed(3)}\\,\\mathrm m`}
   ],
-  renderCanvas: (ctx, state, _params, viewport, activeLayers) => {
-    const m = createWorldMapper(viewport);
-    const basePpm = Math.min(viewport.width, viewport.height) * 0.24 * 0.833;
-    const toScr = (xMeters: number, laneY: number) => {
-      const point = m.toScreen(xMeters * 0.05, -laneY);
-      return { sx: point.x, sy: point.y };
-    };
-
+  renderCanvas:(ctx,s,p,vp,layers)=>{
+    const m=createWorldMapper(vp),paper=vp.theme==='projector',extent=teachingExtent(p),lane=laneHalf(p),span=Math.max(extent,s.xA,s.xB)*1.04;
+    const axis=paper?'#64748b':'#64748b',ink=paper?'#1e293b':'#e2e8f0',blue=paper?'#0369a1':'#38bdf8',pink=paper?'#be185d':'#f472b6',amber=paper?'#92400e':'#fbbf24';
+    const line=(x1:number,y1:number,x2:number,y2:number,color:string,width=1,dashed=false)=>{const a=m.toScreen(x1,y1),b=m.toScreen(x2,y2);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dashed?[5,5]:[]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);};
+    const text=(x:number,y:number,label:string,color:string,align:CanvasTextAlign='center')=>{const q=m.toScreen(x,y);ctx.fillStyle=color;ctx.font='12px system-ui';ctx.textAlign=align;ctx.fillText(label,q.x,q.y);};
     ctx.save();
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    const trackStart = toScr(-20, 0.35);
-    const trackEnd = toScr(120, 0.35);
-    ctx.moveTo(trackStart.sx, trackStart.sy);
-    ctx.lineTo(trackEnd.sx, trackEnd.sy);
-    ctx.stroke();
-
-    if (activeLayers.has('cars')) {
-      const pA = toScr(state.xA, 0);
-      const pB = toScr(state.xB, 0);
-      ctx.fillStyle = '#38bdf8';
-      const carWidth = m.len(44 / basePpm);
-      const carHeight = m.len(28 / basePpm);
-      ctx.fillRect(pA.sx - carWidth * 0.5, pA.sy - carHeight * 0.5, carWidth, carHeight);
-      ctx.fillStyle = '#0f172a';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('A', pA.sx - m.len(5 / basePpm), pA.sy + m.len(5 / basePpm));
-
-      ctx.fillStyle = '#f472b6';
-      ctx.fillRect(pB.sx - carWidth * 0.5, pB.sy - carHeight * 0.5, carWidth, carHeight);
-      ctx.fillStyle = '#0f172a';
-      ctx.fillText('B', pB.sx - m.len(5 / basePpm), pB.sy + m.len(5 / basePpm));
-
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 12px monospace';
-      ctx.fillText(`vA=${state.vA.toFixed(1)} m/s`, pA.sx - m.len(28 / basePpm), pA.sy - m.len(22 / basePpm));
-      ctx.fillText(`vB=${state.vB.toFixed(1)} m/s`, pB.sx - m.len(28 / basePpm), pB.sy - m.len(22 / basePpm));
+    line(-extent*.08,0,span,0,axis,1.5);
+    line(-extent*.08,lane,span,lane,axis,1,true);
+    line(-extent*.08,-lane,span,-lane,axis,1,true);
+    const tick=tickStep(span);
+    for(let x=0;x<=span;x+=tick){line(x,-lane*.10,x,lane*.10,axis,1);text(x,-lane*.27,String(Number(x.toPrecision(5))),ink);}
+    text(span,0,'x / m',ink,'left');
+    text(-extent*.055,lane*1.55,'A',blue,'left');text(-extent*.055,-lane*1.55,'B',pink,'left');
+    if(layers.has('cars')){
+      const size=Math.max(10,Math.min(30,m.len(extent*.035))),height=size*.62;
+      for(const car of [{name:'A',x:s.xA,v:s.vA,a:s.aACurrent,y:lane,c:blue},{name:'B',x:s.xB,v:s.vB,a:s.aBCurrent,y:-lane,c:pink}]){
+        const q=m.toScreen(car.x,car.y);
+        line(car.x,0,car.x,car.y,car.c,1,true);
+        ctx.fillStyle=car.c;ctx.beginPath();ctx.roundRect(q.x-size*.5,q.y-height*.5,size,height,Math.min(4,height*.2));ctx.fill();
+        ctx.fillStyle=paper?'#fff':'#0f172a';ctx.font='bold 11px system-ui';ctx.textAlign='center';ctx.fillText(car.name,q.x,q.y+4);
+        ctx.fillStyle=car.c;ctx.font='12px ui-monospace,monospace';ctx.fillText(`x=${car.x.toFixed(2)} m · v=${car.v.toFixed(2)} m/s`,q.x,q.y+(car.name==='A'?-height*.5-10:height*.5+16));
+      }
+      if(Math.abs(s.xB-s.xA)>0)line(Math.min(s.xA,s.xB),lane*2,Math.max(s.xA,s.xB),lane*2,amber,2);
+      text((s.xA+s.xB)/2,lane*2.25,`d = ${Math.abs(s.xB-s.xA).toFixed(2)} m`,amber);
     }
-
-    if (activeLayers.has('eventPins')) {
-      for (const ev of state.events) {
-        if (!ev.position) continue;
-        const p = toScr(ev.position.x, -0.5);
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(p.sx, p.sy, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillText(`${ev.label} @${ev.time.toFixed(2)}s`, p.sx + 8, p.sy + 4);
+    if(layers.has('eventPins')){
+      // Same-instant events are distinct records; combine their labels into one readable pin.
+      const groups=new Map<number,typeof s.events[number][]>();
+      for(const ev of s.events){const a=groups.get(ev.time)??[];a.push(ev);groups.set(ev.time,a);}
+      const labelRows: {left:number;right:number}[][]=[];
+      for(const [t,evs] of groups){
+        // Stop positions belong to their own car, not always A.
+        for(const ev of evs){if(!ev.position)continue;const q=m.toScreen(ev.position.x,0);ctx.fillStyle=amber;ctx.beginPath();ctx.arc(q.x,q.y,4,0,Math.PI*2);ctx.fill();}
+        const ev=evs[0]!,x=ev.position?.x??s.xA,q=m.toScreen(x,-lane*2);
+        ctx.fillStyle=amber;ctx.textAlign='center';ctx.font='11px system-ui';
+        const names=evs.map(e=>e.id.startsWith('stop-a')?'A停':e.id.startsWith('stop-b')?'B停':e.id.startsWith('co-vel')?'共速':'相遇').join(' / ');
+        const label=names+' '+t.toFixed(3)+'s', half=ctx.measureText(label).width/2+5;
+        let row=0;while(labelRows[row]?.some(b=>q.x-half<b.right&&q.x+half>b.left))row++;
+        (labelRows[row]??=[]).push({left:q.x-half,right:q.x+half});
+        ctx.fillText(label,q.x,q.y+row*15);
       }
     }
     ctx.restore();
   }
 });
-
 export default mechKinematicsChasePlugin;

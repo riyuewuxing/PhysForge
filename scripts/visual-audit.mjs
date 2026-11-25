@@ -327,6 +327,44 @@ async function auditB5Ode(page,origin){
   return {initial,harmonic,invalid,pend,orbit0,orbit};
 }
 
+async function auditM01Chase(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-kinematics-chase');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-kinematics-chase',null,{timeout:20000});
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-chase-rendered'));
+  const waitInitial=async(x)=>page.waitForFunction(x=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-chase-rendered')||'null');return d?.t===0&&d.xB===x;},x,{timeout:5000});
+  const runTo=async(t)=>{await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-chase-rendered')||'null')?.t>t,t,{timeout:15000});await play.click();const s=await read();await page.waitForFunction(t=>Math.abs(Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-last-sample-t'))-t)<1e-10,t===s.t?t:s.t);return s;};
+  await selectPreset(page,'catchup-acceleration',true);await waitInitial(16);
+  await page.getByTestId('chase-scope-empty').waitFor({state:'visible'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')==='vA'&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')==='vB');
+  const initial=await read();if(initial.deltaX!==16||initial.minGap!==16||initial.meetCount!==0)throw Error('M01 initial data '+JSON.stringify(initial));
+  await page.screenshot({path:path.join(OUT_DIR,'H12_M01_initial.png')});
+  await page.locator('[data-testid="topbar"]').getByLabel('播放倍速').selectOption('2');
+  const catchup=await runTo(9.70);
+  if(Math.abs(catchup.xA-catchup.t**2)>1e-7||Math.abs(catchup.xB-(16+8*catchup.t))>1e-7||Math.abs(catchup.vA-2*catchup.t)>1e-7||Math.abs(catchup.firstCoVelocityTime-4)>1e-9||Math.abs(catchup.firstMeetTime-(4+4*Math.SQRT2))>1e-9||catchup.meetCount!==1||catchup.minGap!==0||catchup.deltaX>=0)throw Error('M01 analytic crossing '+JSON.stringify(catchup));
+  await page.screenshot({path:path.join(OUT_DIR,'H12_M01_catchup_velocity.png')});
+  for(const [id,key] of [['scope-channel-a','xA'],['scope-channel-b','xB']]){
+    const b=page.getByTestId(id);for(let i=0;i<8&&await b.getAttribute('data-channel-key')!==key;i++)await b.click();
+    if(await b.getAttribute('data-channel-key')!==key)throw Error('M01 position channel missing '+key);
+  }
+  await page.waitForFunction(t=>{const d=document.querySelector('[data-testid="uplot-container"]')?.dataset;return d?.plotChannelA==='xA'&&d?.plotChannelB==='xB'&&Number(d.sampleCount)>2&&Math.abs(Number(d.lastSampleT)-t)<1e-10;},catchup.t,{timeout:5000});
+  await page.screenshot({path:path.join(OUT_DIR,'H12_M01_catchup_position.png')});
+  await selectPreset(page,'brake-safe-margin',true);await waitInitial(42);
+  const safe=await runTo(5.45);
+  if(Math.abs(safe.xA-58)>1e-8||safe.vA!==0||safe.aA!==0||Math.abs(safe.xB-(42+6*safe.t))>1e-8||Math.abs(safe.minGap-11.9)>1e-8||Math.abs(safe.firstCoVelocityTime-3.9)>1e-8||safe.meetCount!==0)throw Error('M01 safe braking '+JSON.stringify(safe));
+  if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+  await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  await page.screenshot({path:path.join(OUT_DIR,'H12_M01_safe_paper.png')});
+  if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+  await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  await page.locator('[data-testid="topbar"]').getByLabel('播放倍速').selectOption('1');
+  console.log('H12 M01 online '+JSON.stringify({initial,catchup,safe}));
+  return {initial,catchup,safe};
+}
+
 async function runWaveBCoordinateAudit(page, origin) {
   const cases = [
     { id: 'em-induction-double-rod', name: 'E04 defaultView' },
@@ -1745,6 +1783,7 @@ async function main() {
     await page.screenshot({path:path.join(OUT_DIR,'N01_06_compton_direct_drag.png')});
     const b4AnalyticReport=await auditB4Analytic(page,origin);
     const b5OdeReport=await auditB5Ode(page,origin);
+    const m01ChaseReport=await auditM01Chase(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -1907,7 +1946,21 @@ async function main() {
       const invalid=await read();if(invalid.t!==0)throw Error('B5 offline singular formula advanced');await b5Page.screenshot({path:path.join(OUT_DIR,'H11_B5_offline_invalid_paper.png')});
       if(b5Errors.length||b5Network.length)throw Error('B5 offline errors '+JSON.stringify({b5Errors,b5Network}));Object.assign(b5OfflineReport,{step,invalid,errors:b5Errors,network:b5Network});
     }finally{await b5Context.close();}
-    const summary = { b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const m01File=path.join(OUT_DIR,'H12_M01_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-kinematics-chase','--preset','brake-safe-margin','--out',m01File],{stdio:'inherit'});
+    const m01Context=await browser.newContext({viewport:VIEWPORT,offline:true});const m01Page=await m01Context.newPage(),m01Errors=[],m01Network=[],m01OfflineReport={};
+    m01Page.on('pageerror',e=>m01Errors.push(e.message));m01Page.on('console',m=>{if(m.type()==='error')m01Errors.push(m.text());});m01Page.on('request',r=>{if(/^https?:/.test(r.url()))m01Network.push(r.url());});
+    try{
+      await m01Page.goto(pathToFileURL(m01File).href);const canvas=m01Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-chase-rendered'));
+      await m01Page.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      await m01Page.getByRole('button',{name:'单步',exact:true}).click();await m01Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-chase-rendered')||'null')?.t>0);
+      const step=await read();if(Math.abs(step.t-1/60)>1e-10||Math.abs(step.xA-20*step.t)>1e-9||Math.abs(step.xB-(42+6*step.t))>1e-9||step.aA!==0)throw Error('M01 offline reaction step '+JSON.stringify(step));
+      await m01Page.getByLabel('播放倍速').selectOption('2');const play=m01Page.getByTestId('sf-play-pause');await play.click();await m01Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-chase-rendered')||'null')?.t>5.45,null,{timeout:15000});await play.click();
+      const stop=await read();if(stop.vA!==0||stop.aA!==0||Math.abs(stop.xA-58)>1e-8||Math.abs(stop.minGap-11.9)>1e-8||Math.abs(stop.firstCoVelocityTime-3.9)>1e-8||stop.meetCount!==0)throw Error('M01 offline braking '+JSON.stringify(stop));
+      await m01Page.getByRole('button',{name:'黑板深蓝'}).click();await m01Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');await m01Page.screenshot({path:path.join(OUT_DIR,'H12_M01_offline_safe_paper.png')});
+      if(m01Errors.length||m01Network.length)throw Error('M01 offline errors '+JSON.stringify({m01Errors,m01Network}));Object.assign(m01OfflineReport,{step,stop,errors:m01Errors,network:m01Network});
+    }finally{await m01Context.close();}
+    const summary = { m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

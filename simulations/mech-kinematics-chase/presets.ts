@@ -4,8 +4,8 @@ import type { KinematicsChaseParams } from './engine.js';
 export const kinematicsChasePresets: readonly PresetSpec<KinematicsChaseParams>[] = [
   {
     id: 'brake-safe-margin',
-    name: '1. 匀加速追及前方匀速车（共速不撞临界）',
-    description: 'B 车在前匀速，A 车从静止出发经反应后匀加速或减速，观察共速时刻最小间距。',
+    name: '1. 反应后制动追及匀速车（安全间距）',
+    description: 'B 车匀速 6 m/s，A 初速 20 m/s，反应 0.4 s 后以 −4 m/s² 制动；共速时最小间距 11.9 m。',
     params: {
       scenario: 'brake-collision-avoid',
       vA0: 20,
@@ -19,7 +19,7 @@ export const kinematicsChasePresets: readonly PresetSpec<KinematicsChaseParams>[
   {
     id: 'catchup-acceleration',
     name: '2. 静止加速追及匀速目标 (Δx极大值与相遇)',
-    description: 'A 车初速度 0、a=2 m/s² 追赶前方 16 m 处匀速 8 m/s 的 B 车，精确捕获共速 t=4s 与相遇 t=8s。',
+    description: 'A 车初速度 0、a=2 m/s² 追赶前方 16 m 处匀速 8 m/s 的 B 车，精确捕获共速 t=4s 与相遇 t=4+4√2≈9.657s。',
     params: {
       scenario: 'accelerate-chase',
       vA0: 0,
