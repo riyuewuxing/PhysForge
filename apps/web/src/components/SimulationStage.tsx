@@ -719,6 +719,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
   };
 
+  const syncingPlotRef = useRef(false);
   const syncUPlotData = (force = false) => {
     const plot = uplotInstanceRef.current;
     if (!plot || latestRef.current.oscilloscopeCollapsed) return;
@@ -736,9 +737,17 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       seriesA[i] = chA ? (s.observables[chA] ?? (circuit?null:0)) : (circuit?null:0);
       seriesB[i] = chB ? (s.observables[chB] ?? (circuit?null:0)) : (circuit?null:0);
     }
-    plot.setData([ts, seriesA, seriesB]);
+    syncingPlotRef.current = true;
+    try { plot.setData([ts, seriesA, seriesB]); }
+    finally { syncingPlotRef.current = false; }
     // Update only the instrument DOM, not React state on every animation frame.
-    if (uplotWrapRef.current) uplotWrapRef.current.dataset.sampleCount = String(snaps.length);
+    if (uplotWrapRef.current) {
+      uplotWrapRef.current.dataset.sampleCount = String(snaps.length);
+      if (circuit) {
+        uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
+        uplotWrapRef.current.dataset.scopeMax = String(plot.scales.x?.max ?? '');
+      }
+    }
     lastPlotSyncMsRef.current = now;
   };
 
@@ -929,8 +938,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
-    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror'].includes(latestRef.current.plugin.meta.id)){
+    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna'].includes(latestRef.current.plugin.meta.id)){
       // The final displayed physical sample and chart must agree after pause.
+      const current = latestRef.current;
+      if (current.plugin.meta.id === 'builder-circuit-mna' &&
+          current.scrubTime === null && simStateModelIdRef.current === current.plugin.meta.id &&
+          simStateResetNonceRef.current === current.resetNonce && simStateRef.current !== null &&
+          simulationTimeRef.current > lastSnapshotTRef.current) {
+        const state = simStateRef.current, t = simulationTimeRef.current;
+        snapshotsRef.current.push({ t, state, observables: current.plugin.engine.computeObservables(state, current.params) });
+        if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
+        lastSnapshotTRef.current = t;
+      }
       renderFrameToCanvas();syncUPlotData(true);emitTelemetrySummary(true);
     }
   }, [isPlaying]);
@@ -1179,7 +1198,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (!wrap || oscilloscopeCollapsed || presentationMode) return;
 
     const width = Math.max(1, wrap.clientWidth);
-    const height = heroScope ? (wrap.parentElement?.clientHeight || 152) : 84;
+    const height = heroScope ? (wrap.parentElement?.clientHeight || 152) : circuitScope ? 104 : 84;
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.16)';
 
@@ -1192,7 +1211,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       },
       legend: { show: false },
       scales: {
-        x: { time: false },
+        x: { time: false, ...(circuitScope ? { range: (_u: uPlot, min: number, max: number): [number,number] => {
+          const lo = Number.isFinite(min) ? min : 0;
+          return [lo, Math.max(lo + .1, Number.isFinite(max) ? max : lo)];
+        }} : {}) },
         y: { auto: true },
         ...(splitScopeUnits ? { y2: { auto: true } } : {})
       },
@@ -1200,9 +1222,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         {
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
-          values: (_u, splits) => splits.map((v) => `${v.toFixed(1)}s`),
+          values: (_u, splits) => splits.map((v) => circuitScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
           ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : {}),
-          ...(heroScope ? { size: 30 } : {})
+          ...(heroScope ? { size: 30 } : circuitScope ? { size: 24 } : {})
         },
         {
           stroke: semanticScope ? scopeColorA : textColor,
@@ -1249,7 +1271,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           (u) => {
             const idx = u.cursor.idx;
             if (idx === null || idx === undefined) return;
-            if (latestRef.current.isPlaying) return;
+            if (latestRef.current.isPlaying || syncingPlotRef.current) return;
             const tVal = u.data[0]?.[idx];
             if (typeof tVal === 'number' && Number.isFinite(tVal)) {
               latestRef.current.onScrubTime(tVal);
@@ -1267,7 +1289,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       if (!uplotWrapRef.current) return;
       plot.setSize({
         width: Math.max(1, uplotWrapRef.current.clientWidth),
-        height: heroScope ? (uplotWrapRef.current.parentElement?.clientHeight || 152) : 84
+        height: heroScope ? (uplotWrapRef.current.parentElement?.clientHeight || 152) : circuitScope ? 104 : 84
       });
     });
     ro.observe(wrap);
@@ -1278,7 +1300,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       plot.destroy();
       uplotInstanceRef.current = null;
     };
-  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope,semanticScope]);
+  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope,semanticScope,circuitScope]);
 
   return (
     <div className="relative flex flex-1 min-h-0">
@@ -1656,7 +1678,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               <ChevronDown className="h-4 w-4" />
             </button>
           </div>
-          <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : 'h-[76px]'}`}>
+          <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : circuitScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (

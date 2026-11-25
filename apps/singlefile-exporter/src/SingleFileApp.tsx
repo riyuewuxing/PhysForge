@@ -120,8 +120,11 @@ export const SingleFileApp: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const uplotWrapRef = useRef<HTMLDivElement | null>(null);
   const uplotRef = useRef<uPlot | null>(null);
+  const syncingPlotRef = useRef(false);
 
   const simStateRef = useRef<unknown>(null);
+  // Physics time belongs to the integrator, not the downsampled plot history.
+  const simulationTimeRef = useRef(0);
   const initialStateRef = useRef<unknown>(null);
   const eventsRef = useRef<PhysicsEvent[]>([]);
   const snapshotsRef = useRef<SnapshotFrame[]>([]);
@@ -223,11 +226,18 @@ export const SingleFileApp: React.FC = () => {
     if (!plot) return;
     const snaps = snapshotsRef.current;
     const { channelA: chA, channelB: chB } = latestRef.current;
-    plot.setData([
-      snaps.map((s) => s.t),
-      snaps.map((s) => (chA ? s.observables[chA] ?? (circuitSlice?null:0) : (circuitSlice?null:0))),
-      snaps.map((s) => (chB ? s.observables[chB] ?? (circuitSlice?null:0) : (circuitSlice?null:0)))
-    ]);
+    syncingPlotRef.current = true;
+    try {
+      plot.setData([
+        snaps.map((s) => s.t),
+        snaps.map((s) => (chA ? s.observables[chA] ?? (circuitSlice?null:0) : (circuitSlice?null:0))),
+        snaps.map((s) => (chB ? s.observables[chB] ?? (circuitSlice?null:0) : (circuitSlice?null:0)))
+      ]);
+    } finally { syncingPlotRef.current = false; }
+    if (circuitSlice && uplotWrapRef.current) {
+      uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
+      uplotWrapRef.current.dataset.scopeMax = String(plot.scales.x?.max ?? '');
+    }
   };
 
   const emitSummary = (force = false) => {
@@ -264,6 +274,7 @@ export const SingleFileApp: React.FC = () => {
     const init = targetPlugin.engine.createInitialState(params);
     const obs0 = targetPlugin.engine.computeObservables(init, params);
     simStateRef.current = init;
+    simulationTimeRef.current = 0;
     initialStateRef.current = init;
     eventsRef.current = [];
     snapshotsRef.current = [{ t: 0, state: init, observables: obs0 }];
@@ -275,11 +286,27 @@ export const SingleFileApp: React.FC = () => {
     emitSummary(true);
   }, [resetNonce]);
 
+  // Preserve the exact final integration sample on pause. A frame may have
+  // advanced fewer than SNAPSHOT_INTERVAL seconds since the last plot sample.
+  useEffect(() => {
+    if (isPlaying) return;
+    const state = simStateRef.current;
+    const t = simulationTimeRef.current;
+    if (state !== null && t > lastSnapTRef.current) {
+      snapshotsRef.current.push({ t, state, observables: targetPlugin.engine.computeObservables(state, latestRef.current.params) });
+      if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
+      lastSnapTRef.current = t;
+    }
+    drawCanvas();
+    syncPlot();
+    emitSummary(true);
+  }, [isPlaying]);
+
   useEffect(() => {
     if (stepOnceNonce === 0) return;
     let cur = simStateRef.current;
     if (cur === null) return;
-    let simT = snapshotsRef.current[snapshotsRef.current.length - 1]?.t ?? 0;
+    let simT = simulationTimeRef.current;
     for (let i = 0; i < 4; i++) {
       const res = targetPlugin.engine.step(cur, params, FIXED_DT);
       cur = res.nextState;
@@ -287,6 +314,7 @@ export const SingleFileApp: React.FC = () => {
       if (res.events.length > 0) eventsRef.current = [...eventsRef.current, ...res.events];
     }
     simStateRef.current = cur;
+    simulationTimeRef.current = simT;
     snapshotsRef.current.push({
       t: simT,
       state: cur,
@@ -355,7 +383,7 @@ export const SingleFileApp: React.FC = () => {
 
       let stepped = false;
       let cur = simStateRef.current;
-      let simT = snapshotsRef.current[snapshotsRef.current.length - 1]?.t ?? 0;
+      let simT = simulationTimeRef.current;
 
       while (accRef.current >= FIXED_DT && cur !== null) {
         const res = targetPlugin.engine.step(cur, latestRef.current.params, FIXED_DT);
@@ -377,6 +405,7 @@ export const SingleFileApp: React.FC = () => {
 
       if (stepped && cur !== null) {
         simStateRef.current = cur;
+        simulationTimeRef.current = simT;
         drawCanvas();
         syncPlot();
         emitSummary(false);
@@ -402,10 +431,18 @@ export const SingleFileApp: React.FC = () => {
       {
         width: Math.max(280, wrap.clientWidth),
         height: 150,
-        ...(split?{scales:{x:{time:false},y:{auto:true},y2:{auto:true}}}:{}),
+        ...(circuitSlice ? { scales: {
+          x: { time: false, range: (_u: uPlot, min: number, max: number): [number, number] => {
+            const lo = Number.isFinite(min) ? min : 0;
+            return [lo, Math.max(lo + .1, Number.isFinite(max) ? max : lo)];
+          }},
+          y: { auto: true }, ...(split ? { y2: { auto: true } } : {})
+        }} : {}),
         axes: [
-          { stroke: textColor, grid: { stroke: gridColor } },
-          { stroke: textColor, grid: { stroke: gridColor } },
+          { stroke: textColor, grid: { stroke: gridColor }, ...(circuitSlice ? {
+            values: (_u: uPlot, splits: number[]) => splits.map(v => Number(v.toPrecision(4)) + 's')
+          } : {}) },
+          { stroke: circuitSlice ? paint(specA?.color ?? '#38bdf8') : textColor, grid: { stroke: gridColor } },
           ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false}}]:[])
         ],
         series: [
@@ -417,7 +454,7 @@ export const SingleFileApp: React.FC = () => {
           setCursor: [
             (u) => {
               const idx = u.cursor.idx;
-              if (idx == null || latestRef.current.isPlaying) return;
+              if (idx == null || latestRef.current.isPlaying || syncingPlotRef.current) return;
               const tv = u.data[0]?.[idx];
               if (typeof tv === 'number' && Number.isFinite(tv)) setScrubTime(tv);
             }
@@ -453,7 +490,7 @@ export const SingleFileApp: React.FC = () => {
       >
         <div>
           <div className="font-bold text-base">{targetPlugin.meta.title}</div>
-          <div className="text-xs" style={{ color: 'var(--pf-text-muted)' }}>
+          <div className="text-xs" data-testid="sf-summary-clock" data-sample-time={summary.t} style={{ color: 'var(--pf-text-muted)' }}>
             离线课堂单文件切片 · {targetPlugin.meta.textbookRef} · t = {summary.t.toFixed(3)} s
           </div>
         </div>

@@ -195,7 +195,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
                 return <div key={key} className="flex justify-between gap-2 text-xs"><span>{label}</span><span data-testid={'b2-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof value==='number'&&Number.isFinite(value)?value.toFixed(3)+' '+unit:'—'}</span></div>;
               })}
             </section>}
-            {!divider&&<section data-testid="b2-topology-readouts" className="space-y-1.5" style={{color:'var(--pf-text-muted)'}}>
+            {!divider&&<section data-testid="b2-topology-readouts" data-sample-time={telemetry.t} className="space-y-1.5" style={{color:'var(--pf-text-muted)'}}>
               {telemetry.observables.solutionDefined===0&&<div data-testid="b2-invalid" className="text-xs text-rose-400">{params.topology==='nonlinear-lamp-diode'?'超出模型适用范围':emf===0?'理想零阻回路：电流不唯一':'理想短路：无有限解'}</div>}
               {(circuitReadouts[String(params.topology)]??[]).map(({key,label,unit})=>{const value=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2 text-xs"><span>{label}</span><span data-testid={'b2-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{telemetry.observables.solutionDefined!==0&&typeof value==='number'&&Number.isFinite(value)?value.toFixed(3)+' '+unit:'—'}</span></div>;})}
             </section>}
