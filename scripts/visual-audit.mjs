@@ -389,6 +389,10 @@ async function auditM02Equilibrium(page,origin){
   const sphere=await read();
   const checkSphere=d=>{const L=Math.sqrt(1+1.6**2-3.2*Math.cos(d.angleDeg*Math.PI/180));if(Math.abs(d.force1-19.6/1.6)>1e-9||Math.abs(d.force2-19.6*L/1.6)>1e-9||Math.abs(d.ropeLengthM-L)>1e-9||d.netResidualN>=1e-10)throw Error('M02 hemisphere '+JSON.stringify(d));};
   checkSphere(sphere);
+  const expand=page.getByRole('button',{name:'展开示波器',exact:true});
+  if(await expand.isVisible())await expand.click();
+  await page.getByTestId('uplot-container').waitFor({state:'attached'});
+  await page.getByTestId('equilibrium-scope-empty').waitFor({state:'visible'});
   await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-equilibrium-rendered')||'null')?.t>.8,null,{timeout:10000});await play.click();
   const scanned=await read();checkSphere(scanned);if(Math.abs(scanned.angleDeg-sphere.angleDeg)<1)throw Error('M02 scan did not change');
   await page.waitForFunction(t=>Math.abs(Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-last-sample-t'))-t)<1e-10,scanned.t,{timeout:5000});
