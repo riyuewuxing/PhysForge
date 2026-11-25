@@ -104,9 +104,13 @@ export async function auditSceneHeadless(
   const dt = options.dt ?? 0.02;
   try {
     for (let i = 0; i < steps; i++) {
-      state = plugin.engine.step(state, resolvedParams, dt).nextState;
+      const step=plugin.engine.step(state,resolvedParams,dt);
+      state=step.nextState;
+      if(step.advancedTime===0)throw new Error('Engine did not advance; cannot certify headless physics.');
+      if(step.halt)break;
     }
   } catch (err) {
+    plugin.engine.disposeState?.(state);
     return {
       passed: false,
       scene,
@@ -116,6 +120,7 @@ export async function auditSceneHeadless(
     };
   }
 
+  try {
   const finalObservables = plugin.engine.computeObservables(state, resolvedParams);
   for (const [k, v] of Object.entries(finalObservables)) {
     if (!Number.isFinite(v)) {
@@ -141,6 +146,7 @@ export async function auditSceneHeadless(
     invariants,
     finalObservables
   };
+  } finally { plugin.engine.disposeState?.(state); }
 }
 
 export interface RefineLoopResult {

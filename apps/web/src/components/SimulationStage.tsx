@@ -78,6 +78,10 @@ function getDefaultScopeChannels(
     const pairs:Record<string,[string,string]>={'divider-lamp':['totalCurrent','lampCurrent'],'closed-power':['totalCurrent','outputPower'],'series-parallel-dynamic':['branchCurrent1','branchCurrent2'],'rc-transient':['capVoltage','capCurrent'],'rc-bridge-charge':['capVoltage','capCurrent'],'nonlinear-lamp-diode':['totalCurrent','terminalVoltage']};
     const pair=pairs[String(params.topology)];if(pair&&pair.every(k=>channels.some(c=>c.key===k)))return pair;
   }
+  if(modelId==='builder-mechanics-lab'){
+    const pair=params.scenario==='atwood-constrained'?['primaryVy','secondaryVy']:params.scenario==='spring-oscillator'?['kineticEnergy','springPotentialEnergy']:null;
+    if(pair&&pair.every(k=>channels.some(c=>c.key===k)))return [pair[0]!,pair[1]!];
+  }
   const singleRodE04 = modelId === 'em-induction-double-rod' && params.rodMode === 'single';
   const defaultA = singleRodE04
     ? channels.find((channel) => channel.key === 'current')?.key
@@ -264,8 +268,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const allowed:Record<string,string[]>={'divider-lamp':['totalCurrent','lampCurrent','lampVoltage','outputPower'],'closed-power':['totalCurrent','terminalVoltage','outputPower'],'series-parallel-dynamic':['totalCurrent','branchCurrent1','branchCurrent2','terminalVoltage','outputPower'],'rc-transient':['capVoltage','capCurrent'],'rc-bridge-charge':['capVoltage','capCurrent','totalCurrent','branchCurrent1','branchCurrent2'],'nonlinear-lamp-diode':['totalCurrent','terminalVoltage','outputPower']};
       const keys=allowed[String(params.topology)];if(keys)return plugin.telemetryChannels.filter(c=>keys.includes(c.key));
     }
+    if(plugin.meta.id==='builder-mechanics-lab'){
+      const keys=params.scenario==='atwood-constrained'?['primaryVy','secondaryVy','constraintTensionN']:params.scenario==='spring-oscillator'?['kineticEnergy','springPotentialEnergy','primaryVx']:['totalMomentumX','kineticEnergy','primaryVx'];
+      return plugin.telemetryChannels.filter(c=>keys.includes(c.key));
+    }
     return plugin.telemetryChannels;
-  },[plugin.meta.id,plugin.telemetryChannels,params.mode,params.topology]);
+  },[plugin.meta.id,plugin.telemetryChannels,params.mode,params.topology,params.scenario]);
   const [channelA, setChannelA] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[0]);
   const [channelB, setChannelB] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[1]);
 
@@ -274,10 +282,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics'].includes(plugin.meta.id)?params.mode:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
+  const disposeStateRef = useRef<((state:unknown)=>void)|undefined>(undefined);
   const simStateModelIdRef = useRef<string | null>(null);
   const simStateResetNonceRef = useRef<number | null>(null);
   const initialStateRef = useRef<unknown>(null);
@@ -703,6 +712,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if(p.meta.id==='builder-optics-ray'&&frame&&drawState!==null){
       canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...p.engine.computeObservables(drawState,pm)});
     }
+    if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
+      canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...p.engine.computeObservables(drawState,pm)});
+    }
     if(p.meta.id==='builder-circuit-mna'&&frame&&drawState!==null){
       canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...p.engine.computeObservables(drawState,pm)});
     }
@@ -733,13 +745,14 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
+    const mechanics=latestRef.current.plugin.meta.id==='builder-mechanics-lab';
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
       const s = snaps[i]!;
       ts[i] = s.t;
-      seriesA[i] = chA ? (s.observables[chA] ?? (circuit?null:0)) : (circuit?null:0);
-      seriesB[i] = chB ? (s.observables[chB] ?? (circuit?null:0)) : (circuit?null:0);
+      seriesA[i] = chA ? (s.observables[chA] ?? (circuit||mechanics?null:0)) : (circuit||mechanics?null:0);
+      seriesB[i] = chB ? (s.observables[chB] ?? (circuit||mechanics?null:0)) : (circuit||mechanics?null:0);
     }
     syncingPlotRef.current = true;
     try { plot.setData([ts, seriesA, seriesB]); }
@@ -747,10 +760,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     // Update only the instrument DOM, not React state on every animation frame.
     if (uplotWrapRef.current) {
       uplotWrapRef.current.dataset.sampleCount = String(snaps.length);
-      const emptyCircuit = circuit && latestRef.current.params.topology !== 'divider-lamp' && snaps.length < 2;
+      const emptyCircuit = (mechanics||(circuit && latestRef.current.params.topology !== 'divider-lamp')) && snaps.length < 2;
       uplotWrapRef.current.style.visibility = emptyCircuit ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = emptyCircuit ? 'grid' : 'none';
-      if (circuit) {
+      if (circuit||mechanics) {
         uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
       }
     }
@@ -783,6 +796,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   // 初始化 / 重置引擎状态（分镜复位复用同一入口）。
   const resetEngine = () => {
     const { plugin: p, params: pm } = latestRef.current;
+    if(simStateRef.current!==null)disposeStateRef.current?.(simStateRef.current);
+    disposeStateRef.current=p.engine.disposeState;
     const init = p.engine.createInitialState(pm);
     const obs0 = p.engine.computeObservables(init, pm);
     simStateRef.current = init;
@@ -805,6 +820,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     storyRunnerRef.current?.cancelTween();
     resetEngine();
   }, [plugin.meta.id, resetNonce]);
+  useEffect(()=>()=>{if(simStateRef.current!==null)disposeStateRef.current?.(simStateRef.current);},[]);
 
   const flushStoryParams = (modelId: string, nowMs: number, force = false) => {
     if (!storyDirtyRef.current || !storyParamsRef.current) return;
@@ -944,10 +960,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
-    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna'].includes(latestRef.current.plugin.meta.id)){
+    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror','builder-circuit-mna','builder-mechanics-lab'].includes(latestRef.current.plugin.meta.id)){
       // The final displayed physical sample and chart must agree after pause.
       const current = latestRef.current;
-      if (current.plugin.meta.id === 'builder-circuit-mna' &&
+      if (['builder-circuit-mna','builder-mechanics-lab'].includes(current.plugin.meta.id) &&
           current.scrubTime === null && simStateModelIdRef.current === current.plugin.meta.id &&
           simStateResetNonceRef.current === current.resetNonce && simStateRef.current !== null &&
           simulationTimeRef.current > lastSnapshotTRef.current) {
@@ -971,15 +987,17 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     for (let i = 0; i < 4; i++) {
       const res = plugin.engine.step(cur, params, FIXED_DT);
       cur = res.nextState;
-      stepT += FIXED_DT;
+      stepT += res.advancedTime ?? FIXED_DT;
       if (res.events.length > 0) {
         eventsRef.current = [...eventsRef.current, ...res.events];
       }
+      if(res.halt||res.advancedTime===0)break;
     }
     simulationTimeRef.current = stepT;
     simStateRef.current = cur;
     const obs = plugin.engine.computeObservables(cur, params);
-    snapshotsRef.current.push({ t: stepT, state: cur, observables: obs });
+    if(stepT===lastSnapshotTRef.current)snapshotsRef.current[snapshotsRef.current.length-1]={t:stepT,state:cur,observables:obs};
+    else snapshotsRef.current.push({ t: stepT, state: cur, observables: obs });
     if (snapshotsRef.current.length > MAX_SNAPSHOTS) {
       snapshotsRef.current.shift();
     }
@@ -1135,7 +1153,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       while (accumulatorRef.current >= FIXED_DT && cur !== null) {
         const res = p.engine.step(cur, pm, FIXED_DT);
         cur = res.nextState;
-        simT += FIXED_DT;
+        const advanced=res.advancedTime??FIXED_DT;
+        simT += advanced;
         accumulatorRef.current -= FIXED_DT;
         stepped = true;
 
@@ -1145,16 +1164,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
         // Detect at each actual 240 Hz physics sample, never only at the next browser frame.
         const armedObs = runner?.hasArmedFreeze ? p.engine.computeObservables(cur, pm) : undefined;
-        freezeHit = armedObs !== undefined && runner !== null && runner.checkAutoFreeze(armedObs);
+        freezeHit = Boolean(res.halt)||(armedObs !== undefined && runner !== null && runner.checkAutoFreeze(armedObs));
+        if(res.halt){latestRef.current.isPlaying=false;storyCallbacksRef.current.onStoryPlaying?.(false);}
         if (freezeHit || simT - lastSnapshotTRef.current >= SNAPSHOT_INTERVAL) {
           const obs = armedObs ?? p.engine.computeObservables(cur, pm);
-          snapshotsRef.current.push({ t: simT, state: cur, observables: obs });
+          if(simT===lastSnapshotTRef.current)snapshotsRef.current[snapshotsRef.current.length-1]={t:simT,state:cur,observables:obs};
+          else snapshotsRef.current.push({ t: simT, state: cur, observables: obs });
           if (snapshotsRef.current.length > MAX_SNAPSHOTS) {
             snapshotsRef.current.shift();
           }
           lastSnapshotTRef.current = simT;
         }
-        if (freezeHit) {
+        if (freezeHit || advanced===0) {
           accumulatorRef.current = 0;
           lastFrameMsRef.current = null;
           break;
@@ -1188,7 +1209,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const orbitScope=plugin.meta.id==='astro-orbital-mechanics';
   const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror'||orbitScope;
   const circuitScope=plugin.meta.id==='builder-circuit-mna'&&params.topology!=='divider-lamp';
-  const semanticScope=heroScope||circuitScope;
+  const mechanicsScope=plugin.meta.id==='builder-mechanics-lab';
+  const measuredScope=circuitScope||mechanicsScope;
+  const semanticScope=heroScope||circuitScope||plugin.meta.id==='builder-mechanics-lab';
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {
@@ -1204,7 +1227,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (!wrap || oscilloscopeCollapsed || presentationMode) return;
 
     const width = Math.max(1, wrap.clientWidth);
-    const height = heroScope ? (wrap.parentElement?.clientHeight || 152) : circuitScope ? 104 : 84;
+    const height = heroScope ? (wrap.parentElement?.clientHeight || 152) : measuredScope ? 104 : 84;
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.16)';
 
@@ -1217,7 +1240,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       },
       legend: { show: false },
       scales: {
-        x: { time: false, ...(circuitScope ? { range: (_u: uPlot, min: number, max: number): [number,number] => {
+        x: { time: false, ...(measuredScope ? { range: (_u: uPlot, min: number, max: number): [number,number] => {
           const lo = Number.isFinite(min) ? min : 0;
           return [lo, Math.max(lo + .1, Number.isFinite(max) ? max : lo)];
         }} : {}) },
@@ -1228,9 +1251,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         {
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
-          values: (_u, splits) => splits.map((v) => circuitScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
+          values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
           ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : {}),
-          ...(heroScope ? { size: 30 } : circuitScope ? { size: 24 } : {})
+          ...(heroScope ? { size: 30 } : measuredScope ? { size: 24 } : {})
         },
         {
           stroke: semanticScope ? scopeColorA : textColor,
@@ -1273,7 +1296,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       ],
       hooks: {
-        draw: [(u) => { if (circuitScope) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
+        draw: [(u) => { if (measuredScope) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
         setCursor: [
           (u) => {
             const idx = u.cursor.idx;
@@ -1296,7 +1319,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       if (!uplotWrapRef.current) return;
       plot.setSize({
         width: Math.max(1, uplotWrapRef.current.clientWidth),
-        height: heroScope ? (uplotWrapRef.current.parentElement?.clientHeight || 152) : circuitScope ? 104 : 84
+        height: heroScope ? (uplotWrapRef.current.parentElement?.clientHeight || 152) : measuredScope ? 104 : 84
       });
     });
     ro.observe(wrap);
@@ -1307,7 +1330,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       plot.destroy();
       uplotInstanceRef.current = null;
     };
-  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope,semanticScope,circuitScope]);
+  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope,semanticScope,circuitScope,mechanicsScope,measuredScope]);
 
   return (
     <div className="relative flex flex-1 min-h-0">
@@ -1685,10 +1708,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               <ChevronDown className="h-4 w-4" />
             </button>
           </div>
-          <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : circuitScope ? 'h-[104px]' : 'h-[76px]'}`}>
+          <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : measuredScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
-            {circuitScope && <div ref={circuitScopeEmptyRef} data-testid="b2-scope-empty" className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽

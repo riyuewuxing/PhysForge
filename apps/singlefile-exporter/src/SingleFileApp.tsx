@@ -28,6 +28,22 @@ const MAX_SNAPSHOTS = 2400;
 // isolated singlefile bundle (the exporter explicitly rejects those IDs).
 const circuitSlice=targetPlugin.paramSchema.some(f=>f.key==='topology'&&f.kind==='select'&&f.options.some(o=>o.value==='divider-lamp'));
 const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind==='select'&&f.options.some(o=>o.value==='thin-lens-imaging'));
+const mechanicsSlice=targetPlugin.paramSchema.some(f=>f.key==='scenario'&&f.kind==='select'&&f.options.some(o=>o.value==='atwood-constrained'));
+const measuredScope=circuitSlice||mechanicsSlice;
+const MECHANICS_FIELDS:Record<string,string[]>={
+  'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
+  'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
+  'newtons-cradle':['scenario','gravity','restitution','friction'],
+  'spring-oscillator':['scenario','gravity','springK'],
+  'atwood-constrained':['scenario','gravity','massRatio']
+};
+const MECHANICS_CHANNELS:Record<string,string[]>={
+  'elastic-collision':['totalMomentumX','kineticEnergy','primaryVx'],
+  'incline-slide':['kineticEnergy','primaryVx','totalMomentumX'],
+  'newtons-cradle':['totalMomentumX','kineticEnergy','primaryVx'],
+  'spring-oscillator':['kineticEnergy','springPotentialEnergy','primaryVx'],
+  'atwood-constrained':['primaryVy','secondaryVy','constraintTensionN']
+};
 const OPTICAL_FIELDS:Record<string,string[]>={
   'tir-interface':['sceneMode','incidentAngleDeg','n1','n2','animateSweep'],
   'parallel-slab':['sceneMode','incidentAngleDeg','n1','slabThickness','animateSweep'],
@@ -53,7 +69,7 @@ const CIRCUIT_CHANNELS:Record<string,string[]>={
   'nonlinear-lamp-diode':['totalCurrent','terminalVoltage','outputPower']
 };
 function channelsFor(params:ParamRecord){
-  const keys=circuitSlice?CIRCUIT_CHANNELS[String(params.topology)]:undefined;
+  const keys=circuitSlice?CIRCUIT_CHANNELS[String(params.topology)]:mechanicsSlice?MECHANICS_CHANNELS[String(params.scenario)]:undefined;
   return keys?keys.flatMap(key=>targetPlugin.telemetryChannels.filter(c=>c.key===key)):targetPlugin.telemetryChannels;
 }
 
@@ -120,10 +136,10 @@ export const SingleFileApp: React.FC = () => {
     formulas: FormulaDisplayItem[];
   }>({ t: 0, observables: {}, events: [], invariants: [], formulas: [] });
 
-  const channels = useMemo(()=>channelsFor(params),[params.topology]);
+  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario]);
   const [channelA, setChannelA] = useState(channels[0]?.key ?? '');
   const [channelB, setChannelB] = useState(channels[1]?.key ?? channels[0]?.key ?? '');
-  useEffect(()=>{if(circuitSlice){setChannelA(channels[0]?.key??'');setChannelB(channels[1]?.key??channels[0]?.key??'');}},[channels]);
+  useEffect(()=>{if(measuredScope){setChannelA(channels[0]?.key??'');setChannelB(channels[1]?.key??channels[0]?.key??'');}},[channels]);
 
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -208,9 +224,10 @@ export const SingleFileApp: React.FC = () => {
         layerSet.delete('vibrationGraph');
         layerSet.delete('eventPins');
       }
-      targetPlugin.renderCanvas(ctx, drawState, pm, circuitSlice||opticalSlice?{...vp,theme:th}:vp, layerSet);
+      targetPlugin.renderCanvas(ctx, drawState, pm, measuredScope||opticalSlice?{...vp,theme:th}:vp, layerSet);
       if(opticalSlice&&frame)canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...frame.observables});
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
+      if(mechanicsSlice&&frame)canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...frame.observables});
 
       if (strobe && !masked && snapshotsRef.current.length > 2) {
         const curT = frame ? frame.t : 0;
@@ -241,11 +258,11 @@ export const SingleFileApp: React.FC = () => {
     try {
       plot.setData([
         snaps.map((s) => s.t),
-        snaps.map((s) => (chA ? s.observables[chA] ?? (circuitSlice?null:0) : (circuitSlice?null:0))),
-        snaps.map((s) => (chB ? s.observables[chB] ?? (circuitSlice?null:0) : (circuitSlice?null:0)))
+        snaps.map((s) => (chA ? s.observables[chA] ?? (measuredScope?null:0) : (measuredScope?null:0))),
+        snaps.map((s) => (chB ? s.observables[chB] ?? (measuredScope?null:0) : (measuredScope?null:0)))
       ]);
     } finally { syncingPlotRef.current = false; }
-    if (circuitSlice && uplotWrapRef.current) {
+    if (measuredScope && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
       const empty = snaps.length < 2;
       uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
@@ -284,6 +301,7 @@ export const SingleFileApp: React.FC = () => {
       viewportRef.current.height
     );
     viewportRef.current = { ...viewportRef.current, ...camera };
+    if(simStateRef.current!==null)targetPlugin.engine.disposeState?.(simStateRef.current);
     const init = targetPlugin.engine.createInitialState(params);
     const obs0 = targetPlugin.engine.computeObservables(init, params);
     simStateRef.current = init;
@@ -298,6 +316,7 @@ export const SingleFileApp: React.FC = () => {
     syncPlot();
     emitSummary(true);
   }, [resetNonce]);
+  useEffect(()=>()=>{if(simStateRef.current!==null)targetPlugin.engine.disposeState?.(simStateRef.current);},[]);
 
   // Preserve the exact final integration sample on pause. A frame may have
   // advanced fewer than SNAPSHOT_INTERVAL seconds since the last plot sample.
@@ -323,16 +342,15 @@ export const SingleFileApp: React.FC = () => {
     for (let i = 0; i < 4; i++) {
       const res = targetPlugin.engine.step(cur, params, FIXED_DT);
       cur = res.nextState;
-      simT += FIXED_DT;
+      simT += res.advancedTime??FIXED_DT;
       if (res.events.length > 0) eventsRef.current = [...eventsRef.current, ...res.events];
+      if(res.halt||res.advancedTime===0)break;
     }
     simStateRef.current = cur;
     simulationTimeRef.current = simT;
-    snapshotsRef.current.push({
-      t: simT,
-      state: cur,
-      observables: targetPlugin.engine.computeObservables(cur, params)
-    });
+    const sample={t:simT,state:cur,observables:targetPlugin.engine.computeObservables(cur,params)};
+    if(simT===lastSnapTRef.current)snapshotsRef.current[snapshotsRef.current.length-1]=sample;
+    else snapshotsRef.current.push(sample);
     if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
     lastSnapTRef.current = simT;
     drawCanvas();
@@ -401,19 +419,20 @@ export const SingleFileApp: React.FC = () => {
       while (accRef.current >= FIXED_DT && cur !== null) {
         const res = targetPlugin.engine.step(cur, latestRef.current.params, FIXED_DT);
         cur = res.nextState;
-        simT += FIXED_DT;
+        const advanced=res.advancedTime??FIXED_DT;
+        simT += advanced;
         accRef.current -= FIXED_DT;
         stepped = true;
         if (res.events.length > 0) eventsRef.current = [...eventsRef.current, ...res.events];
-        if (simT - lastSnapTRef.current >= SNAPSHOT_INTERVAL) {
-          snapshotsRef.current.push({
-            t: simT,
-            state: cur,
-            observables: targetPlugin.engine.computeObservables(cur, latestRef.current.params)
-          });
+        if (res.halt||simT - lastSnapTRef.current >= SNAPSHOT_INTERVAL) {
+          const sample={t:simT,state:cur,observables:targetPlugin.engine.computeObservables(cur,latestRef.current.params)};
+          if(simT===lastSnapTRef.current)snapshotsRef.current[snapshotsRef.current.length-1]=sample;
+          else snapshotsRef.current.push(sample);
           if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
           lastSnapTRef.current = simT;
         }
+        if(res.halt){latestRef.current.isPlaying=false;setIsPlaying(false);}
+        if(res.halt||advanced===0){accRef.current=0;lastFrameMsRef.current=null;break;}
       }
 
       if (stepped && cur !== null) {
@@ -433,9 +452,9 @@ export const SingleFileApp: React.FC = () => {
     if (!wrap) return;
     const specA = channels.find((c) => c.key === channelA) ?? channels[0];
     const specB = channels.find((c) => c.key === channelB) ?? channels[1] ?? channels[0];
-    const split=circuitSlice&&specA?.unit!==specB?.unit;
+    const split=measuredScope&&specA?.unit!==specB?.unit;
     const colors:Record<string,string>={'#38bdf8':'#0369a1','#fbbf24':'#92400e','#f472b6':'#9d174d','#4ade80':'#166534'};
-    const paint=(c:string)=>circuitSlice&&theme==='projector'?colors[c]??'#334155':c;
+    const paint=(c:string)=>measuredScope&&theme==='projector'?colors[c]??'#334155':c;
     wrap.dataset.scopeUnits=split?'separate':'shared';
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15,23,42,0.12)' : 'rgba(148,163,184,0.16)';
@@ -444,7 +463,7 @@ export const SingleFileApp: React.FC = () => {
       {
         width: Math.max(280, wrap.clientWidth),
         height: 150,
-        ...(circuitSlice ? { scales: {
+        ...(measuredScope ? { scales: {
           x: { time: false, range: (_u: uPlot, min: number, max: number): [number, number] => {
             const lo = Number.isFinite(min) ? min : 0;
             return [lo, Math.max(lo + .1, Number.isFinite(max) ? max : lo)];
@@ -452,10 +471,10 @@ export const SingleFileApp: React.FC = () => {
           y: { auto: true }, ...(split ? { y2: { auto: true } } : {})
         }} : {}),
         axes: [
-          { stroke: textColor, grid: { stroke: gridColor }, ...(circuitSlice ? {
+          { stroke: textColor, grid: { stroke: gridColor }, ...(measuredScope ? {
             values: (_u: uPlot, splits: number[]) => splits.map(v => Number(v.toPrecision(4)) + 's')
           } : {}) },
-          { stroke: circuitSlice ? paint(specA?.color ?? '#38bdf8') : textColor, grid: { stroke: gridColor } },
+          { stroke: measuredScope ? paint(specA?.color ?? '#38bdf8') : textColor, grid: { stroke: gridColor } },
           ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false}}]:[])
         ],
         series: [
@@ -466,7 +485,7 @@ export const SingleFileApp: React.FC = () => {
         hooks: {
           // uPlot commits scale changes during its draw; reading immediately
           // after setData may return the previous frame's range.
-          draw: [(u) => { if (circuitSlice) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
+          draw: [(u) => { if (measuredScope) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
           setCursor: [
             (u) => {
               const idx = u.cursor.idx;
@@ -635,7 +654,7 @@ export const SingleFileApp: React.FC = () => {
               >
                 {channels.map((c) => (
                   <option key={c.key} value={c.key}>
-                    {c.label}{circuitSlice&&c.unit?' ('+c.unit+')':''}
+                    {c.label}{measuredScope&&c.unit?' ('+c.unit+')':''}
                   </option>
                 ))}
               </select>
@@ -648,14 +667,14 @@ export const SingleFileApp: React.FC = () => {
               >
                 {channels.map((c) => (
                   <option key={c.key} value={c.key}>
-                    {c.label}{circuitSlice&&c.unit?' ('+c.unit+')':''}
+                    {c.label}{measuredScope&&c.unit?' ('+c.unit+')':''}
                   </option>
                 ))}
               </select>
             </div>
             <div className="relative">
               <div ref={uplotWrapRef} data-testid="sf-uplot" />
-              {circuitSlice && <div ref={circuitScopeEmptyRef} data-testid="sf-scope-empty" className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+              {measuredScope && <div ref={circuitScopeEmptyRef} data-testid="sf-scope-empty" className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             </div>
           </div>
         </section>
@@ -706,7 +725,7 @@ export const SingleFileApp: React.FC = () => {
           ))}
 
           <div className="text-xs font-bold text-sky-400">参数调节</div>
-          {targetPlugin.paramSchema.filter(field=>circuitSlice?(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key):opticalSlice?(OPTICAL_FIELDS[String(params.sceneMode)]??[]).includes(field.key):true).map((field) => {
+          {targetPlugin.paramSchema.filter(field=>circuitSlice?(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key):opticalSlice?(OPTICAL_FIELDS[String(params.sceneMode)]??[]).includes(field.key):mechanicsSlice?(MECHANICS_FIELDS[String(params.scenario)]??[]).includes(field.key):true).map((field) => {
             const val = params[field.key] ?? field.defaultValue;
             if (field.kind === 'number') {
               return (

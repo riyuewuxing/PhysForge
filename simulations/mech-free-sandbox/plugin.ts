@@ -4,7 +4,10 @@ import {
   checkInvariants,
   computeObservables,
   createInitialState,
+  disposeSandbox,
   stepSandbox,
+  usesAnalyticSolver,
+  SPRING_EQUILIBRIUM_X,
   type SandboxParams,
   type SandboxState
 } from './engine.js';
@@ -94,19 +97,25 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     difficulty: '基础新授',
     version: '2.0.0'
   },
-  defaultView: { scale: 0.58, offsetRatioX: 0.05 },
+  defaultView: {
+    scale:(params,{width,height})=>params.scenario==='atwood-constrained'?Math.max(.1,Math.min(1.1,(width-(width>=900?300:0)-40)/(3.6*Math.min(width,height)*.24),(height-180)/(3.5*Math.min(width,height)*.24))):.58,
+    offsetRatioX:(params,{width})=>params.scenario==='atwood-constrained'?(width-(width>=900?280:0))/(2*width)-.45:.05,
+    offsetRatioY:params=>params.scenario==='atwood-constrained'?-.06:0
+  },
   getControlHandles: (state, params) => {
-    const dyn = state.bodies.find((b) => b.dynamic);
+    const id=params.scenario==='elastic-collision'?'b2':params.scenario==='incline-slide'?'target':params.scenario==='atwood-constrained'?'atwood-right':undefined;
+    const dyn=state.bodies.find(b=>b.id===id);
     if (!dyn) return [];
+    const position={x:dyn.x,y:dyn.y+dyn.halfH+.5};
     return [
       {
         id: 'mass-ratio',
         label: `m₂=${params.massRatio.toFixed(1)}kg`,
-        position: { x: dyn.x, y: dyn.y + dyn.halfH + 0.5 },
+        position,
         handleKind: 'point',
         color: '#f472b6',
         onDrag: (wp) => ({
-          massRatio: Number(Math.max(0.5, Math.min(5, Math.round((wp.y + 1.5) * 2) / 2)).toFixed(1))
+          massRatio: Math.max(.5,Math.min(5,Math.round((params.massRatio+2*(wp.y-position.y))*2)/2))
         })
       }
     ];
@@ -137,10 +146,14 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
       }
       if (params.scenario === 'spring-oscillator' && b.id === 'mass-block') {
         vectors.push({
+          id:'normal-mass-block',label:'N',origin:{x:b.x,y:b.y},
+          force:{x:0,y:b.mass*params.gravity},color:'#38bdf8',category:'normal' as const,unit:'N'
+        });
+        vectors.push({
           id: 'spring-force',
           label: 'F_k',
           origin: { x: b.x, y: b.y },
-          force: { x: -params.springK * (b.x + 0.45), y: 0 },
+          force: { x: -params.springK * (b.x - SPRING_EQUILIBRIUM_X), y: 0 },
           color: '#4ade80',
           category: 'tension' as const,
           unit: 'N'
@@ -177,11 +190,13 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     importScene: (dsl) => dsl.params as Partial<SandboxParams>
   },
   exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'hatchedGround', x1: -3.5, y1: -1.2, x2: 3.5, y2: -1.2 }
-    ];
+    const primitives: DiagramPrimitive[] = [];
     for (const b of state.bodies) {
-      if (!b.dynamic) continue;
+      if(b.id==='floor'){
+        primitives.push({kind:'hatchedGround',x1:b.x-b.halfW,y1:b.y+b.halfH,x2:b.x+b.halfW,y2:b.y+b.halfH});
+        continue;
+      }
+      if(b.id==='pulley')continue;
       if (b.shape === 'ball') {
         primitives.push({ kind: 'circle', cx: b.x, cy: b.y, r: b.halfW });
       } else {
@@ -191,6 +206,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
           cy: b.y,
           width: b.halfW * 2,
           height: b.halfH * 2,
+          angleDeg:b.angle*180/Math.PI,
           label: b.label
         });
       }
@@ -205,6 +221,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
       const left = state.bodies.find((b) => b.id === 'atwood-left');
       const right = state.bodies.find((b) => b.id === 'atwood-right');
       primitives.push({ kind: 'circle', cx: 0, cy: 1.4, r: 0.28 });
+      primitives.push({kind:'arc',cx:0,cy:1.4,r:.28,startAngle:0,endAngle:Math.PI});
       if (left && right) {
         primitives.push({ kind: 'line', x1: -0.28, y1: 1.4, x2: left.x, y2: left.y + left.halfH });
         primitives.push({ kind: 'line', x1: 0.28, y1: 1.4, x2: right.x, y2: right.y + right.halfH });
@@ -213,7 +230,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     return {
       width: 720,
       height: 440,
-      viewBox: { minX: -3.8, minY: -1.8, maxX: 3.8, maxY: 2.2 },
+      viewBox: { minX: params.scenario==='atwood-constrained'?-1.6:-5.2, minY: -1.8, maxX: params.scenario==='atwood-constrained'?1.6:5.2, maxY: 2.2 },
       title: '自由力学刚体与解析约束试卷配图',
       primitives
     };
@@ -234,7 +251,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     {
       id: 'inelastic-collision',
       name: '2. 完全非弹性碰撞（动能损失最大）',
-      description: '恢复系数 e=0，两球碰撞后粘合共速运动，观察总动量守恒而总动能显著衰减。',
+      description: '恢复系数 e=0，理想正碰瞬间两球法向速度相同；未添加永久粘接约束。观察碰撞动量及动能变化。',
       params: {
         scenario: 'elastic-collision',
         restitution: 0,
@@ -267,21 +284,28 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     {
       id: 'atwood-udwadia-analytical',
       name: '5. 阿特伍德机精确约束与张力求解 (Udwadia-Kalaba)',
-      description: '采用 Gauss 最小拘束原理直接输出精确轻绳张力 T = 2m₁m₂g/(m₁+m₂) 与对称辛步进轨迹。',
+      description: '采用 Gauss 最小拘束原理直接输出轻绳张力 T = 2m₁m₂g/(m₁+m₂) 与恒加速度轨迹，适用于重物碰到滑轮前。',
       params: {
         scenario: 'atwood-constrained',
         massRatio: 2.0,
         gravity: 9.8
       }
+    },
+    {
+      id:'ideal-spring-oscillator',
+      name:'6. 理想气垫导轨弹簧振子',
+      description:'无摩擦水平约束，精确简谐运动；调节劲度系数，检验动能和弹性势能转换。',
+      params:{scenario:'spring-oscillator',springK:20,gravity:9.8,friction:0}
     }
   ],
   engine: {
     createInitialState: (params) => {
       // 仅在真正创建/运行本沙箱模型时异步按需触发 WASM 加载
-      void ensureRapierLoaded();
+      if(!usesAnalyticSolver(params.scenario))void ensureRapierLoaded().catch(()=>{/* surfaced as a terminal engine event on step */});
       return createInitialState(params);
     },
     step: stepSandbox,
+    disposeState:disposeSandbox,
     computeObservables,
     checkInvariants
   },
@@ -292,15 +316,35 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
   telemetryChannels: [
     { key: 'totalMomentumX', label: '系统水平总动量 Px', unit: 'kg·m/s', color: '#38bdf8' },
     { key: 'kineticEnergy', label: '系统总动能 Ek', unit: 'J', color: '#4ade80' },
-    { key: 'primaryVx', label: '主刚体速度 vx', unit: 'm/s', color: '#fbbf24' }
+    { key: 'primaryVx', label: '主刚体速度 vx', unit: 'm/s', color: '#fbbf24' },
+    { key: 'springPotentialEnergy', label: '弹性势能', unit: 'J', color: '#fbbf24' },
+    { key: 'primaryVy', label: '左重物速度', unit: 'm/s', color: '#38bdf8' },
+    { key: 'secondaryVy', label: '右重物速度', unit: 'm/s', color: '#f472b6' },
+    { key: 'constraintTensionN', label: '轻绳张力', unit: 'N', color: '#4ade80' }
   ],
   formatFormulas: (state, params) => {
+    if(params.scenario==='spring-oscillator'){
+      const b=state.bodies.find(b=>b.id==='mass-block')!;
+      const omega=Math.sqrt(params.springK/b.mass),q=b.x-SPRING_EQUILIBRIUM_X;
+      return [
+        {id:'spring-omega',label:'理想简谐振子（无摩擦）',latex:'\\omega=\\sqrt{k/m}',substitutedLatex:'\\omega='+omega.toFixed(3)+'\\ \\mathrm{rad/s}'},
+        {id:'spring-energy',label:'动能与弹性势能',latex:'E=\\frac12mv_x^2+\\frac12k(x-x_0)^2',substitutedLatex:'E='+(.5*b.mass*b.vx*b.vx+.5*params.springK*q*q).toFixed(3)+'\\ \\mathrm J'}
+      ];
+    }
+    if(params.scenario==='atwood-constrained'){
+      const l=state.bodies.find(b=>b.id==='atwood-left')!,r=state.bodies.find(b=>b.id==='atwood-right')!;
+      const a=(r.mass-l.mass)*params.gravity/(l.mass+r.mass);
+      return [
+        {id:'atwood-a',label:state.terminal==='pulley-contact'?'首次接触滑轮（碰撞前一瞬）':'理想轻绳约束（上为正）',latex:'a_1=-a_2=\\frac{(m_2-m_1)g}{m_1+m_2}',substitutedLatex:'a_1='+a.toFixed(3)+'\\ \\mathrm{m/s^2}'},
+        {id:'atwood-tension',label:state.terminal==='pulley-contact'?'碰撞前张力':'轻绳张力',latex:'T=\\frac{2m_1m_2g}{m_1+m_2}',substitutedLatex:'T='+(state.constraintTensionN??0).toFixed(3)+'\\ \\mathrm N'}
+      ];
+    }
     const obs = computeObservables(state, params);
     return [
       {
         id: 'sandbox-momentum',
-        label: `碰撞动量与能量监测（${state.rapierActive ? 'Rapier2D WASM 已接管' : '正在按需加载 WASM'}）`,
-        latex: 'p_x = \\sum m_i v_{ix}, \\quad E_k = \\sum \\frac{1}{2}m_i v_i^2',
+        label: `碰撞动量与能量监测（${state.terminal==='engine-unavailable'?'加载失败，请复位重试':state.rapierActive ? 'Rapier2D WASM 已接管' : '正在按需加载 WASM，物理时间暂停'}）`,
+        latex: 'p_x = \\sum m_i v_{ix}, \\quad E_k = \\sum (\\frac{1}{2}m_i v_i^2+\\frac{1}{2}I_i\\omega_i^2)',
         substitutedLatex: `p_x = ${(obs.totalMomentumX ?? 0).toFixed(2)}\\text{ kg}\\cdot\\text{m/s},\\; E_k = ${(obs.kineticEnergy ?? 0).toFixed(2)}\\text{ J}`
       }
     ];
@@ -308,6 +352,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
     const pxPerM = m.ppm;
+    const paper=viewport.theme==='projector';
     const toScreen = (wx: number, wy: number) => {
       const point = m.toScreen(wx, wy);
       return { sx: point.x, sy: point.y };
@@ -324,13 +369,15 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
           const pR = toScreen(right.x, right.y + right.halfH);
           const rPx = pulley.halfW * pxPerM;
           ctx.save();
-          ctx.strokeStyle = '#cbd5e1';
+          ctx.strokeStyle = paper?'#475569':'#cbd5e1';
           ctx.lineWidth = 2.2;
           ctx.beginPath();
           ctx.moveTo(pL.sx, pL.sy);
           ctx.lineTo(pP.sx - rPx, pP.sy);
           ctx.moveTo(pR.sx, pR.sy);
           ctx.lineTo(pP.sx + rPx, pP.sy);
+          ctx.moveTo(pP.sx-rPx,pP.sy);
+          ctx.arc(pP.sx,pP.sy,rPx,Math.PI,2*Math.PI);
           ctx.stroke();
           ctx.restore();
         }
@@ -344,7 +391,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
           const pA = toScreen(anchor.x + anchor.halfW, anchor.y);
           const pB = toScreen(block.x - block.halfW, block.y);
           ctx.save();
-          ctx.strokeStyle = '#fbbf24';
+          ctx.strokeStyle = paper?'#92400e':'#fbbf24';
           ctx.lineWidth = 2.5;
           ctx.beginPath();
           const coils = 12;
@@ -366,8 +413,9 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
         ctx.save();
         ctx.translate(p.sx, p.sy);
         ctx.rotate(-b.angle);
-        ctx.fillStyle = b.color;
-        ctx.strokeStyle = '#e2e8f0';
+        const paperColors:Record<string,string>={'#38bdf8':'#bae6fd','#f472b6':'#fbcfe8','#fbbf24':'#fde68a','#4ade80':'#bbf7d0','#475569':'#cbd5e1','#64748b':'#94a3b8','#94a3b8':'#cbd5e1'};
+        ctx.fillStyle = paper?paperColors[b.color]??b.color:b.color;
+        ctx.strokeStyle = paper?'#334155':'#e2e8f0';
         ctx.lineWidth = 1.5;
 
         if (b.shape === 'ball') {
@@ -385,19 +433,23 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
 
         if (activeLayers.has('velocityLabels') && b.dynamic) {
           ctx.save();
-          ctx.fillStyle = b.color;
+          const paper=viewport.theme==='projector',atwood=params.scenario==='atwood-constrained';
+          ctx.fillStyle = paper?'#334155':b.color;
           ctx.font = 'bold 13px system-ui, sans-serif';
-          ctx.fillText(`${b.label} v=${b.vx.toFixed(2)}`, p.sx - 35, p.sy - b.halfH * pxPerM - 10);
+          ctx.textAlign=atwood?(b.x<0?'right':'left'):'center';
+          const x=atwood?p.sx+Math.sign(b.x)*(b.halfW*pxPerM+9):p.sx;
+          const y=atwood?p.sy+5:p.sy-b.halfH*pxPerM-10;
+          ctx.fillText(b.label+(atwood?' vᵧ='+b.vy.toFixed(2):' vₓ='+b.vx.toFixed(2))+' m/s', x,y);
           ctx.restore();
         }
       }
     }
 
     ctx.save();
-    ctx.fillStyle = state.rapierActive ? '#4ade80' : '#fbbf24';
+    ctx.fillStyle = paper?(usesAnalyticSolver(params.scenario)||state.rapierActive?'#166534':'#92400e'):(usesAnalyticSolver(params.scenario)||state.rapierActive ? '#4ade80' : '#fbbf24');
     ctx.font = 'bold 13px system-ui, sans-serif';
     ctx.fillText(
-      `引擎状态：${state.rapierActive ? 'Rapier2D WASM 刚体内核运行中' : '按需加载 Rapier2D WASM...'}`,
+      `引擎状态：${params.scenario==='spring-oscillator'?'理想简谐运动解析流':params.scenario==='atwood-constrained'?(state.terminal==='pulley-contact'?'首次接触滑轮 · 碰撞前一瞬':'Udwadia-Kalaba 轻绳约束'):state.terminal==='engine-unavailable'?'刚体引擎加载失败 · 请复位重试':state.rapierActive?'Rapier2D WASM 刚体内核运行中':'等待 Rapier2D WASM · 物理时间暂停'}`,
       18,
       26
     );
