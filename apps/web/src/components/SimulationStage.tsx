@@ -2,6 +2,8 @@ import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import { ChevronDown, ChevronUp, Crosshair, MoveDiagonal2, RotateCcw, Ruler } from 'lucide-react';
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
+import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
+type B1StagePlugin=typeof import('../../../../simulations/em-bounded-magnetic-field/plugin.js').emBoundedMagneticFieldPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -288,11 +290,14 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const cameraRef = useRef<CameraTransform>(DEFAULT_CAMERA_TRANSFORM);
   const baseScaleRef = useRef<number>(1);
   const userTransformedViewRef = useRef<boolean>(false);
+  const b1FitKeyRef=useRef('');
+  const b1FitAtRef=useRef(-Infinity);
   const applyDefaultCameraView = (width: number, height: number) => {
     const v2 = latestRef.current.plugin as SimulationPluginV2<ParamRecord, unknown>;
     const initialCamera = resolveInitialCameraTransform(v2, latestRef.current.params, width, height);
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
+    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -479,6 +484,25 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       scrubTime: scrub
     } = latestRef.current;
 
+    const frame=readDisplayedFrame(p.meta.id);
+    const drawState=frame?.state??null;
+    if(p.meta.id==='builder-composite-em-field'&&drawState!==null&&!userTransformedViewRef.current&&
+       !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&scrub===null){
+      const model=p as unknown as B1StagePlugin,cur=latestRef.current,vp=viewportRef.current;
+      const key=JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,pm.mode,pm.fieldScale]);
+      const now=performance.now(),fresh=key!==b1FitKeyRef.current;
+      if(fresh||now-b1FitAtRef.current>=250){
+        b1FitKeyRef.current=key;b1FitAtRef.current=now;
+        const bounds=model.b1FrameBounds(drawState as BoundedMagneticState,pm as BoundedMagneticParams,readDisplayedLayers());
+        const safe=model.b1SafeRect(vp.width,vp.height,cur.presentationMode,!cur.oscilloscopeCollapsed);
+        if(fresh||!model.b1BoundsInViewport(bounds,vp,safe)){
+          const next=model.b1FitViewport(bounds,vp,safe);
+          cameraRef.current=next;viewportRef.current=next;
+          if(fresh)baseScaleRef.current=next.scale;
+          setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+        }
+      }
+    }
     const baseVp = viewportRef.current;
     ctx.save();
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
@@ -494,8 +518,6 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       }
     }
 
-    const frame = readDisplayedFrame(p.meta.id);
-    const drawState = frame?.state ?? null;
     const { effectiveVp: vp, frameOrigin } = computeEffectiveViewport(baseVp, drawState);
 
     if (drawState !== null) {
@@ -842,6 +864,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
+    } else if(latestRef.current.plugin.meta.id==='builder-composite-em-field'){
+      // The final displayed physical sample and chart must agree after pause.
+      renderFrameToCanvas();syncUPlotData(true);emitTelemetrySummary(true);
     }
   }, [isPlaying]);
 

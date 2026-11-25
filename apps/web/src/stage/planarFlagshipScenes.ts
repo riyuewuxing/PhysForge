@@ -4,7 +4,8 @@ import type { InductionParams, InductionState } from '../../../../simulations/em
 import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints, inductionLoadDimensions } from '../../../../simulations/em-induction-double-rod/diagramGeometry.js';
 import { fieldSignedDistance, type BoundedMagneticParams, type BoundedMagneticState, type ParticleTrack } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { DynamicTubeTrail } from './dynamicTubeTrail.js';
-import { displayLarmorCircleForTrack } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
+import { CameraMorphController,project3DToScreen } from './cameraMorphController.js';
+import { type B1Bounds,type B1SafeRect,b1VelocityDisplay,displayLarmorCircleForTrack } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import { anodizedRailMaterial, brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
 
 export interface FlagshipSceneDriver {
@@ -215,9 +216,44 @@ function trackVisual(track: ParticleTrack): TrackVisual {
   return result;
 }
 
+/** Camera test uses projected physical content, including the field depth.
+ * It never scales or translates the physical scene itself. */
+export function b1ProjectedBounds(bounds:B1Bounds,camera:THREE.Camera,width:number,height:number){
+  const points=[];
+  for(const x of [bounds.minX,bounds.maxX])for(const y of [bounds.minY,bounds.maxY])for(const z of [-.22,.22])
+    points.push(project3DToScreen({x,y,z},camera,width,height));
+  return {left:Math.min(...points.map(p=>p.x)),right:Math.max(...points.map(p=>p.x)),
+    top:Math.min(...points.map(p=>p.y)),bottom:Math.max(...points.map(p=>p.y)),visible:points.every(p=>p.visible)};
+}
+export function b1ProjectionFits(bounds:B1Bounds,camera:THREE.Camera,width:number,height:number,safe:B1SafeRect,margin=8){
+  const p=b1ProjectedBounds(bounds,camera,width,height);
+  return p.visible&&p.left>=safe.left+margin&&p.right<=safe.right-margin&&p.top>=safe.top+margin&&p.bottom<=safe.bottom-margin;
+}
+/** Keep the orbit orientation, fit the actual XY envelope, and put its center
+ * into the safe rectangle by intersecting the desired view ray with XY.
+ * Iteration accounts for perspective/depth rather than assuming a flat view. */
+export function fitB1SpatialFrame(morph:CameraMorphController,bounds:B1Bounds,width:number,height:number,safe:B1SafeRect){
+  const center=new THREE.Vector3((bounds.minX+bounds.maxX)/2,(bounds.minY+bounds.maxY)/2,0);
+  const spanX=Math.max(1,bounds.maxX-bounds.minX),spanY=Math.max(1,bounds.maxY-bounds.minY);
+  const screenX=(safe.left+safe.right)/2,screenY=(safe.top+safe.bottom)/2;
+  const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,0,1),0);
+  let visibleHeight=Math.max(3.6,1.15*Math.max((spanX+.65)*height/Math.max(1,safe.right-safe.left-48),(spanY+.65)*height/Math.max(1,safe.bottom-safe.top-48)));
+  for(let i=0;i<8;i++){
+    morph.setFraming(center,visibleHeight);
+    const camera=morph.getActiveCamera();
+    ray.setFromCamera(new THREE.Vector2(2*screenX/width-1,1-2*screenY/height),camera);
+    const hit=ray.ray.intersectPlane(plane,new THREE.Vector3());
+    if(hit)morph.setFraming(center.clone().multiplyScalar(2).sub(hit),visibleHeight);
+    if(b1ProjectionFits(bounds,morph.getActiveCamera(),width,height,safe,18))break;
+    visibleHeight*=1.25;
+  }
+  return b1ProjectedBounds(bounds,morph.getActiveCamera(),width,height);
+}
+
 /** B1 field geometry follows exactly the engine's signed-distance region. Infinite regions are shown as a finite viewing window. */
 function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
   const fixed = new THREE.Group();
+  const fieldWindow=new THREE.Group();
   const tracks = new Map<number, TrackVisual>();
   root.add(fixed);
   let signature = '';
@@ -226,20 +262,18 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
       const state = raw as BoundedMagneticState, params = rawParams as BoundedMagneticParams;
       const next = JSON.stringify([params.mode, params.fieldScale, params.magneticFieldZ, params.electricFieldY, layers.has('fieldRegion')]);
       if (next !== signature) {
-        signature = next; clear(fixed);
+        signature = next; clear(fixed);clear(fieldWindow);fieldWindow.position.set(0,0,0);fixed.add(fieldWindow);
         if (layers.has('fieldRegion')) {
           const radius = Math.max(params.fieldScale,params.mode==='circular'?.05:.1);
-          let region: THREE.Mesh;
-          if (params.mode === 'circular') {
-            region = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.44, 64, 1, true), dielectricGlassMaterial());
-            region.rotation.x = Math.PI / 2;
-          } else {
-            const width = params.mode === 'rectangular' ? radius : params.mode === 'half-space' ? 4 : 8;
-            const height = params.mode === 'rectangular' ? Math.max(params.fieldScale * 1.6, 0.2) : 5;
-            region = new THREE.Mesh(new THREE.BoxGeometry(width, height, 0.44), dielectricGlassMaterial());
-            region.position.x = params.mode === 'crossed-eb' ? 0 : width / 2;
+          // A field is not glass matter. Use a faint, depth-write-free local
+          // tint only for bounded regions; infinite crossed fields have no box.
+          if(params.mode==='circular'||params.mode==='rectangular'){
+            const mat=new THREE.MeshBasicMaterial({color:0x2b8db4,transparent:true,opacity:.085,depthWrite:false,toneMapped:false,side:THREE.DoubleSide});
+            const region=params.mode==='circular'?new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,.44,64,1,true),mat):
+              new THREE.Mesh(new THREE.BoxGeometry(radius,Math.max(params.fieldScale*1.6,.2),.44),mat);
+            if(params.mode==='circular')region.rotation.x=Math.PI/2;else region.position.x=radius/2;
+            region.name='b1-bounded-field-tint';fixed.add(region);
           }
-          fixed.add(region);
           if (params.mode === 'circular') {
             for (const [index, zPlane] of [-0.22, 0.22].entries()) {
               const rimPoints = Array.from({ length: 72 }, (_, pointIndex) => {
@@ -274,21 +308,38 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
           }
           if (params.magneticFieldZ!==0) {
             const sign = Math.sign(params.magneticFieldZ);
-            for (let x = -3; x <= 4; x += 0.6) {
-              for (let y = -2.4; y <= 2.4; y += 0.6) {
-                if (fieldSignedDistance({ x, y, z: 0 }, params.mode, params.fieldScale) > -0.05) continue;
-                const arrow=new THREE.ArrowHelper(new THREE.Vector3(0,0,sign),new THREE.Vector3(x,y,-.18*sign),.36,0x38bdf8,.08,.04);
-                arrow.name='b1-field-arrow';
-                const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.005,.005,.28,6),new THREE.MeshBasicMaterial({color:0x7dd3fc,toneMapped:false}));shaft.position.y=.14;arrow.add(shaft);fixed.add(arrow);
+            const positions:{x:number;y:number}[]=[];
+            if(params.mode==='circular'){
+              const spacing=radius*.45;
+              for(let i=-2;i<=2;i++)for(let j=-2;j<=2;j++){
+                const x=i*spacing,y=j*spacing;
+                if(fieldSignedDistance({x,y,z:0},params.mode,params.fieldScale)<-radius*.06)positions.push({x,y});
               }
+            }else if(params.mode==='rectangular'){
+              const height=Math.max(params.fieldScale*1.6,.2);
+              for(let i=1;i<=3;i++)for(let j=-1;j<=1;j++)positions.push({x:i*radius/4,y:j*height/3});
+            }else{
+              for(let i=params.mode==='half-space'?1:-2;i<=3;i++)for(let j=-2;j<=2;j++)positions.push({x:i*.78,y:j*.78});
+            }
+            for(const {x,y} of positions){
+              const arrow=new THREE.ArrowHelper(new THREE.Vector3(0,0,sign),new THREE.Vector3(x,y,-.18*sign),.36,0x38bdf8,.08,.04);
+              arrow.name='b1-field-arrow';
+              const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.005,.005,.28,6),new THREE.MeshBasicMaterial({color:0x7dd3fc,toneMapped:false}));
+              shaft.position.y=.14;arrow.line.visible=false;arrow.add(shaft);fieldWindow.add(arrow);
             }
           }
           if (params.mode === 'crossed-eb' && Math.abs(params.electricFieldY) > 1e-9) {
             const sign = Math.sign(params.electricFieldY);
-            for (let x = -2.4; x <= 2.4; x += 0.8) fixed.add(new THREE.ArrowHelper(
-              new THREE.Vector3(0, sign, 0), new THREE.Vector3(x, -sign * 0.5, 0), 1, 0xfbbf24, 0.16, 0.07));
+            for (let x=-2;x<=2;x+=1)fieldWindow.add(new THREE.ArrowHelper(
+              new THREE.Vector3(0,sign,0),new THREE.Vector3(x,-sign*.46,0),.92,0xfbbf24,.15,.065));
           }
         }
+      }
+      // Recenter only the visual sample lattice of the all-space field; no
+      // physical positions or real boundaries are moved or reconstructed.
+      if(params.mode==='crossed-eb'&&state.particles[0]){
+        const p=state.particles[0].state.position;
+        fieldWindow.position.set(Math.round(p.x/1.56)*1.56,Math.round(p.y/1.56)*1.56,0);
       }
       const ids = new Set(state.particles.map(track => track.id));
       for (const [id, visual] of tracks) if (!ids.has(id)) { disposeTree(visual.root); tracks.delete(id); }
@@ -298,7 +349,7 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
         const pos = track.state.position;
         visual.particle.position.set(pos.x, pos.y, pos.z);
         const points=track.trail;
-        if(visual.lastTrail!==points){
+        if(layers.has('trajectory')&&visual.lastTrail!==points){
           visual.lastTrail=points;
           const recent=points.slice(-TRAIL_CAP);
           for(let i=0;i<recent.length;i++){const p=recent[i]!;visual.trailBuffer.setXYZ(i,p.x,p.y,0);}
@@ -320,20 +371,15 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
           const buffer=visual.radiusLine.geometry.getAttribute('position');
           buffer.setXYZ(0,orbit.center.x,orbit.center.y,0);buffer.setXYZ(1,pos.x,pos.y,0);buffer.needsUpdate=true;
         }
-        const v=track.state.velocity;
+        const {vx,vy,vd,rx:rotX,ry:rotY,decomposition,scale}=b1VelocityDisplay(track,params,layers);
         const showVelocity=layers.has('velocityVector')&&(track.id===0||state.particles.length<=5);
-        const decomposition=layers.has('speedDecomposition')&&track.id===0&&params.mode==='crossed-eb'&&
-          params.charge!==0&&Math.abs(params.magneticFieldZ)>1e-6;
-        const vd=decomposition?params.electricFieldY/params.magneticFieldZ:0;
-        const rotX=v.x-vd,rotY=v.y;
-        const scale=Math.min(0.22,1.5/Math.max(Math.hypot(v.x,v.y),Math.abs(vd),Math.hypot(rotX,rotY),1e-6));
         const setArrow=(arrow:THREE.ArrowHelper,x:number,y:number,show:boolean,offsetX=0)=>{
           const magnitude=Math.hypot(x,y),length=magnitude*scale;
           arrow.visible=show&&length>1e-6;arrow.position.set(pos.x+offsetX,pos.y,0.04);
           if(arrow.visible){arrow.setDirection(new THREE.Vector3(x/magnitude,y/magnitude,0));
             arrow.setLength(length,Math.min(0.12,length*0.3),Math.min(0.07,length*0.2));}
         };
-        setArrow(visual.velocity,v.x,v.y,showVelocity);setArrow(visual.drift,vd,0,decomposition);setArrow(visual.rotation,rotX,rotY,decomposition,vd*scale);
+        setArrow(visual.velocity,vx,vy,showVelocity);setArrow(visual.drift,vd,0,decomposition);setArrow(visual.rotation,rotX,rotY,decomposition,vd*scale);
       }
     },
     dispose: () => { disposeTree(root); tracks.clear(); }

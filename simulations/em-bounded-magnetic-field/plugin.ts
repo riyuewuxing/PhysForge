@@ -1,6 +1,6 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { magneticStoryDecks } from './storyDecks.js';
-import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec, type ForceVectorItem } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec, type ForceVectorItem, type Viewport, createWorldMapper } from '@physforge/sim-sdk';
 import {
   checkInvariants,
   computeLarmorCircleForTrack,
@@ -273,6 +273,72 @@ export function b1StateCaption(s:BoundedMagneticState,p:BoundedMagneticParams):s
   return 't='+s.t.toFixed(3)+' s · 入场 '+s.particles.filter(t=>t.hasEntered).length+'/'+s.particles.length+' · 出场 '+s.particles.filter(t=>t.hasExited).length+'/'+s.particles.length;
 }
 
+export type B1Bounds={minX:number;maxX:number;minY:number;maxY:number};
+export type B1SafeRect={left:number;right:number;top:number;bottom:number};
+/** A common visual scale for the three velocity vectors. Their tip-to-tail sum
+ * is exact, but lengths are display-scaled rather than force or world distances. */
+export function b1VelocityDisplay(track:ParticleTrack,p:BoundedMagneticParams,layers:ReadonlySet<string>){
+  const {x:vx,y:vy}=track.state.velocity;
+  const decomposition=layers.has('speedDecomposition')&&track.id===0&&p.mode==='crossed-eb'&&p.charge!==0&&Math.abs(p.magneticFieldZ)>1e-6;
+  const vd=decomposition?p.electricFieldY/p.magneticFieldZ:0;
+  const rx=vx-vd,ry=vy;
+  const scale=Math.min(.22,1.15/Math.max(Math.hypot(vx,vy),Math.abs(vd),Math.hypot(rx,ry),1e-6));
+  return {vx,vy,vd,rx,ry,scale,decomposition};
+}
+
+/** Include only visible physical content, not the artificial display window
+ * of an infinite field. Huge auxiliary circles are intentionally allowed to
+ * extend beyond the view rather than shrinking all real particles to dots. */
+export function b1FrameBounds(s:BoundedMagneticState,p:BoundedMagneticParams,layers:ReadonlySet<string>):B1Bounds{
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  const add=(x:number,y:number)=>{if(Number.isFinite(x)&&Number.isFinite(y)){
+    minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);
+  }};
+  if(layers.has('fieldRegion')){
+    if(p.mode==='circular'){const r=Math.max(p.fieldScale,.05);add(-r,-r);add(r,r);}
+    if(p.mode==='rectangular'){const w=Math.max(p.fieldScale,.1),h=Math.max(p.fieldScale*1.6,.2)/2;add(0,-h);add(w,h);}
+    if(p.mode==='half-space'){add(0,-1.2);add(0,1.2);}
+  }
+  for(const tr of s.particles){
+    const pos=tr.state.position;add(pos.x,pos.y);
+    if(layers.has('trajectory'))for(const pt of tr.trail)add(pt.x,pt.y);
+    if(layers.has('eventPins')){if(tr.entryPoint)add(tr.entryPoint.x,tr.entryPoint.y);if(tr.exitPoint)add(tr.exitPoint.x,tr.exitPoint.y);}
+    const d=b1VelocityDisplay(tr,p,layers);
+    if(layers.has('velocityVector')&&(tr.id===0||s.particles.length<=5)||d.decomposition)
+      add(pos.x+d.vx*d.scale,pos.y+d.vy*d.scale);
+    if(d.decomposition)add(pos.x+d.vd*d.scale,pos.y);
+    if(layers.has('larmorCircle')){
+      const circle=displayLarmorCircleForTrack(tr,p);
+      if(circle&&circle.radius<=Math.max(4,3*p.fieldScale)){
+        add(circle.center.x-circle.radius,circle.center.y-circle.radius);add(circle.center.x+circle.radius,circle.center.y+circle.radius);
+      }
+    }
+  }
+  if(!Number.isFinite(minX)){add(-1,-1);add(1,1);}
+  const cx=(minX+maxX)/2,cy=(minY+maxY)/2;
+  const hx=Math.max(.9,(maxX-minX)/2),hy=Math.max(.9,(maxY-minY)/2);
+  return {minX:cx-hx,maxX:cx+hx,minY:cy-hy,maxY:cy+hy};
+}
+export function b1SafeRect(width:number,height:number,presentation:boolean,scope=true):B1SafeRect{
+  return {left:Math.min(70,width*.09),right:width-Math.min(presentation?352:300,width*.40),
+    top:Math.min(presentation?105:30,height*.17),
+    bottom:height-Math.min(presentation?115:scope?230:85,height*.39)};
+}
+export function b1FitViewport(bounds:B1Bounds,viewport:Viewport,safe:B1SafeRect):Viewport{
+  const cx=(bounds.minX+bounds.maxX)/2,cy=(bounds.minY+bounds.maxY)/2;
+  const base=Math.min(viewport.width,viewport.height)*.24;
+  const ppm=Math.max(base*.1,Math.min(base*1.15,
+    Math.max(1,safe.right-safe.left-40)/(bounds.maxX-bounds.minX+.55),
+    Math.max(1,safe.bottom-safe.top-40)/(bounds.maxY-bounds.minY+.55)));
+  return {...viewport,scale:ppm/base,offsetX:(safe.left+safe.right)/2-.45*viewport.width-cx*ppm,
+    offsetY:(safe.top+safe.bottom)/2-.5*viewport.height+cy*ppm};
+}
+export function b1BoundsInViewport(bounds:B1Bounds,viewport:Viewport,safe:B1SafeRect):boolean{
+  const m=createWorldMapper(viewport);
+  return m.toX(bounds.minX)>=safe.left+8&&m.toX(bounds.maxX)<=safe.right-8&&
+    m.toY(bounds.maxY)>=safe.top+8&&m.toY(bounds.minY)<=safe.bottom-8;
+}
+
 export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin<
   BoundedMagneticParams,
   BoundedMagneticState
@@ -322,7 +388,10 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
         })
       }
     ];
-    return params.mode==='circular'||params.mode==='rectangular'?handles:handles.slice(0,1);
+    // Launch controls belong to the launch state. The sliders remain available
+    // during flight, but a moving particle must not carry a fake v0 vector.
+    const visible=params.mode==='circular'||params.mode==='rectangular'?handles:handles.slice(0,1);
+    return state.t===0?visible:visible.filter(h=>h.id!=='launch-velocity');
   },
   getForceVectors: (state, params) => {
     const primary = state.particles[0];
@@ -583,7 +652,7 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
       const R = Math.max(params.fieldScale, params.mode==='circular'?.05:.1);
       ctx.save();
       const grad=ctx.createRadialGradient(originX,originY,0,originX,originY,Math.max(1,Math.min(viewport.width,viewport.height)*.65));
-      grad.addColorStop(0,paper?'rgba(3,105,161,.10)':'rgba(56,189,248,.13)');
+      grad.addColorStop(0,paper?'rgba(3,105,161,.075)':'rgba(56,189,248,.075)');
       grad.addColorStop(1,paper?'rgba(3,105,161,.03)':'rgba(56,189,248,.035)');
       ctx.fillStyle=grad;ctx.strokeStyle=paper?'#0369a1':'#7dd3fc';
       ctx.lineWidth=2;
@@ -591,7 +660,7 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
 
       if (params.mode === 'half-space') {
         const p0 = toScreen(0, 0);
-        ctx.fillRect(p0.sx, 0, viewport.width - p0.sx, viewport.height);
+        ctx.fillRect(Math.max(0,p0.sx),0,Math.max(0,viewport.width-Math.max(0,p0.sx)),viewport.height);
         ctx.beginPath();
         ctx.setLineDash([8, 6]);
         ctx.moveTo(p0.sx, 0);
@@ -623,8 +692,12 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
         ctx.strokeStyle = paper?'#0369a1':'rgba(125, 211, 252, 0.66)';
         ctx.fillStyle = paper?'#0369a1':'rgba(125, 211, 252, 0.75)';
         ctx.lineWidth = 1.4;
-        for (let wx = -2.5; wx <= 3.0; wx += 0.55) {
-          for (let wy = -2.0; wy <= 2.0; wy += 0.55) {
+        // Sample the displayed world, not a static patch at the original origin.
+        const step=Math.max(.55,84/pxPerMeter);
+        const loX=Math.ceil((-originX+12)/pxPerMeter/step)*step,hiX=(viewport.width-originX-12)/pxPerMeter;
+        const loY=Math.ceil((originY-viewport.height+12)/pxPerMeter/step)*step,hiY=(originY-12)/pxPerMeter;
+        for (let wx=loX;wx<=hiX;wx+=step) {
+          for (let wy=loY;wy<=hiY;wy+=step) {
             if (fieldSignedDistance({ x: wx, y: wy, z: 0 }, params.mode, params.fieldScale) <= -0.05) {
               const p = toScreen(wx, wy);
               ctx.beginPath();
@@ -650,9 +723,11 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
       // 复合场绘制向上的电场线箭头
       if (params.mode === 'crossed-eb' && Math.abs(params.electricFieldY) > 1e-6) {
         const sgn = params.electricFieldY > 0 ? 1 : -1;
-        for (let wx = -1.6; wx <= 2.4; wx += 1.0) {
-          const base = toScreen(wx, -1.2 * sgn);
-          const tip = toScreen(wx, -0.5 * sgn);
+        const step=Math.max(1,150/pxPerMeter);
+        const centerY=(originY-viewport.height*.70)/pxPerMeter;
+        for (let wx=Math.ceil((-originX+30)/pxPerMeter/step)*step;wx<=(viewport.width-originX-30)/pxPerMeter;wx+=step) {
+          const base=toScreen(wx,centerY-.35*sgn);
+          const tip=toScreen(wx,centerY+.35*sgn);
           drawArrow(ctx, base.sx, base.sy, tip.sx, tip.sy, paper?'#92400e':'rgba(251, 191, 36, 0.78)', 'E');
         }
       }
@@ -724,8 +799,9 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
       ctx.stroke();
       ctx.restore();
 
-      if (activeLayers.has('velocityVector') && (track.id === 0 || state.particles.length <= 3)) {
-        const vScale = 22;
+      const vector=b1VelocityDisplay(track,params,activeLayers);
+      if (activeLayers.has('velocityVector') && (track.id === 0 || state.particles.length <= 5)) {
+        const vScale=vector.scale*pxPerMeter;
         drawArrow(
           ctx,
           p.sx,
@@ -738,15 +814,10 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
       }
 
       if (
-        activeLayers.has('speedDecomposition') &&
-        track.id === 0 &&
-        params.mode === 'crossed-eb' && params.charge !== 0 &&
-        Math.abs(params.magneticFieldZ) > 1e-6
+        vector.decomposition
       ) {
-        const vScale = 22;
-        const vd = params.electricFieldY / params.magneticFieldZ;
-        const vxRot = track.state.velocity.x - vd;
-        const vyRot = track.state.velocity.y;
+        const vScale=vector.scale*pxPerMeter;
+        const vd=vector.vd,vxRot=vector.rx,vyRot=vector.ry;
         drawArrow(ctx, p.sx, p.sy, p.sx + vd * vScale, p.sy, paper?'#92400e':'#fbbf24');
         drawArrow(
           ctx,
@@ -790,7 +861,7 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
     // Keep the coordinate/field convention outside the central trajectory and controls.
     ctx.save();ctx.font='600 12px system-ui,sans-serif';ctx.textAlign='left';
     ctx.fillStyle=paper?'#334155':'#cbd5e1';
-    const y=viewport.height-44;
+    const y=viewport.height-102;
     ctx.fillText(b1FieldCaption(params),12,y);
     ctx.fillText(b1StateCaption(state,params),12,y+17);
     if(params.mode==='crossed-eb'&&activeLayers.has('speedDecomposition')&&params.charge!==0&&params.magneticFieldZ!==0){
@@ -799,6 +870,6 @@ export const emBoundedMagneticFieldPlugin = Object.assign(defineSimulationPlugin
     }
     ctx.restore();
   }
-}), { storyDecks: magneticStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 5.8, sceneDepthRadius: 9, default3DAzimuthRad: 0.65, default3DPolarRad: 1.15 } });
+}), { b1FrameBounds,b1SafeRect,b1FitViewport,b1BoundsInViewport,storyDecks: magneticStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 5.8, sceneDepthRadius: 9, default3DAzimuthRad: 0.65, default3DPolarRad: 1.15 } });
 
 export default emBoundedMagneticFieldPlugin;

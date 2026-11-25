@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { resolvePluginParams } from '@physforge/sim-sdk';
-import { emBoundedMagneticFieldPlugin } from './plugin.js';
+import { createWorldMapper, resolvePluginParams } from '@physforge/sim-sdk';
+import { emBoundedMagneticFieldPlugin,b1FrameBounds,b1SafeRect,b1FitViewport,b1BoundsInViewport,b1VelocityDisplay } from './plugin.js';
 import {
   createInitialState,
   solveCriticalSpeedForRadius,
@@ -9,6 +9,26 @@ import {
 } from './engine.js';
 
 describe('B1 builder-composite-em-field V2 verification', () => {
+  it('fits actual long crossed-field flight and all displayed vector endpoints in both safe workbench and fullscreen views',()=>{
+    const p=resolvePluginParams<BoundedMagneticParams>(emBoundedMagneticFieldPlugin.paramSchema,{mode:'crossed-eb',family:'single',initialSpeed:0,magneticFieldZ:2,electricFieldY:3});
+    const initial=createInitialState(p),state=stepBoundedMagnetic(initial,p,4).nextState;
+    const layers=new Set(['trajectory','fieldRegion','velocityVector','speedDecomposition']);
+    const bounds=b1FrameBounds(state,p,layers);
+    for(const [width,height] of [[1440,900],[1024,768]] as const)for(const presentation of [false,true]){
+      const safe=b1SafeRect(width,height,presentation);
+      const fitted=b1FitViewport(bounds,{width,height,dpr:1,scale:1,offsetX:0,offsetY:0},safe);
+      expect(b1BoundsInViewport(bounds,fitted,safe)).toBe(true);
+      const m=createWorldMapper(fitted),tr=state.particles[0]!,v=b1VelocityDisplay(tr,p,layers);
+      const points=[...tr.trail,tr.state.position,{x:tr.state.position.x+v.vx*v.scale,y:tr.state.position.y+v.vy*v.scale},{x:tr.state.position.x+v.vd*v.scale,y:tr.state.position.y}];
+      for(const pt of points){
+        const screen=m.toScreen(pt.x,pt.y);
+        expect(screen.x).toBeGreaterThan(safe.left);expect(screen.x).toBeLessThan(safe.right);
+        expect(screen.y).toBeGreaterThan(safe.top);expect(screen.y).toBeLessThan(safe.bottom);
+      }
+    }
+    expect(emBoundedMagneticFieldPlugin.getControlHandles?.(initial,p).some(h=>h.id==='launch-velocity')).toBe(true);
+    expect(emBoundedMagneticFieldPlugin.getControlHandles?.(state,p).some(h=>h.id==='launch-velocity')).toBe(false);
+  });
   it('preserves kinetic energy < 1e-10 and radius < 1e-6 over 50 cyclotron periods', () => {
     const params = resolvePluginParams<BoundedMagneticParams>(
       emBoundedMagneticFieldPlugin.paramSchema,

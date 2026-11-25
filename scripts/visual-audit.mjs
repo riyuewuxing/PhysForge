@@ -488,6 +488,32 @@ async function auditB1Physics(page,origin,screenshot){
   await page.goto(url.toString(),{waitUntil:'networkidle'});
   await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='builder-composite-em-field');
   const report=[];
+  // Capture actual rendered state on timeout, not just a generic Playwright line.
+  const waitB1=async(condition,label,timeout=15000)=>{
+    try{await page.waitForFunction(condition,null,{timeout});}
+    catch(error){
+      const status=await page.evaluate(()=>{
+        const stage=document.querySelector('[data-testid="three-stage-container"]');
+        const play=[...document.querySelectorAll('[data-testid="btn-play-pause"]')].find(el=>el.getBoundingClientRect().width>0);
+        return {stage:stage?{...stage.dataset}:null,play:play?.getAttribute('aria-label'),topbar:document.querySelector('[data-testid="topbar"]')?.textContent};
+      });
+      if(screenshot)await screenshot('B1_failure_'+label);
+      throw Error('B1 '+label+' timeout: '+JSON.stringify(status),{cause:error});
+    }
+  };
+  const checkB1Composition=async(stage)=>{
+    const result=await stage.evaluate(el=>{
+      const b=JSON.parse(el.dataset.b1ScreenBounds||'null'),r=el.getBoundingClientRect();
+      const relative=selector=>{const e=document.querySelector(selector);if(!e)return null;const a=e.getBoundingClientRect();return {left:a.left-r.left,right:a.right-r.left,top:a.top-r.top,bottom:a.bottom-r.top};};
+      const formula=relative('[data-testid="fullscreen-formula"]'),controls=relative('[data-testid="fullscreen-controls"]'),title=relative('[data-testid="fullscreen-title"]');
+      return {b,width:r.width,height:r.height,formula,controls,title};
+    });
+    const {b,width,height,formula,controls,title}=result;
+    if(!b?.visible||b.left<8||b.right>width-8||b.top<8||b.bottom>height-8)throw Error('B1 physical envelope is clipped '+JSON.stringify(result));
+    for(const rect of [formula,controls,title])if(rect&&b.left<rect.right+4&&b.right>rect.left-4&&b.top<rect.bottom+4&&b.bottom>rect.top-4)
+      throw Error('B1 real content overlaps presentation chrome '+JSON.stringify(result));
+    return result;
+  };
   for(const preset of ['circle-magnetic-focusing','crossed-eb-cycloid']){
     await selectPreset(page,preset);
     const scope=page.getByTestId('floating-scope-dock');
@@ -520,24 +546,36 @@ async function auditB1Physics(page,origin,screenshot){
     await stage.waitFor({state:'visible',timeout:20000});
     await page.waitForFunction(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t'))===0);
     const play=page.locator('[data-testid="btn-play-pause"]:visible');
-    if(await play.getAttribute('aria-label')==='运行')await play.click();
+    // The previous workbench reset must propagate through the real morph.
+    // No synthetic advance, retry click, or increased original run timeout.
+    await waitB1(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-b1-render-time'))===0,'reset-frame');
+    if(await play.getAttribute('aria-label')!=='运行')throw Error('B1 reset did not pause');
+    await play.click();
+    await page.waitForFunction(()=>[...document.querySelectorAll('[data-testid="btn-play-pause"]')].some(el=>el.getBoundingClientRect().width>0&&el.getAttribute('aria-label')==='暂停'));
     if(preset==='circle-magnetic-focusing'){
-      await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-b1-exits')||'[]').length===5,null,{timeout:15000});
+      await waitB1(()=>JSON.parse(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-b1-render-exits')||'[]').length===5,'focus-exits');
       if(await play.getAttribute('aria-label')==='暂停')await play.click();
-      const exits=JSON.parse(await stage.getAttribute('data-b1-exits')||'[]');
+      const exits=JSON.parse(await stage.getAttribute('data-b1-render-exits')||'[]');
       const maxError=Math.max(...exits.map(p=>Math.hypot(p.x,p.y+1.2)));
       if(exits.length!==5||maxError>1e-6)throw Error('B1 real focusing error '+maxError);
       report.push({preset,exits,maxError});
     }else{
-      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-b1-time'))>1.1,null,{timeout:15000});
+      await waitB1(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-b1-render-time'))>1.1,'cycloid-progress');
       if(await play.getAttribute('aria-label')==='暂停')await play.click();
-      const s=JSON.parse(await stage.getAttribute('data-b1-primary')||'null');
+      const s=JSON.parse(await stage.getAttribute('data-b1-render-primary')||'null');
       if(!s||!(s.t>1))throw Error('B1 crossed field has no actual state');
       const theta=2*s.t,x=1.5*(s.t-Math.sin(theta)/2),y=.75*(1-Math.cos(theta)),vx=1.5*(1-Math.cos(theta)),vy=1.5*Math.sin(theta);
       const error=Math.max(Math.hypot(s.position.x-x,s.position.y-y),Math.hypot(s.velocity.x-vx,s.velocity.y-vy));
       if(error>1e-6)throw Error('B1 browser cycloid oracle error '+error);
       report.push({preset,t:s.t,error});
     }
+    // Ensure the last paused WebGL frame catches up to the final engine state.
+    await waitB1(()=>{
+      const el=document.querySelector('[data-testid="three-stage-container"]');
+      const t=Number(el?.getAttribute('data-b1-time')),rendered=Number(el?.getAttribute('data-b1-render-time'));
+      return Number.isFinite(t)&&Number.isFinite(rendered)&&Math.abs(t-rendered)<1e-8;
+    },'paused-state-agreement');
+    report[report.length-1].composition=await checkB1Composition(stage);
     if(screenshot)await screenshot('B1_'+preset+'_3d');
     if(preset==='circle-magnetic-focusing'){
       const axis=stage.locator('[data-magnetic-axis-widget]');
@@ -551,6 +589,7 @@ async function auditB1Physics(page,origin,screenshot){
       await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.64,bounds.y+bounds.height*.49,{steps:8});await page.mouse.up();
       await page.waitForFunction(old=>document.querySelector('[data-magnetic-axis-widget]')?.getAttribute('data-axis-orientation')!==old,before);
       if(await stage.getAttribute('data-b1-time')!==paused)throw Error('B1 paused time changed during orbit');
+      if(await stage.getAttribute('data-b1-auto-fit')!=='false')throw Error('B1 manual orbit must take ownership of camera');
       if(screenshot)await screenshot('B1_focus_orbit');
     }
     await toggle.click();await stage.waitFor({state:'detached',timeout:15000});

@@ -8,8 +8,8 @@ import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop } from './spatialMaterials.js';
-import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
-import { b1FieldCaption,b1StateCaption } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
+import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
+import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
 import { magnetic3dDisplayPoint, magnetic3dDefaultVisibleHeight } from '@physforge/simulations/em-3d-magnetic-fields';
@@ -334,10 +334,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     cssRenderer.domElement.setAttribute('aria-hidden', 'true');
     container.appendChild(cssRenderer.domElement);
 
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    const roomEnvironment = new RoomEnvironment();
-    const environmentTarget = pmremGenerator.fromScene(roomEnvironment, 0.04);
-    scene.environment = environmentTarget.texture;
+    // B1 has no reflective matter or transmissive box. Avoid allocating and
+    // sampling a room environment solely to depict an abstract field.
+    const pmremGenerator=isBoundedStage?null:new THREE.PMREMGenerator(renderer);
+    const roomEnvironment=pmremGenerator?new RoomEnvironment():null;
+    const environmentTarget=pmremGenerator&&roomEnvironment?pmremGenerator.fromScene(roomEnvironment,.04):null;
+    if(environmentTarget)scene.environment=environmentTarget.texture;
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -439,6 +441,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     renderer.domElement.addEventListener('webglcontextlost', onContextLost, false);
     renderer.domElement.addEventListener('webglcontextrestored', onContextRestored, false);
     controls.addEventListener('change', markDirty);
+    let b1AutoFit=true,b1FramingKey='',b1FramedAt=-Infinity,b1RenderCount=0;
+    const lockB1Camera=()=>{b1AutoFit=false;};
+    if(isBoundedStage)controls.addEventListener('start',lockB1Camera);
 
     const velocityLabelAnchor = new THREE.Vector3();
     const forceLabelAnchor = new THREE.Vector3();
@@ -717,6 +722,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
+        if(isBoundedStage)controls.removeEventListener('start',lockB1Camera);
         planarDriver?.dispose();
         clearDeviceLabels();
         disposeGroupChildren(staticGroup);
@@ -730,9 +736,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         sphereMat.dispose();
         disposeObjectResources(grid);
         magneticBackdrop?.dispose();
-        environmentTarget.dispose();
-        pmremGenerator.dispose();
-        disposeObjectResources(roomEnvironment);
+        environmentTarget?.dispose();
+        pmremGenerator?.dispose();
+        if(roomEnvironment)disposeObjectResources(roomEnvironment);
         controls.dispose();
         renderer.dispose();
         renderer.forceContextLoss();
@@ -763,6 +769,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if (morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
+          if(isBoundedStage)b1AutoFit=false;
           morph.startKeyframe(command.view, now, command.durationMs);
           if (storyCameraCommandRef) storyCameraCommandRef.current = null;
           lastMorphTarget = target;
@@ -794,18 +801,36 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       const latestState = readState();
       const frameParams = getFrameParams?.() ?? latestParamsRef.current;
       const frameLayers = readLayers();
-      if (latestState !== null && latestState !== undefined && (latestState !== lastSyncedState || frameParams !== lastSyncedParams || frameLayers !== lastSyncedLayers)) {
-        syncState(latestState, frameParams, frameLayers);
-        lastSyncedState = latestState;
-        lastSyncedParams = frameParams;
-        lastSyncedLayers = frameLayers;
-      }
-
-      if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) {
-        return;
-      }
+      const changed=latestState!==null&&latestState!==undefined&&(latestState!==lastSyncedState||frameParams!==lastSyncedParams||frameLayers!==lastSyncedLayers);
+      const syncLatest=()=>{
+        syncState(latestState,frameParams,frameLayers);
+        lastSyncedState=latestState;lastSyncedParams=frameParams;lastSyncedLayers=frameLayers;
+      };
+      // B1's tube buffers are computed for a rendered frame, not every rAF
+      // callback that the adaptive frame guard is about to discard.
+      if(changed&&!isBoundedStage)syncLatest();
+      if(changed&&isBoundedStage)dirty=true;
+      if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) return;
 
       const renderStart = performance.now();
+      if(changed&&isBoundedStage)syncLatest();
+      const b1=isBoundedStage&&latestState!==null&&latestState!==undefined?latestState as BoundedMagneticState:null;
+      const bp=frameParams as BoundedMagneticParams;
+      const rw=renderer.domElement.clientWidth||width,rh=renderer.domElement.clientHeight||height;
+      if(b1&&morph&&morph.getMorphT()===0&&!morph.isAnimating){
+        const key=JSON.stringify([bp.mode,bp.fieldScale,rw,rh]);
+        const fresh=key!==b1FramingKey;
+        if(fresh){b1FramingKey=key;}
+        if(b1AutoFit&&(fresh||now-b1FramedAt>=250)){
+          b1FramedAt=now;
+          const bounds=b1FrameBounds(b1,bp,frameLayers),safe=b1SafeRect(rw,rh,presentationMode);
+          if(fresh||!b1ProjectionFits(bounds,camera,rw,rh,safe)){
+            morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
+            fitB1SpatialFrame(morph,bounds,rw,rh,safe);
+            controls.target.copy(morph.getOrbitTarget());controls.update();
+          }
+        }
+      }
       if (isMag3d || isDeviceStage) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
@@ -813,6 +838,18 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget, renderCamera,isBoundedStage);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
+      if(b1){
+        // Diagnostics and visible caption refer to the state just rendered.
+        // No React state is updated at animation frequency.
+        container.dataset.b1RenderTime=String(b1.t);
+        container.dataset.b1RenderPrimary=JSON.stringify(b1.particles[0]?.state??null);
+        container.dataset.b1RenderExits=JSON.stringify(b1.particles.flatMap(t=>t.exitPoint?[t.exitPoint]:[]));
+        container.dataset.b1RenderMode=bp.mode;
+        container.dataset.b1RenderCount=String(++b1RenderCount);
+        container.dataset.b1AutoFit=String(b1AutoFit);
+        const b=b1FrameBounds(b1,bp,frameLayers);
+        container.dataset.b1ScreenBounds=JSON.stringify(b1ProjectedBounds(b,renderCamera,rw,rh));
+      }
       if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
         flatNotified = true;
         morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)));
@@ -901,7 +938,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-flow-rate={deviceState?.flowRateM3ps}
       className="relative w-full h-full min-h-[260px] rounded-xl overflow-hidden"
     >
-      {b1State&&<div data-testid="b1-field-caption" className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[38%] rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200"><div>{b1FieldCaption(b1Params)}</div><div>{b1StateCaption(b1State,b1Params)}</div>{b1Params.mode==='crossed-eb'&&b1Params.charge!==0&&b1Params.magneticFieldZ!==0&&activeLayers.has('speedDecomposition')&&<div><span className="text-emerald-300">v</span> = <span className="text-amber-300">v_d</span> + <span className="text-pink-300">v_rot</span></div>}</div>}
+      {b1State&&<div data-testid="b1-field-caption" className={`pointer-events-none absolute ${presentationMode?'bottom-3':'bottom-[78px]'} left-3 z-10 max-w-[38%] rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200`}><div>{b1FieldCaption(b1Params)}</div><div>{b1StateCaption(b1State,b1Params)}</div>{b1Params.mode==='crossed-eb'&&b1Params.charge!==0&&b1Params.magneticFieldZ!==0&&activeLayers.has('speedDecomposition')&&<div><span className="text-emerald-300">v</span> = <span className="text-amber-300">v_d</span> + <span className="text-pink-300">v_rot</span></div>}</div>}
       {lossCone !== undefined && <div data-testid="mirror-loss-cone" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200">
         <div>速度空间逃逸锥 θc={lossCone.toFixed(1)}°</div>
         <svg viewBox="0 0 104 60" width="104" height="60" aria-label="速度空间示意">
