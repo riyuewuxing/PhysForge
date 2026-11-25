@@ -95,7 +95,7 @@ describe('stse-tokamak-magnetic-mirror physics invariants (S01)', () => {
     expect(reflections.length).toBeGreaterThanOrEqual(2);
     for(const e of reflections){
       expect(Math.abs(e.position!.z!)).toBeLessThan(p.coilHalfSpanM);
-      expect(Math.abs(e.metrics!.vParallel)).toBeLessThan(1e-5);
+      expect(Math.abs(e.metrics!.vParallel!)).toBeLessThan(1e-5);
     }
     expect(out.nextState.reflectionCount).toBe(reflections.length);
     expect(out.nextState.escaped).toBe(false);
