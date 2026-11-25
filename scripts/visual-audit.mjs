@@ -496,6 +496,12 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
     if (!await deviceSelect.isVisible()) await page.getByText('更多参数与图层',{exact:false}).first().click();
     await deviceSelect.selectOption(device);
     if(device==='cyclotron')await selectPreset(page,'cyclotron-classic-vs-rel');
+    if(device==='hall-sensor')await selectPreset(page,'hall-electron-vs-hole');
+    if(device==='mhd-generator')await selectPreset(page,'mhd-peak-power');
+    if(device==='em-flowmeter')await selectPreset(page,'flowmeter-open-circuit');
+    const expectedScope={ 'velocity-selector':['selectedSpeed','particleSpeedMps','shared'], 'mass-spectrometer':['spectrometerRadiusM','particleSpeedMps','separate'],cyclotron:['cyclotronEnergyJ','cyclotronPhaseSlipRad','separate'],'hall-sensor':['hallVoltageMv','hallCurrentA','separate'],'mhd-generator':['mhdOutputWatt','mhdLoadCurrentA','separate'],'em-flowmeter':['flowVoltageMv','flowRateM3ps','separate']}[device];
+    await page.waitForFunction(([a,b,units])=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')===a&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')===b&&document.querySelector('[data-testid="floating-scope-dock"]')?.getAttribute('data-scope-units')===units,expectedScope);
+    if(screenshot)await screenshot('S02_'+device+'_scope');
     await page.getByTestId('btn-fullscreen-speech').click();
     const toggle = page.getByTestId('btn-view-3d-fullscreen');
     if ((await toggle.textContent())?.includes('3D 空间')) await toggle.click();
@@ -531,6 +537,21 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
       if((await play.getAttribute('aria-label'))==='暂停')await play.click();
       if(screenshot)await screenshot('S02_cyclotron_wall');
     }
+    if(device==='hall-sensor'){
+      const drift=Number(await stage.getAttribute('data-sensor-drift')),u=Number(await stage.getAttribute('data-hall-voltage'));
+      if(!(drift<0)||Math.abs(u-(-3*.8/(2e24*1.602176634e-19*.0005)))>1e-10)throw Error('S02 electron polarity/drift mismatch');
+      for(const label of ['上 ＋','下 −','电子漂移','E_H','F洛','I'])await stage.locator(`[data-device-label="${label}"]`).waitFor({state:'visible'});
+    }
+    if(device==='mhd-generator'){
+      const emf=Number(await stage.getAttribute('data-mhd-emf')),u=Number(await stage.getAttribute('data-mhd-terminal')),i=Number(await stage.getAttribute('data-mhd-current'));
+      if(Math.abs(emf-960)>1e-6||Math.abs(u-480)>1e-6||Math.abs(i-600)>1e-6)throw Error('S02 MHD loaded voltage/current mismatch');
+      for(const label of ['上 −','下 ＋','I外','v'])await stage.locator(`[data-device-label="${label}"]`).waitFor({state:'visible'});
+    }
+    if(device==='em-flowmeter'){
+      const u=Number(await stage.getAttribute('data-flow-voltage')),q=Number(await stage.getAttribute('data-flow-rate'));
+      if(Math.abs(u-20)>1e-8||Math.abs(q-Math.PI)>1e-8)throw Error('S02 flowmeter independent oracle mismatch');
+      for(const label of ['上 −','下 ＋','v'])await stage.locator(`[data-device-label="${label}"]`).waitFor({state:'visible'});
+    }
     if (screenshot) await screenshot('S02_' + device + '_3d');
     await toggle.click();
     await stage.waitFor({state:'detached',timeout:15000});
@@ -539,6 +560,24 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
     report.push({device,spatial:true,flat:true});
     await page.getByTestId('btn-exit-fullscreen-speech').click();
   }
+  // Switch electron to hole via the actual control and check its independent polarity.
+  await selectPreset(page,'hall-electron-vs-hole');
+  const carrier=page.locator('#param-carrierType');
+  if(!await carrier.isVisible())await page.getByText('更多参数与图层',{exact:false}).first().click();
+  await carrier.selectOption('hole');
+  await page.getByTestId('btn-fullscreen-speech').click();
+  const sensorToggle=page.getByTestId('btn-view-3d-fullscreen');
+  if((await sensorToggle.textContent())?.includes('3D 空间'))await sensorToggle.click();
+  const sensorStage=page.getByTestId('three-stage-container');
+  await sensorStage.waitFor({state:'visible',timeout:20000});
+  await page.waitForFunction(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-sensor-drift'))>0);
+  const holeU=Number(await sensorStage.getAttribute('data-hall-voltage'));
+  if(Math.abs(holeU-3*.8/(2e24*1.602176634e-19*.0005))>1e-10)throw Error('S02 hole polarity mismatch');
+  for(const label of ['上 −','下 ＋','空穴漂移','E_H','F洛','I'])await sensorStage.locator(`[data-device-label="${label}"]`).waitFor({state:'visible'});
+  if(screenshot)await screenshot('S02_hall_hole_3d');
+  await sensorToggle.click();await sensorStage.waitFor({state:'detached',timeout:15000});
+  if(screenshot)await screenshot('S02_hall_hole_flat');
+  await page.getByTestId('btn-exit-fullscreen-speech').click();
   // Run actual relativistic and low-turn presets through the same stage.
   for(const preset of ['cyclotron-classic-vs-rel','cyclotron-gap-classroom']){
     const relativistic=preset==='cyclotron-classic-vs-rel';

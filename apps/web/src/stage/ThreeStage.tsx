@@ -15,7 +15,8 @@ import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic
 import type { EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { flightReadout } from '../../../../simulations/stse-em-devices-suite/particleFlight.js';
 import { cyclotronReadout } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
-import type { EmDevicesParams } from '../../../../simulations/stse-em-devices-suite/engine.js';
+import { isSensorDevice, sensorReadout, type EmDevicesParams } from '../../../../simulations/stse-em-devices-suite/engine.js';
+import { getDeviceSchematic, deviceCueColor } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import {
   buildMagneticConductorPaths,
   magneticFieldGeometrySignature,
@@ -440,6 +441,27 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const forceLabelAnchor = new THREE.Vector3();
     const fieldLabelAnchor = new THREE.Vector3();
 
+    // S02 labels share the schematic anchors; rebuild only when direction/polarity changes.
+    let deviceLabels: Array<{obj:CSS2DObject;anchor:THREE.Vector3}> = [];
+    let deviceLabelSignature='';
+    const clearDeviceLabels=()=>{for(const {obj} of deviceLabels){scene.remove(obj);obj.element.remove();}deviceLabels=[];};
+    const syncDeviceLabels=(p:EmDevicesParams,layers:ReadonlySet<string>)=>{
+      const signature=[p.device,p.carrierType,Math.sign(p.hallCurrentA),Math.sign(p.bFieldT),Math.sign(p.particleSpeedMps)].join(':');
+      if(signature!==deviceLabelSignature){
+        deviceLabelSignature=signature;clearDeviceLabels();
+        if(isSensorDevice(p.device)){
+          const diagram=getDeviceSchematic(p.device,p);
+          const add=(text:string,color:string,x:number,y:number)=>{
+            const obj=createWorldLabel(text,color),anchor=new THREE.Vector3(x,.22,-y);
+            obj.element.dataset.deviceLabel=text;obj.position.copy(anchor);scene.add(obj);deviceLabels.push({obj,anchor});
+          };
+          for(const l of diagram.labels.filter(l=>/^(上|下) /.test(l.text)))add(l.text,'#f8fafc',l.x,l.y);
+          for(const c of diagram.cues)add(c.label,deviceCueColor(c.kind),c.x+c.dx*.5,c.y+c.dy*.5);
+        }
+      }
+      for(const {obj} of deviceLabels)obj.visible=layers.has('main');
+    };
+
     const separateWorldLabels = (viewportWidth: number, viewportHeight: number) => {
       const activeCamera = morph?.getActiveCamera() ?? camera;
       activeCamera.updateMatrixWorld();
@@ -447,7 +469,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       const candidates: Array<{ obj: CSS2DObject; anchor: THREE.Vector3 }> = [
         { obj: velocityLabel, anchor: velocityLabelAnchor },
         { obj: forceLabel, anchor: forceLabelAnchor },
-        { obj: fieldLabel, anchor: fieldLabelAnchor }
+        { obj: fieldLabel, anchor: fieldLabelAnchor },
+        ...deviceLabels
       ];
       for (const item of candidates) {
         if (!item.obj.visible) continue;
@@ -459,7 +482,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           ndcZ: projected.z,
           x: (projected.x * 0.5 + 0.5) * viewportWidth,
           y: (-projected.y * 0.5 + 0.5) * viewportHeight,
-          width: Math.max(30, rect.width, item.obj.element.offsetWidth),
+          width: Math.max(30, rect.width, item.obj.element.offsetWidth, item.obj.element.dataset.deviceLabel ? item.obj.element.dataset.deviceLabel.length*12+12 : 0),
           height: Math.max(32, rect.height, item.obj.element.offsetHeight)
         });
       }
@@ -481,7 +504,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       layers: ReadonlySet<string>
     ) => {
       if (state === null || state === undefined) return;
-      if (planarDriver) { planarDriver.sync(state, curParams, layers); dirty = true; return; }
+      if (planarDriver) { planarDriver.sync(state, curParams, layers); if(isDeviceStage)syncDeviceLabels(curParams as EmDevicesParams,layers); dirty = true; return; }
       if (isMag3d || isTokamak3d) {
         const magState = state as Magnetic3dState | TokamakMirrorState;
         const fusionParams = curParams as TokamakMirrorParams;
@@ -692,6 +715,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
         planarDriver?.dispose();
+        clearDeviceLabels();
         disposeGroupChildren(staticGroup);
         disposeGroupChildren(trailGroup);
         scene.remove(velocityArrow, lorentzForceArrow, magneticFieldArrow, marker, velocityLabel, forceLabel, fieldLabel);
@@ -779,7 +803,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       }
 
       const renderStart = performance.now();
-      if (isMag3d) {
+      if (isMag3d || isDeviceStage) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
       const renderCamera = morph?.getActiveCamera() ?? camera;
@@ -859,6 +883,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-cyclotron-time={cyclotron?.physicalTimeS}
       data-cyclotron-radius={cyclotron?.radiusM}
       data-cyclotron-rf={cyclotron?.rfVoltageV}
+      data-sensor-drift={deviceState&&isSensorDevice((params as EmDevicesParams).device)?deviceState.particleVel.x:undefined}
+      data-hall-voltage={deviceState?.hallVoltageV}
+      data-mhd-emf={deviceState?.mhdEmfV}
+      data-mhd-terminal={deviceState?.mhdTerminalVoltageV}
+      data-mhd-current={deviceState?.mhdLoadCurrentA}
+      data-flow-voltage={deviceState?.flowVoltageV}
+      data-flow-rate={deviceState?.flowRateM3ps}
       className="relative w-full h-full min-h-[260px] rounded-xl overflow-hidden"
     >
       {lossCone !== undefined && <div data-testid="mirror-loss-cone" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200">
@@ -868,7 +899,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           <path d="M5 30 H99 M52 5 V55" stroke="#94a3b8" strokeWidth="1" />
         </svg>
       </div>}
-      {plugin.meta.id === 'stse-em-devices-suite' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">{deviceFlight?flightReadout(deviceFlight):cyclotron?cyclotronReadout(params as EmDevicesParams,cyclotron):'归一化原理示意 · 蓝色箭头 B 垂直剖面 · 定量值见公式区'}{cyclotron&&cyclotron.arcIndex>=8&&<div className="mt-1 text-amber-200/80">浅色：抽样历史圆弧 · 亮色：最近实际轨迹</div>}</div>}
+      {plugin.meta.id === 'stse-em-devices-suite' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">{deviceFlight?flightReadout(deviceFlight):cyclotron?cyclotronReadout(params as EmDevicesParams,cyclotron):deviceState&&isSensorDevice((params as EmDevicesParams).device)?sensorReadout(deviceState,params as EmDevicesParams)+' · 蓝色箭头 B 出剖面 · 稳态示意': '归一化原理示意 · 蓝色箭头 B 垂直剖面 · 定量值见公式区'}{cyclotron&&cyclotron.arcIndex>=8&&<div className="mt-1 text-amber-200/80">浅色：抽样历史圆弧 · 亮色：最近实际轨迹</div>}</div>}
       {plugin.meta.id === 'astro-orbital-mechanics' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">轨道使用归一化长度 · 天体尺寸为示意{params.mode === 'binary-lagrange' && activeLayers.has('corotatingView') ? ' · 共转系不绘制无逐点时刻的历史轨迹' : params.mode === 'hohmann-transfer' ? ' · 橙色标记为引擎记录的点火' : ''}</div>}
       {vectorsVisible && (
         <div data-testid="three-vector-legend" className={`pointer-events-none absolute ${presentationMode ? 'bottom-3 left-3' : 'left-3 top-3'} z-10 flex items-center gap-3 rounded-lg border border-white/10 bg-slate-950/75 px-3 py-2 text-[11px] text-slate-200 shadow-lg backdrop-blur`}>

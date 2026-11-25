@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
-import type { EmDevicesParams, EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
+import { isSensorDevice, type EmDevicesParams, type EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { cyclotronHistory,type CyclotronHistoryArc } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
-import { deviceDiagramPoint, getDeviceSchematic, deeOutline, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
+import { deviceDiagramPoint, getDeviceSchematic, deeOutline, deviceCueColor, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
 import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers } from '@physforge/simulations/astro-orbital-mechanics';
 import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial, coilCopperMaterial, createParticleGlow } from './spatialMaterials.js';
@@ -89,10 +89,11 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
     const state=raw as EmDevicesState|null, p=rawParams as EmDevicesParams;
     if(!state?.particlePos)return;
     root.visible=layers.has('main');
-    if(signature!==p.device) {
-      signature=p.device;clear(fixed);
+    const nextSignature=isSensorDevice(p.device)?[p.device,p.carrierType,Math.sign(p.hallCurrentA),Math.sign(p.bFieldT),Math.sign(p.particleSpeedMps)].join(':'):p.device;
+    if(signature!==nextSignature) {
+      signature=nextSignature;clear(fixed);
       const base=mesh(fixed,'device-base',p.device==='cyclotron'?new THREE.CylinderGeometry(.99,1.05,.08,96):new THREE.BoxGeometry(3.15,.09,2.65),obsidianStageFloorMaterial());base.position.set(-0.25,p.device==='cyclotron'?-0.23:-0.52,0);
-      const schematic=getDeviceSchematic(p.device);
+      const schematic=getDeviceSchematic(p.device,p);
       for(const part of schematic.parts)buildDevicePart(fixed,part);
       // B points along +Y, i.e. out of the physical diagram plane (x,y)->(x,0,-y).
       // These are direction markers, not a solved field distribution or a strength scale.
@@ -103,11 +104,16 @@ function deviceDriver(root: THREE.Group): FlagshipSceneDriver {
       for(const cue of schematic.cues){
         const delta=new THREE.Vector3(cue.dx,0,-cue.dy),length=delta.length();
         if(length<=0)continue;
-        const direction=new THREE.ArrowHelper(delta.normalize(),new THREE.Vector3(cue.x,0.10,-cue.y),length,
-          cue.kind==='electric'?0xfbbf24:0x4ade80,Math.min(0.13,length*0.25),0.07);
+        const headLength=Math.min(0.13,length*0.25),color=new THREE.Color(deviceCueColor(cue.kind));
+        const direction=new THREE.ArrowHelper(delta.normalize(),new THREE.Vector3(cue.x,0.10,-cue.y),length,color,headLength,0.07);
+        if(isSensorDevice(p.device)){
+          const shaftLength=length-headLength;
+          const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.008,.008,shaftLength,8),new THREE.MeshBasicMaterial({color,toneMapped:false}));
+          shaft.position.y=shaftLength/2;direction.add(shaft);
+        }
         direction.name=cue.id;fixed.add(direction);
       }
-      for(const x of p.device==='cyclotron'?[]:[-1.65,1.28]) {
+      for(const x of p.device==='cyclotron'?[]:p.device==='velocity-selector'?[-1.65,1.28]:[1.28]) {
         const guide=mesh(fixed,'field-guide',new THREE.BoxGeometry(0.025,0.025,1.2),anodizedRailMaterial());
         guide.position.set(x,0,0);
       }
