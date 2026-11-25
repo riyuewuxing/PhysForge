@@ -1343,9 +1343,31 @@ async function main() {
           return JSON.parse(await page.getByTestId('simulation-canvas').getAttribute('data-b3-rendered'));
         };
         const checkReadout=async(key,value)=>{
-          await page.waitForFunction(({key,value})=>Math.abs(parseFloat(document.querySelector('[data-testid="b3-'+key+'"]')?.textContent||'')-value)<.000501,{key,value});
+          try{
+            await page.waitForFunction(({key,value})=>Math.abs(parseFloat(document.querySelector('[data-testid="b3-'+key+'"]')?.textContent||'')-value)<.000501,{key,value},{timeout:5000});
+          }catch(error){
+            const probe=await page.evaluate(key=>({readout:document.querySelector('[data-testid="b3-'+key+'"]')?.textContent,canvas:document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b3-rendered'),sliders:[...document.querySelectorAll('[data-testid^="param-slider-"]')].map(el=>({id:el.getAttribute('data-testid'),value:el.value}))}),key);
+            await page.screenshot({path:path.join(OUT_DIR,'H9_B3_'+key+'_failure.png')});
+            throw Error('B3 readout mismatch '+JSON.stringify({key,value,probe}),{cause:error});
+          }
+        };
+        // Actual pointer drag and exact parameter boundary are distinct tests:
+        // keyboard steps set a quantized input without guessing thumb geometry.
+        const exactRange=async(slider,target)=>{
+          const spec=await slider.evaluate(el=>({min:Number(el.min),step:Number(el.step),value:Number(el.value)}));
+          if(!Number.isFinite(spec.step)||spec.step<=0)throw Error('Invalid B3 range step');
+          await slider.focus();
+          const count=Math.round((target-spec.value)/spec.step);
+          for(let k=0;k<Math.abs(count);k++)await slider.press(count>0?'ArrowRight':'ArrowLeft');
+          const actual=Number(await slider.inputValue());
+          if(Math.abs(actual-target)>1e-10)throw Error('B3 exact keyboard parameter mismatch '+JSON.stringify({target,actual,spec}));
+          return actual;
+        };
+        const checkTitle=async(title)=>{
+          if(!(await page.getByTestId('topbar').innerText()).includes(title))throw Error('B3 stale mode title '+title);
         };
         await selectPreset(page,'parallel-glass-slab');
+        await checkTitle('几何光学·平行玻璃砖');
         const slab=await readB3('parallel-slab'),th=50*Math.PI/180,r=Math.asin(Math.sin(th)/1.5),shift=Math.sin(th-r)/Math.cos(r);
         if(Math.abs(slab.lateralShift-shift)>1e-9)throw Error('B3 slab geometry differs from independent displacement');
         await checkReadout('lateralShift',shift);
@@ -1367,10 +1389,17 @@ async function main() {
         const slit=await readB3('double-slit');if(Math.abs(slit.fringeSpacingMm-1.8)>1e-9)throw Error('B3 slit spacing incorrect');
         await checkReadout('fringeSpacingMm',1.8);
         await page.screenshot({path:path.join(OUT_DIR,'H9_B3_slit.png')});
-        const pre=await canvasFingerprint(page);
-        await dragRangeTo(page,page.getByTestId('param-slider-wavelengthNm'),500);
-        await checkReadout('fringeSpacingMm',1.5);
+        await checkTitle('波动光学·双缝干涉');
+        const pre=await canvasFingerprint(page),waveSlider=page.getByTestId('param-slider-wavelengthNm');
+        await dragRangeTo(page,waveSlider,500);
+        const actualLambda=Number(await waveSlider.inputValue());
+        if(!Number.isFinite(actualLambda)||actualLambda===600)throw Error('B3 wavelength pointer drag did not update');
+        await checkReadout('fringeSpacingMm',1.5*actualLambda/500);
+        const dragged=await readB3('double-slit');
+        if(Math.abs(dragged.fringeSpacingMm-1.5*actualLambda/500)>1e-9)throw Error('B3 dragged wavelength and physical state disagree');
         const post=await canvasFingerprint(page);
+        await exactRange(waveSlider,500);
+        await checkReadout('fringeSpacingMm',1.5);
         if(!pre||!post||pre.hash===post.hash)throw Error('B3 physical slit profile did not react to wavelength');
         await page.screenshot({path:path.join(OUT_DIR,'H9_B3_slit_changed.png')});
         await selectPreset(page,'thin-lens-real-image');
@@ -1378,10 +1407,11 @@ async function main() {
         if(Math.abs(lens.imageDistanceM-v)>1e-9)throw Error('B3 real lens mismatch');
         await checkReadout('imageDistanceM',v);
         await page.screenshot({path:path.join(OUT_DIR,'H9_B3_lens_real.png')});
-        await dragRangeTo(page,page.getByTestId('param-slider-objectDistanceM'),.45);
+        await checkTitle('几何光学·薄凸透镜成像');
+        await exactRange(page.getByTestId('param-slider-objectDistanceM'),.45);
         await checkReadout('imageDistanceM',.45*.65/(.45-.65));
         await page.screenshot({path:path.join(OUT_DIR,'H9_B3_lens_virtual.png')});
-        await dragRangeTo(page,page.getByTestId('param-slider-objectDistanceM'),.65);
+        await exactRange(page.getByTestId('param-slider-objectDistanceM'),.65);
         await page.getByTestId('b3-focus-infinity').waitFor({state:'visible'});
         const focus=await readB3('thin-lens-imaging');
         if(focus.imageAtInfinity!==1||'imageDistanceM' in focus||'magnification' in focus)throw Error('B3 focus fabricated finite image');
@@ -1696,7 +1726,11 @@ async function main() {
       const real=await read();if(Math.abs(real.imageDistanceM-1.5*.65/(1.5-.65))>1e-9)throw Error('B3 offline real image mismatch');
       if(await b3Page.getByTestId('sf-uplot').isVisible())throw Error('B3 static offline time scope visible');
       await b3Page.screenshot({path:path.join(OUT_DIR,'H9_B3_offline_lens.png')});
-      await b3Page.getByTestId('sf-param-objectDistanceM').evaluate(el=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,'0.65');el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));});
+      const uSlider=b3Page.getByTestId('sf-param-objectDistanceM');
+      await uSlider.focus();
+      const uSpec=await uSlider.evaluate(el=>({value:Number(el.value),step:Number(el.step)}));
+      for(let k=0;k<Math.round((uSpec.value-.65)/uSpec.step);k++)await uSlider.press('ArrowLeft');
+      if(Math.abs(Number(await uSlider.inputValue())-.65)>1e-10)throw Error('B3 offline exact focal input mismatch');
       await b3Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b3-rendered')||'null')?.imageAtInfinity===1);
       const focus=await read();if('imageDistanceM' in focus)throw Error('B3 offline finite image at focus');
       await b3Page.getByRole('button',{name:'黑板深蓝'}).click();
