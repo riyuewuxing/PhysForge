@@ -28,6 +28,42 @@ export function orbitDisplayTrail(state:AstroOrbitalState,corotating:boolean){
   return history.map(p=>orbitDisplayXY(p.x,p.y,p.tNorm,corotating));
 }
 
+type OrbitGuide={points:readonly {x:number;y:number}[];closed:boolean;kind:'kepler'|'transfer'|'clipped'};
+let orbitGuideCache:{key:string;guide:OrbitGuide|null}|null=null;
+export function orbitAnalyticalGuide(p:AstroOrbitalParams):OrbitGuide|null{
+  const key=[p.mode,p.v0Ratio,p.r2OverR1].join(':');
+  if(orbitGuideCache?.key===key)return orbitGuideCache.guide;
+  let guide:OrbitGuide|null=null;
+  if(p.mode!=='binary-lagrange'){
+    const transfer=p.mode==='hohmann-transfer',rho=Math.max(1.1,p.r2OverR1);
+    const v2=transfer?2*rho/(1+rho):Math.max(.5,p.v0Ratio)**2;
+    const ex=v2-1,e=Math.abs(ex);
+    // "closed" describes the displayed guide, not physical orbital type.
+    const closed=!transfer&&e<1&&v2/(1-e)<=6;
+    const n=closed?128:256,points:{x:number;y:number}[]=[];
+    for(let i=0;i<(closed?n:n+1);i++){
+      const theta=transfer?Math.PI*i/n:closed?2*Math.PI*i/n:-Math.PI+2*Math.PI*i/n;
+      const denominator=1+ex*Math.cos(theta);
+      if(denominator<=0)continue;
+      const radius=v2/denominator;
+      if(radius>6)continue;
+      points.push({x:radius*Math.cos(theta),y:radius*Math.sin(theta)});
+    }
+    guide={points,closed,kind:transfer?'transfer':closed?'kepler':'clipped'};
+  }
+  orbitGuideCache={key,guide};return guide;
+}
+export function orbitRenderSnapshot(state:AstroOrbitalState,params:AstroOrbitalParams,layers:ReadonlySet<string>){
+  const corotating=params.mode==='binary-lagrange'&&layers.has('corotatingView');
+  const obs=computeObservables(state,params),history=orbitDisplayTrail(state,corotating);
+  return {mode:params.mode,tSim:state.tSim,tNorm:state.tNorm,position:{x:state.xNorm,y:state.yNorm},
+    velocity:{x:state.vxNorm,y:state.vyNorm},energy:obs.energyNorm,angularMomentum:obs.angularMomNorm,
+    eccentricity:obs.eccentricity,jacobi:obs.jacobiConstant,jacobi0:state.jacobi0,corotating,
+    historyCount:history.length,historyFirst:history[0],historyLast:history.at(-1),
+    sectors:state.sectors.map(v=>({area:v.areaDimless,start:v.startTNorm,end:v.endTNorm})),
+    phase:state.hohmannPhase,events:state.events,deltaV1SI:state.deltaV1SI,deltaV2SI:state.deltaV2SI,
+    guideClosed:orbitAnalyticalGuide(params)?.closed};
+}
 /** Engine-reported Hohmann impulses only; no synthetic burn positions or timing. */
 export function orbitalBurnMarkers(state:AstroOrbitalState,params:AstroOrbitalParams){
   if(params.mode!=='hohmann-transfer')return [];
@@ -67,7 +103,7 @@ const paramSchema: readonly ParamFieldSpec<AstroOrbitalParams>[] = [
       { value: 'solar-au', label: '日地天文尺度 (1 AU / M日)' }
     ]
   },
-  { key: 'r1Ratio', kind: 'number', label: '近地点尺度比 r₁/L₀', unit: '', min: 0.5, max: 2, step: 0.1, defaultValue: 1 },
+  { key: 'r1Ratio', kind: 'number', label: '初始半径尺度比 r₁/L₀', unit: '', min: 0.5, max: 2, step: 0.1, defaultValue: 1 },
   { key: 'r2OverR1', kind: 'number', label: '霍曼目标半径比 r₂/r₁', unit: '', min: 1.2, max: 3.5, step: 0.1, defaultValue: 2.4 },
   { key: 'v0Ratio', kind: 'number', label: '初速度比 v₀/v_环', unit: '', min: 0.7, max: 1.45, step: 0.02, defaultValue: 1.2 },
   { key: 'massRatioQ', kind: 'number', label: '双星次星质量比 q', unit: '', min: 0.01, max: 0.4, step: 0.01, defaultValue: 0.03 },
@@ -106,7 +142,7 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
       {
         "tokenKey": "r1Ratio",
         "paramKey": "r1Ratio",
-        "label": "近地点尺度比 r₁/L₀",
+        "label": "初始半径尺度比 r₁/L₀",
         "unit": "",
         "min": 0.5,
         "max": 2,
@@ -259,13 +295,15 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     }else primitives.push({kind:'circle',cx:0,cy:0,r:0.13,fill:true});
     if(params.mode==='hohmann-transfer')primitives.push({kind:'circle',cx:0,cy:0,r:1,dashed:true},
       {kind:'circle',cx:0,cy:0,r:params.r2OverR1,dashed:true});
-    primitives.push({kind:'polyline',points:state.trailNorm,dashed:true},
+    const guide=orbitAnalyticalGuide(params);
+    if(guide?.points.length)primitives.push({kind:'polyline',points:guide.closed?[...guide.points,guide.points[0]!]:guide.points,dashed:true});
+    primitives.push({kind:'polyline',points:state.trailNorm,dashed:false},
       {kind:'circle',cx:state.xNorm,cy:state.yNorm,r:0.05,fill:true},
       {kind:'arrow',x1:state.xNorm,y1:state.yNorm,x2:state.xNorm+state.vxNorm*0.45,y2:state.yNorm+state.vyNorm*0.45,label:'v'});
     for(const burn of orbitalBurnMarkers(state,params))primitives.push(
       {kind:'circle',cx:burn.x,cy:burn.y,r:0.08},
       {kind:'arrow',x1:burn.x,y1:burn.y,x2:burn.x+0.45*burn.dx,y2:burn.y+0.45*burn.dy,label:'Δv'+burn.index});
-    const extent=Math.max(2.8,params.mode==='hohmann-transfer'?params.r2OverR1+0.6:0,Math.hypot(state.xNorm,state.yNorm)+0.6);
+    const extent=Math.max(2.8,params.mode==='hohmann-transfer'?params.r2OverR1+0.6:0,Math.hypot(state.xNorm,state.yNorm)+0.6,...(guide?.points.map(p=>Math.hypot(p.x,p.y)+.2)??[]),...state.trailNorm.map(p=>Math.hypot(p.x,p.y)+.2));
     return {width:720,height:460,viewBox:{minX:-extent,minY:-extent,maxX:extent,maxY:extent},
       title:'天体轨道动力学配图（惯性系，归一化长度）',primitives};
   },
@@ -283,13 +321,21 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     };
 
     ctx.save();
+    const paper=viewport.theme==='projector';
+    const star=(x:number,y:number,r:number,cold=false)=>{
+      const color=cold?'#60a5fa':'#fbbf24';
+      if(!paper){const halo=ctx.createRadialGradient(x,y,r*.2,x,y,r*2.6);halo.addColorStop(0,cold?'rgba(96,165,250,.35)':'rgba(251,191,36,.35)');halo.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=halo;ctx.beginPath();ctx.arc(x,y,r*2.6,0,Math.PI*2);ctx.fill();}
+      const gradient=ctx.createRadialGradient(x-r*.28,y-r*.34,r*.05,x,y,r);gradient.addColorStop(0,paper?'#ffffff':cold?'#e0f2fe':'#fff4c2');gradient.addColorStop(.55,color);gradient.addColorStop(1,cold?'#1d4ed8':'#b45309');
+      ctx.fillStyle=gradient;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+      if(paper){ctx.strokeStyle=cold?'#1e40af':'#92400e';ctx.lineWidth=1.3;ctx.stroke();}
+    };
 
     if (params.mode === 'binary-lagrange' && activeLayers.has('rocheIsolines')) {
       const contours = extractRocheIsolines(params.massRatioQ);
       const rot = useCorotating ? 0 : state.tNorm;
       const cr = Math.cos(rot);
       const sr = Math.sin(rot);
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.32)';
+      ctx.strokeStyle = paper?'rgba(51,65,85,.6)':'rgba(125,211,252,.45)';
       ctx.lineWidth = 1;
       for (const c of contours) {
         ctx.beginPath();
@@ -307,8 +353,8 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
       }
 
       const lPts = computeLagrangePoints(params.massRatioQ);
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = '11px sans-serif';
+      ctx.fillStyle = paper?'#92400e':'#fbbf24';
+      ctx.font = '12px sans-serif';
       for (const lp of lPts) {
         const lx = lp.x * cr - lp.y * sr;
         const ly = lp.x * sr + lp.y * cr;
@@ -337,8 +383,15 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     }
 
     if (activeLayers.has('orbit')) {
+      const guide=orbitAnalyticalGuide(params);
+      if(guide&&guide.points.length>1){
+        ctx.strokeStyle=paper?'#64748b':'#67c6e8';ctx.lineWidth=1.5;ctx.setLineDash([6,5]);ctx.beginPath();
+        guide.points.forEach((pt,i)=>{const a=m.toScreen(pt.x,pt.y);if(i===0)ctx.moveTo(a.x,a.y);else ctx.lineTo(a.x,a.y);});
+        if(guide.closed)ctx.closePath();ctx.stroke();ctx.setLineDash([]);
+        ctx.font='12px sans-serif';ctx.fillStyle=paper?'#334155':'#94a3b8';ctx.fillText((guide.kind==='transfer'?'虚线：解析转移半椭圆':guide.kind==='clipped'?'虚线：解析轨道（有限显示范围）':'虚线：解析轨道')+' · 实线：真实积分轨迹',18,94);
+      }
       if (params.mode === 'hohmann-transfer') {
-        ctx.strokeStyle = 'rgba(148,163,184,0.3)';
+        ctx.strokeStyle = paper?'#94a3b8':'rgba(148,163,184,0.55)';
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
         const origin = m.toScreen(0, 0);
@@ -352,10 +405,10 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
 
       const history=orbitDisplayTrail(state,useCorotating);
       if(history.length>1){
-        ctx.strokeStyle=viewport.theme==='projector'?'#0369a1':'#38bdf8';
-        ctx.lineWidth=2;ctx.beginPath();
+        ctx.strokeStyle=paper?'#b45309':'#ffcb75';
+        ctx.lineWidth=2.6;ctx.shadowColor=paper?'transparent':'#fbbf24';ctx.shadowBlur=paper?0:8;ctx.beginPath();
         history.forEach((point,i)=>{const p=m.toScreen(point.x,point.y);if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);});
-        ctx.stroke();
+        ctx.stroke();ctx.shadowBlur=0;
       }
 
       if (params.mode === 'binary-lagrange') {
@@ -364,24 +417,13 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
         const p2 = { x: (1 - q) * Math.cos(state.tNorm), y: (1 - q) * Math.sin(state.tNorm) };
         const c1 = mapPoint(p1.x, p1.y);
         const c2 = mapPoint(p2.x, p2.y);
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(c1.px, c1.py, markerRadius(14), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#60a5fa';
-        ctx.beginPath();
-        ctx.arc(c2.px, c2.py, markerRadius(7), 0, Math.PI * 2);
-        ctx.fill();
+        star(c1.px,c1.py,markerRadius(14));star(c2.px,c2.py,markerRadius(7),true);
       } else {
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        const origin = m.toScreen(0, 0);
-        ctx.arc(origin.x, origin.y, markerRadius(16), 0, Math.PI * 2);
-        ctx.fill();
+        const origin=m.toScreen(0,0);star(origin.x,origin.y,markerRadius(16));
       }
 
       const sat = mapPoint(state.xNorm, state.yNorm);
-      ctx.fillStyle = '#4ade80';
+      ctx.fillStyle = paper?'#15803d':'#4ade80';
       ctx.beginPath();
       ctx.arc(sat.px, sat.py, markerRadius(6), 0, Math.PI * 2);
       ctx.fill();
@@ -394,13 +436,13 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
         ctx.font='12px sans-serif';ctx.fillText(label,b.x+4,b.y-4);
       };
       const v=orbitDisplayVelocity(state,useCorotating),position=orbitDisplayXY(state.xNorm,state.yNorm,state.tNorm,useCorotating);
-      drawArrow(position.x,position.y,v.x*.35,v.y*.35,'#4ade80','v');
+      drawArrow(position.x,position.y,v.x*.35,v.y*.35,paper?'#166534':'#4ade80','v');
       for(const burn of orbitalBurnMarkers(state,params)){
         const p=m.toScreen(burn.x,burn.y);ctx.strokeStyle='#fb923c';ctx.lineWidth=2;
         ctx.beginPath();ctx.arc(p.x,p.y,markerRadius(8),0,Math.PI*2);ctx.stroke();
-        drawArrow(burn.x,burn.y,burn.dx*.45,burn.dy*.45,'#fb923c','Δv'+burn.index);
+        drawArrow(burn.x,burn.y,burn.dx*.45,burn.dy*.45,paper?'#b45309':'#fb923c','Δv'+burn.index);
       }
-      if(useCorotating){ctx.font='12px sans-serif';ctx.fillStyle=viewport.theme==='projector'?'#475569':'#94a3b8';ctx.fillText('共转系 · 各历史点按自身时刻转换',18,28);}
+      if(useCorotating){ctx.font='12px sans-serif';ctx.fillStyle=viewport.theme==='projector'?'#475569':'#94a3b8';ctx.fillText('共转系 · 实线为各历史点按自身时刻转换',18,94);}
 
     }
 
@@ -410,14 +452,14 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     const obs = computeObservables(state, params);
     if (params.mode === 'binary-lagrange') {
       const display = orbitDisplayXY(state.xNorm, state.yNorm, state.tNorm, true);
-      return [{ id: 'binary-jacobi',label:'三体共转系雅可比积分（归一化）',
-        latex:'C=2U+x^2+y^2-|\\\\mathbf v_{\\\\rm rot}|^2',
-        substitutedLatex:`C=${obs.jacobiConstant!.toFixed(7)}`},
+      return [{ id: 'binary-jacobi',label:'三体共转系雅可比积分（U 为正引力势函数）',
+        latex:'C=2U+x^2+y^2-|\\mathbf v_{\\rm rot}|^2',
+        substitutedLatex:`C=${obs.jacobiConstant!.toFixed(7)},\\quad \\tau=${state.tNorm.toFixed(3)}`},
         { id: 'binary-state', label: '共转系试探粒子位置（双星间距为长度单位）',
         latex: 'r_1/a=q,\\quad r_2/a=1-q',
         substitutedLatex: `\\begin{aligned}x_{\\rm rot}/a&=${display.x.toFixed(3)}\\\\y_{\\rm rot}/a&=${display.y.toFixed(3)}\\\\q&=${binaryMassRatio(params.massRatioQ).toFixed(3)}\\end{aligned}` }];
     }
-    const items = [{ id: 'orbit-state', label: '归一化二体轨道状态',
+    const items = [{ id: 'orbit-state', label: '归一化二体轨道状态（τ 为物理归一化时间）',
       latex: 'r/r_1,\\quad v/v_{c1},\\quad e',
       substitutedLatex: `\\begin{aligned}r/r_1&=${(obs.rNorm ?? 0).toFixed(4)}\\\\v/v_{c1}&=${(obs.speedNorm ?? 0).toFixed(4)}\\\\e&=${(obs.eccentricity ?? 0).toFixed(4)}\\end{aligned}` }];
     items.push({id:'orbit-integrals',label:'归一化比机械能与比角动量',
@@ -437,6 +479,6 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     }
     return items;
   }
-}), { storyDecks: orbitalStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 8.5, sceneDepthRadius: 8, default3DAzimuthRad: 0.5, default3DPolarRad: 0.92 } });
+}), { orbitRenderSnapshot,storyDecks: orbitalStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 8.5, sceneDepthRadius: 8, default3DAzimuthRad: 0.5, default3DPolarRad: 0.92 } });
 
 export default astroOrbitalMechanicsPlugin;

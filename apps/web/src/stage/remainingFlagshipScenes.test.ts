@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {describe,it,expect} from 'vitest';
 import {createWorldMapper,resolvePluginParams} from '@physforge/sim-sdk';
 import {stseEmDevicesSuitePlugin} from '@physforge/simulations/stse-em-devices-suite';
-import {astroOrbitalMechanicsPlugin,orbitDisplayXY,orbitalBurnMarkers,orbitDisplayVelocity} from '@physforge/simulations/astro-orbital-mechanics';
+import {astroOrbitalMechanicsPlugin,orbitDisplayXY,orbitalBurnMarkers,orbitDisplayVelocity,orbitAnalyticalGuide} from '@physforge/simulations/astro-orbital-mechanics';
 import {magnetic3dDisplayPoint} from '@physforge/simulations/em-3d-magnetic-fields';
 import type {EmDevicesParams} from '../../../../simulations/stse-em-devices-suite/engine.js';
 import {deviceDiagramPoint,getDeviceSchematic,deeOutline} from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
@@ -119,6 +119,20 @@ describe('remaining planar flagship projections',()=>{
     const b=createWorldMapper(alignedCanvasViewport(camera.get2DAlignMetrics())).toScreen(s.xNorm*c-s.yNorm*sin,s.xNorm*sin+s.yNorm*c);
     expect(Math.hypot(a.x-b.x,a.y-b.y)).toBeLessThan(0.5);
     driver.dispose();expect(scene.children.length).toBe(0);
+  });
+  it('M10 shared conic guide keeps physical ellipse, parabola and transfer distinct',()=>{
+    const p=astroOrbitalMechanicsPlugin;
+    for(const v0Ratio of [.7,1,1.2,1.41,Math.SQRT2,1.45]){
+      const params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'kepler-ellipse',v0Ratio});
+      const guide=orbitAnalyticalGuide(params)!;
+      expect(guide.points.length).toBeGreaterThan(10);
+      expect(guide.closed).toBe(v0Ratio<Math.SQRT2&&v0Ratio*v0Ratio/(1-Math.abs(v0Ratio*v0Ratio-1))<=6);
+      for(const pt of guide.points)expect(Math.hypot(pt.x,pt.y)+(v0Ratio*v0Ratio-1)*pt.x).toBeCloseTo(v0Ratio*v0Ratio,10);
+    }
+    const params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'hohmann-transfer',r2OverR1:2.4});
+    const guide=orbitAnalyticalGuide(params)!;
+    expect(guide.closed).toBe(false);expect(guide.points[0]!.x).toBeCloseTo(1,12);expect(guide.points.at(-1)!.x).toBeCloseTo(-2.4,12);
+    expect(guide.points.every(pt=>pt.y>=-1e-12)).toBe(true);
   });
   it('M10 analytical Kepler orbit passes through the initial body and rebuilds with orbital speed',()=>{
     const p=astroOrbitalMechanicsPlugin;

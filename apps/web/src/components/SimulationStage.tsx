@@ -6,6 +6,8 @@ import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../sim
 type B1StagePlugin=typeof import('../../../../simulations/em-bounded-magnetic-field/plugin.js').emBoundedMagneticFieldPlugin;
 import type { TokamakMirrorState,TokamakMirrorParams } from '../../../../simulations/stse-tokamak-magnetic-mirror/engine.js';
 type FusionStagePlugin=typeof import('../../../../simulations/stse-tokamak-magnetic-mirror/plugin.js').stseTokamakMagneticMirrorPlugin;
+import type { AstroOrbitalState,AstroOrbitalParams } from '../../../../simulations/astro-orbital-mechanics/engine.js';
+type OrbitStagePlugin=typeof import('../../../../simulations/astro-orbital-mechanics/plugin.js').astroOrbitalMechanicsPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -690,6 +692,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
 
     ctx.restore();
+    if(p.meta.id==='astro-orbital-mechanics'&&frame&&drawState!==null){
+      const model=p as unknown as OrbitStagePlugin;
+      canvas.dataset.m10Rendered=JSON.stringify(model.orbitRenderSnapshot(drawState as AstroOrbitalState,pm as AstroOrbitalParams,readDisplayedLayers()));
+    }
     if(fusionModel&&fusionPoints&&frame){
       canvas.dataset.s01ScreenBounds=JSON.stringify(fusionModel.fusionFlatScreenBounds(fusionPoints,viewportRef.current));
       canvas.dataset.s01AutoFit=String(fusionAutomatic);
@@ -1143,8 +1149,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   );
 
   const deviceScope = plugin.meta.id === 'stse-em-devices-suite';
-  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror';
-  const splitScopeUnits = heroScope && !!specA && !!specB && specA.unit !== specB.unit;
+  const orbitScope=plugin.meta.id==='astro-orbital-mechanics';
+  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror'||orbitScope;
+  const splitScopeUnits = heroScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {
     '#38bdf8': '#0369a1', '#fbbf24': '#92400e', '#f472b6': '#9d174d',
