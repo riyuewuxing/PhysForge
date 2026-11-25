@@ -30,3 +30,62 @@ describe('M03 mech-constrained-velocity verification', () => {
     }
   });
 });
+
+describe('H18 M03 independently differentiated physical paths',()=>{
+  const p:ConstrainedVelocityParams={mode:'rope-pull-boat',driveSpeed:1.5,heightOrLength:1.8,initialAngleDeg:30};
+  const at=(q:ConstrainedVelocityParams,t:number)=>stepConstrainedVelocity(createInitialState(q),q,t).nextState;
+  it('matches exact rope-length derivative and instantaneous acceleration, including coarse steps',()=>{
+    const t=.3,H=1.8,L0=H/Math.sin(Math.PI/6),L=L0-1.5*t,x=Math.sqrt(L*L-H*H);
+    const s=at(p,t);
+    expect(s.posA.x).toBeCloseTo(x,10);
+    expect(s.velA.x).toBeCloseTo(-1.5*L/x,10);
+    expect(s.accelBoatMag).toBeCloseTo(1.5**2*H**2/x**3,10);
+    expect(Math.abs(s.accelBoatMag-1.5**2*H**2/x**3)).toBeLessThan(1e-5);
+  });
+  it('does not teleport away from shore on the first step at a steep initial angle',()=>{
+    const q={...p,initialAngleDeg:75};
+    const a=createInitialState(q),b=stepConstrainedVelocity(a,q,1e-6).nextState;
+    expect(b.posA.x).toBeLessThan(a.posA.x);
+    expect((b.posA.x-a.posA.x)/1e-6).toBeCloseTo(a.velA.x,3);
+  });
+  it('prescribes the ladder material endpoint speed, not an arbitrary angular speed',()=>{
+    const q={...p,mode:'ladder-wall' as const,driveSpeed:2,heightOrLength:3,initialAngleDeg:40},t=.25,h=1e-5;
+    const s=at(q,t),a=at(q,t-h),b=at(q,t+h),y=3*Math.sin(40*Math.PI/180)-2*t;
+    expect(s.posA.y).toBeCloseTo(y,10);
+    expect(Math.hypot(s.posB.x,s.posA.y)).toBeCloseTo(3,10);
+    expect((b.posA.y-a.posA.y)/(2*h)).toBeCloseTo(s.velA.y,7);
+    expect((b.posB.x-a.posB.x)/(2*h)).toBeCloseTo(s.velB.x,7);
+  });
+  it('translates the wedge and raises the constrained rod at their reported velocities',()=>{
+    const q={...p,mode:'wedge-rod' as const,driveSpeed:2,heightOrLength:3,initialAngleDeg:40},t=.25,h=1e-5;
+    const s=at(q,t),a=at(q,t-h),b=at(q,t+h);
+    expect((b.posA.x-a.posA.x)/(2*h)).toBeCloseTo(s.velA.x,7);
+    expect((b.posB.y-a.posB.y)/(2*h)).toBeCloseTo(s.velB.y,7);
+    expect(s.velB.y).toBeCloseTo(2*Math.tan(40*Math.PI/180),10);
+    expect(s.posB.x).toBe(a.posB.x);
+  });
+  it('halts at the valid boundary, records one event and never advances frozen time',()=>{
+    const q={...p,initialAngleDeg:75};
+    const first=stepConstrainedVelocity(createInitialState(q),q,100);
+    expect(first.halt).toBe(true);
+    expect(first.advancedTime).toBeLessThan(100);
+    expect(first.events).toHaveLength(1);
+    expect(first.nextState.t).toBeCloseTo((1.8/Math.sin(75*Math.PI/180)-1.8/Math.sin(80*Math.PI/180))/1.5,7);
+    const later=stepConstrainedVelocity(first.nextState,q,1);
+    expect(later.advancedTime).toBe(0);
+    expect(later.events).toHaveLength(0);
+    expect(later.nextState).toBe(first.nextState);
+  });
+  it('solves asymmetric two-rope material length constraints from both moving distances',()=>{
+    // Keep the test compilable against the pre-feature engine: the new mode is intentionally absent there.
+    const q={...p,mode:'dual-rope-pull' as ConstrainedVelocityParams['mode'],heightOrLength:3,initialAngleDeg:45,secondarySpeedRatio:.6};
+    const t=.2,h=1e-5,s=at(q,t),a=at(q,t-h),b=at(q,t+h),L0=3/(2*Math.cos(Math.PI/4));
+    const l1=L0-1.5*t,l2=L0-.9*t;
+    expect(Math.hypot(s.posA.x,s.posA.y)).toBeCloseTo(l1,9);
+    expect(Math.hypot(s.posA.x-3,s.posA.y)).toBeCloseTo(l2,9);
+    expect((b.posA.x-a.posA.x)/(2*h)).toBeCloseTo(s.velA.x,7);
+    expect((b.posA.y-a.posA.y)/(2*h)).toBeCloseTo(s.velA.y,7);
+    expect((-s.posA.x*s.velA.x-s.posA.y*s.velA.y)/l1).toBeCloseTo(1.5,10);
+    expect(((3-s.posA.x)*s.velA.x-s.posA.y*s.velA.y)/l2).toBeCloseTo(.9,10);
+  });
+});
