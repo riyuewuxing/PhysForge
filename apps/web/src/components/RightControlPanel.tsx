@@ -203,6 +203,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
           >
             {showLiveSubstituted ? '仅符号' : '显示数值'}
           </button>
+          {plugin.getTelemetryChannels && telemetry.formulaItems[0] && <div data-testid="ode-equation-caption" className="mb-2 break-all text-xs" style={{color:telemetry.observables.solverValid===0?'#fb7185':'var(--pf-text-muted)'}}>{telemetry.formulaItems[0].label}</div>}
           <KatexFormulaCard items={telemetry.formulaItems} compact showSubstituted={showLiveSubstituted} />
         </section>
 
