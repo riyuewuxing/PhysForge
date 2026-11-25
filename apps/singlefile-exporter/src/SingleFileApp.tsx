@@ -284,6 +284,7 @@ export const SingleFileApp: React.FC = () => {
       viewportRef.current.height
     );
     viewportRef.current = { ...viewportRef.current, ...camera };
+    if(simStateRef.current!==null)targetPlugin.engine.disposeState?.(simStateRef.current);
     const init = targetPlugin.engine.createInitialState(params);
     const obs0 = targetPlugin.engine.computeObservables(init, params);
     simStateRef.current = init;
@@ -298,6 +299,7 @@ export const SingleFileApp: React.FC = () => {
     syncPlot();
     emitSummary(true);
   }, [resetNonce]);
+  useEffect(()=>()=>{if(simStateRef.current!==null)targetPlugin.engine.disposeState?.(simStateRef.current);},[]);
 
   // Preserve the exact final integration sample on pause. A frame may have
   // advanced fewer than SNAPSHOT_INTERVAL seconds since the last plot sample.
@@ -323,16 +325,15 @@ export const SingleFileApp: React.FC = () => {
     for (let i = 0; i < 4; i++) {
       const res = targetPlugin.engine.step(cur, params, FIXED_DT);
       cur = res.nextState;
-      simT += FIXED_DT;
+      simT += res.advancedTime??FIXED_DT;
       if (res.events.length > 0) eventsRef.current = [...eventsRef.current, ...res.events];
+      if(res.halt||res.advancedTime===0)break;
     }
     simStateRef.current = cur;
     simulationTimeRef.current = simT;
-    snapshotsRef.current.push({
-      t: simT,
-      state: cur,
-      observables: targetPlugin.engine.computeObservables(cur, params)
-    });
+    const sample={t:simT,state:cur,observables:targetPlugin.engine.computeObservables(cur,params)};
+    if(simT===lastSnapTRef.current)snapshotsRef.current[snapshotsRef.current.length-1]=sample;
+    else snapshotsRef.current.push(sample);
     if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
     lastSnapTRef.current = simT;
     drawCanvas();
@@ -401,19 +402,20 @@ export const SingleFileApp: React.FC = () => {
       while (accRef.current >= FIXED_DT && cur !== null) {
         const res = targetPlugin.engine.step(cur, latestRef.current.params, FIXED_DT);
         cur = res.nextState;
-        simT += FIXED_DT;
+        const advanced=res.advancedTime??FIXED_DT;
+        simT += advanced;
         accRef.current -= FIXED_DT;
         stepped = true;
         if (res.events.length > 0) eventsRef.current = [...eventsRef.current, ...res.events];
-        if (simT - lastSnapTRef.current >= SNAPSHOT_INTERVAL) {
-          snapshotsRef.current.push({
-            t: simT,
-            state: cur,
-            observables: targetPlugin.engine.computeObservables(cur, latestRef.current.params)
-          });
+        if (res.halt||simT - lastSnapTRef.current >= SNAPSHOT_INTERVAL) {
+          const sample={t:simT,state:cur,observables:targetPlugin.engine.computeObservables(cur,latestRef.current.params)};
+          if(simT===lastSnapTRef.current)snapshotsRef.current[snapshotsRef.current.length-1]=sample;
+          else snapshotsRef.current.push(sample);
           if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
           lastSnapTRef.current = simT;
         }
+        if(res.halt){latestRef.current.isPlaying=false;setIsPlaying(false);}
+        if(res.halt||advanced===0){accRef.current=0;lastFrameMsRef.current=null;break;}
       }
 
       if (stepped && cur !== null) {

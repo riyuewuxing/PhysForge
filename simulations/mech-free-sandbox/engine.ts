@@ -1,7 +1,7 @@
 import { CLASSROOM_GRAVITY, degToRad, solveUdwadiaKalaba } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 import type RAPIER from '@dimforge/rapier2d-compat';
-import { getLoadedRapier } from './rapierLoader.js';
+import { getLoadedRapier, getRapierLoadError } from './rapierLoader.js';
 
 export type SandboxScenario =
   | 'elastic-collision'
@@ -29,6 +29,7 @@ export interface SandboxBodySnapshot {
   readonly vx: number;
   readonly vy: number;
   readonly angle: number;
+  readonly angularVelocity?: number;
   readonly halfW: number;
   readonly halfH: number;
   readonly mass: number;
@@ -42,6 +43,7 @@ export interface SandboxState {
   readonly rapierActive: boolean;
   readonly initialEnergy: number;
   readonly constraintTensionN?: number;
+  readonly terminal?: 'pulley-contact' | 'engine-unavailable';
   readonly events: readonly PhysicsEvent[];
 }
 
@@ -51,6 +53,11 @@ interface RapierRuntime {
  }
 
 const runtimeMap = new WeakMap<SandboxState, RapierRuntime>();
+/** Only the current state owns the mutable world. Historical snapshots hold value data. */
+export function disposeSandbox(state:SandboxState):void {
+  const rt=runtimeMap.get(state);
+  if(rt){runtimeMap.delete(state);rt.world.free();}
+}
 
 export const SPRING_EQUILIBRIUM_X = -.45;
 export function usesAnalyticSolver(scenario:SandboxScenario):boolean {
@@ -150,6 +157,11 @@ function createInitialBodies(params: SandboxParams): SandboxBodySnapshot[] {
 
   if (params.scenario === 'incline-slide') {
     const theta = degToRad(params.inclineDeg);
+    const c=Math.cos(theta),s=Math.sin(theta);
+    const rampX=-1.6,rampY=floorY+1.8*s-.1*c;
+    const startAlong=-1.15,normalOffset=.1+.18;
+    const sliderX=rampX+startAlong*c+normalOffset*s;
+    const sliderY=rampY-startAlong*s+normalOffset*c;
     return [
       {
         id: 'floor',
@@ -170,8 +182,8 @@ function createInitialBodies(params: SandboxParams): SandboxBodySnapshot[] {
         id: 'ramp',
         label: '斜面',
         shape: 'box',
-        x: -1.6,
-        y: floorY + 1.2 * Math.sin(theta),
+        x: rampX,
+        y: rampY,
         vx: 0,
         vy: 0,
         angle: -theta,
@@ -185,8 +197,8 @@ function createInitialBodies(params: SandboxParams): SandboxBodySnapshot[] {
         id: 'slider',
         label: '滑块 1',
         shape: 'box',
-        x: -2.4,
-        y: floorY + 2.2 * Math.sin(theta) + 0.35,
+        x: sliderX,
+        y: sliderY,
         vx: 0,
         vy: 0,
         angle: -theta,
@@ -408,6 +420,7 @@ function buildRapierRuntime(
           .setTranslation(b.x, b.y)
           .setRotation(b.angle)
           .setLinvel(b.vx, b.vy)
+          .setAngvel(b.angularVelocity??0)
           .setLinearDamping(0)
           .setAngularDamping(0)
       : rapier.RigidBodyDesc.fixed().setTranslation(b.x, b.y).setRotation(b.angle);
@@ -449,7 +462,8 @@ function computeTotalEnergy(
 
   for (const b of bodies) {
     if (!b.dynamic) continue;
-    ke += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy);
+    const inertia=b.shape==='ball'?.5*b.mass*b.halfW**2:b.mass*(b.halfW**2+b.halfH**2)/3;
+    ke += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy)+.5*inertia*(b.angularVelocity??0)**2;
     pe += b.mass * params.gravity * (b.y - floorRef);
     momentumX += b.mass * b.vx;
     if (params.scenario === 'spring-oscillator' && b.id === 'mass-block') {
@@ -492,9 +506,8 @@ export function stepSandbox(
   if (!Number.isFinite(dt) || dt < 0) {
     throw new Error(`Time step dt must be non-negative finite, got ${dt}.`);
   }
-  if (dt === 0) {
-    return { nextState: state, events: [] };
-  }
+  if (dt === 0) return {nextState:state,events:[]};
+  if(state.terminal)return {nextState:state,events:[],advancedTime:0,halt:true};
 
   // These ideal constrained systems have a fixed solver; WASM readiness
   // must not alter their trajectory or allocate an unused rigid-body world.
@@ -517,10 +530,27 @@ export function stepSandbox(
       const uk = solveAtwood(left.mass,right.mass,params.gravity);
       const ay1 = uk.acceleration[0]!;
       const ay2 = uk.acceleration[1]!;
-      const nextVy1 = left.vy + ay1 * dt;
-      const nextVy2 = right.vy + ay2 * dt;
-      const nextY1 = left.y + 0.5 * (left.vy + nextVy1) * dt;
-      const nextY2 = right.y + 0.5 * (right.vy + nextVy2) * dt;
+      const pulley=state.bodies.find(b=>b.id==='pulley')!;
+      // First circle/rectangle contact, not an arbitrary maximum time.
+      let elapsed=dt,contact=false;
+      for(const [b,a] of [[left,ay1],[right,ay2]] as const){
+        const dx=Math.max(0,Math.abs(b.x-pulley.x)-b.halfW);
+        if(dx>=pulley.halfW)continue;
+        const ceiling=pulley.y-Math.sqrt(pulley.halfW**2-dx**2)-b.halfH;
+        const gap=Math.max(0,ceiling-b.y);
+        if(a>0||b.vy>0){
+          // Stable positive root for the constant-acceleration contact event.
+          const discriminant=b.vy*b.vy+2*a*gap;
+          if(discriminant<0)continue;
+          const denominator=b.vy+Math.sqrt(discriminant);
+          const hit=gap===0?0:denominator>0?2*gap/denominator:Infinity;
+          if(hit<=elapsed){elapsed=hit;contact=true;}
+        }
+      }
+      const nextVy1 = left.vy + ay1 * elapsed;
+      const nextVy2 = right.vy + ay2 * elapsed;
+      const nextY1 = left.y + 0.5 * (left.vy + nextVy1) * elapsed;
+      const nextY2 = right.y + 0.5 * (right.vy + nextVy2) * elapsed;
       const tensionN = uk.constraintForce[0]!;
       const updated = state.bodies.map((b) =>
         b.id === 'atwood-left'
@@ -529,16 +559,15 @@ export function stepSandbox(
             ? { ...b, y: nextY2, vy: nextVy2 }
             : b
       );
+      const time=state.t+elapsed;
+      const events:PhysicsEvent[]=contact?[{id:'atwood-pulley-contact',time,label:'首次接触滑轮：模型止于碰撞前一瞬'}]:[];
       return {
         nextState: {
-          t: state.t + dt,
-          bodies: updated,
-          rapierActive: false,
-          initialEnergy: state.initialEnergy,
-          constraintTensionN: tensionN,
-          events: state.events
+          t:time,bodies:updated,rapierActive:false,initialEnergy:state.initialEnergy,
+          constraintTensionN:tensionN,events:[...state.events,...events],
+          ...(contact?{terminal:'pulley-contact' as const}:{})
         },
-        events: []
+        events,advancedTime:elapsed,halt:contact
       };
     }
   }
@@ -551,6 +580,7 @@ export function stepSandbox(
     rt.world.gravity = { x: 0, y: -params.gravity };
     rt.world.timestep = dt;
     rt.world.step();
+    runtimeMap.delete(state); // transfer ownership; stepping an old frame reconstructs its own world
 
     const nextBodies = state.bodies.map((b) => {
       if (!b.dynamic) return b;
@@ -564,7 +594,8 @@ export function stepSandbox(
         y: tr.y,
         vx: vel.x,
         vy: vel.y,
-        angle: rb.rotation()
+        angle: rb.rotation(),
+        angularVelocity: rb.angvel()
       };
     });
 
@@ -579,53 +610,12 @@ export function stepSandbox(
     return { nextState, events: [] };
   }
 
-  // Rapier WASM 尚未懒加载就绪前的纯 TS 确定性辛/弹性碰撞推进
-  const updated = state.bodies.map((b) => {
-    if (!b.dynamic) return b;
-     let ax = 0;
-    let ay = 0;
-    if (params.scenario === 'incline-slide') {
-      ay = -params.gravity;
-    }
-    const nextVx = b.vx + ax * dt;
-    let nextVy = b.vy + ay * dt;
-    const nextX = b.x + 0.5 * (b.vx + nextVx) * dt;
-    let nextY = b.y + 0.5 * (b.vy + nextVy) * dt;
-    if (nextY - b.halfH < -1.2) {
-      nextY = -1.2 + b.halfH;
-      nextVy = 0;
-    }
-    return { ...b, x: nextX, y: nextY, vx: nextVx, vy: nextVy };
-  });
-
-  // 简单球-球一维弹性碰撞处理（供首帧同步过渡）
-  for (let i = 0; i < updated.length; i++) {
-    for (let j = i + 1; j < updated.length; j++) {
-      const a = updated[i]!;
-      const b = updated[j]!;
-      if (!a.dynamic || !b.dynamic) continue;
-      if (Math.abs(a.x - b.x) < a.halfW + b.halfW && (a.vx - b.vx) * (b.x - a.x) > 0) {
-        const e = params.restitution;
-        const m1 = a.mass;
-        const m2 = b.mass;
-        const v1p = (m1 * a.vx + m2 * b.vx + m2 * e * (b.vx - a.vx)) / (m1 + m2);
-        const v2p = (m1 * a.vx + m2 * b.vx + m1 * e * (a.vx - b.vx)) / (m1 + m2);
-        updated[i] = { ...a, vx: v1p };
-        updated[j] = { ...b, vx: v2p };
-      }
-    }
+  // Loading is not physical evolution. Do not advance time or substitute free fall.
+  if(getRapierLoadError()){
+    const event:PhysicsEvent={id:'rapier-unavailable',time:state.t,label:'刚体引擎加载失败：请复位重试'};
+    return {nextState:{...state,terminal:'engine-unavailable',events:[...state.events,event]},events:[event],advancedTime:0,halt:true};
   }
-
-  return {
-    nextState: {
-      t: state.t + dt,
-      bodies: updated,
-      rapierActive: false,
-      initialEnergy: state.initialEnergy,
-      events: state.events
-    },
-    events: []
-  };
+  return {nextState:state,events:[],advancedTime:0};
 }
 
 export function computeObservables(
@@ -647,7 +637,10 @@ export function computeObservables(
       secondaryVy:state.bodies.find(b=>b.id==='atwood-right')!.vy
     }:{}),
     constraintTensionN: state.constraintTensionN ?? 0,
-    rapierActive: state.rapierActive ? 1 : 0
+    rapierActive: state.rapierActive ? 1 : 0,
+    ...(params.scenario==='atwood-constrained'?{atwoodAtLimit:state.terminal==='pulley-contact'?1:0}:{}),
+    ...(params.scenario==='incline-slide'?{sliderY:firstDyn!.y,sliderVy:firstDyn!.vy,sliderAngle:firstDyn!.angle}:{}),
+    engineUnavailable:state.terminal==='engine-unavailable'?1:0
   };
 }
 

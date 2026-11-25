@@ -171,6 +171,10 @@ export interface TimedPhysicsState {
 export interface StepResult<TState> {
   nextState: TState;
   events: PhysicsEvent[];
+  /** Actual simulated time, in [0, requested dt]. Defaults to requested dt. */
+  advancedTime?: number;
+  /** Terminal physical event: preserve the last pre-event state and pause. */
+  halt?: boolean;
 }
 
 /**
@@ -179,6 +183,8 @@ export interface StepResult<TState> {
 export interface SimulationEngine<TParams extends ParamRecord, TState> {
   createInitialState: (params: TParams) => TState;
   step: (state: TState, params: TParams, dt: number) => StepResult<TState>;
+  /** Release external resources owned by this state; value snapshots remain readable. */
+  disposeState?: (state:TState)=>void;
   computeObservables: (state: TState, params: TParams) => Record<string, number>;
   checkInvariants?: (state: TState, initial: TState, params: TParams) => InvariantReport[];
 }

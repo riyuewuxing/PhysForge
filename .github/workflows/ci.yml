@@ -10,6 +10,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -50,6 +51,7 @@ jobs:
   e2e-subpath-smoke:
     name: Playwright Subpath (/PhysForge/) & Export Smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: verify
     steps:
       - uses: actions/checkout@v4

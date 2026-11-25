@@ -286,6 +286,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
+  const disposeStateRef = useRef<((state:unknown)=>void)|undefined>(undefined);
   const simStateModelIdRef = useRef<string | null>(null);
   const simStateResetNonceRef = useRef<number | null>(null);
   const initialStateRef = useRef<unknown>(null);
@@ -794,6 +795,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   // 初始化 / 重置引擎状态（分镜复位复用同一入口）。
   const resetEngine = () => {
     const { plugin: p, params: pm } = latestRef.current;
+    if(simStateRef.current!==null)disposeStateRef.current?.(simStateRef.current);
+    disposeStateRef.current=p.engine.disposeState;
     const init = p.engine.createInitialState(pm);
     const obs0 = p.engine.computeObservables(init, pm);
     simStateRef.current = init;
@@ -816,6 +819,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     storyRunnerRef.current?.cancelTween();
     resetEngine();
   }, [plugin.meta.id, resetNonce]);
+  useEffect(()=>()=>{if(simStateRef.current!==null)disposeStateRef.current?.(simStateRef.current);},[]);
 
   const flushStoryParams = (modelId: string, nowMs: number, force = false) => {
     if (!storyDirtyRef.current || !storyParamsRef.current) return;
@@ -982,15 +986,17 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     for (let i = 0; i < 4; i++) {
       const res = plugin.engine.step(cur, params, FIXED_DT);
       cur = res.nextState;
-      stepT += FIXED_DT;
+      stepT += res.advancedTime ?? FIXED_DT;
       if (res.events.length > 0) {
         eventsRef.current = [...eventsRef.current, ...res.events];
       }
+      if(res.halt||res.advancedTime===0)break;
     }
     simulationTimeRef.current = stepT;
     simStateRef.current = cur;
     const obs = plugin.engine.computeObservables(cur, params);
-    snapshotsRef.current.push({ t: stepT, state: cur, observables: obs });
+    if(stepT===lastSnapshotTRef.current)snapshotsRef.current[snapshotsRef.current.length-1]={t:stepT,state:cur,observables:obs};
+    else snapshotsRef.current.push({ t: stepT, state: cur, observables: obs });
     if (snapshotsRef.current.length > MAX_SNAPSHOTS) {
       snapshotsRef.current.shift();
     }
@@ -1146,7 +1152,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       while (accumulatorRef.current >= FIXED_DT && cur !== null) {
         const res = p.engine.step(cur, pm, FIXED_DT);
         cur = res.nextState;
-        simT += FIXED_DT;
+        const advanced=res.advancedTime??FIXED_DT;
+        simT += advanced;
         accumulatorRef.current -= FIXED_DT;
         stepped = true;
 
@@ -1156,16 +1163,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
         // Detect at each actual 240 Hz physics sample, never only at the next browser frame.
         const armedObs = runner?.hasArmedFreeze ? p.engine.computeObservables(cur, pm) : undefined;
-        freezeHit = armedObs !== undefined && runner !== null && runner.checkAutoFreeze(armedObs);
+        freezeHit = Boolean(res.halt)||(armedObs !== undefined && runner !== null && runner.checkAutoFreeze(armedObs));
+        if(res.halt){latestRef.current.isPlaying=false;storyCallbacksRef.current.onStoryPlaying?.(false);}
         if (freezeHit || simT - lastSnapshotTRef.current >= SNAPSHOT_INTERVAL) {
           const obs = armedObs ?? p.engine.computeObservables(cur, pm);
-          snapshotsRef.current.push({ t: simT, state: cur, observables: obs });
+          if(simT===lastSnapshotTRef.current)snapshotsRef.current[snapshotsRef.current.length-1]={t:simT,state:cur,observables:obs};
+          else snapshotsRef.current.push({ t: simT, state: cur, observables: obs });
           if (snapshotsRef.current.length > MAX_SNAPSHOTS) {
             snapshotsRef.current.shift();
           }
           lastSnapshotTRef.current = simT;
         }
-        if (freezeHit) {
+        if (freezeHit || advanced===0) {
           accumulatorRef.current = 0;
           lastFrameMsRef.current = null;
           break;

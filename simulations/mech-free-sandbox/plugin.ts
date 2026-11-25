@@ -4,6 +4,7 @@ import {
   checkInvariants,
   computeObservables,
   createInitialState,
+  disposeSandbox,
   stepSandbox,
   usesAnalyticSolver,
   SPRING_EQUILIBRIUM_X,
@@ -300,10 +301,11 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
   engine: {
     createInitialState: (params) => {
       // 仅在真正创建/运行本沙箱模型时异步按需触发 WASM 加载
-      if(!usesAnalyticSolver(params.scenario))void ensureRapierLoaded();
+      if(!usesAnalyticSolver(params.scenario))void ensureRapierLoaded().catch(()=>{/* surfaced as a terminal engine event on step */});
       return createInitialState(params);
     },
     step: stepSandbox,
+    disposeState:disposeSandbox,
     computeObservables,
     checkInvariants
   },
@@ -333,16 +335,16 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
       const l=state.bodies.find(b=>b.id==='atwood-left')!,r=state.bodies.find(b=>b.id==='atwood-right')!;
       const a=(r.mass-l.mass)*params.gravity/(l.mass+r.mass);
       return [
-        {id:'atwood-a',label:'理想轻绳约束（上为正）',latex:'a_1=-a_2=\\frac{(m_2-m_1)g}{m_1+m_2}',substitutedLatex:'a_1='+a.toFixed(3)+'\\ \\mathrm{m/s^2}'},
-        {id:'atwood-tension',label:'轻绳张力',latex:'T=\\frac{2m_1m_2g}{m_1+m_2}',substitutedLatex:'T='+(state.constraintTensionN??0).toFixed(3)+'\\ \\mathrm N'}
+        {id:'atwood-a',label:state.terminal==='pulley-contact'?'首次接触滑轮（碰撞前一瞬）':'理想轻绳约束（上为正）',latex:'a_1=-a_2=\\frac{(m_2-m_1)g}{m_1+m_2}',substitutedLatex:'a_1='+a.toFixed(3)+'\\ \\mathrm{m/s^2}'},
+        {id:'atwood-tension',label:state.terminal==='pulley-contact'?'碰撞前张力':'轻绳张力',latex:'T=\\frac{2m_1m_2g}{m_1+m_2}',substitutedLatex:'T='+(state.constraintTensionN??0).toFixed(3)+'\\ \\mathrm N'}
       ];
     }
     const obs = computeObservables(state, params);
     return [
       {
         id: 'sandbox-momentum',
-        label: `碰撞动量与能量监测（${state.rapierActive ? 'Rapier2D WASM 已接管' : '正在按需加载 WASM'}）`,
-        latex: 'p_x = \\sum m_i v_{ix}, \\quad E_k = \\sum \\frac{1}{2}m_i v_i^2',
+        label: `碰撞动量与能量监测（${state.terminal==='engine-unavailable'?'加载失败，请复位重试':state.rapierActive ? 'Rapier2D WASM 已接管' : '正在按需加载 WASM，物理时间暂停'}）`,
+        latex: 'p_x = \\sum m_i v_{ix}, \\quad E_k = \\sum (\\frac{1}{2}m_i v_i^2+\\frac{1}{2}I_i\\omega_i^2)',
         substitutedLatex: `p_x = ${(obs.totalMomentumX ?? 0).toFixed(2)}\\text{ kg}\\cdot\\text{m/s},\\; E_k = ${(obs.kineticEnergy ?? 0).toFixed(2)}\\text{ J}`
       }
     ];
@@ -445,7 +447,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     ctx.fillStyle = usesAnalyticSolver(params.scenario)||state.rapierActive ? '#4ade80' : '#fbbf24';
     ctx.font = 'bold 13px system-ui, sans-serif';
     ctx.fillText(
-      `引擎状态：${params.scenario==='spring-oscillator'?'理想简谐运动解析流':params.scenario==='atwood-constrained'?'Udwadia-Kalaba 轻绳约束':state.rapierActive?'Rapier2D WASM 刚体内核运行中':'按需加载 Rapier2D WASM...'}`,
+      `引擎状态：${params.scenario==='spring-oscillator'?'理想简谐运动解析流':params.scenario==='atwood-constrained'?(state.terminal==='pulley-contact'?'首次接触滑轮 · 碰撞前一瞬':'Udwadia-Kalaba 轻绳约束'):state.terminal==='engine-unavailable'?'刚体引擎加载失败 · 请复位重试':state.rapierActive?'Rapier2D WASM 刚体内核运行中':'等待 Rapier2D WASM · 物理时间暂停'}`,
       18,
       26
     );
