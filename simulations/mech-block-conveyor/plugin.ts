@@ -1,6 +1,7 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
-import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
-import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
+import { incline,world,blockCenter,contactDiagram,contactInitialView,contactBoundsFit,fitContactViewport,drawRelativeVelocityBand,type ContactRole } from './diagram.js';
 import {
   checkInvariants,
   computeObservables,
@@ -44,7 +45,7 @@ const paramSchema: readonly ParamFieldSpec<BlockConveyorParams>[] = [
   {
     key: 'muBlockCarrier',
     kind: 'number',
-    label: '块与带/板间动摩擦因数 μ₁',
+    label: '块与带/板摩擦因数 μ₁（μs=μk）',
     unit: '',
     min: 0,
     max: 0.8,
@@ -110,7 +111,8 @@ const paramSchema: readonly ParamFieldSpec<BlockConveyorParams>[] = [
     max: 30,
     step: 1,
     defaultValue: 0
-  }
+  },
+  {key:'carrierLengthM',kind:'number',label:'承载面全长 L（0=无限）',unit:'m',min:0,max:30,step:1,defaultValue:0}
 ];
 
 
@@ -202,7 +204,8 @@ export const mechBlockConveyorPlugin = Object.assign(defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '1.0.0'
   },
-  defaultView: { scale: 0.354, offsetRatioX: 0.05, offsetRatioY: 0.08 },
+  defaultView:{minScale:.001,scale:(p,v)=>contactInitialView(createInitialState(p),p,v).scale,offsetRatioX:(p,v)=>contactInitialView(createInitialState(p),p,v).offsetRatioX,offsetRatioY:(p,v)=>contactInitialView(createInitialState(p),p,v).offsetRatioY},
+  getParamFields:p=>paramSchema.filter(f=>['massPlank','muGround','plankInitialV','externalForcePlank'].includes(f.key)?p.systemMode==='plank':['inclineDeg','beltVelocity'].includes(f.key)?p.systemMode==='conveyor':true),
   paramSchema,
   presets: [
     {
@@ -280,57 +283,31 @@ export const mechBlockConveyorPlugin = Object.assign(defineSimulationPlugin<
   telemetryChannels: [
     { key: 'vBlock', label: '物块速度 v物', unit: 'm/s', color: '#38bdf8' },
     { key: 'vCarrier', label: '带/板速度 v带', unit: 'm/s', color: '#fbbf24' },
-    { key: 'relativeScratch', label: '累计划痕 Δx_rel', unit: 'm', color: '#f472b6' },
+    { key: 'relativeScratch', label: '累计相对滑移路程 s_rel', unit: 'm', color: '#f472b6' },
     { key: 'frictionHeat', label: '摩擦生热 Q', unit: 'J', color: '#fb7185' },
-    { key: 'kineticEnergy', label: '总动能 Ek', unit: 'J', color: '#4ade80' }
+    { key: 'kineticEnergy', label: '总动能 Ek', unit: 'J', color: '#4ade80' },
+    {key:'groundHeat',label:'地面生热 Q₂',unit:'J',color:'#fb7185'},
+    {key:'carrierWork',label:'外力/电机功 W',unit:'J',color:'#4ade80'},
+    {key:'frictionOnBlockN',label:'有向摩擦力 f₁',unit:'N',color:'#fbbf24'}
   ],
-  getControlHandles: (_state, params) => {
-    const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
-    const origin = { x: 0, y: -0.6 };
-    const direction = { x: Math.cos(theta), y: Math.sin(theta) };
-    return [{
-      id: 'belt-velocity',
-      label: `${params.systemMode === 'conveyor' ? 'v带' : 'v板'}=${params.beltVelocity.toFixed(1)}m/s`,
-      position: {
-        x: origin.x + params.beltVelocity * 0.3 * direction.x,
-        y: origin.y + params.beltVelocity * 0.3 * direction.y
-      },
-      origin,
-      handleKind: 'vector',
-      color: '#fbbf24',
-      onDrag: (wp) => {
-        const projection = (wp.x - origin.x) * direction.x + (wp.y - origin.y) * direction.y;
-        return { beltVelocity: Number(Math.max(-6, Math.min(6, Math.round((projection / 0.3) * 2) / 2)).toFixed(1)) };
-      }
-    }];
+  getControlHandles:(s,p)=>{
+    if(s.t>0||s.terminal)return [];
+    const isBelt=p.systemMode==='conveyor',v=isBelt?p.beltVelocity:p.plankInitialV,origin=world(p,0,isBelt?-1.14:-.92);
+    return [{id:'carrier-initial-velocity',label:(isBelt?'v带':'v板₀')+'='+v.toFixed(1)+' m/s',position:world(p,.3*v,isBelt?-1.14:-.92),origin,handleKind:'vector',color:'#fbbf24',showWhenIdle:false,
+      onDrag:wp=>{const a=incline(p),v=Math.round(((wp.x-origin.x)*Math.cos(a)+(wp.y-origin.y)*Math.sin(a))/.3*2)/2;
+        const patch:Record<string,number>={};
+        patch[isBelt?'beltVelocity':'plankInitialV']=Math.max(isBelt?-6:-4,Math.min(6,v));
+        return patch;}}];
   },
-  getForceVectors: (state, params) => {
-    const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
-    const m = params.massBlock;
-    const g = CLASSROOM_GRAVITY;
-    const mg = m * g;
-    const normalMag = mg * Math.cos(theta);
-    const vRel = state.vBlock - state.vCarrier;
-    const fMax = params.muBlockCarrier * normalMag;
-    const fAlong = state.coMovingLocked ? m * g * Math.sin(theta) : Math.abs(vRel) < 1e-9 ? 0 : vRel > 0 ? -fMax : fMax;
-    const bx = state.xBlock * Math.cos(theta);
-    const by = state.xBlock * Math.sin(theta);
-    return [
-      { id: 'gravity', label: 'mg', origin: { x: bx, y: by }, force: { x: 0, y: -mg }, color: '#fbbf24', unit: 'N' },
-      { id: 'normal', label: 'F_N', origin: { x: bx, y: by }, force: { x: -normalMag * Math.sin(theta), y: normalMag * Math.cos(theta) }, color: '#38bdf8', unit: 'N' },
-      { id: 'friction', label: 'f', origin: { x: bx, y: by }, force: { x: fAlong * Math.cos(theta), y: fAlong * Math.sin(theta) }, color: '#f472b6', unit: 'N' }
-    ];
+  getForceVectors:(s,p)=>{
+    const a=incline(p),mg=p.massBlock*CLASSROOM_GRAVITY,N=mg*Math.cos(a),origin=blockCenter(s,p),f=s.frictionOnBlockN;
+    return [{id:'gravity',label:'mg',origin,force:{x:0,y:-mg},color:'#fbbf24',unit:'N'},
+      {id:'normal',label:'F_N',origin,force:{x:-N*Math.sin(a),y:N*Math.cos(a)},color:'#38bdf8',unit:'N'},
+      {id:'friction',label:'f₁',origin,force:world(p,f),color:'#f472b6',unit:'N'}];
   },
-  referenceFrames: [
-    {
-      id: 'carrier',
-      label: '传送带/长木板参考系',
-      getOrigin: (state, params) => {
-        const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
-        const s = state.xCarrier;
-        return { x: s * Math.cos(theta), y: s * Math.sin(theta) };
-      }
-    }
+  referenceFrames:[
+    {id:'carrier',label:'带/板材料参考系',getOrigin:(s,p)=>world(p,s.xCarrier),getVelocity:(s,p)=>world(p,s.vCarrier)},
+    {id:'block',label:'物块平移参考系',getOrigin:(s,p)=>world(p,s.xBlock),getVelocity:(s,p)=>world(p,s.vBlock)}
   ],
   sceneSerializer: {
     exportScene: (_s, params) => ({
@@ -341,133 +318,43 @@ export const mechBlockConveyorPlugin = Object.assign(defineSimulationPlugin<
     }),
     importScene: (dsl) => dsl.params as Partial<BlockConveyorParams>
   },
-  exportDiagramIR: (state, params) => {
-    const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'hatchedGround', x1: -3.2 * Math.cos(theta), y1: -3.2 * Math.sin(theta) - 0.25, x2: 3.2 * Math.cos(theta), y2: 3.2 * Math.sin(theta) - 0.25 },
-      { kind: 'block', cx: 0, cy: 0.1, width: 0.7, height: 0.45, angleDeg: params.inclineDeg, label: 'm_1' },
-      { kind: 'arrow', x1: 0, y1: 0.1, x2: 0, y2: -0.9, label: 'mg' },
-      { kind: 'mathLabel', x: 2.6, y: 1.4, text: `\\mu=${params.muBlockCarrier}, Q=${state.frictionHeat.toFixed(2)} J`, align: 'end' }
-    ];
-    return {
-      width: 720,
-      height: 400,
-      viewBox: { minX: -3.5, minY: -2, maxX: 3.5, maxY: 2 },
-      title: '板块与倾斜传送带受力配图',
-      primitives
-    };
+  exportDiagramIR:(s,p)=>{
+    const d=contactDiagram(s,p);return {width:900,height:520,viewBox:d.bounds,title:'板块与传送带 · 实际位置和摩擦',primitives:d.items.map(x=>x.primitive)};
   },
-  formatFormulas: (state) => [
-    {
-      id: 'scratch-heat',
-      label: '相对划痕生热与位移对比',
-      latex: 'Q = f_k \\cdot \\Delta x_{\\text{rel}}',
-      substitutedLatex: `Q = ${state.frictionHeat.toFixed(2)}\\text{ J},\\; \\Delta x_{\\text{rel}} = ${state.relativeScratch.toFixed(2)}\\text{ m},\\; x_{\\text{物}} = ${state.xBlock.toFixed(2)}\\text{ m}`
-    }
-  ],
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
-    const m = createWorldMapper(viewport);
-    const origin = m.toScreen(0, 0);
-    const px = (distance: number) => m.len(distance);
-    const toLocalX = (distance: number) => px(distance);
-    const labels: CanvasLabel[] = [];
-
-    ctx.save();
-    // The local belt axis is rotated from world +x by the incline angle.
-    ctx.translate(origin.x, origin.y);
-    ctx.rotate(-theta);
-
-    if (activeLayers.has('carrier')) {
-      if (params.systemMode === 'conveyor') {
-        const beltHalf = px(4.5);
-        const wheelRadius = px(0.26);
-        ctx.fillStyle = 'rgba(51, 65, 85, 0.75)';
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2.5;
-        ctx.fillRect(-beltHalf, 0, beltHalf * 2, px(0.52));
-        ctx.strokeRect(-beltHalf, 0, beltHalf * 2, px(0.52));
-
-        for (const wheelX of [-beltHalf, beltHalf]) {
-          ctx.fillStyle = '#475569';
-          ctx.beginPath();
-          ctx.arc(wheelX, wheelRadius, wheelRadius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
+  formatFormulas:(s,p)=>{
+    const pair=(a:string,b:string)=>'\\begin{gathered}'+a+'\\\\'+b+'\\end{gathered}';
+    const n=(x:number,u:string)=>x.toFixed(3)+'\\,\\mathrm{'+u+'}';
+    return [{id:'m05-force',label:s.coMovingLocked?'当前静摩擦':'当前滑动摩擦',latex:'f_1='+n(s.frictionOnBlockN,'N'),substitutedLatex:pair('a_1='+n(s.accelerationBlock,'m/s^2'),'a_2='+n(s.accelerationCarrier,'m/s^2'))},
+      {id:'scratch-heat',label:'累计滑移路程（不等于净位移）',latex:'Q_1=\\mu_1N\\int |v_1-v_2|dt',substitutedLatex:pair('s_{rel}='+n(s.relativeScratch,'m'),'Q_1='+n(s.frictionHeat,'J'))},
+      {id:'m05-ledger',label:'真实功能关系',latex:'\\Delta E+Q_1+Q_2=W',substitutedLatex:pair('Q_2='+n(s.groundHeat,'J'),'W='+n(s.carrierWork,'J'))},
+      ...(s.terminal?[{id:'m05-terminal',label:'到达承载边界 · 保留接触前瞬时值',latex:'t='+n(s.t,'s')}]:[])];
+  },
+  renderCanvas:(ctx,s,p,vp,layers)=>{
+    const d=contactDiagram(s,p),m=createWorldMapper(vp),paper=vp.theme==='projector';
+    const colors:Record<ContactRole,string>=paper?{support:'#334155',block:'#0369a1',trace:'#9d174d',velocity:'#166534',friction:'#9d174d',ink:'#0f172a',event:'#b91c1c'}:{support:'#94a3b8',block:'#38bdf8',trace:'#f472b6',velocity:'#4ade80',friction:'#fbbf24',ink:'#e2e8f0',event:'#fb7185'};
+    const labels:CanvasLabel[]=[];
+    for(const [i,{primitive:q,role,layer}] of d.items.entries()){
+      if(!layers.has(layer))continue;
+      const color=colors[role];ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=role==='trace'?5:2;
+      if(q.kind==='line'||q.kind==='arrow'){
+        const a=m.toScreen(q.x1,q.y1),b=m.toScreen(q.x2,q.y2);
+        ctx.setLineDash(q.dashed?[5,5]:[]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);
+        if(q.kind==='arrow'){
+          const ang=Math.atan2(b.y-a.y,b.x-a.x);
+          if(Math.hypot(b.x-a.x,b.y-a.y)>2){ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-9*Math.cos(ang-.4),b.y-9*Math.sin(ang-.4));ctx.lineTo(b.x-9*Math.cos(ang+.4),b.y-9*Math.sin(ang+.4));ctx.closePath();ctx.fill();}
+          if(q.label)labels.push({id:'arrow-'+i,x:(a.x+b.x)/2+Math.sin(ang)*17,y:(a.y+b.y)/2-Math.cos(ang)*17,text:q.label,color,font:'bold 13px sans-serif'});
         }
-
-        ctx.fillStyle = '#fbbf24';
-        const spacing = 0.8;
-        const shift = ((state.xCarrier % spacing) + spacing) % spacing;
-        for (let s = -4.5 + shift; s <= 4.5; s += spacing) {
-          ctx.beginPath();
-          ctx.arc(toLocalX(s), px(0.05), px(0.04), 0, Math.PI * 2);
-          ctx.fill();
-        }
-      } else {
-        const plankLeft = toLocalX(state.xCarrier - 0.5);
-        ctx.fillStyle = 'rgba(251, 191, 36, 0.25)';
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 2.5;
-        ctx.fillRect(plankLeft, 0, px(5.5), px(0.3));
-        ctx.strokeRect(plankLeft, 0, px(5.5), px(0.3));
-        ctx.strokeStyle = '#64748b';
-        ctx.beginPath();
-        ctx.moveTo(-px(12), px(0.32));
-        ctx.lineTo(px(12), px(0.32));
-        ctx.stroke();
-      }
-    }
-
-    if (activeLayers.has('scratchTrack') && state.relativeScratch > 0.01) {
-      const blockX = toLocalX(state.xBlock);
-      const carrierX = toLocalX(state.xCarrier);
-      ctx.fillStyle = 'rgba(244, 114, 182, 0.75)';
-      ctx.fillRect(Math.min(blockX, carrierX), -px(0.05), Math.abs(blockX - carrierX), px(0.05));
-    }
-
-    const blockX = toLocalX(state.xBlock);
-    if (activeLayers.has('block')) {
-      ctx.fillStyle = '#38bdf8';
-      ctx.strokeStyle = '#e0f2fe';
-      ctx.lineWidth = 2;
-      ctx.fillRect(blockX - px(0.275), -px(0.42), px(0.55), px(0.42));
-      ctx.strokeRect(blockX - px(0.275), -px(0.42), px(0.55), px(0.42));
-    }
-
-    if (activeLayers.has('forceAndVelocity')) {
-      const blockLabel = m.toScreen(state.xBlock * Math.cos(theta), state.xBlock * Math.sin(theta) + 0.62);
-      const carrierLabel = m.toScreen(state.xCarrier * Math.cos(theta), state.xCarrier * Math.sin(theta) - 0.72);
-      labels.push(
-        { id: 'block-velocity', x: blockLabel.x, y: blockLabel.y, text: `v物=${state.vBlock.toFixed(2)} m/s`, color: '#38bdf8', font: 'bold 14px system-ui, sans-serif' },
-        { id: 'carrier-velocity', x: carrierLabel.x, y: carrierLabel.y, text: `${params.systemMode === 'conveyor' ? 'v带' : 'v板'}=${state.vCarrier.toFixed(2)} m/s`, color: '#fbbf24', font: 'bold 14px system-ui, sans-serif' }
-      );
-    }
-
-    ctx.restore();
-
-    // 顶部同屏量化对比条（世界固定HUD）
-    if (activeLayers.has('scratchTrack')) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
-      ctx.fillRect(16, 16, 330, 74);
-      ctx.strokeRect(16, 16, 330, 74);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      ctx.fillText(`物块对地位移 x物 = ${state.xBlock.toFixed(2)} m`, 28, 38);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillText(`带/板位移 x带 = ${state.xCarrier.toFixed(2)} m`, 28, 59);
-      ctx.fillStyle = '#f472b6';
-      ctx.fillText(
-        `相对划痕 Δx_rel = ${state.relativeScratch.toFixed(2)} m  |  Q = ${state.frictionHeat.toFixed(2)} J`,
-        28,
-        80
-      );
+      }else if(q.kind==='polyline'){
+        ctx.setLineDash(q.dashed?[5,5]:[]);ctx.beginPath();q.points.forEach((p,i)=>{const c=m.toScreen(p.x,p.y);if(i===0)ctx.moveTo(c.x,c.y);else ctx.lineTo(c.x,c.y);});if(q.closed)ctx.closePath();ctx.stroke();
+      }else if(q.kind==='circle'){
+        const c=m.toScreen(q.cx,q.cy);ctx.beginPath();ctx.arc(c.x,c.y,Math.max(2,m.len(q.r)),0,Math.PI*2);if(q.fill)ctx.fill();else ctx.stroke();
+      }else if(q.kind==='block'){
+        const c=m.toScreen(q.cx,q.cy);ctx.translate(c.x,c.y);ctx.rotate(-(q.angleDeg??0)*Math.PI/180);
+        ctx.globalAlpha=.25;ctx.fillRect(-m.len(q.width)/2,-m.len(q.height)/2,m.len(q.width),m.len(q.height));ctx.globalAlpha=1;ctx.strokeRect(-m.len(q.width)/2,-m.len(q.height)/2,m.len(q.width),m.len(q.height));
+      }else if(q.kind==='text'){const c=m.toScreen(q.x,q.y);labels.push({id:'text-'+i,x:c.x,y:c.y,text:q.text,color,font:'13px sans-serif'});}
       ctx.restore();
     }
-    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
+    resolveAndDrawLabels(ctx,labels,vp.width,vp.height);
   }
-}), { liveFormulas });
-
+}),{liveFormulas,contactBoundsFit,fitContactViewport,drawRelativeVelocityBand});
 export default mechBlockConveyorPlugin;

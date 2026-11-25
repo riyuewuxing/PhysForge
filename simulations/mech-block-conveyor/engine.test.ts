@@ -255,3 +255,50 @@ describe('H23 M05 force and reference contracts',()=>{
     expect(ir.primitives.some(x=>x.kind==='text'&&x.text.includes('边界'))).toBe(true);
   });
 });
+
+import { contactSupport, contactInitialView, contactBoundsFit, fitContactViewport, relativeVelocityStrips, sampledSlipDistance } from './diagram.js';
+describe('H24 long-run contact viewport',()=>{
+  it('keeps a bounded visible interval around the actual block on ideal infinite support',()=>{
+    const initial=createInitialState(baseParams);
+    const s=stepBlockConveyor(initial,baseParams,30).nextState;
+    expect(s.xBlock).toBeGreaterThan(100);
+    const support=contactSupport(s,baseParams);
+    expect(support.finite).toBe(false);
+    expect(support.right-support.left).toBeCloseTo(6,10);
+    expect((support.left+support.right)/2).toBeCloseTo(s.xBlock,10);
+    const size={width:1280,height:720};
+    expect(contactInitialView(s,baseParams,size).scale).toBeGreaterThan(.75*contactInitialView(initial,baseParams,size).scale);
+  });
+  it('does not move the ends of a finite conveyor to follow the block',()=>{
+    const p={...baseParams,carrierLengthM:2};
+    const s=stepBlockConveyor(createInitialState(p),p,10).nextState;
+    expect(s.terminal).toBeTruthy();
+    const support=contactSupport(s,p);
+    expect(support).toMatchObject({finite:true,left:-1,right:1,center:0});
+  });
+  it('distinguishes the critical applied force on a frictionless-ground plank',()=>{
+    const p={...baseParams,systemMode:'plank' as const,muBlockCarrier:.2,muGround:0};
+    const critical=(p.massBlock+p.massPlank)*p.muBlockCarrier*CLASSROOM_GRAVITY;
+    for(const delta of [-1e-7,1e-7]){
+      const q={...p,externalForcePlank:critical+delta};
+      const s=stepBlockConveyor(createInitialState(q),q,.2).nextState;
+      expect(s.coMovingLocked).toBe(delta<0);
+    }
+  });
+});
+
+it('fits the long-run world position without changing the physical state',()=>{
+  const s=stepBlockConveyor(createInitialState(baseParams),baseParams,30).nextState;
+  const v={width:1280,height:720,dpr:1,scale:1,offsetX:0,offsetY:0};
+  const safe={left:30,right:960,top:30,bottom:550};
+  expect(contactBoundsFit(s,baseParams,v,safe)).toBe(false);
+  const next=fitContactViewport(s,baseParams,v,safe)!;
+  expect(contactBoundsFit(s,baseParams,next,safe)).toBe(true);
+  expect(s.t).toBeCloseTo(30,10);
+});
+it('integrates both sides of a velocity crossing and never invents missing samples',()=>{
+  const strips=relativeVelocityStrips([0,2,3,4,5],[2,-2,null,2,2],[0,0,0,0,0]);
+  expect(strips).toHaveLength(3);
+  expect(sampledSlipDistance(strips)).toBeCloseTo(4,12);
+  expect(sampledSlipDistance(relativeVelocityStrips([0,1],[2,2],[1,1]))).toBeCloseTo(1,12);
+});
