@@ -593,10 +593,41 @@ async function auditB1Physics(page,origin,screenshot){
       if(screenshot)await screenshot('B1_focus_orbit');
     }
     await toggle.click();await stage.waitFor({state:'detached',timeout:15000});
-    await page.getByTestId('simulation-canvas').waitFor({state:'visible'});
+    const flat=page.getByTestId('simulation-canvas');
+    await flat.waitFor({state:'visible'});
+    const expectedOwner=preset==='circle-magnetic-focusing'?'false':'true';
+    await page.waitForFunction(expected=>document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b1-auto-fit')===expected,expectedOwner);
     if(screenshot)await screenshot('B1_'+preset+'_flat');
     await page.getByTestId('btn-exit-fullscreen-speech').click();
   }
+  // Real paused 2D pan, followed by a 3D round-trip, must not silently
+  // re-enable automatic framing; explicit center reset is the owner switch.
+  const flat=page.getByTestId('simulation-canvas');
+  await flat.waitFor({state:'visible'});
+  const before=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
+  const time=await flat.getAttribute('data-b1-time');
+  const rect=await flat.boundingBox();
+  if(!rect||!before||!time)throw Error('B1 flat camera diagnostics missing');
+  const x=rect.x+rect.width*.14,y=rect.y+rect.height*.17;
+  await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+50,y+32,{steps:6});await page.mouse.up();
+  await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b1-auto-fit')==='false');
+  const moved=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
+  if(Math.abs(moved.offsetX-before.offsetX-50)>.5||Math.abs(moved.offsetY-before.offsetY-32)>.5||moved.scale!==before.scale)throw Error('B1 physical pan differs from pointer delta');
+  if(await flat.getAttribute('data-b1-time')!==time)throw Error('B1 pan changed physical time');
+  await page.getByTestId('btn-fullscreen-speech').click();
+  const toggle=page.getByTestId('btn-view-3d-fullscreen');await toggle.click();
+  const stage=page.getByTestId('three-stage-container');await stage.waitFor({state:'visible',timeout:20000});
+  await waitB1(()=>{const e=document.querySelector('[data-testid="three-stage-container"]');return e?.getAttribute('data-morph-t')==='0'&&e?.getAttribute('data-b1-auto-fit')==='false';},'manual-2d-to-3d');
+  if(Math.abs(Number(await stage.getAttribute('data-b1-render-time'))-Number(time))>1e-8)throw Error('B1 camera round trip altered time');
+  await toggle.click();await stage.waitFor({state:'detached',timeout:15000});
+  await flat.waitFor({state:'visible'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b1-auto-fit')==='false');
+  await page.getByTestId('btn-exit-fullscreen-speech').click();
+  await page.getByTestId('btn-reset-view').click();
+  await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b1-auto-fit')==='true');
+  if(await flat.getAttribute('data-b1-time')!==time)throw Error('B1 center reset changed physical time');
+  report.push({manualPan:true,manualRoundTrip:true,autoRecenter:true});
+  if(screenshot)await screenshot('B1_recenter');
   return report;
 }
 

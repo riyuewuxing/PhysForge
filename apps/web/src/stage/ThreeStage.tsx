@@ -48,7 +48,11 @@ interface ThreeStageProps {
   readonly morphTarget?: 0 | 1;
   readonly initialFlatViewport?: Viewport;
   readonly onMorphProgress?: (progress: number) => void;
-  readonly onMorphFlat?: (viewport: Viewport) => void;
+  readonly onMorphFlat?: (viewport: Viewport,b1Automatic?:boolean) => void;
+  readonly initialB1AutoFit?:boolean;
+  readonly b1AutoFitAllowed?:boolean;
+  readonly b1ResetViewNonce?:number;
+  readonly b1ScopeCollapsed?:boolean;
   readonly onWebGLFallback?: () => void;
 }
 
@@ -237,7 +241,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   activeLayers,
   getFrameLayers,
   presentationMode = false,
-  morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback
+  morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback,
+  initialB1AutoFit=true,b1AutoFitAllowed=true,b1ResetViewNonce=0,b1ScopeCollapsed=false
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ThreeSceneBridge<ParamRecord, unknown> | null>(null);
@@ -247,6 +252,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   const morphPropsRef = useRef({ morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback });
   morphPropsRef.current = { morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback };
   const initialViewportRef = useRef(initialFlatViewport);
+  const b1PolicyRef=useRef({allowed:b1AutoFitAllowed,nonce:b1ResetViewNonce,presentation:presentationMode,scopeCollapsed:b1ScopeCollapsed});
+  b1PolicyRef.current={allowed:b1AutoFitAllowed,nonce:b1ResetViewNonce,presentation:presentationMode,scopeCollapsed:b1ScopeCollapsed};
   latestStateRef.current = simState;
   latestParamsRef.current = params;
   latestLayersRef.current = activeLayers;
@@ -441,7 +448,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     renderer.domElement.addEventListener('webglcontextlost', onContextLost, false);
     renderer.domElement.addEventListener('webglcontextrestored', onContextRestored, false);
     controls.addEventListener('change', markDirty);
-    let b1AutoFit=true,b1FramingKey='',b1FramedAt=-Infinity,b1RenderCount=0;
+    let b1AutoFit=initialB1AutoFit,b1FramingKey='',b1FramedAt=-Infinity,b1RenderCount=0;
+    let b1LastPolicy=b1PolicyRef.current;
     const lockB1Camera=()=>{b1AutoFit=false;};
     if(isBoundedStage)controls.addEventListener('start',lockB1Camera);
 
@@ -798,6 +806,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         controls.update();
       }
 
+      const b1Policy=b1PolicyRef.current;
+      if(isBoundedStage){
+        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';b1FramedAt=-Infinity;dirty=true;}
+        if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
+        b1LastPolicy=b1Policy;
+      }
       const latestState = readState();
       const frameParams = getFrameParams?.() ?? latestParamsRef.current;
       const frameLayers = readLayers();
@@ -818,12 +832,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       const bp=frameParams as BoundedMagneticParams;
       const rw=renderer.domElement.clientWidth||width,rh=renderer.domElement.clientHeight||height;
       if(b1&&morph&&morph.getMorphT()===0&&!morph.isAnimating){
-        const key=JSON.stringify([bp.mode,bp.fieldScale,rw,rh]);
+        const key=JSON.stringify([bp.mode,bp.fieldScale,rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed]);
         const fresh=key!==b1FramingKey;
         if(fresh){b1FramingKey=key;}
-        if(b1AutoFit&&(fresh||now-b1FramedAt>=250)){
+        if(b1AutoFit&&b1Policy.allowed&&(fresh||now-b1FramedAt>=250)){
           b1FramedAt=now;
-          const bounds=b1FrameBounds(b1,bp,frameLayers),safe=b1SafeRect(rw,rh,presentationMode);
+          const bounds=b1FrameBounds(b1,bp,frameLayers),safe=b1SafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
           if(fresh||!b1ProjectionFits(bounds,camera,rw,rh,safe)){
             morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
             fitB1SpatialFrame(morph,bounds,rw,rh,safe);
@@ -846,13 +860,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         container.dataset.b1RenderExits=JSON.stringify(b1.particles.flatMap(t=>t.exitPoint?[t.exitPoint]:[]));
         container.dataset.b1RenderMode=bp.mode;
         container.dataset.b1RenderCount=String(++b1RenderCount);
-        container.dataset.b1AutoFit=String(b1AutoFit);
+        container.dataset.b1AutoFit=String(b1AutoFit&&b1Policy.allowed);
         const b=b1FrameBounds(b1,bp,frameLayers);
         container.dataset.b1ScreenBounds=JSON.stringify(b1ProjectedBounds(b,renderCamera,rw,rh));
       }
       if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
         flatNotified = true;
-        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)));
+        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)),isBoundedStage?b1AutoFit:undefined);
       }
       const renderDuration = performance.now() - renderStart;
       performanceGuard.observe(renderDuration);

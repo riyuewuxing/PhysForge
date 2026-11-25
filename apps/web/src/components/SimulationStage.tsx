@@ -219,7 +219,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
   const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
   const [heldThreeId, setHeldThreeId] = useState<string | null>(() => view3dEnabled ? plugin.meta.id : null);
-  const showThree = view3dEnabled || Boolean(presentationMode && spatial && heldThreeId === plugin.meta.id);
+  const b1Stage=plugin.meta.id==='builder-composite-em-field';
+  const morphInThisView=Boolean((presentationMode||b1Stage)&&spatial);
+  const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
   const showThreeRef = useRef(showThree);
   showThreeRef.current = showThree;
   const storySpatialCommandRef = useRef<StorySpatialCommand | null>(null);
@@ -229,14 +231,14 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const threeLayers = selectDisplayLayers(activeLayers, poeMasked);
   const previouslyShowThreeRef = useRef(showThree);
   const initialFlatViewportRef = useRef<Viewport | undefined>(undefined);
-  const enterFromCanvas = showThree && !previouslyShowThreeRef.current && Boolean(presentationMode && spatial);
+  const enterFromCanvas = showThree && !previouslyShowThreeRef.current && morphInThisView;
   useEffect(() => {
     previouslyShowThreeRef.current = showThree;
     if (view3dEnabled) setHeldThreeId(plugin.meta.id);
-    else if (!presentationMode || !spatial) setHeldThreeId(null);
+    else if (!morphInThisView) setHeldThreeId(null);
     if (!showThree) onMorphProgress?.(1);
     else if (!spatial) onMorphProgress?.(0);
-  }, [showThree, view3dEnabled, plugin.meta.id, presentationMode, spatial]);
+  }, [showThree, view3dEnabled, plugin.meta.id, morphInThisView, spatial]);
   const uplotWrapRef = useRef<HTMLDivElement | null>(null);
   const uplotInstanceRef = useRef<uPlot | null>(null);
   const lastPlotSyncMsRef = useRef(0);
@@ -292,12 +294,14 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const userTransformedViewRef = useRef<boolean>(false);
   const b1FitKeyRef=useRef('');
   const b1FitAtRef=useRef(-Infinity);
+  const b1AlignedViewportRef=useRef<Viewport|null>(null);
+  const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale]);};
   const applyDefaultCameraView = (width: number, height: number) => {
     const v2 = latestRef.current.plugin as SimulationPluginV2<ParamRecord, unknown>;
     const initialCamera = resolveInitialCameraTransform(v2, latestRef.current.params, width, height);
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
-    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
+    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;b1AlignedViewportRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -328,11 +332,17 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (finished) storyCameraTweenRef.current = null;
     return true;
   };
-  const completeFlatMorph = (aligned: Viewport) => {
+  const completeFlatMorph = (aligned: Viewport,b1Automatic?:boolean) => {
     const transform = { scale: aligned.scale, offsetX: aligned.offsetX, offsetY: aligned.offsetY };
     cameraRef.current = transform;
     viewportRef.current = aligned;
-    userTransformedViewRef.current = true;
+    // A camera morph transfers ownership, not just its projection. A teacher's
+    // orbit remains manual; an automatic camera remains automatic.
+    userTransformedViewRef.current=!(b1Stage&&b1Automatic===true);
+    if(b1Stage){
+      b1AlignedViewportRef.current=aligned;
+      b1FitKeyRef.current=b1FitKey(aligned);b1FitAtRef.current=performance.now();
+    }
     setZoomPercent(Math.round(100 * aligned.scale / Math.max(1e-6, baseScaleRef.current)));
     setOverlayViewport(aligned);
     setHeldThreeId(null);
@@ -486,10 +496,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     const frame=readDisplayedFrame(p.meta.id);
     const drawState=frame?.state??null;
-    if(p.meta.id==='builder-composite-em-field'&&drawState!==null&&!userTransformedViewRef.current&&
-       !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&scrub===null){
+    const b1Automatic=p.meta.id==='builder-composite-em-field'&&!userTransformedViewRef.current&&
+       !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&scrub===null;
+    if(b1Automatic&&drawState!==null){
       const model=p as unknown as B1StagePlugin,cur=latestRef.current,vp=viewportRef.current;
-      const key=JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,pm.mode,pm.fieldScale]);
+      const key=b1FitKey(vp);
       const now=performance.now(),fresh=key!==b1FitKeyRef.current;
       if(fresh||now-b1FitAtRef.current>=250){
         b1FitKeyRef.current=key;b1FitAtRef.current=now;
@@ -653,6 +664,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
 
     ctx.restore();
+    if(p.meta.id==='builder-composite-em-field'&&frame){
+      const v=viewportRef.current;
+      canvas.dataset.b1AutoFit=String(b1Automatic);
+      canvas.dataset.b1Viewport=JSON.stringify({scale:v.scale,offsetX:v.offsetX,offsetY:v.offsetY,width:v.width,height:v.height});
+      canvas.dataset.b1Time=String(frame.t);
+    }
   };
 
   const syncUPlotData = (force = false) => {
@@ -976,8 +993,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         height,
         dpr
       };
-      if (!userTransformedViewRef.current) {
-        applyDefaultCameraView(width, height);
+      const aligned=b1AlignedViewportRef.current;
+      // Do not replace a just-transferred aligned flat camera during mount.
+      if(aligned&&aligned.width===width&&aligned.height===height){
+        b1AlignedViewportRef.current=null;
+      }else if(!userTransformedViewRef.current){
+        applyDefaultCameraView(width,height);
       }
       setOverlayViewport(viewportRef.current);
       renderFrameToCanvas();
@@ -1242,6 +1263,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               presentationMode={presentationMode}
               morphTarget={view3dEnabled ? 0 : 1}
               initialFlatViewport={initialFlatViewportRef.current}
+              initialB1AutoFit={!userTransformedViewRef.current}
+              b1AutoFitAllowed={!storyDeck&&activeFrameId==='ground'&&scrubTime===null}
+              b1ResetViewNonce={resetViewNonce}
+              b1ScopeCollapsed={oscilloscopeCollapsed}
               onMorphProgress={onMorphProgress}
               onMorphFlat={completeFlatMorph}
               onWebGLFallback={() => { setHeldThreeId(null); onWebGLFallback?.(); }}
