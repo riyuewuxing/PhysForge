@@ -83,6 +83,27 @@ describe('B1 builder-composite-em-field V2 verification', () => {
     }
   });
 
+  it('exports physical B sign, actual current velocity and all nine focusing beams',()=>{
+    const plugin=emBoundedMagneticFieldPlugin;
+    const p=resolvePluginParams<BoundedMagneticParams>(plugin.paramSchema,{mode:'circular',family:'focusing',beamCount:9});
+    const initial=createInitialState(p),s=stepBoundedMagnetic(initial,p,1.4).nextState;
+    const positive=plugin.exportDiagramIR!(s,p);
+    const marks=positive.primitives.filter(v=>v.kind==='fieldMarker');
+    expect(marks.length).toBeGreaterThan(0);expect(marks.every(v=>v.symbol==='dot')).toBe(true);
+    expect(positive.primitives.filter(v=>v.kind==='trajectory')).toHaveLength(9);
+    expect(positive.primitives.some(v=>v.kind==='arrow'&&v.label==='v')).toBe(true);
+    const negative=plugin.exportDiagramIR!(s,{...p,magneticFieldZ:-2});
+    expect(negative.primitives.filter(v=>v.kind==='fieldMarker').every(v=>v.symbol==='cross')).toBe(true);
+    const zero=plugin.exportDiagramIR!(s,{...p,magneticFieldZ:0});
+    expect(zero.primitives.filter(v=>v.kind==='fieldMarker')).toHaveLength(0);
+    const crossed={...p,mode:'crossed-eb' as const,electricFieldY:-3};
+    const ir=plugin.exportDiagramIR!(createInitialState(crossed),crossed);
+    expect(ir.primitives.some(v=>v.kind==='rect')).toBe(false);
+    const e=ir.primitives.find(v=>v.kind==='arrow'&&v.label==='E');
+    expect(e?.kind==='arrow'&&e.y2<e.y1).toBe(true);
+    expect(plugin.getForceVectors?.(createInitialState(crossed),crossed).some(v=>v.id==='electric'&&v.category==='electric')).toBe(true);
+  });
+
   it('achieves exact cycloid peak speed 2E/B and solves inverse critical speed via Brent', () => {
     const params = resolvePluginParams<BoundedMagneticParams>(
       emBoundedMagneticFieldPlugin.paramSchema,

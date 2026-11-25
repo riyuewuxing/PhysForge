@@ -3,6 +3,7 @@ import type { ParamRecord } from '@physforge/sim-sdk';
 import type { InductionParams, InductionState } from '../../../../simulations/em-induction-double-rod/engine.js';
 import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints, inductionLoadDimensions } from '../../../../simulations/em-induction-double-rod/diagramGeometry.js';
 import { fieldSignedDistance, type BoundedMagneticParams, type BoundedMagneticState, type ParticleTrack } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
+import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { displayLarmorCircleForTrack } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import { anodizedRailMaterial, brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, obsidianStageFloorMaterial } from './spatialMaterials.js';
 
@@ -159,6 +160,11 @@ interface TrackVisual {
   particle: THREE.Mesh;
   trail: THREE.Line;
   trailBuffer: THREE.BufferAttribute;
+  tube?:DynamicTubeTrail;
+  tubeMesh?:THREE.Mesh;
+  halo?:DynamicTubeTrail;
+  haloMesh?:THREE.Mesh;
+  lastTrail?:ParticleTrack['trail'];
   circle: THREE.LineLoop;
   center: THREE.Mesh;
   radiusLine: THREE.Line;
@@ -177,7 +183,7 @@ function trackVisual(track: ParticleTrack): TrackVisual {
   const geometry = new THREE.BufferGeometry();
   const trailBuffer = new THREE.BufferAttribute(new Float32Array(TRAIL_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute('position', trailBuffer); geometry.setDrawRange(0, 0);
-  const trail = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 }));
+  const trail = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95,toneMapped:false }));
   trail.frustumCulled = false;
   const points = Array.from({ length: 96 }, (_, i) => new THREE.Vector3(Math.cos(i * Math.PI / 48), Math.sin(i * Math.PI / 48), 0));
   const circle = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.45 }));
@@ -197,7 +203,16 @@ function trackVisual(track: ParticleTrack): TrackVisual {
   };
   const velocity=arrow('magnetic-velocity',0x4ade80),drift=arrow('magnetic-drift',0xfbbf24),rotation=arrow('magnetic-rotation',0xf472b6);
   root.add(particle,trail,circle,center,radiusLine,velocity,drift,rotation,entry,exit);
-  return {root,particle,trail,trailBuffer,circle,center,radiusLine,velocity,drift,rotation,entry,exit};
+  const result:TrackVisual={root,particle,trail,trailBuffer,circle,center,radiusLine,velocity,drift,rotation,entry,exit};
+  if(track.id===0){
+    result.tube=new DynamicTubeTrail(TRAIL_CAP,.008,6);result.halo=new DynamicTubeTrail(TRAIL_CAP,.022,6);
+    result.tubeMesh=new THREE.Mesh(result.tube.geometry,new THREE.MeshBasicMaterial({color,toneMapped:false}));
+    result.haloMesh=new THREE.Mesh(result.halo.geometry,new THREE.MeshBasicMaterial({color,toneMapped:false,transparent:true,opacity:.16,depthWrite:false,blending:THREE.AdditiveBlending}));
+    result.tubeMesh.name='b1-primary-trajectory';result.haloMesh.name='b1-primary-trajectory-halo';
+    result.tubeMesh.frustumCulled=result.haloMesh.frustumCulled=false;
+    root.add(result.tubeMesh,result.haloMesh);
+  }
+  return result;
 }
 
 /** B1 field geometry follows exactly the engine's signed-distance region. Infinite regions are shown as a finite viewing window. */
@@ -213,7 +228,7 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
       if (next !== signature) {
         signature = next; clear(fixed);
         if (layers.has('fieldRegion')) {
-          const radius = Math.max(params.fieldScale, 0.1);
+          const radius = Math.max(params.fieldScale,params.mode==='circular'?.05:.1);
           let region: THREE.Mesh;
           if (params.mode === 'circular') {
             region = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.44, 64, 1, true), dielectricGlassMaterial());
@@ -237,8 +252,11 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
               );
               rim.name = `b1-field-rim-${index}`;
               fixed.add(rim);
+              const core=new THREE.Mesh(new THREE.TorusGeometry(radius,.007,6,72),new THREE.MeshBasicMaterial({color:0x7dd3fc,toneMapped:false}));
+              const halo=new THREE.Mesh(new THREE.TorusGeometry(radius,.018,6,72),new THREE.MeshBasicMaterial({color:0x38bdf8,toneMapped:false,transparent:true,opacity:.12,depthWrite:false,blending:THREE.AdditiveBlending}));
+              core.position.z=halo.position.z=zPlane;fixed.add(core,halo);
             }
-          } else {
+          } else if(params.mode==='rectangular') {
             const width = params.mode === 'rectangular' ? radius : params.mode === 'half-space' ? 4 : 8;
             const height = params.mode === 'rectangular' ? Math.max(params.fieldScale * 1.6, 0.2) : 5;
             const centerX = params.mode === 'crossed-eb' ? 0 : width / 2;
@@ -252,13 +270,18 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
             outline.name = 'b1-field-wire';
             outline.position.x = centerX;
             fixed.add(outline);
+          } else if(params.mode==='half-space'){
+            const boundary=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,-2.5,0),new THREE.Vector3(0,2.5,0)]),new THREE.LineBasicMaterial({color:0x7dd3fc,toneMapped:false}));
+            boundary.name='b1-halfspace-boundary';fixed.add(boundary);
           }
-          if (Math.abs(params.magneticFieldZ) > 1e-9) {
+          if (params.magneticFieldZ!==0) {
             const sign = Math.sign(params.magneticFieldZ);
             for (let x = -3; x <= 4; x += 0.6) {
               for (let y = -2.4; y <= 2.4; y += 0.6) {
                 if (fieldSignedDistance({ x, y, z: 0 }, params.mode, params.fieldScale) > -0.05) continue;
-                fixed.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, sign), new THREE.Vector3(x, y, -0.18 * sign), 0.36, 0x38bdf8, 0.08, 0.04));
+                const arrow=new THREE.ArrowHelper(new THREE.Vector3(0,0,sign),new THREE.Vector3(x,y,-.18*sign),.36,0x38bdf8,.08,.04);
+                arrow.name='b1-field-arrow';
+                const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.005,.005,.28,6),new THREE.MeshBasicMaterial({color:0x7dd3fc,toneMapped:false}));shaft.position.y=.14;arrow.add(shaft);fixed.add(arrow);
               }
             }
           }
@@ -276,13 +299,17 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
         if (!visual) { visual = trackVisual(track); tracks.set(track.id, visual); root.add(visual.root); }
         const pos = track.state.position;
         visual.particle.position.set(pos.x, pos.y, pos.z);
-        const points = track.trail.slice(-TRAIL_CAP);
-        for (let i = 0; i < points.length; i++) {
-          const p = points[i]; if (p) visual.trailBuffer.setXYZ(i, p.x, p.y, 0);
+        const points=track.trail;
+        if(visual.lastTrail!==points){
+          visual.lastTrail=points;
+          const recent=points.slice(-TRAIL_CAP);
+          for(let i=0;i<recent.length;i++){const p=recent[i]!;visual.trailBuffer.setXYZ(i,p.x,p.y,0);}
+          visual.trailBuffer.needsUpdate=true;visual.trail.geometry.setDrawRange(0,recent.length);
+          if(visual.tube&&visual.halo){const spatial=recent.map(p=>({x:p.x,y:p.y,z:0}));visual.tube.update(spatial,p=>p);visual.halo.update(spatial,p=>p);}
         }
-        visual.trailBuffer.needsUpdate = true;
-        visual.trail.geometry.setDrawRange(0, points.length);
-        visual.trail.visible = layers.has('trajectory') && points.length > 1;
+        const showTrail=layers.has('trajectory')&&points.length>1;
+        visual.trail.visible=showTrail&&!visual.tubeMesh;
+        if(visual.tubeMesh&&visual.haloMesh)visual.tubeMesh.visible=visual.haloMesh.visible=showTrail;
         visual.entry.visible = layers.has('eventPins') && track.hasEntered && Boolean(track.entryPoint);
         visual.exit.visible = layers.has('eventPins') && track.hasExited && Boolean(track.exitPoint);
         if (track.entryPoint) visual.entry.position.set(track.entryPoint.x, track.entryPoint.y, 0.025);
@@ -302,13 +329,13 @@ function boundedDriver(root: THREE.Group): FlagshipSceneDriver {
         const vd=decomposition?params.electricFieldY/params.magneticFieldZ:0;
         const rotX=v.x-vd,rotY=v.y;
         const scale=Math.min(0.22,1.5/Math.max(Math.hypot(v.x,v.y),Math.abs(vd),Math.hypot(rotX,rotY),1e-6));
-        const setArrow=(arrow:THREE.ArrowHelper,x:number,y:number,show:boolean)=>{
+        const setArrow=(arrow:THREE.ArrowHelper,x:number,y:number,show:boolean,offsetX=0)=>{
           const magnitude=Math.hypot(x,y),length=magnitude*scale;
-          arrow.visible=show&&length>1e-6;arrow.position.set(pos.x,pos.y,0.04);
+          arrow.visible=show&&length>1e-6;arrow.position.set(pos.x+offsetX,pos.y,0.04);
           if(arrow.visible){arrow.setDirection(new THREE.Vector3(x/magnitude,y/magnitude,0));
             arrow.setLength(length,Math.min(0.12,length*0.3),Math.min(0.07,length*0.2));}
         };
-        setArrow(visual.velocity,v.x,v.y,showVelocity);setArrow(visual.drift,vd,0,decomposition);setArrow(visual.rotation,rotX,rotY,decomposition);
+        setArrow(visual.velocity,v.x,v.y,showVelocity);setArrow(visual.drift,vd,0,decomposition);setArrow(visual.rotation,rotX,rotY,decomposition,vd*scale);
       }
     },
     dispose: () => { disposeTree(root); tracks.clear(); }

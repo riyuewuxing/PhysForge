@@ -1067,7 +1067,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   );
 
   const deviceScope = plugin.meta.id === 'stse-em-devices-suite';
-  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope;
+  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field';
   const splitScopeUnits = heroScope && !!specA && !!specB && specA.unit !== specB.unit;
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {

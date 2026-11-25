@@ -9,6 +9,8 @@ import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraD
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop } from './spatialMaterials.js';
 import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
+import { b1FieldCaption,b1StateCaption } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
+import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
 import { magnetic3dDisplayPoint, magnetic3dDefaultVisibleHeight } from '@physforge/simulations/em-3d-magnetic-fields';
 import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
@@ -283,7 +285,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const height = Math.max(240, container.clientHeight);
     const scene = new THREE.Scene();
     const isDeviceStage=plugin.meta.id==='stse-em-devices-suite';
-    const magneticBackdrop=isMag3d||isDeviceStage?createMagneticBackdrop():null;
+    const isBoundedStage=plugin.meta.id==='builder-composite-em-field';
+    const magneticBackdrop=isMag3d||isDeviceStage||isBoundedStage?createMagneticBackdrop():null;
     scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
     scene.fog = new THREE.FogExp2('#0b0f17', 0.085);
 
@@ -838,6 +841,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     && typeof simState === 'object'
     ? simState as Magnetic3dState
     : null;
+  const b1State=plugin.meta.id==='builder-composite-em-field'?simState as BoundedMagneticState|null:null;
+  const b1Params=params as BoundedMagneticParams;
+  const b1Primary=b1State?.particles[0];
   const deviceState=plugin.meta.id==='stse-em-devices-suite'?simState as EmDevicesState|null:null;
   const deviceFlight=deviceState?.flight;
   const cyclotron=deviceState?.cyclotron;
@@ -883,6 +889,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-cyclotron-time={cyclotron?.physicalTimeS}
       data-cyclotron-radius={cyclotron?.radiusM}
       data-cyclotron-rf={cyclotron?.rfVoltageV}
+      data-b1-time={b1State?.t}
+      data-b1-primary={b1Primary?JSON.stringify(b1Primary.state):undefined}
+      data-b1-exits={b1State?JSON.stringify(b1State.particles.flatMap(t=>t.exitPoint?[t.exitPoint]:[])):undefined}
       data-sensor-drift={deviceState&&isSensorDevice((params as EmDevicesParams).device)?deviceState.particleVel.x:undefined}
       data-hall-voltage={deviceState?.hallVoltageV}
       data-mhd-emf={deviceState?.mhdEmfV}
@@ -892,6 +901,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-flow-rate={deviceState?.flowRateM3ps}
       className="relative w-full h-full min-h-[260px] rounded-xl overflow-hidden"
     >
+      {b1State&&<div data-testid="b1-field-caption" className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[38%] rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200"><div>{b1FieldCaption(b1Params)}</div><div>{b1StateCaption(b1State,b1Params)}</div>{b1Params.mode==='crossed-eb'&&b1Params.charge!==0&&b1Params.magneticFieldZ!==0&&activeLayers.has('speedDecomposition')&&<div><span className="text-emerald-300">v</span> = <span className="text-amber-300">v_d</span> + <span className="text-pink-300">v_rot</span></div>}</div>}
       {lossCone !== undefined && <div data-testid="mirror-loss-cone" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200">
         <div>速度空间逃逸锥 θc={lossCone.toFixed(1)}°</div>
         <svg viewBox="0 0 104 60" width="104" height="60" aria-label="速度空间示意">

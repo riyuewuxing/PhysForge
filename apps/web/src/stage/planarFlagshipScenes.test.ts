@@ -208,6 +208,24 @@ describe('flagship physical display alignment', () => {
     expect(center.visible).toBe(false);expect(drift.visible).toBe(false);expect(rotation.visible).toBe(false);
     driver.dispose();
   });
+  it('uses actual B1 trajectory samples and signed field arrows; no fictitious walls in infinite fields',()=>{
+    const p=emBoundedMagneticFieldPlugin,params=resolvePluginParams<BoundedMagneticParams>(p.paramSchema,{mode:'half-space',family:'single',magneticFieldZ:-2});
+    const scene=new THREE.Scene(),driver=createPlanarFlagshipScene('builder-composite-em-field',scene)!;
+    const state=p.engine.step(p.engine.createInitialState(params),params,.8).nextState;
+    const layers=new Set(['fieldRegion','trajectory']);
+    driver.sync(state,params,layers);
+    expect(scene.getObjectByName('b1-halfspace-boundary')).toBeDefined();
+    expect(scene.getObjectByName('b1-field-wire')).toBeUndefined();
+    const arrow=scene.getObjectByName('b1-field-arrow') as THREE.ArrowHelper;
+    expect(new THREE.Vector3(0,1,0).applyQuaternion(arrow.quaternion).z).toBeCloseTo(-1,10);
+    const tube=scene.getObjectByName('b1-primary-trajectory') as THREE.Mesh;
+    expect(tube.visible).toBe(true);expect(tube.geometry.drawRange.count).toBeGreaterThan(0);
+    driver.sync(state,{...params,mode:'crossed-eb',magneticFieldZ:0},new Set(['fieldRegion']));
+    expect(scene.getObjectByName('b1-halfspace-boundary')).toBeUndefined();
+    expect(scene.getObjectByName('b1-field-wire')).toBeUndefined();
+    expect(scene.getObjectByName('b1-field-arrow')).toBeUndefined();
+    expect(tube.visible).toBe(false);driver.dispose();
+  });
   it('removes the owned Three scene graph on dispose', () => {
     const scene = new THREE.Scene();
     const driver = createPlanarFlagshipScene('em-induction-double-rod', scene);

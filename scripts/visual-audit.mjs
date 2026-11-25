@@ -483,6 +483,50 @@ async function auditV3Morph(page, origin, screenshot) {
   return report;
 }
 
+async function auditB1Physics(page,origin,screenshot){
+  const url=new URL(origin);url.searchParams.set('model','builder-composite-em-field');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='builder-composite-em-field');
+  const report=[];
+  for(const preset of ['circle-magnetic-focusing','crossed-eb-cycloid']){
+    await selectPreset(page,preset);
+    const scope=page.getByTestId('floating-scope-dock');
+    await scope.waitFor({state:'visible'});
+    if(await scope.getAttribute('data-scope-units')!=='separate')throw Error('B1 mixed physical units share a scope axis');
+    await page.getByTestId('btn-fullscreen-speech').click();
+    const toggle=page.getByTestId('btn-view-3d-fullscreen');
+    if((await toggle.textContent())?.includes('3D 空间'))await toggle.click();
+    const stage=page.getByTestId('three-stage-container');
+    await stage.waitFor({state:'visible',timeout:20000});
+    await page.waitForFunction(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-morph-t'))===0);
+    const play=page.locator('[data-testid="btn-play-pause"]:visible');
+    if(await play.getAttribute('aria-label')==='运行')await play.click();
+    if(preset==='circle-magnetic-focusing'){
+      await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-b1-exits')||'[]').length===5,null,{timeout:15000});
+      if(await play.getAttribute('aria-label')==='暂停')await play.click();
+      const exits=JSON.parse(await stage.getAttribute('data-b1-exits')||'[]');
+      const maxError=Math.max(...exits.map(p=>Math.hypot(p.x,p.y+1.2)));
+      if(exits.length!==5||maxError>1e-6)throw Error('B1 real focusing error '+maxError);
+      report.push({preset,exits,maxError});
+    }else{
+      await page.waitForFunction(()=>Number(document.querySelector('[data-testid="three-stage-container"]')?.getAttribute('data-b1-time'))>1.1,null,{timeout:15000});
+      if(await play.getAttribute('aria-label')==='暂停')await play.click();
+      const s=JSON.parse(await stage.getAttribute('data-b1-primary')||'null');
+      if(!s||!(s.t>1))throw Error('B1 crossed field has no actual state');
+      const theta=2*s.t,x=1.5*(s.t-Math.sin(theta)/2),y=.75*(1-Math.cos(theta)),vx=1.5*(1-Math.cos(theta)),vy=1.5*Math.sin(theta);
+      const error=Math.max(Math.hypot(s.position.x-x,s.position.y-y),Math.hypot(s.velocity.x-vx,s.velocity.y-vy));
+      if(error>1e-6)throw Error('B1 browser cycloid oracle error '+error);
+      report.push({preset,t:s.t,error});
+    }
+    if(screenshot)await screenshot('B1_'+preset+'_3d');
+    await toggle.click();await stage.waitFor({state:'detached',timeout:15000});
+    await page.getByTestId('simulation-canvas').waitFor({state:'visible'});
+    if(screenshot)await screenshot('B1_'+preset+'_flat');
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+  }
+  return report;
+}
+
 async function auditV3DeviceGeometry(page, origin, screenshot) {
   const url = new URL(origin);
   url.searchParams.set('model', 'stse-em-devices-suite');
@@ -1166,7 +1210,8 @@ async function main() {
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
     const v3StoryFormulaReport = await auditV3StoryAndFormula(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
     const v3DeviceReport = await auditV3DeviceGeometry(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
-    const summary = { report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const b1PhysicsReport=await auditB1Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
+    const summary = { report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
