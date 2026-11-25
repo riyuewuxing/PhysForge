@@ -556,6 +556,67 @@ async function auditM03Constraints(page,origin){
   return {ladder,wedge,dual,boat};
 }
 
+
+async function auditM05Contact(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-block-conveyor');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-block-conveyor');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),plot=page.getByTestId('uplot-container');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-contact-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M05 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(m=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.contactRendered||'null');return s?.mode===m&&s.t===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey==='vBlock'&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey==='vCarrier');
+  };
+  const sync=async()=>{
+    await page.waitForFunction(()=>{
+      const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.contactRendered||'null'),t=Number(document.querySelector('[data-testid="contact-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);
+      return d&&Math.abs(d.t-t)<1e-10&&Math.abs(d.t-p)<1e-10;
+    },null,{timeout:5000});
+    return read();
+  };
+  const runTo=async(t)=>{
+    await play.click();
+    await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.contactRendered||'null')?.t>t,t,{timeout:20000});
+    await play.click();return sync();
+  };
+  const checkArea=async(s,tol=.03)=>{
+    const area=Number(await plot.getAttribute('data-sampled-relative-slip'));
+    check(area,s.relativeScratch,'sampled v-t inter-curve area',tol);
+    if(!await plot.isVisible()||Number(await plot.getAttribute('data-sample-count'))<2)throw Error('M05 missing sampled graph');
+  };
+  await select('conveyor-horizontal-startup','conveyor');
+  await page.getByTestId('contact-scope-empty').waitFor({state:'visible'});
+  const mid=await runTo(.4);check(mid.vBlock,2.45*mid.t,'horizontal acceleration');check(mid.xBlock,1.225*mid.t**2,'horizontal displacement');await checkArea(mid);
+  await page.screenshot({path:path.join(OUT_DIR,'H24_M05_horizontal_slip.png')});
+  const late=await runTo(4.5);check(late.vBlock,4,'locked speed');check(late.xBlock,4*late.t-8/2.45,'late displacement');check(late.frictionHeat,16,'heat');check(late.carrierWork,32,'motor work');check(late.relativeScratch,8/2.45,'slip');await checkArea(late);
+  const vp=JSON.parse(await canvas.getAttribute('data-contact-viewport')),rect=await canvas.boundingBox();
+  const ppm=.24*Math.min(vp.width,vp.height)*vp.scale,bx=.45*vp.width+vp.offsetX+late.xBlock*ppm,by=.5*vp.height+vp.offsetY-.21*ppm;
+  if(!(bx>25&&bx<rect.width-25&&by>25&&by<rect.height-25&&ppm>15))throw Error('M05 long-run block not visible '+JSON.stringify({vp,late,bx,by,ppm}));
+  await page.screenshot({path:path.join(OUT_DIR,'H24_M05_long_run.png')});
+  await select('conveyor-inclined-downward-break','conveyor');
+  const inclined=await runTo(.9),th=37*Math.PI/180,tStar=4/(9.8*(Math.sin(th)+.25*Math.cos(th)));
+  check(inclined.vBlock,-4-9.8*(Math.sin(th)-.25*Math.cos(th))*(inclined.t-tStar),'post-crossing velocity');
+  check(inclined.frictionOnBlockN,2*.25*9.8*Math.cos(th),'reversed friction');if(inclined.coMovingLocked!==0)throw Error('M05 inclined state wrongly locked');
+  await checkArea(inclined);await page.screenshot({path:path.join(OUT_DIR,'H24_M05_inclined_flip.png')});
+  await select('plank-smooth-ground-momentum','plank');
+  const plank=await runTo(2.4);check(plank.vBlock,2,'plank common speed');check(plank.vCarrier,2,'plank speed');check(plank.frictionHeat,24,'plank heat');await checkArea(plank);
+  if(await page.getByTestId('param-slider-beltVelocity').count()||!await page.getByTestId('param-slider-massPlank').count())throw Error('M05 stale mode fields');
+  await page.screenshot({path:path.join(OUT_DIR,'H24_M05_plank_momentum.png')});
+  await select('conveyor-horizontal-startup','conveyor');
+  const length=page.getByTestId('param-slider-carrierLengthM');
+  if(!await length.isVisible())await page.locator('details').filter({has:length}).locator('summary').click();
+  await length.fill('2');await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.contactRendered||'null')?.t===0);
+  await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.contactRendered||'null')?.terminal===1,null,{timeout:10000});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="topbar"] [data-testid="btn-play-pause"]')?.getAttribute('aria-label')==='运行');
+  const terminal=await sync();check(terminal.t,Math.sqrt(2/2.45),'finite edge time');check(terminal.xBlock,1,'finite edge position');
+  await page.getByTestId('btn-step').click();await page.evaluate(()=>new Promise(requestAnimationFrame));check((await read()).t,terminal.t,'terminal single step');
+  await page.screenshot({path:path.join(OUT_DIR,'H24_M05_finite_edge.png')});
+  const report={mid,late,inclined,plank,terminal,vp};console.log('H24 M05 online '+JSON.stringify(report));return report;
+}
+
 async function auditM04Projectile(page,origin){
   const url=new URL(origin);url.searchParams.set('model','mech-projectile-coupling');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2038,6 +2099,7 @@ async function main() {
     const m02EquilibriumReport=await auditM02Equilibrium(page,origin);
     const m03ConstraintReport=await auditM03Constraints(page,origin);
     const m04ProjectileReport=await auditM04Projectile(page,origin);
+    const m05ContactReport=await auditM05Contact(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2303,7 +2365,36 @@ async function main() {
       if(m04Errors.length||m04Network.length)throw Error('M04 offline errors '+JSON.stringify({m04Errors,m04Network}));
       Object.assign(m04OfflineReport,{step,impact,errors:m04Errors,network:m04Network});
     }finally{await m04Context.close();}
-    const summary = { m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+
+    const m05File=path.join(OUT_DIR,'H24_M05_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-block-conveyor','--preset','conveyor-horizontal-startup','--out',m05File],{stdio:'inherit'});
+    const m05Context=await browser.newContext({viewport:VIEWPORT,offline:true}),m05Page=await m05Context.newPage(),m05Errors=[],m05Network=[],m05OfflineReport={};
+    m05Page.on('pageerror',e=>m05Errors.push(e.message));m05Page.on('console',m=>{if(m.type()==='error')m05Errors.push(m.text());});m05Page.on('request',r=>{if(/^https?:/.test(r.url()))m05Network.push(r.url());});
+    try{
+      await m05Page.goto(pathToFileURL(m05File).href);
+      const canvas=m05Page.getByTestId('sf-canvas'),plot=m05Page.getByTestId('sf-uplot'),read=async()=>JSON.parse(await canvas.getAttribute('data-contact-rendered'));
+      await m05Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.contactRendered||'null')?.mode==='conveyor');
+      await m05Page.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      await m05Page.getByRole('button',{name:'单步',exact:true}).click();
+      await m05Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.contactRendered||'null')?.t>0);
+      const step=await read();if(Math.abs(step.t-1/60)>1e-10||Math.abs(step.vBlock-2.45*step.t)>1e-9||Math.abs(step.xBlock-1.225*step.t**2)>1e-9)throw Error('M05 offline step '+JSON.stringify(step));
+      await m05Page.getByTestId('sf-param-carrierLengthM').fill('2');
+      await m05Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.contactRendered||'null')?.t===0);
+      await m05Page.getByTestId('sf-play-pause').click();
+      await m05Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.contactRendered||'null')?.terminal===1);
+      const terminal=await read();
+      if(Math.abs(terminal.t-Math.sqrt(2/2.45))>1e-7||Math.abs(terminal.xBlock-1)>1e-7)throw Error('M05 offline edge '+JSON.stringify(terminal));
+      await m05Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]').dataset.contactRendered),t=Number(document.querySelector('[data-testid="sf-summary-clock"]').dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]').dataset.lastSampleT);return Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;});
+      if(Math.abs(Number(await plot.getAttribute('data-sampled-relative-slip'))-terminal.relativeScratch)>.03)throw Error('M05 offline sampled area');
+      await m05Page.getByRole('button',{name:'单步',exact:true}).click();await m05Page.evaluate(()=>new Promise(requestAnimationFrame));
+      if(Math.abs((await read()).t-terminal.t)>1e-10)throw Error('M05 offline terminal single step');
+      await m05Page.getByRole('button',{name:'黑板深蓝'}).click();await m05Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await m05Page.screenshot({path:path.join(OUT_DIR,'H24_M05_offline_edge_paper.png')});
+      if(m05Errors.length||m05Network.length)throw Error('M05 offline errors '+JSON.stringify({m05Errors,m05Network}));
+      Object.assign(m05OfflineReport,{step,terminal,errors:m05Errors,network:m05Network});
+    }finally{await m05Context.close();}
+
+    const summary = { m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
