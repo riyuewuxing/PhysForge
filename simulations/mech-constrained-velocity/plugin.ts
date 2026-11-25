@@ -118,8 +118,7 @@ export const mechConstrainedVelocityPlugin=defineSimulationPlugin<ConstrainedVel
         return {initialAngleDeg:Math.max(15,Math.min(75,Math.round(rad*180/Math.PI/5)*5))};
       }}];
   },
-  // A purely kinematic constraint does not determine forces.
-  getForceVectors:()=>[],
+  // Pure kinematics does not determine forces: deliberately do not declare a force capability.
   referenceFrames:[{id:'block-a',label:'A 端平移参考系',getOrigin:s=>s.posA,getVelocity:s=>s.velA}],
   sceneSerializer:{exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'mech-constrained-velocity',title:'关联速度约束分解',params}),importScene:dsl=>dsl.params as Partial<ConstrainedVelocityParams>},
   exportDiagramIR:(s,p)=>{

@@ -136,7 +136,7 @@ it('shares actual geometry and vector decomposition with print and handle contra
     const p:ConstrainedVelocityParams={mode,driveSpeed:1.5,heightOrLength:3,initialAngleDeg:45,secondarySpeedRatio:.6};
     const s=createInitialState(p),g=constrainedGeometry(s,p),model=mechConstrainedVelocityPlugin;
     expect(model.getControlHandles!(s,p)[0]!.onDrag(model.getControlHandles!(s,p)[0]!.position).initialAngleDeg).toBe(45);
-    expect(model.getForceVectors!(s,p)).toEqual([]);
+    expect(model.getForceVectors).toBeUndefined();
     expect(model.exportDiagramIR!(s,p).primitives).toEqual([...g.structure,...g.vectors].map(x=>x.primitive));
     expect(g.vectors.some(x=>x.role==='parallel'&&x.primitive.kind==='arrow')).toBe(true);
     expect(g.vectors.some(x=>x.role==='perpendicular'&&x.primitive.kind==='arrow')).toBe(true);
