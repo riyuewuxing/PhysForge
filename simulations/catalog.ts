@@ -124,7 +124,7 @@ export const simulationCatalog: readonly SimulationCatalogEntry[] = [
       textbookRef: '人教版 必修第一册 第三章 第4节',
       curriculumTags: ['物理观念', '科学思维'],
       difficulty: '高三一轮',
-      version: '2.1.0'
+      version: '2.2.0'
     }
   },
   {

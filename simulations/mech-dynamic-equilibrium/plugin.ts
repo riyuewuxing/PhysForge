@@ -1,7 +1,8 @@
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type DiagramPrimitive, type ParamFieldSpec, type ForceVectorItem } from '@physforge/sim-sdk';
 import { equilibriumPresets } from './presets.js';
+import { auxiliaryItems, anglePlotItems, shiftedAnalysis, type AnalysisRole } from './analysis.js';
 import {
-  angleRange, boundedAngle, checkInvariants, computeObservables, createInitialState, stepEquilibrium,
+  angleRange, boundedAngle, checkInvariants, computeObservables, createInitialState, stepEquilibrium, isRodMode,
   type EquilibriumParams, type EquilibriumState, type Point, type Force
 } from './engine.js';
 
@@ -10,20 +11,24 @@ const paramSchema: readonly ParamFieldSpec<EquilibriumParams>[] = [
     { label: '死结 · 固定左绳', value: 'dead-knot-rotate' },
     { label: '活结 · 对称轻滑轮', value: 'active-pulley-knot' },
     { label: '光滑斜面 · 水平拉力', value: 'hemisphere-similar' },
-    { label: '光滑半球 · 顶部悬绳', value: 'hemisphere-suspension' }
+    { label: '光滑半球 · 顶部悬绳', value: 'hemisphere-suspension' },
+    { label: '动杆 · 理想铰接二力杆', value: 'hinged-rod' },
+    { label: '定杆 · 固定支座与力矩', value: 'fixed-rod' }
   ], defaultValue: 'dead-knot-rotate' },
   { key: 'mass', kind: 'number', label: '重物质量 m', unit: 'kg', min: 0.5, max: 10, step: 0.5, defaultValue: 2 },
   { key: 'baseAngleDeg', kind: 'number', label: '左绳与竖直夹角 α', unit: '°', min: 15, max: 75, step: 1, defaultValue: 37 },
-  { key: 'sweepAngleDeg', kind: 'number', label: '初始角 β/θ', unit: '°', min: -30, max: 85, step: 1, defaultValue: 37 },
+  { key: 'sweepAngleDeg', kind: 'number', label: '初始角 β/θ', unit: '°', min: -30, max: 150, step: 1, defaultValue: 37 },
   { key: 'radiusM', kind: 'number', label: '半球半径 R', unit: 'm', min: 0.5, max: 1.5, step: 0.1, defaultValue: 1 },
   { key: 'anchorHeightM', kind: 'number', label: '悬点高出球顶 h', unit: 'm', min: 0.2, max: 1.2, step: 0.1, defaultValue: 0.6 },
+  { key: 'rodLengthM', kind: 'number', label: '杆长 L', unit: 'm', min: .6, max: 1.5, step: .1, defaultValue: 1.2 },
+  { key: 'pullForceN', kind: 'number', label: '指定绳张力 T₀', unit: 'N', min: 0, max: 40, step: .5, defaultValue: 8 },
   { key: 'autoSweep', kind: 'boolean', label: '连续准静态扫描', defaultValue: true }
 ];
 const O: Point = { x: 0, y: 0 };
 const shift = (p: Point, d: Point, scale: number): Point => ({ x: p.x + d.x * scale, y: p.y + d.y * scale });
 const isSupport = (s: EquilibriumState) => s.mode === 'hemisphere-similar' || s.mode === 'hemisphere-suspension';
-const name1 = (s: EquilibriumState) => isSupport(s) ? 'N' : 'T₁';
-const name2 = (s: EquilibriumState) => s.mode === 'hemisphere-similar' ? 'F' : 'T₂';
+const name1 = (s: EquilibriumState) => isSupport(s) ? 'N' : s.mode==='hinged-rod'?'|C|':s.mode==='fixed-rod'?'R':'T₁';
+const name2 = (s: EquilibriumState) => s.mode === 'hemisphere-similar' ? 'F' : s.rod||s.sphere?'T':'T₂';
 const statusLabel = (s: EquilibriumState) => s.status === 'infeasible' ? '无平衡解：绳不可受压' :
   s.status === 'singular' ? '奇异构型：无有限解' : '近奇异：无法可靠求解';
 type ColoredArrow = { from: Point; to: Point; force: Force; color: string; label: string; id: string };
@@ -32,7 +37,36 @@ export function equilibriumGeometry(s: EquilibriumState) {
   const p = s.point;
   const line = (a: Point, b: Point, dashed = false) => structure.push({kind:'line',x1:a.x,y1:a.y,x2:b.x,y2:b.y,dashed});
   const label = (a: Point, text: string) => structure.push({kind:'text',x:a.x,y:a.y,text,align:'middle'});
-  if (s.sphere) {
+  if(s.rod){
+    const r=s.rod,o=r.pivot,ropeEnd=shift(p,s.direction2,1.48);
+    structure.push({kind:'line',x1:o.x,y1:o.y,x2:p.x,y2:p.y,strokeWidth:3});
+    line(p,ropeEnd,s.status!=='balanced'||s.force2.mag===0);
+    structure.push({kind:'circle',cx:ropeEnd.x,cy:ropeEnd.y,r:.035,fill:true});
+    if(s.mode==='hinged-rod'){
+      structure.push({kind:'circle',cx:o.x,cy:o.y,r:.07,fill:false});
+      line({x:o.x-.16,y:o.y-.13},o);line(o,{x:o.x+.16,y:o.y-.13});
+      line({x:o.x-.24,y:o.y-.13},{x:o.x+.24,y:o.y-.13});
+      label({x:o.x-.18,y:o.y-.28},'铰支 O');
+      if(r.axialForceN!==undefined)label({x:(o.x+p.x)/2,y:(o.y+p.y)/2-.16},r.axialForceN>1e-10?'受压':r.axialForceN< -1e-10?'受拉':'零轴力');
+    }else{
+      line({x:o.x,y:o.y-.25},{x:o.x,y:o.y+.25});
+      for(let i=0;i<6;i++)line({x:o.x,y:o.y-.25+i*.1},{x:o.x-.13,y:o.y-.32+i*.1});
+      label({x:o.x-.13,y:o.y-.37},'固支 O');
+      if(r.supportMomentNm!==undefined){
+        const moment=r.supportMomentNm,sign=Math.sign(moment);
+        if(Math.abs(moment)>1e-10){
+          const radius=.23,start=.2,end=start+sign*4.6;
+          const points=Array.from({length:33},(_,i)=>{const a=start+(end-start)*i/32;return {x:o.x+radius*Math.cos(a),y:o.y+radius*Math.sin(a)};});
+          structure.push({kind:'polyline',points});
+          const tip=points.at(-1)!,tangent={x:-sign*Math.sin(end),y:sign*Math.cos(end)},normal={x:-tangent.y,y:tangent.x};
+          line(tip,shift(shift(tip,tangent,-.075),normal,.035));line(tip,shift(shift(tip,tangent,-.075),normal,-.035));
+        }
+        label({x:o.x-.05,y:o.y+.45},'M='+moment.toFixed(2)+' N·m（逆时针为正）');
+      }
+    }
+    label({x:(o.x+p.x)/2,y:(o.y+p.y)/2+.16},'L='+r.lengthM.toFixed(1)+'m');
+    label({x:p.x+.13,y:p.y+.13},'P');
+  } else if (s.sphere) {
     const { radius: r, anchor, height, ropeLength } = s.sphere;
     const points = Array.from({length:65},(_,i)=>({x:r*Math.cos(i*Math.PI/64),y:r*Math.sin(i*Math.PI/64)}));
     structure.push({kind:'polyline',points});
@@ -76,56 +110,75 @@ export function equilibriumGeometry(s: EquilibriumState) {
 
 export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumParams,EquilibriumState>({
   meta: { id:'mech-dynamic-equilibrium',title:'动态平衡几何图解（活结/死结/矢量三角形）(M02)',
-    textbookRef:'人教版 必修第一册 第三章 第4节',curriculumTags:['物理观念','科学思维'],difficulty:'高三一轮',version:'2.1.0' },
-  defaultView: {scale:p=>p.mode==='hemisphere-suspension'?Math.min(.78,1.76/((p.radiusM??1)+(p.anchorHeightM??.6))):.85,offsetRatioX:-.13},
+    textbookRef:'人教版 必修第一册 第三章 第4节',curriculumTags:['物理观念','科学思维'],difficulty:'高三一轮',version:'2.2.0' },
+  defaultView: {scale:p=>p.mode==='hemisphere-suspension'?Math.min(.78,1.76/((p.radiusM??1)+(p.anchorHeightM??.6))):isRodMode(p.mode)?.76:.80,offsetRatioX:-.14},
   paramSchema,
-  getParamFields: p => paramSchema.filter(f => f.key==='baseAngleDeg'?p.mode==='dead-knot-rotate':
+  getParamFields: p => paramSchema.filter(f => f.key==='baseAngleDeg'?p.mode==='dead-knot-rotate'||isRodMode(p.mode):
+    f.key==='rodLengthM'?isRodMode(p.mode):f.key==='pullForceN'?p.mode==='fixed-rod':
     f.key==='radiusM'||f.key==='anchorHeightM'?p.mode==='hemisphere-suspension':true).map(f=>{
+      if(f.key==='baseAngleDeg'&&isRodMode(p.mode))return {...f,label:'杆与水平夹角 α'};
       if(f.key!=='sweepAngleDeg'||f.kind!=='number')return f;
       const [min,max]=angleRange(p.mode,p);
-      return {...f,min,max,label:p.mode==='dead-knot-rotate'?'右绳与水平夹角 β':p.mode==='active-pulley-knot'?'绳与水平夹角 θ':'法线与竖直夹角 θ'};
+      return {...f,min,max,label:isRodMode(p.mode)?'初始请求角 β（从左水平向上）':p.mode==='dead-knot-rotate'?'初始请求角 β（右绳与水平）':p.mode==='active-pulley-knot'?'初始请求角 θ（绳与水平）':'初始请求角 θ（法线与竖直）'};
     }),
   presets:equilibriumPresets,
   engine:{createInitialState,step:stepEquilibrium,computeObservables,checkInvariants},
-  layers:[{id:'ropes',label:'结构与受力',defaultVisible:true},{id:'triangle',label:'真实力矢量三角形',defaultVisible:true}],
+  layers:[{id:'ropes',label:'结构与受力',defaultVisible:true},{id:'triangle',label:'真实力矢量三角形',defaultVisible:true},
+    {id:'aux-circle',label:'辅助圆（死结/动杆，替代三角形）',defaultVisible:false},
+    {id:'angle-curve',label:'力—角度函数（优先于辅助圆）',defaultVisible:false}],
   telemetryChannels:[{key:'force1',label:'F₁ 张力/支持力',unit:'N',color:'#38bdf8'},
     {key:'force2',label:'F₂ 拉力/张力',unit:'N',color:'#f472b6'},{key:'angleDeg',label:'扫描角度',unit:'°',color:'#fbbf24'}],
   getControlHandles:(s,p)=>[{
-    id:'pull-angle',label:(s.mode==='dead-knot-rotate'?'β=':'θ=')+s.activeAngleDeg.toFixed(0)+'°',
-    position:s.sphere?s.point:shift(O,isSupport(s)?s.direction1:s.direction2,1.48),origin:O,handleKind:'angle',color:'#f472b6',
-    onDrag:wp=>({sweepAngleDeg:boundedAngle(s.mode,Math.round(Math.atan2(isSupport(s)?-wp.x:wp.y,isSupport(s)?wp.y:wp.x)*180/Math.PI),p),autoSweep:false})
+    id:'pull-angle',label:(s.mode==='dead-knot-rotate'||s.rod?'β=':'θ=')+s.activeAngleDeg.toFixed(0)+'°',
+    position:s.sphere?s.point:shift(s.point,isSupport(s)?s.direction1:s.direction2,1.48),origin:s.sphere?O:s.point,handleKind:'angle',showWhenIdle:!s.sphere,color:'#f472b6',
+    onDrag:wp=>({sweepAngleDeg:boundedAngle(s.mode,Math.round(Math.atan2(isSupport(s)?-wp.x:wp.y,isSupport(s)?wp.y:s.rod?-wp.x:wp.x)*180/Math.PI),p),autoSweep:false})
   }],
   getForceVectors:s=>{
     const result:ForceVectorItem[]=[{id:'mg',label:'mg',origin:s.point,force:s.gravity,color:'#fbbf24',category:'gravity',unit:'N'}];
     if(s.status==='balanced')result.unshift(
-      {id:'f1',label:name1(s),origin:s.point,force:s.force1,color:'#38bdf8',category:isSupport(s)?'normal':'tension',unit:'N'},
+      {id:'f1',label:name1(s),origin:s.point,force:s.force1,color:'#38bdf8',category:isSupport(s)?'normal':s.rod?'other':'tension',unit:'N'},
       {id:'f2',label:name2(s),origin:s.point,force:s.force2,color:'#f472b6',category:s.mode==='hemisphere-similar'?'other':'tension',unit:'N'});
     return result;
   },
+  referenceFrames:[{id:'support-origin',label:'支点原点（仅平移）',description:'准静态几何参照，不表示动力学随动系',getOrigin:s=>s.rod?.pivot??O}],
   sceneSerializer:{exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'mech-dynamic-equilibrium',title:'动态平衡图解',params}),
     importScene:dsl=>dsl.params as Partial<EquilibriumParams>},
-  exportDiagramIR:s=>{
+  exportDiagramIR:(s,p)=>{
     const g=equilibriumGeometry(s);
     const primitives:DiagramPrimitive[]=[...g.structure,...[...g.arrows,...g.triangle].map((a):DiagramPrimitive=>({
       kind:'arrow',x1:a.from.x,y1:a.from.y,x2:a.to.x,y2:a.to.y,label:a.label+'='+a.force.mag.toFixed(2)+'N'
     }))];
     primitives.push({kind:'text',x:2.25,y:1.15,text:s.status==='balanced'?'力矢量三角形':statusLabel(s),align:'middle'});
-    return {width:900,height:560,viewBox:{minX:-2.2,minY:-1.6,maxX:3.5,maxY:Math.max(1.9,(s.sphere?.anchor.y??0)+.35)},title:'准静态动态平衡',primitives};
+    // Include the exact auxiliary/angle constructions in the monochrome
+    // teaching sheet without pretending that they are extra forces.
+    const aux=auxiliaryItems(s),curve=anglePlotItems(s,p);
+    if(s.mode==='dead-knot-rotate'||s.mode==='hinged-rod')primitives.push(...shiftedAnalysis(aux,-3.25));
+    primitives.push(...shiftedAnalysis(curve,-3.25).map((d):DiagramPrimitive=>{
+      // Put the function plot on the left, the auxiliary circle on the right.
+      if(d.kind==='line')return {...d,x1:d.x1-3.55,x2:d.x2-3.55};
+      if(d.kind==='circle')return {...d,cx:d.cx-3.55};
+      if(d.kind==='text')return {...d,x:d.x-3.55};
+      return d;
+    }));
+    return {width:900,height:860,viewBox:{minX:-2.7,minY:-4.8,maxX:3.9,maxY:Math.max(1.9,(s.sphere?.anchor.y??0)+.35)},title:'准静态动态平衡 · 构型与解析图解',primitives};
   },
   formatFormulas:s=>{
-    const angle=(s.mode==='dead-knot-rotate'?'\\beta':'\\theta')+'='+s.activeAngleDeg.toFixed(1)+'^\\circ';
+    const angle=(s.mode==='dead-knot-rotate'||s.rod?'\\beta':'\\theta')+'='+s.activeAngleDeg.toFixed(1)+'^\\circ';
     const law=s.mode==='dead-knot-rotate'?'T_1=\\frac{mg\\cos\\beta}{\\cos(\\alpha-\\beta)},\\quad T_2=\\frac{mg\\sin\\alpha}{\\cos(\\alpha-\\beta)}':
       s.mode==='active-pulley-knot'?'T_1=T_2=\\frac{mg}{2\\sin\\theta}':
+      s.mode==='hinged-rod'?'C=\\frac{mg\\cos\\beta}{\\sin(\\alpha+\\beta)},\\quad T=\\frac{mg\\cos\\alpha}{\\sin(\\alpha+\\beta)}':
+      s.mode==='fixed-rod'?'R_x=T_0\\cos\\beta,\\quad R_y=mg-T_0\\sin\\beta':
       s.sphere?'N=\\frac{mgR}{R+h},\\quad T=\\frac{mgL}{R+h}':'N=\\frac{mg}{\\cos\\theta},\\quad F=mg\\tan\\theta';
     return [
       {id:'eq-forces',label:'准静态平衡条件（非运动轨迹）',latex:'\\vec{F}_1+\\vec{F}_2+m\\vec g=\\mathbf 0',substitutedLatex:angle},
       {id:'eq-law',label:s.status==='balanced'?'解析力值':statusLabel(s),latex:law,substitutedLatex:s.status==='balanced'?
-        'F_1='+s.force1.mag.toFixed(2)+'\\,\\mathrm N,\\quad F_2='+s.force2.mag.toFixed(2)+'\\,\\mathrm N':
+        (s.rod?.axialForceN!==undefined?'C='+s.rod.axialForceN.toFixed(2):s.mode==='fixed-rod'?'|R|='+s.force1.mag.toFixed(2):'F_1='+s.force1.mag.toFixed(2))+'\\,\\mathrm N,\\quad F_2='+s.force2.mag.toFixed(2)+'\\,\\mathrm N':
         '\\text{无可靠有限平衡解}'},
-      {id:'eq-bound',label:'理论拉力下界'+(s.mode==='active-pulley-knot'?'（竖直绳极限不在滑块范围内）':s.sphere?'（球顶连续极限）':''),latex:'F_{2,\\min}='+s.minPullForceN.toFixed(2)+'\\,\\mathrm N'}
+      ...(s.minPullForceN!==undefined?[{id:'eq-bound',label:'理论拉力下界'+(s.mode==='active-pulley-knot'?'（竖直绳极限不在滑块范围内）':s.sphere?'（球顶连续极限）':''),latex:'F_{2,\\min}='+s.minPullForceN.toFixed(2)+'\\,\\mathrm N'}]:[]),
+      ...(s.mode==='fixed-rod'?[{id:'eq-moment',label:'固定支座力矩（逆时针为正）',latex:'M_O=L(\\cos\\alpha R_y-\\sin\\alpha R_x)',...(s.rod?.supportMomentNm!==undefined?{substitutedLatex:'M_O='+s.rod.supportMomentNm.toFixed(3)+'\\,\\mathrm{N\\cdot m}'}:{})}]:[])
     ];
   },
-  renderCanvas:(ctx,s,_p,vp,layers)=>{
+  renderCanvas:(ctx,s,p,vp,layers)=>{
     const m=createWorldMapper(vp),paper=vp.theme==='projector',g=equilibriumGeometry(s);
     const ink=paper?'#334155':'#cbd5e1';
     const color=(c:string)=>paper?({'#38bdf8':'#0369a1','#f472b6':'#9d174d','#fbbf24':'#92400e'}[c]??c):c;
@@ -133,9 +186,9 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
     const label=(p:Point,text:string,id:string,c=ink)=>{
       const q=m.toScreen(p.x,p.y);labels.push({id,x:q.x+6,y:q.y-6,text,color:c,font:'bold 13px sans-serif'});
     };
-    const segment=(a:Point,b:Point,dashed=false)=>{
+    const segment=(a:Point,b:Point,dashed=false,c=ink,width=1.8)=>{
       const p=m.toScreen(a.x,a.y),q=m.toScreen(b.x,b.y);
-      ctx.save();ctx.strokeStyle=ink;ctx.lineWidth=1.8;ctx.setLineDash(dashed?[5,5]:[]);ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();ctx.restore();
+      ctx.save();ctx.strokeStyle=c;ctx.lineWidth=width;ctx.setLineDash(dashed?[5,5]:[]);ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();ctx.restore();
     };
     const arrow=(a:ColoredArrow)=>{
       const p=m.toScreen(a.from.x,a.from.y),q=m.toScreen(a.to.x,a.to.y),ang=Math.atan2(q.y-p.y,q.x-p.x);
@@ -147,17 +200,29 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
     };
     if(layers.has('ropes')){
       for(const [i,d] of g.structure.entries()){
-        if(d.kind==='line')segment({x:d.x1,y:d.y1},{x:d.x2,y:d.y2},d.dashed);
+        if(d.kind==='line')segment({x:d.x1,y:d.y1},{x:d.x2,y:d.y2},d.dashed,ink,d.strokeWidth??1.8);
         else if(d.kind==='polyline'){
           ctx.save();ctx.strokeStyle=ink;ctx.lineWidth=2;ctx.beginPath();
           d.points.forEach((p,j)=>{const q=m.toScreen(p.x,p.y);if(j===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y)});ctx.stroke();ctx.restore();
         }else if(d.kind==='circle'){
-          const q=m.toScreen(d.cx,d.cy);ctx.save();ctx.fillStyle=ink;ctx.beginPath();ctx.arc(q.x,q.y,m.len(d.r),0,Math.PI*2);ctx.fill();ctx.restore();
+          const q=m.toScreen(d.cx,d.cy);ctx.save();ctx.fillStyle=ink;ctx.strokeStyle=ink;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(q.x,q.y,m.len(d.r),0,Math.PI*2);if(d.fill)ctx.fill();else ctx.stroke();ctx.restore();
         }else if(d.kind==='text')label({x:d.x,y:d.y},d.text,'structure-'+i);
       }
       g.arrows.forEach(arrow);
     }
-    if(layers.has('triangle')){
+    const analysis=layers.has('angle-curve')?anglePlotItems(s,p):layers.has('aux-circle')?auxiliaryItems(s):null;
+    if(analysis){
+      const palette:Record<AnalysisRole,string>={ink,force1:color('#38bdf8'),force2:color('#f472b6'),gravity:color('#fbbf24')};
+      for(const {primitive:d,role} of analysis){
+        const c=palette[role];
+        if(d.kind==='line')segment({x:d.x1,y:d.y1},{x:d.x2,y:d.y2},d.dashed,c,role==='ink'?1:2.2);
+        else if(d.kind==='circle'){
+          const q=m.toScreen(d.cx,d.cy);ctx.save();ctx.fillStyle=c;ctx.strokeStyle=c;ctx.lineWidth=1.6;ctx.setLineDash(d.dashed?[4,4]:[]);ctx.beginPath();ctx.arc(q.x,q.y,m.len(d.r),0,Math.PI*2);if(d.fill)ctx.fill();else ctx.stroke();ctx.restore();
+        }else if(d.kind==='text'){
+          const q=m.toScreen(d.x,d.y);ctx.save();ctx.fillStyle=c;ctx.font='12px system-ui';ctx.textAlign=d.align==='start'?'left':d.align==='end'?'right':'center';ctx.textBaseline='middle';ctx.fillText(d.text,q.x,q.y);ctx.restore();
+        }
+      }
+    }else if(layers.has('triangle')){
       label({x:2.05,y:1.15},s.status==='balanced'?'力矢量三角形':statusLabel(s),'triangle-title',s.status==='balanced'?ink:color('#f472b6'));
       g.triangle.forEach(arrow);
     }
