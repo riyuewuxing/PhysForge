@@ -70,7 +70,7 @@ export function stepCustomOde(s:CustomOdeState,p:CustomOdeParams,dt:number):Step
   if(s.formulaError)return failure(s,s.formulaError);
   try{
     let x=s.x,y=s.y,vx=s.vx,vy=s.vy;
-    const maxStep=p.template==='kepler-2d'?Math.min(1/240,.05*Math.sqrt(KEPLER_CORE_RADIUS**3/mu(p))):1/240;
+    const maxStep=p.template==='kepler-2d'?Math.min(1/240,.005*Math.sqrt(KEPLER_CORE_RADIUS**3/mu(p))):1/240;
     const n=Math.ceil(dt/maxStep);
     if(n>4096)throw new Error('Requested time step exceeds the integration work limit.');
     const h=dt/n;

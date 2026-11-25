@@ -155,9 +155,12 @@ describe('H11 reference trajectory beyond a single sample',()=>{
     for(let i=0;i<4800;i++){s=stepCustomOde(s,p,1/240).nextState;const t=s.t;expect(Math.abs(s.x-(.7*Math.cos(3*t)-.4/3*Math.sin(3*t)))).toBeLessThan(2e-7);expect(Math.abs(computeObservables(s,p).energy!-e0)).toBeLessThan(1e-7);}
   });
   it('uses one continuous potential at the finite-core boundary and permits zero radial angular momentum',()=>{
-    const p=resolvePluginParams<CustomOdeParams>(builderCustomOdeLabPlugin.paramSchema,{template:'kepler-2d',mass:2,stiffness:6,initialPos:.4,initialVel:0});
-    let s=createInitialState(p),inside=false;
-    for(let i=0;i<240;i++){s=stepCustomOde(s,p,1/240).nextState;const o=computeObservables(s,p);inside||=o.insideCore===1;expect(o.angularMomentum).toBeCloseTo(0,12);expect(Number.isFinite(o.energy)).toBe(true);}
-    expect(inside).toBe(true);
+    for(const stiffness of [1,6,40]){
+      const p=resolvePluginParams<CustomOdeParams>(builderCustomOdeLabPlugin.paramSchema,{template:'kepler-2d',mass:2,stiffness,initialPos:.4,initialVel:0});
+      let s=createInitialState(p),inside=false,maxError=0;
+      const e0=s.initialEnergy;
+      for(let i=0;i<240;i++){s=stepCustomOde(s,p,1/240).nextState;const o=computeObservables(s,p);inside||=o.insideCore===1;expect(o.angularMomentum).toBeCloseTo(0,12);expect(Number.isFinite(o.energy)).toBe(true);maxError=Math.max(maxError,Math.abs(o.energy!-e0)/Math.abs(e0));}
+      expect(inside).toBe(true);expect(maxError).toBeLessThan(1e-4);
+    }
   });
 });
