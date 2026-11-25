@@ -556,6 +556,66 @@ async function auditM03Constraints(page,origin){
   return {ladder,wedge,dual,boat};
 }
 
+async function auditM04Projectile(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-projectile-coupling');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-projectile-coupling');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-projectile-rendered'));
+  const waitMode=async mode=>page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.projectileRendered||'null');return s?.mode===mode&&s.t===0;},mode);
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M04 '+label+' '+JSON.stringify({v,x}));};
+  const sync=async()=>{
+    const a=await page.evaluate(async()=>{
+      const out=[];
+      for(let i=0;i<8;i++){
+        await new Promise(requestAnimationFrame);
+        const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]').dataset.projectileRendered),m=document.querySelector('[data-testid="topbar"]').innerText.match(/t\s*=\s*([\d.]+)\s*s/);
+        out.push({t:d.t,clock:Number(m?.[1]),plot:Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT)});
+      }return out;
+    });
+    for(const x of a){check(x.clock,x.t,'paused clock',.00501);check(x.plot,x.t,'paused plot',1e-10);}
+    console.log('H21 M04 paused '+JSON.stringify(a));return a;
+  };
+  const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+  await selectPreset(page,'flat-throw-onto-37deg',true);await waitMode('incline-flat');if(await expand.isVisible())await expand.click();
+  await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.projectileRendered||'null')?.t>.27);await play.click();
+  const mid=await read(),theta=37*Math.PI/180,T=12*Math.tan(theta)/9.8;
+  check(mid.x,6*mid.t,'vacuum x');check(mid.y,-4.9*mid.t**2,'vacuum y');check(mid.vx,6,'vx');check(mid.vy,-9.8*mid.t,'vy');
+  await sync();await page.screenshot({path:path.join(OUT_DIR,'H21_M04_midpoint.png')});
+  const finish=async()=>{
+    await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.projectileRendered||'null')?.terminal===1);
+    await page.waitForFunction(()=>document.querySelector('[data-testid="topbar"] [data-testid="btn-play-pause"]')?.getAttribute('aria-label')==='运行');
+    return read();
+  };
+  const incline=await finish();check(incline.t,T,'incline impact time');check(incline.impactTime,T,'impactTime');check(incline.y+incline.x*Math.tan(theta),0,'incline residual',1e-6);await sync();
+  await page.getByTestId('btn-step').click();await page.evaluate(()=>new Promise(requestAnimationFrame));check((await read()).t,T,'terminal time after single step');
+  await page.screenshot({path:path.join(OUT_DIR,'H21_M04_incline_impact.png')});
+  await selectPreset(page,'semicircle-trough-hit',true);await waitMode('semicircle-trough');if(await expand.isVisible())await expand.click();
+  let lo=0,hi=2;const f=t=>16*t+9.8**2*t**3/4-20;
+  for(let k=0;k<70;k++){const m=(lo+hi)/2;if(f(m)<0)lo=m;else hi=m;}
+  const trough=await finish();check(trough.t,(lo+hi)/2,'lower arc root');
+  check((trough.x-2.5)**2+trough.y**2,2.5**2,'lower arc radius',1e-6);if(!(trough.y<0)||trough.landed!==1)throw Error('M04 not physical lower arc '+JSON.stringify(trough));
+  await sync();await page.screenshot({path:path.join(OUT_DIR,'H21_M04_trough_impact.png')});
+  await selectPreset(page,'oblique-escape-rim',true);await waitMode('semicircle-trough');
+  const escape=await finish();check(escape.t,.5,'rim escape time');check(escape.x,2,'rim x');
+  if(escape.landed!==0||'impactTime'in escape||escape.y<=0)throw Error('M04 escape incorrectly reported as collision '+JSON.stringify(escape));
+  await page.screenshot({path:path.join(OUT_DIR,'H21_M04_escape.png')});
+  await selectPreset(page,'oblique-safety-envelope',true);await waitMode('safety-envelope');
+  const drag=await finish();check(drag.y,0,'drag landing height',1e-6);
+  if(drag.kineticEnergy>=32||drag.x>64/9.8+1e-7||drag.y>64/19.6-9.8*drag.x**2/128+1e-7)throw Error('M04 drag not within vacuum envelope '+JSON.stringify(drag));
+  await page.screenshot({path:path.join(OUT_DIR,'H21_M04_drag_envelope.png')});
+  await selectPreset(page,'flat-throw-onto-37deg',true);await waitMode('incline-flat');
+  await page.getByTestId('param-slider-v0').fill('14');await page.getByTestId('param-slider-inclineDeg').fill('60');
+  await page.waitForFunction(()=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.projectileRendered||'null');return d?.t===0&&Math.abs(d.vx-14)<1e-8;});
+  const vp=JSON.parse(await canvas.getAttribute('data-projectile-viewport')),box=await canvas.boundingBox(),panel=await page.getByTestId('right-control-panel').boundingBox(),dock=await page.getByTestId('floating-scope-dock').boundingBox();
+  const x=2*14**2*Math.tan(Math.PI/3)/9.8,y=-x*Math.tan(Math.PI/3),ppm=.24*Math.min(vp.width,vp.height)*vp.scale;
+  const start={x:box.x+.45*vp.width+vp.offsetX,y:box.y+.5*vp.height+vp.offsetY},end={x:start.x+x*ppm,y:start.y-y*ppm};
+  if(start.x<box.x+20||start.y<box.y+15||end.x>panel.x-8||end.y>(dock?.height>20?dock.y-8:box.y+box.height-30))throw Error('M04 extreme physical domain covered '+JSON.stringify({start,end,panel,dock,vp}));
+  await page.screenshot({path:path.join(OUT_DIR,'H21_M04_extreme_view.png')});
+  console.log('H21 M04 online '+JSON.stringify({mid,incline,trough,escape,drag,start,end}));
+  return {mid,incline,trough,escape,drag,start,end};
+}
+
 async function runWaveBCoordinateAudit(page, origin) {
   const cases = [
     { id: 'em-induction-double-rod', name: 'E04 defaultView' },
@@ -1977,6 +2037,7 @@ async function main() {
     const m01ChaseReport=await auditM01Chase(page,origin);
     const m02EquilibriumReport=await auditM02Equilibrium(page,origin);
     const m03ConstraintReport=await auditM03Constraints(page,origin);
+    const m04ProjectileReport=await auditM04Projectile(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2217,7 +2278,32 @@ async function main() {
       if(m03Errors.length||m03Network.length)throw Error('M03 offline errors '+JSON.stringify({m03Errors,m03Network}));
       Object.assign(m03OfflineReport,{step,errors:m03Errors,network:m03Network});
     }finally{await m03Context.close();}
-    const summary = { m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+
+    const m04File=path.join(OUT_DIR,'H21_M04_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-projectile-coupling','--preset','flat-throw-onto-37deg','--out',m04File],{stdio:'inherit'});
+    const m04Context=await browser.newContext({viewport:VIEWPORT,offline:true}),m04Page=await m04Context.newPage(),m04Errors=[],m04Network=[],m04OfflineReport={};
+    m04Page.on('pageerror',e=>m04Errors.push(e.message));m04Page.on('console',m=>{if(m.type()==='error')m04Errors.push(m.text());});m04Page.on('request',r=>{if(/^https?:/.test(r.url()))m04Network.push(r.url());});
+    try{
+      await m04Page.goto(pathToFileURL(m04File).href);
+      const canvas=m04Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-projectile-rendered'));
+      await m04Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.projectileRendered||'null')?.mode==='incline-flat');
+      await m04Page.getByRole('button',{name:'单步',exact:true}).click();
+      await m04Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.projectileRendered||'null')?.t>0);
+      const step=await read();
+      if(Math.abs(step.t-1/60)>1e-10||Math.abs(step.x-6*step.t)>1e-9||Math.abs(step.y+4.9*step.t**2)>1e-9)throw Error('M04 offline step '+JSON.stringify(step));
+      await m04Page.getByRole('button',{name:'运行',exact:true}).click();
+      await m04Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.projectileRendered||'null')?.terminal===1);
+      const impact=await read(),T=12*Math.tan(37*Math.PI/180)/9.8;
+      if(Math.abs(impact.t-T)>1e-7||Math.abs(impact.y+impact.x*Math.tan(37*Math.PI/180))>1e-6)throw Error('M04 offline impact '+JSON.stringify(impact));
+      await m04Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]').dataset.projectileRendered),t=Number(document.querySelector('[data-testid="sf-summary-clock"]').dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]').dataset.lastSampleT);return Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;});
+      await m04Page.getByRole('button',{name:'单步',exact:true}).click();await m04Page.evaluate(()=>new Promise(requestAnimationFrame));
+      if(Math.abs((await read()).t-impact.t)>1e-10)throw Error('M04 offline terminal advanced');
+      await m04Page.getByRole('button',{name:'黑板深蓝'}).click();await m04Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await m04Page.screenshot({path:path.join(OUT_DIR,'H21_M04_offline_impact_paper.png')});
+      if(m04Errors.length||m04Network.length)throw Error('M04 offline errors '+JSON.stringify({m04Errors,m04Network}));
+      Object.assign(m04OfflineReport,{step,impact,errors:m04Errors,network:m04Network});
+    }finally{await m04Context.close();}
+    const summary = { m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
