@@ -47,7 +47,8 @@ export function runParameterSweep<TParams extends ParamRecord, TState>(
     const params = resolvePluginParams(plugin.paramSchema, overrides);
     let state = plugin.engine.createInitialState(params);
     let eventCount = 0;
-
+    let elapsed=0;
+    try {
     const initObs = plugin.engine.computeObservables(state, params);
     const maxObs: Record<string, number> = { ...initObs };
     const minObs: Record<string, number> = { ...initObs };
@@ -56,6 +57,8 @@ export function runParameterSweep<TParams extends ParamRecord, TState>(
       const stepRes = plugin.engine.step(state, params, spec.dt);
       state = stepRes.nextState;
       eventCount += stepRes.events.length;
+      if(stepRes.advancedTime===0)throw new Error(`Parameter sweep ${plugin.meta.id}: engine did not advance for ${spec.paramKey}=${val}.`);
+      elapsed+=stepRes.advancedTime??spec.dt;
       const obs = plugin.engine.computeObservables(state, params);
       for (const [k, v] of Object.entries(obs)) {
         if (spec.metricKeys && !spec.metricKeys.includes(k)) continue;
@@ -63,10 +66,11 @@ export function runParameterSweep<TParams extends ParamRecord, TState>(
         if (maxObs[k] === undefined || v > maxObs[k]!) maxObs[k] = v;
         if (minObs[k] === undefined || v < minObs[k]!) minObs[k] = v;
       }
+      if(stepRes.halt)break;
     }
 
     const finalObs = plugin.engine.computeObservables(state, params);
-    const tVal = (state as { t?: number }).t ?? spec.steps * spec.dt;
+    const tVal = (state as { t?: number }).t ?? elapsed;
     points.push({
       paramValue: val,
       finalTime: tVal,
@@ -75,6 +79,7 @@ export function runParameterSweep<TParams extends ParamRecord, TState>(
       minObservables: minObs,
       eventCount
     });
+    } finally { plugin.engine.disposeState?.(state); }
   }
 
   const endMs = typeof performance !== 'undefined' ? performance.now() : Date.now();

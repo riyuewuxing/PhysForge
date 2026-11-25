@@ -132,3 +132,37 @@ describe('analysis-lab algorithms', () => {
     ]);
   });
 });
+
+
+describe('finite-step contract in headless parameter sweeps',()=>{
+  it('uses actual partial terminal time, never repeats a terminal step, and releases the state',()=>{
+    type P={k:number};type S={x:number};
+    let steps=0,disposed=0;
+    const p=defineSimulationPlugin<P,S>({
+      meta:{id:'finite-step-dummy',title:'Finite step dummy',textbookRef:'必修二',curriculumTags:['科学探究'],difficulty:'基础新授',version:'1.0.0'},
+      paramSchema:[{key:'k',kind:'number',label:'k',min:1,max:10,step:1,defaultValue:2}],
+      presets:[],layers:[],telemetryChannels:[],renderCanvas:()=>{},
+      engine:{
+        createInitialState:()=>({x:0}),
+        step:(s,_p,_dt)=>{steps++;return {nextState:{x:s.x+.025},events:[{id:'stop',time:.025,label:'terminal'}],advancedTime:.025,halt:true};},
+        computeObservables:s=>({x:s.x}),
+        disposeState:s=>{expect(s.x).toBe(.025);disposed++;}
+      }
+    });
+    const result=runParameterSweep(p,{paramKey:'k',values:[1,2],steps:10,dt:.1});
+    expect(steps).toBe(2);expect(disposed).toBe(2);
+    expect(result.points.map(p=>p.finalTime)).toEqual([.025,.025]);
+    expect(result.points.map(p=>p.eventCount)).toEqual([1,1]);
+  });
+  it('rejects an unready solver rather than returning zero-time results and frees its state',()=>{
+    type P={k:number};let disposed=0;
+    const p=defineSimulationPlugin<P,{x:number}>({
+      meta:{id:'unready-dummy',title:'Unready dummy',textbookRef:'必修二',curriculumTags:['科学探究'],difficulty:'基础新授',version:'1.0.0'},
+      paramSchema:[{key:'k',kind:'number',label:'k',min:1,max:10,step:1,defaultValue:2}],
+      presets:[],layers:[],telemetryChannels:[],renderCanvas:()=>{},
+      engine:{createInitialState:()=>({x:0}),step:s=>({nextState:s,events:[],advancedTime:0}),computeObservables:s=>({x:s.x}),disposeState:()=>{disposed++;}}
+    });
+    expect(()=>runParameterSweep(p,{paramKey:'k',values:[1],steps:10,dt:.1})).toThrow('engine did not advance');
+    expect(disposed).toBe(1);
+  });
+});

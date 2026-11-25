@@ -29,16 +29,19 @@ function runPluginToHorizon(
   const allEvents: PhysicsEvent[] = [];
 
   const totalSteps = Math.round(durationSec / SIM_STEP_DT);
+  try {
   for (let i = 0; i < totalSteps; i++) {
     const res = plugin.engine.step(state, params, SIM_STEP_DT);
     state = res.nextState;
     if (res.events.length > 0) {
       allEvents.push(...res.events);
     }
+    if(res.advancedTime===0||res.halt&&(i<totalSteps-1||(res.advancedTime??SIM_STEP_DT)<SIM_STEP_DT-1e-12))throw new Error(`Model ${modelId} did not reach the requested teaching-pack time horizon.`);
   }
 
   const observables = plugin.engine.computeObservables(state, params);
   return { observables, events: allEvents };
+  } finally { plugin.engine.disposeState?.(state); }
 }
 
 function assertPresetExists(modelId: string, presetId: string, context: string): void {
