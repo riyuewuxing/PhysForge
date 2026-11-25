@@ -295,7 +295,9 @@ export const mechBlockConveyorPlugin = Object.assign(defineSimulationPlugin<
     const isBelt=p.systemMode==='conveyor',v=isBelt?p.beltVelocity:p.plankInitialV,origin=world(p,0,isBelt?-1.14:-.92);
     return [{id:'carrier-initial-velocity',label:(isBelt?'v带':'v板₀')+'='+v.toFixed(1)+' m/s',position:world(p,.3*v,isBelt?-1.14:-.92),origin,handleKind:'vector',color:'#fbbf24',showWhenIdle:false,
       onDrag:wp=>{const a=incline(p),v=Math.round(((wp.x-origin.x)*Math.cos(a)+(wp.y-origin.y)*Math.sin(a))/.3*2)/2;
-        return isBelt?{beltVelocity:Math.max(-6,Math.min(6,v))}:{plankInitialV:Math.max(-4,Math.min(6,v))};}}];
+        const patch:Record<string,number>={};
+        patch[isBelt?'beltVelocity':'plankInitialV']=Math.max(isBelt?-6:-4,Math.min(6,v));
+        return patch;}}];
   },
   getForceVectors:(s,p)=>{
     const a=incline(p),mg=p.massBlock*CLASSROOM_GRAVITY,N=mg*Math.cos(a),origin=blockCenter(s,p),f=s.frictionOnBlockN;
