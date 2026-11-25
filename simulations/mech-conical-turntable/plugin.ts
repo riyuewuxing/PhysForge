@@ -61,87 +61,24 @@ export const mechConicalTurntablePlugin = defineSimulationPlugin<
     { key: 'coneAngleDeg', label: '圆锥半顶角 θ', unit: '°', color: '#fbbf24' }
   ],
   getControlHandles: (state, params) => {
-    const angle = state.angleRad;
-    const x = params.mode === 'turntable-dual' ? state.rB * Math.cos(angle) : params.radiusB;
-    const y = params.mode === 'turntable-dual' ? -state.rB * Math.sin(angle) : 0;
-    return [{
-      id: 'radius-b',
-      label: `rB=${params.radiusB.toFixed(1)}m`,
-      position: { x, y },
-      origin: { x: 0, y: 0 },
-      handleKind: 'radius',
-      color: '#f472b6',
-      onDrag: (wp) => ({ radiusB: Number(Math.max(0.8, Math.min(2.4, Math.hypot(wp.x, wp.y))).toFixed(1)) })
-    }];
+    if(params.mode==='conical-pendulum'||state.t>0)return [];
+    return [{id:'radius-b',label:'rB='+params.radiusB.toFixed(1)+'m',position:state.b,origin:{x:0,y:0},handleKind:'radius',color:'#f472b6',onDrag:wp=>({radiusB:Number(Math.max(.8,Math.min(2.4,Math.hypot(wp.x,wp.y))).toFixed(1))})}];
   },
-  getForceVectors: (state, params): ForceVectorItem[] => {
-    if (params.mode === 'conical-pendulum') {
-      const theta = (state.coneAngleDeg * Math.PI) / 180;
-      const pivot = { x: 0, y: 1.1 };
-      const bob = {
-        x: params.pendulumLength * Math.sin(theta) * Math.cos(state.angleRad),
-        y: pivot.y - params.pendulumLength * Math.cos(theta)
-      };
-      const dx = pivot.x - bob.x;
-      const dy = pivot.y - bob.y;
-      const length = Math.max(1e-9, Math.hypot(dx, dy));
-      const tension = { x: (state.tensionN * dx) / length, y: (state.tensionN * dy) / length };
-      const gravity = { x: 0, y: -params.massA * CLASSROOM_GRAVITY };
-      return [
-        { id: 'gravity', label: 'mg', origin: bob, force: gravity, color: '#fbbf24', category: 'gravity' },
-        { id: 'tension', label: 'T', origin: bob, force: tension, color: '#38bdf8', category: 'tension' },
-        { id: 'net', label: 'F_合', origin: bob, force: { x: tension.x, y: tension.y + gravity.y }, color: '#4ade80', category: 'net' }
-      ];
+  getForceVectors:(s,p):ForceVectorItem[]=>{
+    if(p.mode==='conical-pendulum'){
+      const tension={x:-s.tensionN*s.a.x/p.pendulumLength,y:s.tensionN*(1.1-s.a.y)/p.pendulumLength},gravity={x:0,y:-p.massA*CLASSROOM_GRAVITY};
+      return [{id:'gravity',label:'mg',origin:s.a,force:gravity,color:'#fbbf24',category:'gravity'},
+        {id:'tension',label:'T',origin:s.a,force:tension,color:'#38bdf8',category:'tension'},
+        {id:'net',label:'F_合',origin:s.a,force:{x:tension.x,y:tension.y+gravity.y},color:'#4ade80',category:'net'}];
     }
-
-    const angle = state.angleRad;
-    const a = { x: -state.rA * Math.cos(angle), y: state.rA * Math.sin(angle) };
-    const b = { x: state.rB * Math.cos(angle), y: -state.rB * Math.sin(angle) };
-    const inwardA = { x: -a.x / Math.max(1e-9, state.rA), y: -a.y / Math.max(1e-9, state.rA) };
-    const inwardB = { x: -b.x / Math.max(1e-9, state.rB), y: -b.y / Math.max(1e-9, state.rB) };
-    const vectors: ForceVectorItem[] = [];
-    if (Math.abs(state.frictionAN) > 1e-5) {
-      vectors.push({
-        id: 'friction-a', label: 'f_A', origin: a,
-        force: { x: state.frictionAN * inwardA.x, y: state.frictionAN * inwardA.y },
-        color: '#4ade80', category: 'friction'
-      });
-    }
-    if (Math.abs(state.frictionBN) > 1e-5) {
-      vectors.push({
-        id: 'friction-b', label: 'f_B', origin: b,
-        force: { x: state.frictionBN * inwardB.x, y: state.frictionBN * inwardB.y },
-        color: '#f472b6', category: 'friction'
-      });
-    }
-    if (state.tensionN > 1e-5) {
-      vectors.push(
-        {
-          id: 'tension-a', label: 'T_A', origin: a,
-          force: { x: state.tensionN * inwardA.x, y: state.tensionN * inwardA.y },
-          color: '#38bdf8', category: 'tension'
-        },
-        {
-          id: 'tension-b', label: 'T_B', origin: b,
-          force: { x: state.tensionN * inwardB.x, y: state.tensionN * inwardB.y },
-          color: '#38bdf8', category: 'tension'
-        }
-      );
-    }
-    return vectors;
+    const result:ForceVectorItem[]=[];
+    if(Math.hypot(s.fa.x,s.fa.y)>1e-12)result.push({id:'friction-a',label:'f_A',origin:s.a,force:s.fa,color:'#4ade80',category:'friction'});
+    if(Math.hypot(s.fb.x,s.fb.y)>1e-12)result.push({id:'friction-b',label:'f_B',origin:s.b,force:s.fb,color:'#f472b6',category:'friction'});
+    if(s.tensionN>1e-12)result.push({id:'tension-a',label:'T_A',origin:s.a,force:{x:s.tensionN*s.direction.x,y:s.tensionN*s.direction.y},color:'#38bdf8',category:'tension'},
+      {id:'tension-b',label:'T_B',origin:s.b,force:{x:-s.tensionN*s.direction.x,y:-s.tensionN*s.direction.y},color:'#38bdf8',category:'tension'});
+    return result;
   },
-  referenceFrames: [
-    {
-      id: 'turntable',
-      label: '转盘上 A 物块随动系',
-      getOrigin: (s, p) => p.mode === 'turntable-dual'
-        ? { x: -s.rA * Math.cos(s.angleRad), y: s.rA * Math.sin(s.angleRad) }
-        : { x: p.pendulumLength * Math.sin((s.coneAngleDeg * Math.PI) / 180) * Math.cos(s.angleRad), y: 1.1 - p.pendulumLength * Math.cos((s.coneAngleDeg * Math.PI) / 180) },
-      getVelocity: (s, p) => p.mode === 'turntable-dual'
-        ? { x: s.rA * p.omega * Math.sin(s.angleRad), y: s.rA * p.omega * Math.cos(s.angleRad) }
-        : { x: -p.pendulumLength * Math.sin((s.coneAngleDeg * Math.PI) / 180) * p.omega * Math.sin(s.angleRad), y: 0 }
-    }
-  ],
+  referenceFrames:[{id:'turntable',label:'A / 摆球平移参考系',description:'平移坐标原点；不是惯性参考系声明。',getOrigin:s=>s.a,getVelocity:s=>s.va}],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -153,11 +90,11 @@ export const mechConicalTurntablePlugin = defineSimulationPlugin<
   },
   exportDiagramIR: (state, params) => {
     const primitives: DiagramPrimitive[] = [
-      { kind: 'circle', cx: 0, cy: 0, r: Math.max(2.0, state.rB + 0.3), dashed: true },
-      { kind: 'line', x1: -params.radiusA, y1: 0, x2: state.rB, y2: 0 },
-      { kind: 'block', cx: -params.radiusA, cy: 0, width: 0.3, height: 0.3, label: 'A' },
-      { kind: 'block', cx: state.rB, cy: 0, width: 0.35, height: 0.35, label: 'B' },
-      { kind: 'mathLabel', x: 2.2, y: 2.0, text: `\\omega_1=${state.omega1.toFixed(2)},\\; \\omega_3=${state.omega3.toFixed(2)}`, align: 'end' }
+      { kind: 'circle', cx: 0, cy: 0, r: Math.max(2.6,params.radiusA+.1,params.radiusB+.1), dashed: true },
+      { kind: 'line', x1: state.a.x, y1: state.a.y, x2: state.b.x, y2: state.b.y },
+      { kind: 'block', cx: state.a.x, cy: state.a.y, width: 0.3, height: 0.3, label: 'A' },
+      { kind: 'block', cx: state.b.x, cy: state.b.y, width: 0.35, height: 0.35, label: 'B' },
+      { kind: 'mathLabel', x: 2.2, y: 2.0, text: `\\omega_1=${state.omega1.toFixed(2)},\\; \\omega_3=${state.omega3?.toFixed(2)??'—'}`, align: 'end' }
     ];
     return {
       width: 720,
@@ -179,18 +116,11 @@ export const mechConicalTurntablePlugin = defineSimulationPlugin<
         ctx.strokeStyle = '#64748b';
         ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.arc(cx, cy, 2.2 * ppm, 0, Math.PI * 2);
+        ctx.arc(cx, cy, Math.max(2.6,params.radiusA+.1,params.radiusB+.1)*ppm, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
 
-        const cA = Math.cos(state.angleRad);
-        const sA = Math.sin(state.angleRad);
-        // A on opposite or same side? Keep A & B opposite sides of center (-rA, rB) OR same side (+rA, +rB) — match standard (+rA, +rB) aligned with formula mB rB - mA rA? Wait: in mB*rB - mA*rA formula, A & B are on OPPOSITE sides of center so T pulls A OUTWARD/same dir? Wait let's check: T pulls A toward center! Wait if A is at -rA (left) and B is at +rB (right), rope crosses center: T on A pulls RIGHT (+, toward center), T on B pulls LEFT (-, toward center). Let's match signs in renderCanvas!
-        const ax = cx - state.rA * cA * ppm;
-        const ay = cy - state.rA * sA * ppm;
-        const bx = cx + state.rB * cA * ppm;
-        const by = cy + state.rB * sA * ppm;
-
+        const ax=cx+state.a.x*ppm,ay=cy-state.a.y*ppm,bx=cx+state.b.x*ppm,by=cy-state.b.y*ppm;
         ctx.strokeStyle = state.tensionN > 1e-4 ? '#fbbf24' : '#475569';
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -225,7 +155,7 @@ export const mechConicalTurntablePlugin = defineSimulationPlugin<
       ctx.fillStyle = '#e2e8f0';
       ctx.font = 'bold 13px monospace';
       ctx.fillText(
-        `ω₁=${state.omega1.toFixed(2)} | ω₂=${state.omega2.toFixed(2)} | ω₃=${state.omega3.toFixed(2)} rad/s | T=${state.tensionN.toFixed(2)} N`,
+        `ω₁=${state.omega1.toFixed(2)} | ω₂=${(state.omega2?.toFixed(2)??'—')} | ω₃=${(state.omega3?.toFixed(2)??'—')} rad/s | T=${state.tensionN.toFixed(2)} N`,
         20,
         28
       );
