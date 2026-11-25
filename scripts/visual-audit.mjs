@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath,pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -1379,6 +1380,81 @@ async function main() {
           layout.issues.push(`B2 failed to switch to RC transient mode: ${JSON.stringify(rcCheck)}`);
         }
         await page.screenshot({ path: path.join(OUT_DIR, 'B2_04_rc_no_handle.png') });
+        // Independent preset readout expectations. No mock model, no screenshot-only pass.
+        const b2Cases=[
+          ['closed-circuit-max-power','closed_power',{totalCurrent:3,terminalVoltage:6,outputPower:18}],
+          ['series-parallel-branches','mixed',{totalCurrent:1.5,branchCurrent1:.5,branchCurrent2:1}],
+          ['rc-charging-curve','rc_charge',{capVoltage:0,capCurrent:1,capCharge:0}],
+          ['rc-discharging-curve','rc_discharge',{capVoltage:10,capCurrent:-10/9,capCharge:.5}],
+          ['bridge-capacitor-polarity','bridge',{capVoltage:-144/89,capCurrent:0,capCharge:-14.4/89}],
+          ['nonlinear-diode-iv','diode',null],['nonlinear-lamp-iv','lamp',null],['closed-power-short-circuit','ideal_short',null]
+        ];
+        for(const [preset,tag,expected] of b2Cases){
+          await selectPreset(page,preset);
+          await page.waitForTimeout(300);
+          if(expected){await page.waitForFunction(values=>Object.entries(values).every(([k,v])=>Math.abs(parseFloat(document.querySelector('[data-testid="b2-'+k+'"]')?.textContent??'')-v)<.0015),expected,{timeout:5000});}
+          if(tag==='ideal_short'){
+            await page.getByTestId('b2-invalid').waitFor({state:'visible'});
+            if(await page.getByTestId('b2-totalCurrent').textContent()!=='—')throw new Error('B2 undefined current shown as numeric measurement');
+          }
+          if(tag==='diode'||tag==='lamp'){
+            const i=parseFloat(await page.getByTestId('b2-totalCurrent').textContent()),u=parseFloat(await page.getByTestId('b2-terminalVoltage').textContent());
+            const expectedI=tag==='diode'?1e-12*Math.expm1(u/.026):.25*Math.pow(u+1e-6,-.35)*u;
+            if(Math.abs(5-10.5*i-u)>.008||Math.abs(expectedI-i)>.012)throw new Error('B2 nonlinear displayed KVL/law mismatch '+JSON.stringify({tag,u,i,expectedI}));
+          }
+          if(tag==='rc_charge'||tag==='rc_discharge'||tag==='bridge'||tag==='mixed'){
+            await page.getByTestId('b2-scope-empty').waitFor({state:'visible'});
+            if(await page.getByTestId('uplot-container').isVisible())throw Error('B2 single sample shows spurious time axes');
+          }
+          await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'.png')});
+          if(tag==='rc_charge'||tag==='rc_discharge'){
+            await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')==='capVoltage'&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')==='capCurrent'&&document.querySelector('[data-testid="floating-scope-dock"]')?.getAttribute('data-scope-units')==='separate');
+            const play=page.locator('[data-testid="btn-play-pause"]:visible');
+            if(await play.getAttribute('aria-label')!=='运行')throw new Error('B2 RC preset not reset to paused');
+            await play.click();
+            await page.waitForFunction(()=>{const x=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b2-rendered')||'null');return x&&x.t>.35&&Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-sample-count'))>=5;},null,{timeout:10000});
+            if(await play.getAttribute('aria-label')==='暂停')await play.click();
+            // A pause must commit one shared physical frame to canvas, inspector and scope.
+            try { await page.waitForFunction(()=>{
+              const x=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b2-rendered')||'null');
+              const readout=document.querySelector('[data-testid="b2-topology-readouts"]');
+              const scope=document.querySelector('[data-testid="uplot-container"]');
+              const inspectorT=Number(readout?.getAttribute('data-sample-time'));
+              const scopeT=Number(scope?.getAttribute('data-last-sample-t'));
+              const scopeMax=Number(scope?.getAttribute('data-scope-max'));
+              const v=parseFloat(document.querySelector('[data-testid="b2-capVoltage"]')?.textContent||'');
+              const i=parseFloat(document.querySelector('[data-testid="b2-capCurrent"]')?.textContent||'');
+              return x && readout && scope && Math.abs(inspectorT-x.t)<1e-10 && Math.abs(scopeT-x.t)<1e-10 &&
+                Math.abs(v-x.capVoltage)<.000501 && Math.abs(i-x.capCurrent)<.000501 &&
+                scopeMax>=x.t-1e-9 && scopeMax<=Math.max(.1,x.t)+.01;
+            },null,{timeout:5000}); } catch(error) {
+              const probe=await page.evaluate(()=>{
+                const el=id=>document.querySelector('[data-testid="'+id+'"]');
+                return {canvas:el('simulation-canvas')?.getAttribute('data-b2-rendered'),inspectorT:el('b2-topology-readouts')?.getAttribute('data-sample-time'),
+                  voltage:el('b2-capVoltage')?.textContent,current:el('b2-capCurrent')?.textContent,
+                  scopeT:el('uplot-container')?.getAttribute('data-last-sample-t'),scopeMax:el('uplot-container')?.getAttribute('data-scope-max'),
+                  play:el('btn-play-pause')?.getAttribute('aria-label'),scopeText:el('floating-scope-dock')?.textContent};
+              });
+              await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'_pause_failure.png')});
+              throw Error('B2 pause alignment failed '+JSON.stringify(probe),{cause:error});
+            }
+            if(await page.getByTestId('b2-scope-empty').isVisible()||!await page.getByTestId('uplot-container').isVisible())throw Error('B2 real sampled curve remains hidden');
+            const x=JSON.parse(await page.getByTestId('simulation-canvas').getAttribute('data-b2-rendered')||'null');
+            const charging=tag==='rc_charge',tau=charging?.5:.45,voltage=charging?10*(-Math.expm1(-x.t/tau)):10*Math.exp(-x.t/tau),current=charging?(10-voltage)/10:-voltage/9;
+            if(Math.abs(x.capVoltage-voltage)>1e-8||Math.abs(x.capCurrent-current)>1e-8)throw new Error('B2 RC real rendered state differs from independent law '+JSON.stringify({tag,x,voltage,current}));
+            console.log('H8 B2 exact RC browser '+JSON.stringify({tag,t:x.t,u:x.capVoltage,i:x.capCurrent}));
+            await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'_running.png')});
+          }
+        }
+        await selectPreset(page,'bridge-capacitor-polarity');
+        await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+        if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+        await page.screenshot({path:path.join(OUT_DIR,'H8_B2_bridge_projector.png')});
+        await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+        if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+        await selectPreset(page,'rc-charging-curve');
       }
 
       if (testCase.id === 'em-induction-double-rod') {
@@ -1483,7 +1559,76 @@ async function main() {
     const b1PhysicsReport=await auditB1Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
     const s01PhysicsReport=await auditS01Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
     const m10PhysicsReport=await auditM10Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
-    const summary = { m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    // Build and actually open one isolated B2 slice with network disabled.
+    const b2File=path.join(OUT_DIR,'H8_B2_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','builder-circuit-mna','--preset','rc-charging-curve','--out',b2File],{stdio:'inherit'});
+    const offline=await browser.newContext({viewport:VIEWPORT,offline:true});
+    const sf=await offline.newPage(),offlineErrors=[],network=[];
+    sf.on('pageerror',e=>offlineErrors.push(e.message));sf.on('console',m=>{if(m.type()==='error')offlineErrors.push(m.text());});sf.on('request',r=>{if(/^https?:/.test(r.url()))network.push(r.url());});
+    const b2OfflineReport={};
+    try{
+      await sf.goto(pathToFileURL(b2File).href);
+      await sf.getByTestId('sf-canvas').waitFor({state:'visible'});
+      await sf.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='capVoltage'&&document.querySelector('[data-testid="sf-uplot"]')?.getAttribute('data-scope-units')==='separate');
+      await sf.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      if(await sf.getByTestId('sf-uplot').isVisible())throw Error('B2 offline single sample shows spurious time axes');
+      await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_initial.png')});
+      await sf.getByTestId('sf-play-pause').click();
+      await sf.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.t>.35,null,{timeout:10000});
+      await sf.getByTestId('sf-play-pause').click();
+      const pausedOfflineRC=async()=>{
+        try { await sf.waitForFunction(()=>{
+          const x=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null');
+          const summary=document.querySelector('[data-testid="sf-summary-clock"]');
+          const scope=document.querySelector('[data-testid="sf-uplot"]');
+          return x && summary && scope && Math.abs(Number(summary.getAttribute('data-sample-time'))-x.t)<1e-10 &&
+            Math.abs(Number(scope.getAttribute('data-last-sample-t'))-x.t)<1e-10 &&
+            Number(scope.getAttribute('data-scope-max'))>=x.t-1e-9 &&
+            Number(scope.getAttribute('data-scope-max'))<=Math.max(.1,x.t)+.01;
+        },null,{timeout:5000}); } catch(error) {
+          const probe=await sf.evaluate(()=>{
+            const el=id=>document.querySelector('[data-testid="'+id+'"]');
+            return {canvas:el('sf-canvas')?.getAttribute('data-b2-rendered'),summaryT:el('sf-summary-clock')?.getAttribute('data-sample-time'),
+              scopeT:el('sf-uplot')?.getAttribute('data-last-sample-t'),scopeMax:el('sf-uplot')?.getAttribute('data-scope-max'),play:el('sf-play-pause')?.textContent};
+          });
+          await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_pause_failure.png')});
+          throw Error('B2 offline pause alignment failed '+JSON.stringify(probe),{cause:error});
+        }
+        const x=JSON.parse(await sf.getByTestId('sf-canvas').getAttribute('data-b2-rendered'));
+        if(Math.abs(x.capVoltage-10*(-Math.expm1(-x.t/.5)))>1e-8 ||
+           Math.abs(x.capCurrent-(10-x.capVoltage)/10)>1e-8)
+          throw Error('B2 offline RC failed independent exact law '+JSON.stringify(x));
+        return x;
+      };
+      const x=await pausedOfflineRC();
+      if(await sf.getByTestId('sf-scope-empty').isVisible()||!await sf.getByTestId('sf-uplot').isVisible())throw Error('B2 offline sampled curve remains hidden');
+      await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_rc.png')});
+      await sf.getByRole('button',{name:'单步',exact:true}).click();
+      await sf.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.t>t,x.t);
+      const stepped=await pausedOfflineRC();
+      if(Math.abs(stepped.t-x.t-4/240)>1e-10)throw Error('Offline step clock is not four fixed steps');
+      await sf.getByLabel('播放倍速').selectOption('0.5');
+      await sf.getByTestId('sf-play-pause').click();
+      await sf.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.t>t+.1,stepped.t,{timeout:10000});
+      await sf.getByTestId('sf-play-pause').click();
+      const resumed=await pausedOfflineRC();
+      b2OfflineReport.rc={t:x.t,u:x.capVoltage,stepT:stepped.t,resumeT:resumed.t,resumeU:resumed.capVoltage,clockAligned:true};
+      await sf.locator('[data-preset-id="series-parallel-branches"]').click();
+      await sf.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='branchCurrent1'&&document.querySelector('[data-testid="sf-scope-channel-b"]')?.value==='branchCurrent2');
+      const mixed=JSON.parse(await sf.getByTestId('sf-canvas').getAttribute('data-b2-rendered'));
+      if(Math.abs(mixed.totalCurrent-1.5)>1e-9||Math.abs(mixed.branchCurrent1-.5)>1e-9||Math.abs(mixed.branchCurrent2-1)>1e-9)throw Error('B2 offline mixed KCL failed');
+      b2OfflineReport.mixed={i:mixed.totalCurrent,i2:mixed.branchCurrent1,ip:mixed.branchCurrent2};
+      await sf.getByRole('button',{name:'黑板深蓝'}).click();
+      await sf.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_mixed_paper.png')});
+      await sf.locator('[data-preset-id="closed-power-short-circuit"]').click();
+      await sf.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.solutionDefined===0);
+      const fault=JSON.parse(await sf.getByTestId('sf-canvas').getAttribute('data-b2-rendered'));
+      if('totalCurrent' in fault)throw Error('B2 offline invalid solution reports current');
+      if(offlineErrors.length||network.length)throw Error('B2 offline errors '+JSON.stringify({offlineErrors,network}));
+      b2OfflineReport.errors=offlineErrors;b2OfflineReport.network=network;
+    }finally{await offline.close();}
+    const summary = { b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

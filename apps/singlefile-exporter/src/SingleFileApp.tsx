@@ -24,6 +24,29 @@ interface SnapshotFrame {
 const FIXED_DT = 1 / 240;
 const SNAPSHOT_INTERVAL = 1 / 60;
 const MAX_SNAPSHOTS = 2400;
+// Capability detection avoids embedding an unrelated model ID into every
+// isolated singlefile bundle (the exporter explicitly rejects those IDs).
+const circuitSlice=targetPlugin.paramSchema.some(f=>f.key==='topology'&&f.kind==='select'&&f.options.some(o=>o.value==='divider-lamp'));
+const CIRCUIT_FIELDS:Record<string,string[]>={
+  'divider-lamp':['emf','sliderR','internalR','topology'],
+  'closed-power':['emf','sliderR','internalR','topology'],
+  'series-parallel-dynamic':['emf','sliderR','internalR','r1','r2','topology'],
+  'rc-transient':['emf','r1','capacitance','internalR','switchClosed','topology'],
+  'rc-bridge-charge':['emf','sliderR','internalR','r1','r2','capacitance','topology'],
+  'nonlinear-lamp-diode':['emf','sliderR','internalR','switchClosed','topology']
+};
+const CIRCUIT_CHANNELS:Record<string,string[]>={
+  'divider-lamp':['totalCurrent','lampCurrent','lampVoltage','outputPower'],
+  'closed-power':['totalCurrent','outputPower','terminalVoltage'],
+  'series-parallel-dynamic':['branchCurrent1','branchCurrent2','totalCurrent','terminalVoltage','outputPower'],
+  'rc-transient':['capVoltage','capCurrent'],
+  'rc-bridge-charge':['capVoltage','capCurrent','totalCurrent','branchCurrent1','branchCurrent2'],
+  'nonlinear-lamp-diode':['totalCurrent','terminalVoltage','outputPower']
+};
+function channelsFor(params:ParamRecord){
+  const keys=circuitSlice?CIRCUIT_CHANNELS[String(params.topology)]:undefined;
+  return keys?keys.flatMap(key=>targetPlugin.telemetryChannels.filter(c=>c.key===key)):targetPlugin.telemetryChannels;
+}
 
 function findClosestSnapshot(snapshots: readonly SnapshotFrame[], targetT: number): SnapshotFrame | null {
   if (snapshots.length === 0) return null;
@@ -88,16 +111,21 @@ export const SingleFileApp: React.FC = () => {
     formulas: FormulaDisplayItem[];
   }>({ t: 0, observables: {}, events: [], invariants: [], formulas: [] });
 
-  const channels = targetPlugin.telemetryChannels;
+  const channels = useMemo(()=>channelsFor(params),[params.topology]);
   const [channelA, setChannelA] = useState(channels[0]?.key ?? '');
   const [channelB, setChannelB] = useState(channels[1]?.key ?? channels[0]?.key ?? '');
+  useEffect(()=>{if(circuitSlice){setChannelA(channels[0]?.key??'');setChannelB(channels[1]?.key??channels[0]?.key??'');}},[channels]);
 
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const uplotWrapRef = useRef<HTMLDivElement | null>(null);
+  const circuitScopeEmptyRef = useRef<HTMLDivElement | null>(null);
   const uplotRef = useRef<uPlot | null>(null);
+  const syncingPlotRef = useRef(false);
 
   const simStateRef = useRef<unknown>(null);
+  // Physics time belongs to the integrator, not the downsampled plot history.
+  const simulationTimeRef = useRef(0);
   const initialStateRef = useRef<unknown>(null);
   const eventsRef = useRef<PhysicsEvent[]>([]);
   const snapshotsRef = useRef<SnapshotFrame[]>([]);
@@ -171,7 +199,8 @@ export const SingleFileApp: React.FC = () => {
         layerSet.delete('vibrationGraph');
         layerSet.delete('eventPins');
       }
-      targetPlugin.renderCanvas(ctx, drawState, pm, vp, layerSet);
+      targetPlugin.renderCanvas(ctx, drawState, pm, circuitSlice?{...vp,theme:th}:vp, layerSet);
+      if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
 
       if (strobe && !masked && snapshotsRef.current.length > 2) {
         const curT = frame ? frame.t : 0;
@@ -198,11 +227,20 @@ export const SingleFileApp: React.FC = () => {
     if (!plot) return;
     const snaps = snapshotsRef.current;
     const { channelA: chA, channelB: chB } = latestRef.current;
-    plot.setData([
-      snaps.map((s) => s.t),
-      snaps.map((s) => (chA ? s.observables[chA] ?? 0 : 0)),
-      snaps.map((s) => (chB ? s.observables[chB] ?? 0 : 0))
-    ]);
+    syncingPlotRef.current = true;
+    try {
+      plot.setData([
+        snaps.map((s) => s.t),
+        snaps.map((s) => (chA ? s.observables[chA] ?? (circuitSlice?null:0) : (circuitSlice?null:0))),
+        snaps.map((s) => (chB ? s.observables[chB] ?? (circuitSlice?null:0) : (circuitSlice?null:0)))
+      ]);
+    } finally { syncingPlotRef.current = false; }
+    if (circuitSlice && uplotWrapRef.current) {
+      uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
+      const empty = snaps.length < 2;
+      uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
+      if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
+    }
   };
 
   const emitSummary = (force = false) => {
@@ -239,6 +277,7 @@ export const SingleFileApp: React.FC = () => {
     const init = targetPlugin.engine.createInitialState(params);
     const obs0 = targetPlugin.engine.computeObservables(init, params);
     simStateRef.current = init;
+    simulationTimeRef.current = 0;
     initialStateRef.current = init;
     eventsRef.current = [];
     snapshotsRef.current = [{ t: 0, state: init, observables: obs0 }];
@@ -250,11 +289,27 @@ export const SingleFileApp: React.FC = () => {
     emitSummary(true);
   }, [resetNonce]);
 
+  // Preserve the exact final integration sample on pause. A frame may have
+  // advanced fewer than SNAPSHOT_INTERVAL seconds since the last plot sample.
+  useEffect(() => {
+    if (isPlaying) return;
+    const state = simStateRef.current;
+    const t = simulationTimeRef.current;
+    if (state !== null && t > lastSnapTRef.current) {
+      snapshotsRef.current.push({ t, state, observables: targetPlugin.engine.computeObservables(state, latestRef.current.params) });
+      if (snapshotsRef.current.length > MAX_SNAPSHOTS) snapshotsRef.current.shift();
+      lastSnapTRef.current = t;
+    }
+    drawCanvas();
+    syncPlot();
+    emitSummary(true);
+  }, [isPlaying]);
+
   useEffect(() => {
     if (stepOnceNonce === 0) return;
     let cur = simStateRef.current;
     if (cur === null) return;
-    let simT = snapshotsRef.current[snapshotsRef.current.length - 1]?.t ?? 0;
+    let simT = simulationTimeRef.current;
     for (let i = 0; i < 4; i++) {
       const res = targetPlugin.engine.step(cur, params, FIXED_DT);
       cur = res.nextState;
@@ -262,6 +317,7 @@ export const SingleFileApp: React.FC = () => {
       if (res.events.length > 0) eventsRef.current = [...eventsRef.current, ...res.events];
     }
     simStateRef.current = cur;
+    simulationTimeRef.current = simT;
     snapshotsRef.current.push({
       t: simT,
       state: cur,
@@ -330,7 +386,7 @@ export const SingleFileApp: React.FC = () => {
 
       let stepped = false;
       let cur = simStateRef.current;
-      let simT = snapshotsRef.current[snapshotsRef.current.length - 1]?.t ?? 0;
+      let simT = simulationTimeRef.current;
 
       while (accRef.current >= FIXED_DT && cur !== null) {
         const res = targetPlugin.engine.step(cur, latestRef.current.params, FIXED_DT);
@@ -352,6 +408,7 @@ export const SingleFileApp: React.FC = () => {
 
       if (stepped && cur !== null) {
         simStateRef.current = cur;
+        simulationTimeRef.current = simT;
         drawCanvas();
         syncPlot();
         emitSummary(false);
@@ -366,6 +423,10 @@ export const SingleFileApp: React.FC = () => {
     if (!wrap) return;
     const specA = channels.find((c) => c.key === channelA) ?? channels[0];
     const specB = channels.find((c) => c.key === channelB) ?? channels[1] ?? channels[0];
+    const split=circuitSlice&&specA?.unit!==specB?.unit;
+    const colors:Record<string,string>={'#38bdf8':'#0369a1','#fbbf24':'#92400e','#f472b6':'#9d174d','#4ade80':'#166534'};
+    const paint=(c:string)=>circuitSlice&&theme==='projector'?colors[c]??'#334155':c;
+    wrap.dataset.scopeUnits=split?'separate':'shared';
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15,23,42,0.12)' : 'rgba(148,163,184,0.16)';
 
@@ -373,20 +434,33 @@ export const SingleFileApp: React.FC = () => {
       {
         width: Math.max(280, wrap.clientWidth),
         height: 150,
+        ...(circuitSlice ? { scales: {
+          x: { time: false, range: (_u: uPlot, min: number, max: number): [number, number] => {
+            const lo = Number.isFinite(min) ? min : 0;
+            return [lo, Math.max(lo + .1, Number.isFinite(max) ? max : lo)];
+          }},
+          y: { auto: true }, ...(split ? { y2: { auto: true } } : {})
+        }} : {}),
         axes: [
-          { stroke: textColor, grid: { stroke: gridColor } },
-          { stroke: textColor, grid: { stroke: gridColor } }
+          { stroke: textColor, grid: { stroke: gridColor }, ...(circuitSlice ? {
+            values: (_u: uPlot, splits: number[]) => splits.map(v => Number(v.toPrecision(4)) + 's')
+          } : {}) },
+          { stroke: circuitSlice ? paint(specA?.color ?? '#38bdf8') : textColor, grid: { stroke: gridColor } },
+          ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false}}]:[])
         ],
         series: [
           { label: 't (s)' },
-          { label: specA?.label ?? 'A', stroke: specA?.color ?? '#38bdf8', width: 2 },
-          { label: specB?.label ?? 'B', stroke: specB?.color ?? '#f472b6', width: 2 }
+          { label: specA?.label ?? 'A', stroke: paint(specA?.color ?? '#38bdf8'), width: 2 },
+          { label: specB?.label ?? 'B', stroke: paint(specB?.color ?? '#f472b6'), width: 2,...(split?{scale:'y2'}:{}) }
         ],
         hooks: {
+          // uPlot commits scale changes during its draw; reading immediately
+          // after setData may return the previous frame's range.
+          draw: [(u) => { if (circuitSlice) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
           setCursor: [
             (u) => {
               const idx = u.cursor.idx;
-              if (idx == null || latestRef.current.isPlaying) return;
+              if (idx == null || latestRef.current.isPlaying || syncingPlotRef.current) return;
               const tv = u.data[0]?.[idx];
               if (typeof tv === 'number' && Number.isFinite(tv)) setScrubTime(tv);
             }
@@ -407,7 +481,7 @@ export const SingleFileApp: React.FC = () => {
       plot.destroy();
       uplotRef.current = null;
     };
-  }, [channelA, channelB, theme]);
+  }, [channelA, channelB, theme,channels]);
 
   return (
     <div
@@ -422,7 +496,7 @@ export const SingleFileApp: React.FC = () => {
       >
         <div>
           <div className="font-bold text-base">{targetPlugin.meta.title}</div>
-          <div className="text-xs" style={{ color: 'var(--pf-text-muted)' }}>
+          <div className="text-xs" data-testid="sf-summary-clock" data-sample-time={summary.t} style={{ color: 'var(--pf-text-muted)' }}>
             离线课堂单文件切片 · {targetPlugin.meta.textbookRef} · t = {summary.t.toFixed(3)} s
           </div>
         </div>
@@ -542,6 +616,7 @@ export const SingleFileApp: React.FC = () => {
           >
             <div className="flex items-center gap-2 text-xs mb-1">
               <select
+                data-testid="sf-scope-channel-a"
                 value={channelA}
                 onChange={(e) => setChannelA(e.target.value)}
                 className="rounded border px-2 py-1"
@@ -549,11 +624,12 @@ export const SingleFileApp: React.FC = () => {
               >
                 {channels.map((c) => (
                   <option key={c.key} value={c.key}>
-                    {c.label}
+                    {c.label}{circuitSlice&&c.unit?' ('+c.unit+')':''}
                   </option>
                 ))}
               </select>
               <select
+                data-testid="sf-scope-channel-b"
                 value={channelB}
                 onChange={(e) => setChannelB(e.target.value)}
                 className="rounded border px-2 py-1"
@@ -561,12 +637,15 @@ export const SingleFileApp: React.FC = () => {
               >
                 {channels.map((c) => (
                   <option key={c.key} value={c.key}>
-                    {c.label}
+                    {c.label}{circuitSlice&&c.unit?' ('+c.unit+')':''}
                   </option>
                 ))}
               </select>
             </div>
-            <div ref={uplotWrapRef} data-testid="sf-uplot" />
+            <div className="relative">
+              <div ref={uplotWrapRef} data-testid="sf-uplot" />
+              {circuitSlice && <div ref={circuitScopeEmptyRef} data-testid="sf-scope-empty" className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            </div>
           </div>
         </section>
 
@@ -579,12 +658,14 @@ export const SingleFileApp: React.FC = () => {
             {targetPlugin.presets.map((preset) => (
               <button
                 key={preset.id}
+                data-preset-id={preset.id}
                 type="button"
                 onClick={() => {
                   setActivePresetId(preset.id);
                   setParams(resolvePluginParams(targetPlugin.paramSchema, preset.params));
                   if (preset.visibleLayers?.length) setActiveLayers([...preset.visibleLayers]);
                   setIsPlaying(false);
+                  setScrubTime(null);
                   setResetNonce((n) => n + 1);
                 }}
                 className="pf-touch-target w-full text-left rounded-xl border p-2 text-xs cursor-pointer"
@@ -614,7 +695,7 @@ export const SingleFileApp: React.FC = () => {
           ))}
 
           <div className="text-xs font-bold text-sky-400">参数调节</div>
-          {targetPlugin.paramSchema.map((field) => {
+          {targetPlugin.paramSchema.filter(field=>!circuitSlice||(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key)).map((field) => {
             const val = params[field.key] ?? field.defaultValue;
             if (field.kind === 'number') {
               return (

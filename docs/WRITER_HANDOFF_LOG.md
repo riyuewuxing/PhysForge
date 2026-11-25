@@ -18,6 +18,10 @@
 
 ## 会话增量记录
 
+### 会话04 Turn02：B2离线真实物理时钟与暂停帧一致性
+* 用户2026-11-25明确禁止会阻塞无人值守施工的Library覆盖/替换审批路径。Library新增并实际回读 `/PhysForge/01A_无人值守Library写入规则.md`；新建成功后回读，不用overwrite=true，不删除唯一未核验副本；先把施工checkpoint写入GitHub。此补充优先于旧01文件的写入方式。
+* 父99f21cf：常规45567087557通过509 tests，专项45567087525失败于离线RC真实时钟定量断言（t=0.3541667s、U=9.44977V；解析值约5.075V）。根因离线rAF从最后抽样点而非积分器累计时间重新计时，丢失帧间子步。独立积分时钟、暂停最终样本、线上B2同步画布/面板/曲线、短时域刻度修复；同SHA保留原解析1e-8并新增暂停三端一致性、离线单步和半速续跑断言。78099b0首轮常规verify 509绿，但专项45592033789新增线上暂停一致性等待超时（原断言不放宽）；改为uPlot实际draw时记录范围，新增失败现场DOM数值和真实截图，待复验。首帧实图确认单样本时uPlot自动0–100s伪轴；显式空态覆盖，增加真实运行后曲线可见断言。场景gaokao-b2非线性此前0项守恒报告，补RC、电桥、非线性KCL/KVL/瞬时功率及独立60组伏安平衡与扰动检验。最终CI及实图回读前不宣称通过，不合并。Turn01中间9f2a703两套CI绿、127图（60变化已看）；最终候选专项红灯不掩盖。
+
 ### V3.1 当前会话 Turn 08：M10 物理一致性
 * 基于 #45 20a3904，新独立草稿 #46；cf77c9d / CI45561206275 实证5项红灯、原488通过：大步遗漏扇区、轨迹时间缺失、L4一周期误差9.64625e-6、独立三体状态偏差6.60290e-6、逃逸比1.414非sqrt2。统一真实归一化时间扇区/历史点、共转逐点轨迹、实际三体势与力/Jacobi、理想霍曼预设命名；原阈值不降。c7479fa常规及专项全绿496测试；2a44b27共享解析引导、真实历史光芯、四预设真实浏览器门禁，常规497测试、267.37KB。进一步独立复现高q近掠固定步严重Jacobi漂移，06751b4增加q=.08/.2/.4的DOP853独立20时间参考及全程漂移红灯，后续三体改共享自适应RK45，二体/霍曼Yoshida不动，无守恒量修正作弊。最终同SHA门禁及看图未核前仍draft，不合并。
 
@@ -44,3 +48,7 @@
 * H3 #39 b52cd9e：仅分压灯泡预设，0/20Ω、内阻后路端电压、KCL/KVL/功率平衡、实际功率辉光、电势/手柄/DiagramIR同源；其余拓扑待验，灯泡和面板仍有质感差距。bcd6651 artifact14946080956为历史已实审证据。
 * H4 #40 8c63dcc：E10 单/双导线真实合场、RK4场线、零场、矢量可见性、相机物理轴、v/B标签安全区、铜PBR与局部光晕；04质感未终验。初版c642d64标签间隙失败，保留修复记录。
 * H5 #41 337c5e9 选速/质谱真实粒子、边界/探测器、SI与慢放明确；#42 5207b5d 回旋加速器真实RF功、相对论半周、失谐/触壁/离散终能、抽样历史圆弧。#42两套CI成功，artifact14949978649（77图/32变化图实审）；S02整体金标准与总控终验仍待。各分支不得自行合并。
+
+## 2026-11-25 H8 B2 (stack #47, draft)
+- Base #46 cfe6177; only non-divider B2 plus contextual web/offline shell integration. Red 03173ff: five independent physical failures; 6e3dc37 exact zero-ohm constraints, RC exponential and MNA Thevenin bridge pass routine CI. Explicit ideal short / diode model-domain validity, no numeric placeholder observables; no clamp at zero series R. Shared actual branch/symbol geometry for canvas and SVG/TikZ; fixed mixed/diode formulas, drag anchor, contextual controls/scope and offline network-disabled test. Generic old circuitElement existence assertion replaced by stricter triangle/cathode/no-fake-lamp assertion (old failure 43b4268). Existing divider geometry and all numerical tolerances untouched.
+- Web/offline preset or parameter changes still reset time; continuous switch only verified at engine fixed-C segment level. Free arbitrary topology editing, quantitative IV/power scans, gold-reference visuals, full 8 dimensions and real classroom/GPU remain open. Same-SHA run/artifact and review evidence to be attached to PR; no merge, deploy, tag or Key.

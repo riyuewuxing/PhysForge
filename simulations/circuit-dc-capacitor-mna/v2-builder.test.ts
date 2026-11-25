@@ -55,6 +55,14 @@ describe('B2 builder-circuit-mna V2 verification', () => {
     expect(Number.isFinite(shortState.totalCurrent)).toBe(true);
 
     const ir = circuitDcCapacitorMnaPlugin.exportDiagramIR?.(diodeState, diodeParams);
-    expect(ir?.primitives.some((p) => p.kind === 'circuitElement')).toBe(true);
+    // The old generic circuitElement assertion accepted an incorrect lamp
+    // placeholder. Require the actual diode geometry and separate cathode.
+    const triangle=ir?.primitives.find(p=>p.kind==='polyline'&&p.closed&&p.points.length===3);
+    expect(triangle?.kind).toBe('polyline');
+    if(triangle?.kind!=='polyline')throw new Error('missing diode triangle');
+    const tip=triangle.points[2]!;
+    expect(tip.y).toBeLessThan(triangle.points[0]!.y);
+    expect(ir?.primitives.some(p=>p.kind==='polyline'&&p.points.length===2&&p.points.every(a=>Math.abs(a.y-tip.y)<1e-10)&&p.points[0]!.x<tip.x&&p.points[1]!.x>tip.x)).toBe(true);
+    expect(ir?.primitives.some(p=>p.kind==='circle'&&!p.fill)).toBe(false);
   });
 });
