@@ -189,3 +189,34 @@ describe('H22 M05 independent Coulomb phase and boundary tests',()=>{
     expect(reports[0]!.measuredError).toBeLessThan(1e-7);
   });
 });
+
+it('detects a finite edge even when a coarse step would return inside the interval',()=>{
+  const p={...baseParams,beltVelocity:0,blockInitialV:4,muBlockCarrier:0, inclineDeg:30,carrierLengthM:2};
+  // Without contact loss the quadratic would later return to the origin.
+  const a=9.8*.5,T=(4-Math.sqrt(16-2*a))/a;
+  const r=stepBlockConveyor(createInitialState(p),p,8/a);
+  expect(r.halt).toBe(true);expect(r.nextState.xBlock).toBeCloseTo(1,10);expect(r.nextState.t).toBeCloseTo(T,10);
+});
+it('uses the moving plank edge rather than ground coordinates',()=>{
+  const p={...baseParams,systemMode:'plank' as const,muBlockCarrier:0,blockInitialV:3,plankInitialV:2,carrierLengthM:2};
+  const r=stepBlockConveyor(createInitialState(p),p,4);
+  expect(r.halt).toBe(true);expect(r.nextState.t).toBeCloseTo(1,10);
+  expect(r.nextState.xBlock).toBeCloseTo(3,10);expect(r.nextState.xCarrier).toBeCloseTo(2,10);
+});
+it('conserves absolute energy and agrees across coarse/fine partition for diverse Coulomb phases',()=>{
+  for(const systemMode of ['conveyor','plank'] as const)
+  for(const muBlockCarrier of [0,.1,.8])
+  for(const muGround of [0,.25,.5])
+  for(const externalForcePlank of [-20,0,30])
+  for(const blockInitialV of [-2,0,3])
+  for(const plankInitialV of [-1,0,3]){
+    const p={...baseParams,systemMode,muBlockCarrier,muGround,externalForcePlank,blockInitialV,plankInitialV,inclineDeg:37,beltVelocity:-1};
+    const init=createInitialState(p),coarse=stepBlockConveyor(init,p,2).nextState;
+    let fine=init;for(let i=0;i<200;i++)fine=stepBlockConveyor(fine,p,.01).nextState;
+    expect(checkInvariants(coarse,init,p)[0]!.measuredError).toBeLessThan(1e-7);
+    expect(checkInvariants(fine,init,p)[0]!.measuredError).toBeLessThan(1e-7);
+    for(const k of ['xBlock','xCarrier','vBlock','vCarrier','relativeScratch','frictionHeat','groundHeat','carrierWork'] as const)
+      expect(Math.abs(coarse[k]-fine[k])).toBeLessThan(1e-7);
+    expect(fine.coMovingLocked).toBe(coarse.coMovingLocked);expect(fine.plankStopped).toBe(coarse.plankStopped);
+  }
+});
