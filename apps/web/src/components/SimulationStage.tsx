@@ -1327,6 +1327,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
+                  if(autoFrameStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -1349,6 +1350,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               }
               canvas.setPointerCapture?.(e.pointerId);
               dragModeRef.current = { kind: 'pan', lastX: e.clientX, lastY: e.clientY };
+              // Like OrbitControls' start, pointer-down establishes camera
+              // ownership before the first movement; a resize/fit cannot race
+              // the teacher between gesture start and its first delta.
+              if(autoFrameStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {

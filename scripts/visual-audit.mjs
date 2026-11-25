@@ -608,15 +608,22 @@ async function auditB1Physics(page,origin,screenshot){
     const e=document.querySelector('[data-testid="simulation-canvas"]'),v=JSON.parse(e?.getAttribute('data-b1-viewport')||'null'),r=e?.getBoundingClientRect();
     return !!v&&!!r&&Math.abs(v.width-r.width)<1&&Math.abs(v.height-r.height)<1&&e.getAttribute('data-b1-auto-fit')==='true';
   });
-  const before=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
   const time=await flat.getAttribute('data-b1-time');
   const rect=await flat.boundingBox();
-  if(!rect||!before||!time)throw Error('B1 flat camera diagnostics missing');
-  const x=rect.x+rect.width*.14,y=rect.y+rect.height*.17;
-  await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+50,y+32,{steps:6});await page.mouse.up();
+  if(!rect||!time)throw Error('B1 flat camera diagnostics missing');
+  const x=Math.round(rect.x+rect.width*.14),y=Math.round(rect.y+rect.height*.17);
+  await page.mouse.move(x,y);
+  const before=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
+  if(!before)throw Error('B1 pre-gesture camera diagnostics missing');
+  await page.mouse.down();
   await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b1-auto-fit')==='false');
+  const locked=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
+  if(Math.abs(locked.offsetX-before.offsetX)>.5||Math.abs(locked.offsetY-before.offsetY)>.5||locked.scale!==before.scale)
+    throw Error('B1 camera changed when taking ownership: '+JSON.stringify({before,locked}));
+  await page.mouse.move(x+50,y+32,{steps:6});await page.mouse.up();
   const moved=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
-  if(Math.abs(moved.offsetX-before.offsetX-50)>.5||Math.abs(moved.offsetY-before.offsetY-32)>.5||moved.scale!==before.scale)throw Error('B1 physical pan differs from pointer delta');
+  if(Math.abs(moved.offsetX-before.offsetX-50)>.5||Math.abs(moved.offsetY-before.offsetY-32)>.5||moved.scale!==before.scale)
+    throw Error('B1 physical pan differs from pointer delta: '+JSON.stringify({before,locked,moved,expected:[50,32]}));
   if(await flat.getAttribute('data-b1-time')!==time)throw Error('B1 pan changed physical time');
   await page.getByTestId('btn-fullscreen-speech').click();
   const toggle=page.getByTestId('btn-view-3d-fullscreen');await toggle.click();
