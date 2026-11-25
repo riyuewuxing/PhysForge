@@ -14,7 +14,7 @@ function physical(p:SpringSepParams){
   const M=p.mass1+p.mass2,k=p.springK,gSin=CLASSROOM_GRAVITY*Math.sin(degToRad(p.inclineDeg)),s0=-p.initialComp;
   const eq=(p.externalForce-M*gSin)/k,crit=-p.mass1*p.externalForce/(p.mass2*k),w=Math.sqrt(k/M),w1=Math.sqrt(k/p.mass1),eq1=-p.mass1*gSin/k,a2=p.externalForce/p.mass2-gSin;
   const eps=32*Number.EPSILON*Math.max(1,Math.abs(eq),Math.abs(crit),Math.abs(s0));
-  return {M,k,gSin,s0,eq,crit,w,w1,eq1,a2,eps};
+  return {M,k,gSin,s0,eq,crit,w,w1,eq1,a2,eps,invMassSum:1/p.mass1+1/p.mass2};
 }
 type Physical=ReturnType<typeof physical>;
 function coupled(t:number,p:SpringSepParams,q:Physical){
@@ -25,12 +25,15 @@ function firstRelease(p:SpringSepParams,q:Physical):Release|null{
   const s=q.s0,a0=q.w*q.w*(q.eq-s),N=coupled(0,p,q).N;
   // A force of zero is only a release if the subsequent constrained
   // motion would require attraction. At rest this is decided by a0.
-  if(s>q.crit+q.eps||(Math.abs(s-q.crit)<=q.eps&&a0>q.eps*q.w*q.w))return {t:0,s,v:0,requiredNormalForce:N};
+  if(s>q.crit+q.eps)return {t:0,s,v:0,requiredNormalForce:N};
+  if(Math.abs(s-q.crit)<=q.eps&&a0>q.eps*q.w*q.w)return {t:0,s,v:0,requiredNormalForce:0};
   if(a0<=0)return null;
   const max=2*q.eq-s;
   if(max<=q.crit+q.eps)return null; // zero-force turning point is not a crossing
-  const A=s-q.eq,x=(q.crit-q.eq)/A,t=Math.acos(Math.max(-1,Math.min(1,x)))/q.w;
-  return {t,s:q.crit,v:-A*q.w*Math.sin(q.w*t),requiredNormalForce:0};
+  const A=s-q.eq,cos=(q.crit-q.eq)/A;
+  const displacementSpeed=Math.sqrt(Math.max(0,(max-q.crit)*(q.crit-s))),sin=displacementSpeed/Math.abs(A);
+  const t=Math.atan2(sin,cos)/q.w;
+  return {t,s:q.crit,v:q.w*displacementSpeed,requiredNormalForce:0};
 }
 // Fixed anchor outside the complete ideal leftmost excursion, not a wall
 // collision model. Its position depends only on the run parameters.
@@ -56,14 +59,14 @@ function remainders(x:number){
   return {c4:Math.cos(x)-1+.5*x2,s3:x-Math.sin(x)};
 }
 function freeAt(r:Release,u:number,q:Physical){
-  const x=q.w1*u,A=r.s-q.eq1,a1=-q.w1*q.w1*A,co=-2*Math.sin(x/2)**2,si=Math.sin(x);
+  const x=q.w1*u,A=r.s-q.eq1,openingAcceleration=-r.requiredNormalForce*q.invMassSum,co=-2*Math.sin(x/2)**2,si=Math.sin(x);
   const v1=r.v*Math.cos(x)-A*q.w1*si,v2=r.v+q.a2*u;
   const s1=r.s+A*co+r.v*si/q.w1,s2=r.s+r.v*u+.5*q.a2*u*u;
   // Exact zero initial gap/relative velocity; stable even if a1=a2.
   const rem=remainders(x);
-  const gap=Math.abs(x)<.05?.5*(q.a2-a1)*u*u-A*rem.c4+r.v*rem.s3/q.w1:.5*q.a2*u*u-A*co+r.v*(u-si/q.w1);
-  const gapV=Math.abs(x)<.05?(q.a2-a1)*u+A*q.w1*(-rem.s3)-r.v*co:q.a2*u+A*q.w1*si-r.v*co;
-  return {s1,s2,v1,v2,gap,gapV};
+  const gap=Math.abs(x)<.05? .5*openingAcceleration*u*u-A*rem.c4+r.v*rem.s3/q.w1:.5*q.a2*u*u-A*co+r.v*(u-si/q.w1);
+  const gapV=Math.abs(x)<.05?openingAcceleration*u+A*q.w1*(-rem.s3)-r.v*co:q.a2*u+A*q.w1*si-r.v*co;
+  return {s1,s2:gap>=0&&s2<s1?s1:s2,v1,v2,gap,gapV};
 }
 // Partition by every root of g''=a2+w1² A cos(w1 u)+w1 v sin(w1 u).
 // On each partition g' is monotone; its roots partition g into monotone
@@ -140,7 +143,8 @@ export function stepSpringSeparation(state:SpringSepState,p:SpringSepParams,dt:n
 export function computeObservables(s:SpringSepState,p:SpringSepParams):Record<string,number>{
   const q=physical(p),kineticEnergy=.5*p.mass1*s.v1*s.v1+.5*p.mass2*s.v2*s.v2,springEnergy=.5*q.k*s.s1*s.s1,gravityEnergy=q.gSin*(p.mass1*s.s1+p.mass2*s.s2),E=kineticEnergy+springEnergy+gravityEnergy;
   const a1=(-q.k*s.s1-s.normalForceN)/p.mass1-q.gSin,a2=(p.externalForce+s.normalForceN)/p.mass2-q.gSin;
-  return {s1:s.s1,s2:s.s2,v1:s.v1,v2:s.v2,a1,a2,normalForceN:s.normalForceN,gap:s.s2-s.s1,relativeVelocity:s.v2-s.v1,kineticEnergy,springEnergy,gravityEnergy,energy:E,externalWork:s.externalWork,mechanicalEnergy:E-s.externalWork,energyResidual:E-s.externalWork-s.initialEnergy,centerOfMass:(p.mass1*s.s1+p.mass2*s.s2)/q.M,centerOfMassVelocity:(p.mass1*s.v1+p.mass2*s.v2)/q.M,separated:s.separated?1:0,terminal:s.terminal?1:0,...(s.release?{separationTime:s.release.t,separationS:s.release.s,separationV:s.release.v}:{})};
+  const free=s.release?freeAt(s.release,s.t-s.release.t,q):null;
+  return {s1:s.s1,s2:s.s2,v1:s.v1,v2:s.v2,a1,a2,normalForceN:s.normalForceN,gap:free?.gap??0,relativeVelocity:free?.gapV??0,kineticEnergy,springEnergy,gravityEnergy,energy:E,externalWork:s.externalWork,mechanicalEnergy:E-s.externalWork,energyResidual:E-s.externalWork-s.initialEnergy,centerOfMass:(p.mass1*s.s1+p.mass2*s.s2)/q.M,centerOfMassVelocity:(p.mass1*s.v1+p.mass2*s.v2)/q.M,separated:s.separated?1:0,terminal:s.terminal?1:0,...(s.release?{separationTime:s.release.t,separationS:s.release.s,separationV:s.release.v}:{})};
 }
 export function checkInvariants(s:SpringSepState,_init:SpringSepState,p:SpringSepParams):InvariantReport[]{
   const obs=computeObservables(s,p),abs=Math.abs(obs.energyResidual!),scale=Math.abs(s.initialEnergy),nearZero=scale<1e-8*Math.max(1,obs.springEnergy!,Math.abs(obs.gravityEnergy!));

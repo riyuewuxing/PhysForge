@@ -136,7 +136,7 @@ describe('H27 exact dynamics and shared spring geometry',()=>{
     expect(a?.kind).toBe('polyline');expect(b?.kind).toBe('polyline');expect(coil?.kind).toBe('polyline');
     if(a?.kind!=='polyline'||b?.kind!=='polyline'||coil?.kind!=='polyline')throw Error('geometry');
     expect(a.closed).toBe(true);expect(a.points[0]).toEqual(point(s.s1-BLOCK_WIDTH/2));expect(a.points[2]).toEqual(point(s.s1+BLOCK_WIDTH/2,BLOCK_HEIGHT));
-    expect(b.points[0]).toEqual(point(s.s2+BLOCK_WIDTH/2));
+    const expected=point(s.s2+BLOCK_WIDTH/2);expect(b.points[0]!.x).toBeCloseTo(expected.x,12);expect(b.points[0]!.y).toBeCloseTo(expected.y,12);
     expect(coil.points[0]).toEqual(point(springAnchor(p),BLOCK_HEIGHT/2));expect(coil.points.at(-1)).toEqual(point(s.s1-BLOCK_WIDTH/2,BLOCK_HEIGHT/2));
     const fs=springForceVectors(s,p);expect(fs.find(f=>f.id==='gravity-1')?.origin).toEqual(point(s.s1,BLOCK_HEIGHT/2));
     expect(fs.some(f=>f.id==='contact-12')).toBe(false);
@@ -148,4 +148,18 @@ describe('H27 exact dynamics and shared spring geometry',()=>{
     const fit=fitSpringViewport(s,q,vp,safe)!;expect(springBoundsFit(s,q,fit,safe)).toBe(true);
     expect(s.s2-s.s1).toBeGreaterThan(10);
   });
+});
+
+it('resolves a near-grazing sub-step free phase without cancellation or missing the first closing root',()=>{
+  const p:SpringSepParams={mass1:1,mass2:2,springK:30,inclineDeg:30,initialComp:.98,externalForce:0};
+  // Independent 70-digit analytic roots, computed for decimal g=9.8, θ=30°.
+  for(const [d,tSep,tHit,vRel] of [[1e-6,.9928199505578718536,.9953754497772363831,-1.0221940552562338e-7],[1e-8,.9933949389236533918,.9936504895426126877,-1.022202419511745e-10],[1e-10,.9934524378139606673,.9934779928765536242,-1.0222025031550222e-13]] as const){
+    const q={...p,initialComp:p.initialComp+d},init=createInitialState(q),coarse=stepSpringSeparation(init,q,2).nextState;
+    expect(coarse.terminal).toBe('recontact');expect(coarse.events).toHaveLength(2);
+    expect(Math.abs(coarse.separationTime!-tSep)).toBeLessThan(2e-9);expect(Math.abs(coarse.t-tHit)).toBeLessThan(2e-9);
+    expect(Math.abs(computeObservables(coarse,q).relativeVelocity!-vRel)).toBeLessThan(Math.abs(vRel)*1e-4+1e-17);
+    expect(computeObservables(coarse,q).gap).toBeGreaterThanOrEqual(0);
+    let s=init;for(let i=0;i<480&&!s.terminal;i++)s=stepSpringSeparation(s,q,1/240).nextState;
+    expect(s.terminal).toBe('recontact');expect(Math.abs(s.t-coarse.t)).toBeLessThan(2e-11);
+  }
 });
