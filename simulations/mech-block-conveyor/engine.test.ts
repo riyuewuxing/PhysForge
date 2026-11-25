@@ -213,10 +213,10 @@ it('conserves absolute energy and agrees across coarse/fine partition for divers
     const p={...baseParams,systemMode,muBlockCarrier,muGround,externalForcePlank,blockInitialV,plankInitialV,inclineDeg:37,beltVelocity:-1};
     const init=createInitialState(p),coarse=stepBlockConveyor(init,p,2).nextState;
     let fine=init;for(let i=0;i<200;i++)fine=stepBlockConveyor(fine,p,.01).nextState;
-    expect(checkInvariants(coarse,init,p)[0]!.measuredError).toBeLessThan(1e-7);
-    expect(checkInvariants(fine,init,p)[0]!.measuredError).toBeLessThan(1e-7);
+    expect(checkInvariants(coarse,init,p)[0]!.measuredError,JSON.stringify({p,coarse})).toBeLessThan(1e-7);
+    expect(checkInvariants(fine,init,p)[0]!.measuredError,JSON.stringify({p,fine})).toBeLessThan(1e-7);
     for(const k of ['xBlock','xCarrier','vBlock','vCarrier','relativeScratch','frictionHeat','groundHeat','carrierWork'] as const)
-      expect(Math.abs(coarse[k]-fine[k])).toBeLessThan(1e-7);
+      expect(Math.abs(coarse[k]-fine[k]),JSON.stringify({p,k,coarse:coarse[k],fine:fine[k]})).toBeLessThan(1e-7);
     expect(fine.coMovingLocked).toBe(coarse.coMovingLocked);expect(fine.plankStopped).toBe(coarse.plankStopped);
   }
 });
