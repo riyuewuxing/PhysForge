@@ -175,3 +175,24 @@ describe('H9 independent non-interface optical geometry', () => {
     expect(s.rays.filter(r=>r.label==='出射光').every(r=>!inside(r.to.x,r.to.y))).toBe(true);
   });
 });
+
+describe('H9 independent optical limits',()=>{
+  it('matches the independent scalar prism deviation for the direct yellow band and normal dispersion order',()=>{
+    const p:OpticsParams={...baseParams,sceneMode:'prism-dispersion',incidentAngleDeg:45,n1:1.52,prismApexDeg:60};
+    const s=createInitialState(p),i=Math.PI/4,A=Math.PI/3,r1=Math.asin(Math.sin(i)/1.52),r2=A-r1;
+    const expected=(i+Math.asin(1.52*Math.sin(r2))-A)*180/Math.PI;
+    expect(s.prismDeviationDeg).toBeCloseTo(expected,9);
+    const incoming=s.rays[0]!,a=Math.atan2(incoming.to.y-incoming.from.y,incoming.to.x-incoming.from.x);
+    const dev=(color:string)=>{const ray=s.rays.find(r=>r.color===color&&r.label==='出射光')!;return Math.abs(Math.atan2(ray.to.y-ray.from.y,ray.to.x-ray.from.x)-a);};
+    expect(dev('#ef4444')).toBeLessThan(dev('#eab308'));expect(dev('#eab308')).toBeLessThan(dev('#a855f7'));
+  });
+  it('checks air acceptance angle and the geometry of a finite fiber leak at the parameter boundary',()=>{
+    const p:OpticsParams={...baseParams,sceneMode:'optical-fiber',n1:1.5,n2:1.49,incidentAngleDeg:45,fiberHalfWidth:.3};
+    const s=createInitialState(p);
+    expect(s.fiberAcceptanceDeg).toBeCloseTo(Math.asin(Math.sqrt(1.5**2-1.49**2))*180/Math.PI,10);
+    expect(s.isTotalInternalReflection).toBe(false);
+    const leak=s.rays.find(r=>r.label==='进入包层')!;
+    expect(leak.from.y).toBeCloseTo(.3,10);expect(leak.to.y).toBeLessThanOrEqual(.55+1e-10);
+    expect(leak.to.x).toBeLessThanOrEqual(2.4+1e-10);
+  });
+});

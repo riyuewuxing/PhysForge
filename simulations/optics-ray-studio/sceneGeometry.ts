@@ -37,7 +37,8 @@ export function opticalScene(state:OpticsState,p:OpticsParams):OpticalScene {
     if(state.lateralShift>1e-6)label('Δx='+state.lateralShift.toFixed(3)+' m',(q.x+b.from.x)/2,(q.y+b.from.y)/2-.2,'normalLine','warm');
     for(const hit of [a.to,b.from])line(P(hit.x,hit.y-.55),P(hit.x,hit.y+.55),'normalLine','axis',true);
     label('入射与出射方向平行', (left+right)/2,bounds.minY+.25,'normalLine');
-    label('有限显示窗口 · 主透射光', (left+right)/2,bounds.maxY-.2);
+    label('有限窗口 · 仅主透射光', (left+right)/2,bounds.maxY-.2);
+    label('主透射功率 '+((state.slabDirectTransmittance??0)*100).toFixed(1)+'%', (left+right)/2,bounds.minY+.52,'normalLine','cool');
   }else if(p.sceneMode==='prism-dispersion'){
     const pts=prismVertices(p.prismApexDeg);poly(pts,'glass');
     label('A='+p.prismApexDeg.toFixed(0)+'°',0,1.22,'normalLine');
@@ -90,6 +91,10 @@ export function opticalScene(state:OpticsState,p:OpticsParams):OpticalScene {
     put('rays','spectral',{kind:'polyline',points:profile},color);
     label('Δx='+state.fringeSpacingMm.toFixed(3)+' mm',-1.15,-1.85,'normalLine','warm');
     label('屏面固定 ±4 mm · 近轴等幅窄缝',1.35,-1.9,'normalLine');
+  }
+  if(p.sceneMode==='prism-dispersion'||p.sceneMode==='optical-fiber')for(const r of state.rays)for(const q of [r.from,r.to]){
+    bounds.minX=Math.min(bounds.minX,q.x-.15);bounds.maxX=Math.max(bounds.maxX,q.x+.15);
+    bounds.minY=Math.min(bounds.minY,q.y-.15);bounds.maxY=Math.max(bounds.maxY,q.y+.15);
   }
   for(const r of state.rays){
     const tone:Tone=r.dashed?'virtual':p.sceneMode==='prism-dispersion'?'spectral':r.color==='#fbbf24'?'warm':r.color==='#4ade80'?'image':r.color==='#f87171'?'virtual':'cool';

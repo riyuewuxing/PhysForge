@@ -440,7 +440,7 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
   },
   {
     "id": "fiber-critical-angle",
-    "title": "纤芯/包层有效折射率（模型限制 n包<n芯）",
+    "title": "全反射临界角（仅 n芯>n包 时）",
     "latex": "\\sin C=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=n2}{n_{\\rm clad}}}}{\\htmlClass{pf-live-var}{\\htmlData{param=n1}{n_{\\rm core}}}}",
     "bindings": [
       {
@@ -570,7 +570,12 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
       const scale=Math.max(.1,Math.min(1.3,(usable-36)/((b.maxX-b.minX)*base),(height-70)/((b.maxY-b.minY)*base)));
       return center-(b.minX+b.maxX)*.5*base*scale/width;
     },
-    offsetRatioY: (params) => params.sceneMode==='tir-interface'?-.025:0
+    offsetRatioY: (params,{width,height}) => {
+      if(params.sceneMode==='tir-interface')return -.025;
+      const b=opticalScene(createInitialState(params),params).bounds,base=Math.min(width,height)*.24,usable=width-(width>=900?300:0);
+      const scale=Math.max(.1,Math.min(1.3,(usable-36)/((b.maxX-b.minX)*base),(height-70)/((b.maxY-b.minY)*base)));
+      return (b.minY+b.maxY)*.5*base*scale/height;
+    }
   },
   getControlHandles: (state, params) => {
     if (params.sceneMode === 'thin-lens-imaging') {

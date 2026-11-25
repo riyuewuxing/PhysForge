@@ -45,6 +45,7 @@ export interface OpticsState {
   readonly interfaceReflectance?: number;
   readonly interfaceTransmittance?: number;
   readonly lateralShift: number;
+  readonly slabDirectTransmittance?: number;
   readonly prismDeviationDeg?: number;
   /** Air launch angle limit for a positive-index step fiber. */
   readonly fiberAcceptanceDeg?: number;
@@ -257,6 +258,7 @@ function solveRayTrace(
       isTotalInternalReflection: false,
       refractedAngleDeg: radToDeg(theta2),
       lateralShift,
+      slabDirectTransmittance: directPower,
       prismDeviationDeg: 0,
       fringeSpacingMm: 0
     };
@@ -325,7 +327,11 @@ function solveRayTrace(
       rays.push({from:origin,to:hit,color:'#38bdf8',intensity:1});
       const result=refractVector2D(dir,vec2(0,dir.y>0?-1:1),nCore,nClad);
       if(result.refracted){
-        rays.push({from:hit,to:along(hit,result.refracted,.9),color:'#f87171',intensity:1,label:'进入包层'});
+        // Show only the first transmitted segment in the finite cladding window.
+        const d=result.refracted,cladY=dir.y>0?hw+.25:-hw-.25;
+        const tClad=Math.abs(d.y)>1e-12?(cladY-hit.y)/d.y:Infinity;
+        const tEnd=d.x>1e-12?(2.4-hit.x)/d.x:Infinity;
+        rays.push({from:hit,to:along(hit,d,Math.min(.9,tClad,tEnd)),color:'#f87171',intensity:1,label:'进入包层'});
         break;
       }
       origin=hit;dir=result.reflected;
@@ -425,6 +431,7 @@ export function computeObservables(state: OpticsState): Record<string, number> {
     refractedAngleDeg: state.refractedAngleDeg ?? 0,
     criticalAngleDeg: state.criticalAngleDeg ?? 0,
     lateralShift: state.lateralShift,
+    ...(state.slabDirectTransmittance===undefined?{}:{slabDirectTransmittance:state.slabDirectTransmittance}),
     ...(state.prismDeviationDeg===undefined?{}:{prismDeviationDeg:state.prismDeviationDeg}),
     fringeSpacingMm: state.fringeSpacingMm,
     ...(state.imageDistanceM===undefined?{}:{imageDistanceM:state.imageDistanceM}),
