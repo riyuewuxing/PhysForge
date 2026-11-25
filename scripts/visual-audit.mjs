@@ -1402,6 +1402,19 @@ async function main() {
             if(Math.abs(5-10.5*i-u)>.008||Math.abs(expectedI-i)>.012)throw new Error('B2 nonlinear displayed KVL/law mismatch '+JSON.stringify({tag,u,i,expectedI}));
           }
           await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'.png')});
+          if(tag==='rc_charge'||tag==='rc_discharge'){
+            await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')==='capVoltage'&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')==='capCurrent'&&document.querySelector('[data-testid="floating-scope-dock"]')?.getAttribute('data-scope-units')==='separate');
+            const play=page.locator('[data-testid="btn-play-pause"]:visible');
+            if(await play.getAttribute('aria-label')!=='运行')throw new Error('B2 RC preset not reset to paused');
+            await play.click();
+            await page.waitForFunction(()=>{const x=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b2-rendered')||'null');return x&&x.t>.35&&Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-sample-count'))>=5;},null,{timeout:10000});
+            if(await play.getAttribute('aria-label')==='暂停')await play.click();
+            const x=JSON.parse(await page.getByTestId('simulation-canvas').getAttribute('data-b2-rendered')||'null');
+            const charging=tag==='rc_charge',tau=charging?.5:.45,voltage=charging?10*(-Math.expm1(-x.t/tau)):10*Math.exp(-x.t/tau),current=charging?(10-voltage)/10:-voltage/9;
+            if(Math.abs(x.capVoltage-voltage)>1e-8||Math.abs(x.capCurrent-current)>1e-8)throw new Error('B2 RC real rendered state differs from independent law '+JSON.stringify({tag,x,voltage,current}));
+            console.log('H8 B2 exact RC browser '+JSON.stringify({tag,t:x.t,u:x.capVoltage,i:x.capCurrent}));
+            await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'_running.png')});
+          }
         }
         await selectPreset(page,'bridge-capacitor-polarity');
         await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
