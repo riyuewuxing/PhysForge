@@ -441,8 +441,35 @@ async function auditM02Equilibrium(page,origin){
   if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
   await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
   if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
-  console.log('H13 M02 online '+JSON.stringify({minimum,invalid,pulley,sphere,scanned}));
-  return {minimum,invalid,pulley,sphere,scanned};
+  const setAnalysis=async(id,view)=>{
+    const details=page.locator('[data-testid="right-control-panel"] details');
+    if(!await details.evaluate(el=>el.open))await details.locator('summary').click();
+    const check=page.getByTestId('equilibrium-layer-'+id);await check.check();
+    await page.waitForFunction(view=>document.querySelector('[data-testid="simulation-canvas"]')?.dataset.equilibriumView===view,view);
+    await details.locator('summary').click();
+  };
+  await setAnalysis('angle-curve','angle-curve');
+  const same=await read();if(same.t!==scanned.t||same.angleDeg!==scanned.angleDeg)throw Error('M02 angle graph reset physical state');
+  await page.screenshot({path:path.join(OUT_DIR,'H16_M02_sphere_angle_curve.png')});
+  await selectPreset(page,'hinged-rod-compression-tension',true);await waitAngle(60);
+  const compression=await read();
+  if(Math.abs(compression.rodAxialForceN-9.8)>1e-9||Math.abs(compression.force2-19.6*Math.sqrt(3)/2)>1e-9||compression.momentResidualNm>=1e-10)throw Error('M02 hinged compression '+JSON.stringify(compression));
+  await page.screenshot({path:path.join(OUT_DIR,'H16_M02_hinged_compression.png')});
+  await page.getByTestId('param-slider-sweepAngleDeg').fill('120');await waitAngle(120);
+  const tension=await read();if(Math.abs(tension.rodAxialForceN+19.6)>1e-9||Math.abs(tension.force2-19.6*Math.sqrt(3))>1e-9||tension.netResidualN>=1e-10)throw Error('M02 hinged tension '+JSON.stringify(tension));
+  await setAnalysis('aux-circle','aux-circle');
+  await page.screenshot({path:path.join(OUT_DIR,'H16_M02_hinged_tension_aux.png')});
+  await page.getByTestId('param-slider-sweepAngleDeg').fill('150');await waitAngle(150);
+  const singular=await read();if(singular.solutionDefined!==0||'force1'in singular||'rodAxialForceN'in singular)throw Error('M02 hinged singular '+JSON.stringify(singular));
+  await page.screenshot({path:path.join(OUT_DIR,'H16_M02_hinged_singular.png')});
+  await selectPreset(page,'fixed-rod-support-moment',true);await waitAngle(60);
+  const fixed=await read(),rx=4,ry=19.6-4*Math.sqrt(3),moment=1.2*(Math.sqrt(3)/2*ry-.5*rx);
+  if(Math.abs(fixed.force2-8)>1e-10||Math.abs(fixed.reactionXN-rx)>1e-10||Math.abs(fixed.reactionYN-ry)>1e-10||Math.abs(fixed.supportMomentNm-moment)>1e-10||fixed.momentResidualNm>=1e-10||'minPullForceN'in fixed)throw Error('M02 fixed wrench '+JSON.stringify(fixed));
+  await page.screenshot({path:path.join(OUT_DIR,'H16_M02_fixed_rod.png')});
+  await setAnalysis('angle-curve','angle-curve');
+  await page.screenshot({path:path.join(OUT_DIR,'H16_M02_fixed_angle_curve.png')});
+  console.log('H16 M02 online '+JSON.stringify({minimum,invalid,pulley,sphere,scanned,compression,tension,singular,fixed}));
+  return {minimum,invalid,pulley,sphere,scanned,compression,tension,singular,fixed};
 }
 
 async function runWaveBCoordinateAudit(page, origin) {
@@ -2076,8 +2103,16 @@ async function main() {
       if(Math.abs(step.t-1/60)>1e-10||Math.abs(step.force1-19.6/1.6)>1e-9||Math.abs(step.force2-19.6*L/1.6)>1e-9||step.netResidualN>=1e-10)throw Error('M02 offline independent geometry '+JSON.stringify(step));
       await m02Page.getByRole('button',{name:'黑板深蓝'}).click();
       await m02Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');await m02Page.screenshot({path:path.join(OUT_DIR,'H13_M02_offline_paper.png')});
+      await m02Page.locator('[data-preset-id="fixed-rod-support-moment"]').click();
+      await m02Page.waitForFunction(()=>{const d=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.equilibriumRendered||'null');return d?.t===0&&d.supportMomentNm!==undefined;});
+      const fixed=await read(),expected=1.2*(Math.sqrt(3)/2*(19.6-4*Math.sqrt(3))-2);
+      if(Math.abs(fixed.supportMomentNm-expected)>1e-10||Math.abs(fixed.force2-8)>1e-10||fixed.momentResidualNm>=1e-10)throw Error('M02 offline fixed '+JSON.stringify(fixed));
+      await m02Page.getByTestId('sf-layer-angle-curve').check();
+      await m02Page.waitForFunction(()=>document.querySelector('[data-testid="sf-canvas"]')?.dataset.equilibriumView==='angle-curve');
+      const after=await read();if(after.t!==fixed.t||after.angleDeg!==fixed.angleDeg)throw Error('M02 offline view reset');
+      await m02Page.screenshot({path:path.join(OUT_DIR,'H16_M02_offline_fixed_angle_paper.png')});
       if(m02Errors.length||m02Network.length)throw Error('M02 offline errors '+JSON.stringify({m02Errors,m02Network}));
-      Object.assign(m02OfflineReport,{initial,step,errors:m02Errors,network:m02Network});
+      Object.assign(m02OfflineReport,{initial,step,fixed,errors:m02Errors,network:m02Network});
     }finally{await m02Context.close();}
     const summary = { m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));

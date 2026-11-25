@@ -86,7 +86,7 @@ export function solveEquilibriumAtAngle(params: EquilibriumParams, angleDeg: num
   const c = Math.cos(theta), sn = Math.sin(theta);
   const base = { mode: params.mode, activeAngleDeg: actual, requestedAngleDeg: finite(angleDeg, actual),
     requestedInitialAngleDeg: finite(params.sweepAngleDeg,actual), initialAngleDeg: boundedAngle(params.mode,params.sweepAngleDeg,params), gravity };
-  let direction1: Point, direction2: Point, minPullForceN: number|undefined;
+  let direction1: Point, direction2: Point, minPullForceN: number|undefined=undefined;
   let point: Point = { x: 0, y: 0 };
   let sphere: SphereGeometry | undefined;
   let rod: RodGeometry | undefined;
@@ -187,7 +187,7 @@ export function computeObservables(state: EquilibriumState): Record<string, numb
     solutionDefined: state.status === 'balanced' ? 1 : 0,
     ...(state.minPullForceN!==undefined?{minPullForceN:state.minPullForceN}:{}),
     ...(state.rod?.axialForceN!==undefined?{rodAxialForceN:state.rod.axialForceN}:{}),
-    ...(state.rod?.supportMomentNm!==undefined?{supportMomentNm:state.rod.supportMomentNm}:{}),
+    ...(state.rod?.supportMomentNm!==undefined?{supportMomentNm:state.rod.supportMomentNm,reactionXN:state.force1.x,reactionYN:state.force1.y}:{}),
     ...(state.rod?.momentResidualNm!==undefined?{momentResidualNm:state.rod.momentResidualNm}:{}),
     ...(state.status === 'balanced' ? { force1: state.force1.mag, force2: state.force2.mag, netResidualN: state.netResidualN } : {}),
     ...(state.sphere ? { ropeLengthM: state.sphere.ropeLength } : {})
