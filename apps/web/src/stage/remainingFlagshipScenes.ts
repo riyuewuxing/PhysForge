@@ -3,8 +3,8 @@ import type { FlagshipSceneDriver } from './planarFlagshipScenes.js';
 import { isSensorDevice, type EmDevicesParams, type EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { cyclotronHistory,type CyclotronHistoryArc } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
 import { deviceDiagramPoint, getDeviceSchematic, deeOutline, deviceCueColor, type DevicePart } from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
-import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers } from '@physforge/simulations/astro-orbital-mechanics';
-import { computeLagrangePoints, extractRocheIsolines, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
+import { orbitDisplayXY, orbitDisplayVelocity, orbitalBurnMarkers,orbitDisplayTrail,orbitAnalyticalGuide } from '@physforge/simulations/astro-orbital-mechanics';
+import { computeLagrangePoints, extractRocheIsolines,binaryMassRatio, type AstroOrbitalParams, type AstroOrbitalState } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import { anodizedRailMaterial, brushedCopperMaterial, dielectricGlassMaterial, magneticFluxMaterial, obsidianStageFloorMaterial, coilCopperMaterial, createParticleGlow } from './spatialMaterials.js';
 import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 
@@ -26,11 +26,11 @@ function clear(group: THREE.Group) {
 function mesh(group: THREE.Group, name: string, geo: THREE.BufferGeometry, mat: THREE.Material) {
   const object = new THREE.Mesh(geo, mat); object.name = name; group.add(object); return object;
 }
-function bufferedTrail(group: THREE.Group, capacity: number, color: number) {
+function bufferedTrail(group: THREE.Group, capacity: number, color: number,bright=false) {
   const geometry = new THREE.BufferGeometry();
   const attr = new THREE.BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute('position', attr); geometry.setDrawRange(0, 0);
-  const trail = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
+  const trail = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color,toneMapped:!bright }));
   trail.name = 'engine-trail'; trail.frustumCulled = false; group.add(trail);
   return {trail, update(points: readonly {x:number;y:number}[], project: (x:number,y:number)=>THREE.Vector3) {
     const start = Math.max(0, points.length - capacity), count = points.length - start;
@@ -146,14 +146,19 @@ function ring(group:THREE.Group,name:string,radius:number,color:number) {
 }
 function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
   const fixed=new THREE.Group(), moving=new THREE.Group(), guides=new THREE.Group();root.add(fixed,moving,guides);
-  const primary=mesh(moving,'primary-star',new THREE.SphereGeometry(0.13,24,16),magneticFluxMaterial(0xfbbf24));
+  const primary=mesh(moving,'primary-star',new THREE.SphereGeometry(0.13,32,24),new THREE.MeshStandardMaterial({color:0xffd37b,emissive:0xe68b28,emissiveIntensity:1.25,roughness:.55,toneMapped:false}));
   const stellarHalo=new THREE.Mesh(new THREE.RingGeometry(0.16,0.28,32),new THREE.MeshBasicMaterial({
-    color:0xfbbf24,transparent:true,opacity:0.28,side:THREE.DoubleSide,depthWrite:false
+    color:0xfbbf24,transparent:true,opacity:0.14,side:THREE.DoubleSide,depthWrite:false,toneMapped:false
   }));
   stellarHalo.name='primary-star-halo';stellarHalo.rotation.x=-Math.PI/2;primary.add(stellarHalo);
-  const secondary=mesh(moving,'secondary-star',new THREE.SphereGeometry(0.065,20,14),magneticFluxMaterial(0x60a5fa));
-  const satellite=mesh(moving,'orbiting-body',new THREE.SphereGeometry(0.05,18,12),magneticFluxMaterial(0x4ade80));
-  const trail=bufferedTrail(moving,421,0x38bdf8);
+  const starGlow=createParticleGlow();starGlow.sprite.scale.set(.8,.8,1);primary.add(starGlow.sprite);
+  const secondary=mesh(moving,'secondary-star',new THREE.SphereGeometry(0.065,24,18),new THREE.MeshStandardMaterial({color:0x80baff,emissive:0x3072cc,emissiveIntensity:.85,toneMapped:false}));
+  const satellite=mesh(moving,'orbiting-body',new THREE.SphereGeometry(0.05,18,12),new THREE.MeshBasicMaterial({color:0x86efac,toneMapped:false}));
+  const trail=bufferedTrail(moving,421,0xffcb75,true);
+  const orbitTube=new DynamicTubeTrail(421,.011,6),orbitHalo=new DynamicTubeTrail(421,.025,6);
+  const tube=mesh(moving,'orbit-real-trail-core',orbitTube.geometry,new THREE.MeshBasicMaterial({color:0xffcb75,toneMapped:false}));
+  const halo=mesh(moving,'orbit-real-trail-halo',orbitHalo.geometry,new THREE.MeshBasicMaterial({color:0xffb84d,toneMapped:false,transparent:true,opacity:.15,depthWrite:false,blending:THREE.AdditiveBlending}));
+  tube.frustumCulled=halo.frustumCulled=false;
   const contours=new THREE.Group(),burns=new THREE.Group();fixed.add(contours,burns);
   const velocity=new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),0.5,0x4ade80,0.12,0.07);velocity.name='orbit-velocity';moving.add(velocity);
   let burnEvents:AstroOrbitalState['events']|null=null,burnMode:AstroOrbitalParams['mode']|null=null;
@@ -168,30 +173,20 @@ function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
     if(signature!==sig){
       signature=sig;clear(guides);clear(contours);
       const extent=p.mode==='hohmann-transfer'?p.r2OverR1+0.5:2.8;
-      const disk=mesh(guides,'orbit-plane',new THREE.CylinderGeometry(extent,extent,0.018,96),new THREE.MeshStandardMaterial({color:0x1e293b,transparent:true,opacity:0.22,depthWrite:false}));
+      const disk=mesh(guides,'orbit-plane',new THREE.CylinderGeometry(extent,extent,0.018,96),new THREE.MeshStandardMaterial({color:0x1e293b,transparent:true,opacity:0.08,depthWrite:false}));
       disk.position.y=-0.09;
       if(p.mode==='hohmann-transfer'){ring(guides,'parking-orbit',1,0x94a3b8);ring(guides,'target-orbit',p.r2OverR1,0x94a3b8);}
-      if(p.mode==='kepler-ellipse'){
-        const speed=Math.max(0.5,p.v0Ratio),eccentricityX=speed*speed-1,semilatusRectum=speed*speed;
-        const eccentricity=Math.abs(eccentricityX),closed=eccentricity<0.98;
-        const samples=closed?128:256,points:THREE.Vector3[]=[];
-        for(let i=0;i<(closed?samples:samples+1);i++){
-          const theta=closed?(i/samples)*Math.PI*2:-Math.PI+(i/samples)*Math.PI*2;
-          const denominator=1+eccentricityX*Math.cos(theta);
-          if(!closed&&denominator<=0.08)continue;
-          const radius=semilatusRectum/denominator;
-          if(!closed&&Math.abs(radius)>6)continue;
-          points.push(orbitDisplayPoint(radius*Math.cos(theta),radius*Math.sin(theta),0,false));
-        }
-        const geometry=new THREE.BufferGeometry().setFromPoints(points);
-        const material=new THREE.LineBasicMaterial({color:0x38bdf8,transparent:true,opacity:0.48});
-        const analytical=closed?new THREE.LineLoop(geometry,material):new THREE.Line(geometry,material);
-        analytical.name='kepler-analytical-orbit';guides.add(analytical);
+      const guide=orbitAnalyticalGuide(p);
+      if(guide?.points.length){
+        const geometry=new THREE.BufferGeometry().setFromPoints(guide.points.map(pt=>orbitDisplayPoint(pt.x,pt.y,0,false)));
+        const material=new THREE.LineDashedMaterial({color:0x75e5f1,transparent:true,opacity:.83,toneMapped:false,dashSize:.09,gapSize:.055});
+        const analytical=guide.closed?new THREE.LineLoop(geometry,material):new THREE.Line(geometry,material);
+        analytical.computeLineDistances();analytical.name=p.mode==='kepler-ellipse'?'kepler-analytical-orbit':'hohmann-analytical-transfer';guides.add(analytical);
       }
       if(p.mode==='binary-lagrange'&&layers.has('rocheIsolines')){
         for(const c of extractRocheIsolines(p.massRatioQ)){
           const vertices=c.segments.flatMap(seg=>[orbitDisplayPoint(seg.a.x,seg.a.y,0,false),orbitDisplayPoint(seg.b.x,seg.b.y,0,false)]);
-          contours.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(vertices),new THREE.LineBasicMaterial({color:0x94a3b8,transparent:true,opacity:0.35})));
+          contours.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(vertices),new THREE.LineBasicMaterial({color:0x7dd3fc,transparent:true,opacity:0.48,toneMapped:false})));
         }
         for(const pt of computeLagrangePoints(p.massRatioQ)){const dot=mesh(contours,pt.id,new THREE.SphereGeometry(0.025,10,8),magneticFluxMaterial(0xfbbf24));dot.position.copy(orbitDisplayPoint(pt.x,pt.y,0,false));}
       }
@@ -201,10 +196,11 @@ function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
     moving.visible=showOrbit;guides.visible=showOrbit;
     secondary.visible=p.mode==='binary-lagrange';
     if(secondary.visible){
-      const q=p.massRatioQ,c=Math.cos(s.tNorm),sin=Math.sin(s.tNorm);
+      const q=binaryMassRatio(p.massRatioQ),c=Math.cos(s.tNorm),sin=Math.sin(s.tNorm);
       primary.position.copy(project(-q*c,-q*sin));secondary.position.copy(project((1-q)*c,(1-q)*sin));
     }else primary.position.set(0,0,0);
-    satellite.position.copy(project(s.xNorm,s.yNorm));trail.update(corotating?[]:s.trailNorm,project);
+    satellite.position.copy(project(s.xNorm,s.yNorm));const history=orbitDisplayTrail(s,corotating);trail.update(history,(x,y)=>orbitDisplayPoint(x,y,0,false));
+    const spatialHistory=history.map(p=>({x:p.x,y:0,z:-p.y}));orbitTube.update(spatialHistory,p=>p);orbitHalo.update(spatialHistory,p=>p);
     const v=orbitDisplayVelocity(s,corotating),speed=Math.hypot(v.x,v.y);
     velocity.visible=speed>1e-8;velocity.position.copy(satellite.position);
     if(velocity.visible){velocity.setDirection(new THREE.Vector3(v.x/speed,0,-v.y/speed));const len=speed*.35;velocity.setLength(len,Math.min(.12,len*.3),Math.min(.07,len*.2));}
@@ -239,7 +235,7 @@ function orbitDriver(root:THREE.Group):FlagshipSceneDriver {
         });
       }
     }
-  },dispose(){dispose(root);}};
+  },dispose(){starGlow.texture.dispose();starGlow.material.dispose();dispose(root);}};
 }
 export function createRemainingFlagshipScene(id:string,scene:THREE.Scene):FlagshipSceneDriver|null {
   if(id!=='stse-em-devices-suite'&&id!=='astro-orbital-mechanics')return null;

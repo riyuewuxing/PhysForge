@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {describe,it,expect} from 'vitest';
 import {createWorldMapper,resolvePluginParams} from '@physforge/sim-sdk';
 import {stseEmDevicesSuitePlugin} from '@physforge/simulations/stse-em-devices-suite';
-import {astroOrbitalMechanicsPlugin,orbitDisplayXY,orbitalBurnMarkers,orbitDisplayVelocity} from '@physforge/simulations/astro-orbital-mechanics';
+import {astroOrbitalMechanicsPlugin,orbitDisplayXY,orbitalBurnMarkers,orbitDisplayVelocity,orbitAnalyticalGuide} from '@physforge/simulations/astro-orbital-mechanics';
 import {magnetic3dDisplayPoint} from '@physforge/simulations/em-3d-magnetic-fields';
 import type {EmDevicesParams} from '../../../../simulations/stse-em-devices-suite/engine.js';
 import {deviceDiagramPoint,getDeviceSchematic,deeOutline} from '../../../../simulations/stse-em-devices-suite/deviceGeometry.js';
@@ -75,7 +75,7 @@ describe('remaining planar flagship projections',()=>{
     expect(forces[0]!.force.y+forces[1]!.force.y).toBeCloseTo(0,20);
     expect(p.getForceVectors!(state,{...params,carrierType:'hole'})).toEqual(forces);
   });
-  it('M10 renders only actual burn events and does not fake a rotating-frame trail',()=>{
+  it('M10 renders only actual burn events and transforms each genuine historical sample',()=>{
     const p=astroOrbitalMechanicsPlugin,params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'hohmann-transfer'});
     const scene=new THREE.Scene(),driver=createRemainingFlagshipScene(p.meta.id,scene)!;
     const initial=p.engine.createInitialState(params);
@@ -89,10 +89,19 @@ describe('remaining planar flagship projections',()=>{
     driver.sync(next,params,new Set(['orbit']));
     expect(scene.getObjectByName('orbital-burn-2')?.position.x).toBe(-2.4);
     const binary=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'binary-lagrange'});
-    const state={...p.engine.createInitialState(binary),tNorm:.5,trailNorm:[{x:1,y:0},{x:1,y:.1}]};
+    const state=p.engine.step(p.engine.createInitialState(binary),binary,1).nextState;
     driver.sync(state,binary,new Set(['orbit','corotatingView']));
     expect(scene.getObjectByName('orbital-burn-1')).toBeUndefined();
-    expect(scene.getObjectByName('engine-trail')?.visible).toBe(false);
+    const line=scene.getObjectByName('engine-trail') as THREE.Line;
+    expect(line.visible).toBe(true);
+    expect(line.geometry.drawRange.count).toBe(state.trailNorm.length);
+    const positions=line.geometry.getAttribute('position');
+    state.trailNorm.forEach((point,i)=>{
+      const expected=orbitDisplayPoint(point.x,point.y,point.tNorm,true);
+      expect(new THREE.Vector3().fromBufferAttribute(positions,i).distanceTo(expected)).toBeLessThan(1e-6);
+    });
+    driver.sync(state,binary,new Set(['orbit']));
+    state.trailNorm.forEach((point,i)=>expect(new THREE.Vector3().fromBufferAttribute(positions,i).distanceTo(orbitDisplayPoint(point.x,point.y,0,false))).toBeLessThan(1e-6));
     const v=orbitDisplayVelocity(state,true);
     const expected=orbitDisplayXY(state.vxNorm+state.yNorm,state.vyNorm-state.xNorm,state.tNorm,true);
     expect(v).toEqual(expected);
@@ -110,6 +119,20 @@ describe('remaining planar flagship projections',()=>{
     const b=createWorldMapper(alignedCanvasViewport(camera.get2DAlignMetrics())).toScreen(s.xNorm*c-s.yNorm*sin,s.xNorm*sin+s.yNorm*c);
     expect(Math.hypot(a.x-b.x,a.y-b.y)).toBeLessThan(0.5);
     driver.dispose();expect(scene.children.length).toBe(0);
+  });
+  it('M10 shared conic guide keeps physical ellipse, parabola and transfer distinct',()=>{
+    const p=astroOrbitalMechanicsPlugin;
+    for(const v0Ratio of [.7,1,1.2,1.41,Math.SQRT2,1.45]){
+      const params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'kepler-ellipse',v0Ratio});
+      const guide=orbitAnalyticalGuide(params)!;
+      expect(guide.points.length).toBeGreaterThan(10);
+      expect(guide.closed).toBe(v0Ratio<Math.SQRT2&&v0Ratio*v0Ratio/(1-Math.abs(v0Ratio*v0Ratio-1))<=6);
+      for(const pt of guide.points)expect(Math.hypot(pt.x,pt.y)+(v0Ratio*v0Ratio-1)*pt.x).toBeCloseTo(v0Ratio*v0Ratio,10);
+    }
+    const params=resolvePluginParams<AstroOrbitalParams>(p.paramSchema,{mode:'hohmann-transfer',r2OverR1:2.4});
+    const guide=orbitAnalyticalGuide(params)!;
+    expect(guide.closed).toBe(false);expect(guide.points[0]!.x).toBeCloseTo(1,12);expect(guide.points.at(-1)!.x).toBeCloseTo(-2.4,12);
+    expect(guide.points.every(pt=>pt.y>=-1e-12)).toBe(true);
   });
   it('M10 analytical Kepler orbit passes through the initial body and rebuilds with orbital speed',()=>{
     const p=astroOrbitalMechanicsPlugin;

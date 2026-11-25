@@ -15,6 +15,8 @@ import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../sim
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
 import { magnetic3dDisplayPoint, magnetic3dDefaultVisibleHeight } from '@physforge/simulations/em-3d-magnetic-fields';
 import { fusionDisplayPoint,fusionDisplayGeometry,fusionGeometryKey,fusionVelocityVectors,fusionEventPoints,fusionStatus,fusionFramePoints,fusionSafeRect,fusionScreenFits } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
+import { orbitRenderSnapshot } from '@physforge/simulations/astro-orbital-mechanics';
+import type { AstroOrbitalState,AstroOrbitalParams } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 import type { EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { flightReadout } from '../../../../simulations/stse-em-devices-suite/particleFlight.js';
 import { cyclotronReadout } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
@@ -289,22 +291,24 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const isMag3d = plugin.meta.id === 'em-3d-magnetic-fields';
     const isTokamak3d = plugin.meta.id === 'stse-tokamak-magnetic-mirror';
     const isBoundedStage=plugin.meta.id==='builder-composite-em-field';
+    const isOrbitStage=plugin.meta.id==='astro-orbital-mechanics';
     const magneticAxisWidget = isMag3d||isBoundedStage||isTokamak3d ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
 
     const width = Math.max(320, container.clientWidth);
     const height = Math.max(240, container.clientHeight);
     const scene = new THREE.Scene();
     const isDeviceStage=plugin.meta.id==='stse-em-devices-suite';
-    const magneticBackdrop=isMag3d||isDeviceStage||isBoundedStage||isTokamak3d?createMagneticBackdrop():null;
+    const magneticBackdrop=isMag3d||isDeviceStage||isBoundedStage||isTokamak3d||isOrbitStage?createMagneticBackdrop():null;
     scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
     // An abstract electromagnetic field has no atmospheric attenuation.
     // Keep B1's small physical symbols legible when fitting a long trajectory.
-    scene.fog = isBoundedStage||isTokamak3d?null:new THREE.FogExp2('#0b0f17',0.085);
+    scene.fog = isBoundedStage||isTokamak3d||isOrbitStage?null:new THREE.FogExp2('#0b0f17',0.085);
 
     const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
     const initialMagneticParams = isMag3d ? (getFrameParams?.() ?? params) as Magnetic3dParams : null;
     let framedMagneticGeometry = initialMagneticParams?.geometryType;
-    const framedSpec = spatial && initialMagneticParams ? { ...spatial, defaultVisibleHeight: magnetic3dDefaultVisibleHeight(initialMagneticParams,width/height) } : spatial;
+    const orbitParams=isOrbitStage?(getFrameParams?.()??params) as AstroOrbitalParams:null;
+    const framedSpec = spatial && initialMagneticParams ? { ...spatial, defaultVisibleHeight: magnetic3dDefaultVisibleHeight(initialMagneticParams,width/height) } : spatial&&orbitParams?{...spatial,defaultVisibleHeight:orbitParams.mode==='hohmann-transfer'?Math.max(5.8,2*orbitParams.r2OverR1+1.2):orbitParams.mode==='binary-lagrange'?5.8:5.9}:spatial;
     const morph = framedSpec ? new CameraMorphController(framedSpec, width, height) : null;
     const camera = morph?.perspCamera ?? new THREE.PerspectiveCamera(48, width / height, 0.1, 200);
     if (!morph) {
@@ -890,6 +894,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget,renderCamera,isBoundedStage,isTokamak3d?(frameParams as TokamakMirrorParams).mode:undefined);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
+      if(isOrbitStage&&latestState){
+        const trail=scene.getObjectByName('engine-trail');
+        const actual=trail instanceof THREE.Line?trail.geometry.drawRange.count:0;
+        container.dataset.m10Rendered=JSON.stringify({...orbitRenderSnapshot(latestState as AstroOrbitalState,frameParams as AstroOrbitalParams,frameLayers),actualTrailVertices:actual});
+      }
       if(isTokamak3d&&latestState){
         const f=latestState as TokamakMirrorState,p=frameParams as TokamakMirrorParams;
         container.dataset.s01Rendered=JSON.stringify({t:f.t,position:f.position,velocity:f.velocity,bField:f.bField,escaped:f.escaped,reflectionCount:f.reflectionCount,escapeEvent:f.escapeEvent,lastReflection:f.lastReflection,trailLength:f.trail.length,muDev:f.maxMuRelDev,vParallel:fusionParallelVelocity(f.velocity,f.bField),mode:p.mode});

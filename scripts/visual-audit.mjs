@@ -731,6 +731,72 @@ async function auditS01Physics(page,origin,screenshot){
   return report;
 }
 
+async function auditM10Physics(page,origin,screenshot){
+  const url=new URL(origin);url.searchParams.set('model','astro-orbital-mechanics');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='astro-orbital-mechanics');
+  const report=[];
+  for(const preset of ['kepler-ellipse-second-law','hohmann-geo-transfer','solar-escape-velocity','binary-lagrange-roche']){
+    await selectPreset(page,preset);
+    const flat=page.getByTestId('simulation-canvas');await flat.waitFor({state:'visible'});
+    const binary=preset==='binary-lagrange-roche',play=page.locator('[data-testid="btn-play-pause"]:visible');
+    await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-m10-rendered')||'null')?.tNorm===0);
+    if(binary)await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')==='jacobiConstant'&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')==='rotatingSpeedNorm'&&document.querySelector('[data-testid="floating-scope-dock"]')?.getAttribute('data-scope-units')==='separate');
+    if(await play.getAttribute('aria-label')!=='运行')throw Error('M10 preset did not reset to paused');
+    await play.click();
+    try{await page.waitForFunction(p=>{
+      const v=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-m10-rendered')||'null');
+      return v&&(p==='kepler-ellipse-second-law'?v.sectors.length>=2:p==='hohmann-geo-transfer'?v.phase==='circularized':p==='solar-escape-velocity'?v.tNorm>.8:v.tNorm>1.2);
+    },preset,{timeout:20000});}catch(error){if(screenshot)await screenshot('M10_failure_'+preset);throw Error('M10 run '+preset+': '+await flat.getAttribute('data-m10-rendered'),{cause:error});}
+    if(await play.getAttribute('aria-label')==='暂停')await play.click();
+    const state=JSON.parse(await flat.getAttribute('data-m10-rendered')||'null');
+    if(state.historyCount<10)throw Error('M10 actual history missing');
+    if(preset==='kepler-ellipse-second-law'){
+      for(const sector of state.sectors)if(Math.abs(sector.end-sector.start-.55)>1e-9||Math.abs(sector.area-.33)>.33e-4)throw Error('M10 incorrect equal-time polygon '+JSON.stringify(sector));
+    }else if(preset==='hohmann-geo-transfer'){
+      const event=state.events.find(e=>e.id.startsWith('hohmann-burn-2-')),rho=2.4,vc=Math.sqrt(6.6743e-11*5.972e24/7e6);
+      if(!event||Math.abs(event.metrics.tNorm-Math.PI*((1+rho)/2)**1.5)>2e-5||
+        Math.abs(Math.hypot(event.position.x,event.position.y)-rho)>1e-4||event.metrics.bracketWidth>1e-7||
+        Math.abs(state.deltaV1SI/(vc*(Math.sqrt(2*rho/(1+rho))-1))-1)>1e-5||
+        Math.abs(state.deltaV2SI/(vc/Math.sqrt(rho)*(1-Math.sqrt(2/(1+rho))))-1)>1e-5||state.eccentricity>1e-4)
+        throw Error('M10 incorrect actual Hohmann event '+JSON.stringify(state));
+    }else if(preset==='solar-escape-velocity'){
+      if(Math.abs(state.energy)>1e-6||Math.abs(state.eccentricity-1)>1e-6||state.guideClosed)throw Error('M10 false parabolic escape');
+    }else if(!state.corotating||Math.abs(state.jacobi-state.jacobi0)>1e-6||!state.historyLast)throw Error('M10 incorrect Jacobi or rotating history');
+    const scope=page.getByTestId('floating-scope-dock');await scope.waitFor({state:'visible'});
+    const chart=await scope.locator('canvas').first().boundingBox();
+    if(!chart||chart.height<140||await page.getByTestId('scope-empty').isVisible())throw Error('M10 sampled chart missing or clipped');
+    if(screenshot)await screenshot('M10_'+preset+'_running');
+    if(binary){
+      await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+      if(screenshot)await screenshot('M10_binary_projector');
+      await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+      if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+    }
+    await page.getByTestId('btn-fullscreen-speech').click();
+    const toggle=page.getByTestId('btn-view-3d-fullscreen');
+    if((await toggle.textContent())?.includes('3D 空间'))await toggle.click();
+    const stage=page.getByTestId('three-stage-container');await stage.waitFor({state:'visible',timeout:20000});
+    await page.waitForFunction(()=>{const el=document.querySelector('[data-testid="three-stage-container"]');return el?.getAttribute('data-morph-t')==='0'&&!!el.getAttribute('data-m10-rendered');},null,{timeout:15000});
+    const spatial=JSON.parse(await stage.getAttribute('data-m10-rendered')||'null');
+    if(Math.abs(spatial.tNorm-state.tNorm)>1e-8||spatial.actualTrailVertices!==state.historyCount||
+       Math.hypot(spatial.position.x-state.position.x,spatial.position.y-state.position.y)>1e-10)
+      throw Error('M10 spatial display changed paused physics '+JSON.stringify({state,spatial}));
+    if(screenshot)await screenshot('M10_'+preset+'_3d');
+    await toggle.click();await stage.waitFor({state:'detached',timeout:15000});await flat.waitFor({state:'visible'});
+    await page.waitForFunction(()=>!!document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-m10-rendered'));
+    const after=JSON.parse(await flat.getAttribute('data-m10-rendered')||'null');
+    if(Math.abs(after.tNorm-state.tNorm)>1e-8||after.historyCount!==state.historyCount||Math.hypot(after.position.x-state.position.x,after.position.y-state.position.y)>1e-10)
+      throw Error('M10 planar return changed paused physics');
+    if(screenshot)await screenshot('M10_'+preset+'_flat');
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+    report.push({preset,state,spatialTrailVertices:spatial.actualTrailVertices,pausedRoundTrip:true});
+  }
+  return report;
+}
 async function auditV3DeviceGeometry(page, origin, screenshot) {
   const url = new URL(origin);
   url.searchParams.set('model', 'stse-em-devices-suite');
@@ -1416,7 +1482,8 @@ async function main() {
     const v3DeviceReport = await auditV3DeviceGeometry(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
     const b1PhysicsReport=await auditB1Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
     const s01PhysicsReport=await auditS01Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
-    const summary = { s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const m10PhysicsReport=await auditM10Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
+    const summary = { m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

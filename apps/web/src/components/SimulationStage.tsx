@@ -6,6 +6,8 @@ import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../sim
 type B1StagePlugin=typeof import('../../../../simulations/em-bounded-magnetic-field/plugin.js').emBoundedMagneticFieldPlugin;
 import type { TokamakMirrorState,TokamakMirrorParams } from '../../../../simulations/stse-tokamak-magnetic-mirror/engine.js';
 type FusionStagePlugin=typeof import('../../../../simulations/stse-tokamak-magnetic-mirror/plugin.js').stseTokamakMagneticMirrorPlugin;
+import type { AstroOrbitalState,AstroOrbitalParams } from '../../../../simulations/astro-orbital-mechanics/engine.js';
+type OrbitStagePlugin=typeof import('../../../../simulations/astro-orbital-mechanics/plugin.js').astroOrbitalMechanicsPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -51,6 +53,10 @@ function getDefaultScopeChannels(
     const a = channels.find(c => c.key === preferred[0])?.key;
     const b = channels.find(c => c.key === preferred[1])?.key;
     if (a && b) return [a, b];
+  }
+  if(modelId==='astro-orbital-mechanics'&&params.mode==='binary-lagrange'){
+    const pair=['jacobiConstant','rotatingSpeedNorm'];
+    if(pair.every(k=>channels.some(c=>c.key===k)))return [pair[0]!,pair[1]!];
   }
   if(modelId==='stse-tokamak-magnetic-mirror'){
     const pair=params.mode==='tokamak'?['bMagT','minorRadiusM']:['vParallel','vPerp'];
@@ -251,7 +257,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const uplotInstanceRef = useRef<uPlot | null>(null);
   const lastPlotSyncMsRef = useRef(0);
 
-  const channels = plugin.telemetryChannels;
+  const channels=useMemo(()=>plugin.meta.id==='astro-orbital-mechanics'?plugin.telemetryChannels.filter(c=>params.mode==='binary-lagrange'||!['jacobiConstant','rotatingSpeedNorm'].includes(c.key)):plugin.telemetryChannels,[plugin.meta.id,plugin.telemetryChannels,params.mode]);
   const [channelA, setChannelA] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[0]);
   const [channelB, setChannelB] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[1]);
 
@@ -260,7 +266,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,plugin.meta.id==='stse-tokamak-magnetic-mirror'?params.mode:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics'].includes(plugin.meta.id)?params.mode:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -686,6 +692,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
 
     ctx.restore();
+    if(p.meta.id==='astro-orbital-mechanics'&&frame&&drawState!==null){
+      const model=p as unknown as OrbitStagePlugin;
+      canvas.dataset.m10Rendered=JSON.stringify(model.orbitRenderSnapshot(drawState as AstroOrbitalState,pm as AstroOrbitalParams,readDisplayedLayers()));
+    }
     if(fusionModel&&fusionPoints&&frame){
       canvas.dataset.s01ScreenBounds=JSON.stringify(fusionModel.fusionFlatScreenBounds(fusionPoints,viewportRef.current));
       canvas.dataset.s01AutoFit=String(fusionAutomatic);
@@ -1139,8 +1149,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   );
 
   const deviceScope = plugin.meta.id === 'stse-em-devices-suite';
-  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror';
-  const splitScopeUnits = heroScope && !!specA && !!specB && specA.unit !== specB.unit;
+  const orbitScope=plugin.meta.id==='astro-orbital-mechanics';
+  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror'||orbitScope;
+  const splitScopeUnits = heroScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {
     '#38bdf8': '#0369a1', '#fbbf24': '#92400e', '#f472b6': '#9d174d',
