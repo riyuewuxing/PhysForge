@@ -1,5 +1,5 @@
 import { fusionStoryDecks } from './storyDecks.js';
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec, type Viewport } from '@physforge/sim-sdk';
 import { tokamakMirrorPresets } from './presets.js';
 import {
   buildTokamakMirrorSegments,
@@ -70,6 +70,47 @@ export function fusionStatus(s:TokamakMirrorState,p:TokamakMirrorParams):string{
 export function fusionEventPoints(s:TokamakMirrorState,p:TokamakMirrorParams){
   return [s.lastReflection,s.escapeEvent].flatMap(event=>event?.position&&event.position.z!==undefined?
     [{id:event.id,time:event.time,point:fusionDisplayPoint({x:event.position.x,y:event.position.y,z:event.position.z},p.mode)}]:[]);
+}
+export type FusionFramePoint=Point3;
+export type FusionSafeRect={left:number;right:number;top:number;bottom:number};
+export type FusionScreenBounds=FusionSafeRect & {visible:boolean};
+/** Actual visible geometric samples in the same right-handed display space.
+ * Include the chamber envelope, not only its coils. No synthetic particle path. */
+export function fusionFramePoints(s:TokamakMirrorState,p:TokamakMirrorParams,layers:ReadonlySet<string>):Point3[]{
+  const geometry=fusionDisplayGeometry(p),map=(v:Point3)=>fusionDisplayPoint(v,p.mode);
+  const points:Point3[]=[map(s.position),...s.trail.map(map)];
+  if(layers.has('conductors')){
+    for(const seg of geometry.segments)points.push(map(seg.a),map(seg.b));
+    if(p.mode==='tokamak')for(let i=0;i<48;i++)for(let j=0;j<12;j++){
+      const phi=i*2*Math.PI/48,theta=j*2*Math.PI/12,R=p.majorRadiusM+TOKAMAK_MINOR_RADIUS_M*Math.cos(theta);
+      points.push(map({x:R*Math.cos(phi),y:R*Math.sin(phi),z:TOKAMAK_MINOR_RADIUS_M*Math.sin(theta)}));
+    }
+  }
+  if(layers.has('fieldLines3d'))for(const line of geometry.lines)for(const pt of line)points.push(map(pt));
+  if(layers.has('velocityComponents'))for(const v of fusionVelocityVectors(s,p))points.push(v.a,v.b);
+  if(layers.has('eventPins'))for(const v of fusionEventPoints(s,p))points.push(v.point);
+  return points;
+}
+export function fusionSafeRect(width:number,height:number,presentation:boolean,scope=true):FusionSafeRect{
+  return {left:Math.min(65,width*.075),right:width-Math.min(presentation?360:300,width*.40),
+    top:Math.min(presentation?100:38,height*.17),
+    bottom:height-Math.min(presentation?158:scope?245:112,height*.41)};
+}
+export function fusionScreenFits(b:FusionScreenBounds,safe:FusionSafeRect,margin=18):boolean{
+  return b.visible&&b.left>=safe.left+margin&&b.right<=safe.right-margin&&b.top>=safe.top+margin&&b.bottom<=safe.bottom-margin;
+}
+export function fusionFlatScreenBounds(points:readonly Point3[],viewport:Viewport):FusionScreenBounds{
+  const m=createWorldMapper(viewport);let left=Infinity,right=-Infinity,top=Infinity,bottom=-Infinity;
+  for(const pt of points){const p=m.toScreen(pt.x,pt.y);left=Math.min(left,p.x);right=Math.max(right,p.x);top=Math.min(top,p.y);bottom=Math.max(bottom,p.y);}
+  return {left,right,top,bottom,visible:[left,right,top,bottom].every(Number.isFinite)};
+}
+export function fitFusionFlatViewport(points:readonly Point3[],vp:Viewport,safe:FusionSafeRect):Viewport{
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  for(const pt of points){minX=Math.min(minX,pt.x);maxX=Math.max(maxX,pt.x);minY=Math.min(minY,pt.y);maxY=Math.max(maxY,pt.y);}
+  const cx=(minX+maxX)/2,cy=(minY+maxY)/2;
+  const base=Math.min(vp.width,vp.height)*.24;
+  const ppm=Math.min(base*1.32,Math.max(1,safe.right-safe.left-56)/Math.max(1,maxX-minX+.20),Math.max(1,safe.bottom-safe.top-56)/Math.max(1,maxY-minY+.20));
+  return {...vp,scale:ppm/base,offsetX:(safe.left+safe.right)/2-.45*vp.width-cx*ppm,offsetY:(safe.top+safe.bottom)/2-.5*vp.height+cy*ppm};
 }
 function fusionCanvasArrow(ctx:CanvasRenderingContext2D,a:{x:number;y:number},b:{x:number;y:number},color:string){
   const dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy);if(len<.5)return;
@@ -432,6 +473,6 @@ export const stseTokamakMagneticMirrorPlugin = Object.assign(defineSimulationPlu
       substitutedLatex: `\\begin{aligned}\\theta_c&=${computeMirrorLossConeDeg(params).toFixed(2)}^\\circ\\\\z&=${state.position.z.toFixed(3)}\\text{ m}\\\\N_{\\rm ref}&=${state.reflectionCount}\\\\\\Delta\\mu/\\mu&=${(state.maxMuRelDev * 100).toFixed(2)}\\%\\end{aligned}`
     }];
   }
-}), { storyDecks: fusionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 5.2, sceneDepthRadius: 7, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
+}), { fusionFramePoints,fusionSafeRect,fusionScreenFits,fusionFlatScreenBounds,fitFusionFlatViewport,storyDecks: fusionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 5.2, sceneDepthRadius: 7, default3DAzimuthRad: 0.5, default3DPolarRad: 1.05 } });
 
 export default stseTokamakMagneticMirrorPlugin;

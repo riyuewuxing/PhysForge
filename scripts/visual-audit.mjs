@@ -640,6 +640,17 @@ async function auditS01Physics(page,origin,screenshot){
   await page.goto(url.toString(),{waitUntil:'networkidle'});
   await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='stse-tokamak-magnetic-mirror');
   const report=[];
+  const assertComposition=async(element)=>{
+    const bounds=await element.evaluate(el=>{
+      const b=JSON.parse(el.getAttribute('data-s01-screen-bounds')||'null'),r=el.getBoundingClientRect();
+      const relative=selector=>{const e=document.querySelector(selector);if(!e)return null;const a=e.getBoundingClientRect();return {left:a.left-r.left,right:a.right-r.left,top:a.top-r.top,bottom:a.bottom-r.top};};
+      return {b,width:r.width,height:r.height,chrome:['[data-testid="fullscreen-formula"]','[data-testid="fullscreen-controls"]','[data-testid="fullscreen-title"]','[data-testid="mirror-loss-cone"]','[data-testid="s01-torus-status"]'].map(relative).filter(Boolean)};
+    });
+    const {b,width,height,chrome}=bounds;
+    if(!b?.visible||b.left<10||b.right>width-10||b.top<10||b.bottom>height-10)throw Error('S01 clipped real frame '+JSON.stringify(bounds));
+    for(const rect of chrome)if(b.left<rect.right+8&&b.right>rect.left-8&&b.top<rect.bottom+8&&b.bottom>rect.top-8)throw Error('S01 overlap '+JSON.stringify(bounds));
+    return bounds;
+  };
   for(const preset of ['mirror-trapped-bounce','mirror-loss-cone-escape','tokamak-helical-confinement']){
     await selectPreset(page,preset);
     const scope=page.getByTestId('floating-scope-dock');await scope.waitFor({state:'visible'});
@@ -679,9 +690,14 @@ async function auditS01Physics(page,origin,screenshot){
     const speed=Math.hypot(state.velocity.x,state.velocity.y,state.velocity.z),initialSpeed=Math.hypot(init.velocity.x,init.velocity.y,init.velocity.z);
     if(Math.abs(speed-initialSpeed)>1e-8)throw Error('S01 magnetic speed drift');
     report.push({preset,t:state.t,reflection:state.lastReflection,escape:state.escapeEvent,muDev:state.muDev,trail:state.trailLength});
+    // The camera may fit again on the next render after pause; wait for the real frame within the original timeout.
+    await page.waitForFunction(()=>{const el=document.querySelector('[data-testid="three-stage-container"]');const b=JSON.parse(el?.getAttribute('data-s01-screen-bounds')||'null');const r=el?.getBoundingClientRect();return !!b&&!!r&&b.visible&&b.right<r.width-Math.min(360,r.width*.40)&&b.bottom<r.height-Math.min(158,r.height*.41);},null,{timeout:15000});
+    report.at(-1).spatialComposition=await assertComposition(stage);
     if(screenshot)await screenshot('S01_'+preset+'_3d');
     await toggle.click();await stage.waitFor({state:'detached',timeout:15000});
-    await page.getByTestId('simulation-canvas').waitFor({state:'visible'});
+    const flat=page.getByTestId('simulation-canvas');await flat.waitFor({state:'visible'});
+    await page.waitForFunction(()=>{const el=document.querySelector('[data-testid="simulation-canvas"]');const b=JSON.parse(el?.getAttribute('data-s01-screen-bounds')||'null');const r=el?.getBoundingClientRect();return !!b&&!!r&&b.visible&&b.right<r.width-Math.min(360,r.width*.40)&&b.bottom<r.height-Math.min(158,r.height*.41);},null,{timeout:15000});
+    report.at(-1).flatComposition=await assertComposition(flat);
     if(screenshot)await screenshot('S01_'+preset+'_flat');
     await page.getByTestId('btn-exit-fullscreen-speech').click();
   }

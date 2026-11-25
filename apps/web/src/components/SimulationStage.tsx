@@ -4,6 +4,8 @@ import { ChevronDown, ChevronUp, Crosshair, MoveDiagonal2, RotateCcw, Ruler } fr
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 type B1StagePlugin=typeof import('../../../../simulations/em-bounded-magnetic-field/plugin.js').emBoundedMagneticFieldPlugin;
+import type { TokamakMirrorState,TokamakMirrorParams } from '../../../../simulations/stse-tokamak-magnetic-mirror/engine.js';
+type FusionStagePlugin=typeof import('../../../../simulations/stse-tokamak-magnetic-mirror/plugin.js').stseTokamakMagneticMirrorPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -224,7 +226,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
   const [heldThreeId, setHeldThreeId] = useState<string | null>(() => view3dEnabled ? plugin.meta.id : null);
   const b1Stage=plugin.meta.id==='builder-composite-em-field';
-  const morphInThisView=Boolean((presentationMode||b1Stage)&&spatial);
+  const fusionStage=plugin.meta.id==='stse-tokamak-magnetic-mirror';
+  const autoFrameStage=b1Stage||fusionStage;
+  const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
   const showThreeRef = useRef(showThree);
   showThreeRef.current = showThree;
@@ -298,7 +302,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const userTransformedViewRef = useRef<boolean>(false);
   const b1FitKeyRef=useRef('');
   const b1FitAtRef=useRef(-Infinity);
-  const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale]);};
+  const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
     const v2 = latestRef.current.plugin as SimulationPluginV2<ParamRecord, unknown>;
     const initialCamera = resolveInitialCameraTransform(v2, latestRef.current.params, width, height);
@@ -341,8 +345,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     viewportRef.current = aligned;
     // A camera morph transfers ownership, not just its projection. A teacher's
     // orbit remains manual; an automatic camera remains automatic.
-    userTransformedViewRef.current=!(b1Stage&&b1Automatic===true);
-    if(b1Stage){
+    userTransformedViewRef.current=!(autoFrameStage&&b1Automatic===true);
+    if(autoFrameStage){
       b1FitKeyRef.current=b1FitKey(aligned);b1FitAtRef.current=performance.now();
     }
     setZoomPercent(Math.round(100 * aligned.scale / Math.max(1e-6, baseScaleRef.current)));
@@ -516,6 +520,23 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       }
     }
+    const fusionAutomatic=p.meta.id==='stse-tokamak-magnetic-mirror'&&!userTransformedViewRef.current&&
+       !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&scrub===null;
+    if(fusionAutomatic&&drawState!==null){
+      const model=p as unknown as FusionStagePlugin,cur=latestRef.current,vp=viewportRef.current;
+      const key=b1FitKey(vp),now=performance.now(),fresh=key!==b1FitKeyRef.current;
+      if(fresh||now-b1FitAtRef.current>=250){
+        b1FitKeyRef.current=key;b1FitAtRef.current=now;
+        const points=model.fusionFramePoints(drawState as TokamakMirrorState,pm as TokamakMirrorParams,readDisplayedLayers());
+        const safe=model.fusionSafeRect(vp.width,vp.height,cur.presentationMode,!cur.oscilloscopeCollapsed);
+        if(fresh||!model.fusionScreenFits(model.fusionFlatScreenBounds(points,vp),safe)){
+          const next=model.fitFusionFlatViewport(points,vp,safe);
+          cameraRef.current=next;viewportRef.current=next;
+          if(fresh)baseScaleRef.current=next.scale;
+          setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+        }
+      }
+    }
     const baseVp = viewportRef.current;
     ctx.save();
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
@@ -666,6 +687,13 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
 
     ctx.restore();
+    if(p.meta.id==='stse-tokamak-magnetic-mirror'&&frame&&drawState!==null){
+      const model=p as unknown as FusionStagePlugin;
+      const points=model.fusionFramePoints(drawState as TokamakMirrorState,pm as TokamakMirrorParams,readDisplayedLayers());
+      canvas.dataset.s01ScreenBounds=JSON.stringify(model.fusionFlatScreenBounds(points,viewportRef.current));
+      canvas.dataset.s01AutoFit=String(fusionAutomatic);
+      canvas.dataset.s01Time=String(frame.t);
+    }
     if(p.meta.id==='builder-composite-em-field'&&frame){
       const v=viewportRef.current;
       canvas.dataset.b1AutoFit=String(b1Automatic);
@@ -883,7 +911,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
-    } else if(latestRef.current.plugin.meta.id==='builder-composite-em-field'){
+    } else if(['builder-composite-em-field','stse-tokamak-magnetic-mirror'].includes(latestRef.current.plugin.meta.id)){
       // The final displayed physical sample and chart must agree after pause.
       renderFrameToCanvas();syncUPlotData(true);emitTelemetrySummary(true);
     }
@@ -998,7 +1026,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       };
       // A duplicate ResizeObserver notification is not a change of camera.
       // Preserve the exact B1 orthographic transfer when CSS size is unchanged.
-      if(!userTransformedViewRef.current&&(latestRef.current.plugin.meta.id!=='builder-composite-em-field'||changedSize)){
+      if(!userTransformedViewRef.current&&(!['builder-composite-em-field','stse-tokamak-magnetic-mirror'].includes(latestRef.current.plugin.meta.id)||changedSize)){
         applyDefaultCameraView(width,height);
       }
       setOverlayViewport(viewportRef.current);

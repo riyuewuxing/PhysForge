@@ -8,12 +8,13 @@ import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop } from './spatialMaterials.js';
+import { fitFusionSpatialFrame,projectFusionFrame } from './fusionFraming.js';
 import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
 import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
 import { magnetic3dDisplayPoint, magnetic3dDefaultVisibleHeight } from '@physforge/simulations/em-3d-magnetic-fields';
-import { fusionDisplayPoint,fusionDisplayGeometry,fusionGeometryKey,fusionVelocityVectors,fusionEventPoints,fusionStatus } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
+import { fusionDisplayPoint,fusionDisplayGeometry,fusionGeometryKey,fusionVelocityVectors,fusionEventPoints,fusionStatus,fusionFramePoints,fusionSafeRect,fusionScreenFits } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
 import type { EmDevicesState } from '../../../../simulations/stse-em-devices-suite/engine.js';
 import { flightReadout } from '../../../../simulations/stse-em-devices-suite/particleFlight.js';
 import { cyclotronReadout } from '../../../../simulations/stse-em-devices-suite/cyclotronFlight.js';
@@ -455,7 +456,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     let b1AutoFit=initialB1AutoFit,b1FramingKey='',b1FramedAt=-Infinity,b1RenderCount=0;
     let b1LastPolicy=b1PolicyRef.current;
     const lockB1Camera=()=>{b1AutoFit=false;};
-    if(isBoundedStage)controls.addEventListener('start',lockB1Camera);
+    if(isBoundedStage||isTokamak3d)controls.addEventListener('start',lockB1Camera);
 
     const velocityLabelAnchor = new THREE.Vector3();
     const forceLabelAnchor = new THREE.Vector3();
@@ -748,7 +749,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
-        if(isBoundedStage)controls.removeEventListener('start',lockB1Camera);
+        if(isBoundedStage||isTokamak3d)controls.removeEventListener('start',lockB1Camera);
         planarDriver?.dispose();
         clearDeviceLabels();
         disposeGroupChildren(staticGroup);
@@ -796,7 +797,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if (morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
-          if(isBoundedStage)b1AutoFit=false;
+          if(isBoundedStage||isTokamak3d)b1AutoFit=false;
           morph.startKeyframe(command.view, now, command.durationMs);
           if (storyCameraCommandRef) storyCameraCommandRef.current = null;
           lastMorphTarget = target;
@@ -826,7 +827,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       }
 
       const b1Policy=b1PolicyRef.current;
-      if(isBoundedStage){
+      if(isBoundedStage||isTokamak3d){
         if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';b1FramedAt=-Infinity;dirty=true;}
         if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
         b1LastPolicy=b1Policy;
@@ -864,6 +865,23 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
         }
       }
+      const fusion=isTokamak3d&&latestState!==null&&latestState!==undefined?latestState as TokamakMirrorState:null;
+      const fp=frameParams as TokamakMirrorParams;
+      const fusionPoints=fusion?fusionFramePoints(fusion,fp,frameLayers):null;
+      if(fusionPoints&&morph&&morph.getMorphT()===0&&!morph.isAnimating){
+        const key=JSON.stringify([fusionGeometryKey(fp),rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed,[...frameLayers]]);
+        const fresh=key!==b1FramingKey;
+        if(fresh)b1FramingKey=key;
+        if(b1AutoFit&&b1Policy.allowed&&(fresh||now-b1FramedAt>=250)){
+          b1FramedAt=now;
+          const safe=fusionSafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
+          if(fresh||!fusionScreenFits(projectFusionFrame(fusionPoints,camera,rw,rh),safe)){
+            morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
+            fitFusionSpatialFrame(morph,fusionPoints,rw,rh,safe);
+            controls.target.copy(morph.getOrbitTarget());controls.update();
+          }
+        }
+      }
       if (isMag3d || isDeviceStage) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
@@ -875,6 +893,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         const f=latestState as TokamakMirrorState,p=frameParams as TokamakMirrorParams;
         container.dataset.s01Rendered=JSON.stringify({t:f.t,position:f.position,velocity:f.velocity,bField:f.bField,escaped:f.escaped,reflectionCount:f.reflectionCount,escapeEvent:f.escapeEvent,lastReflection:f.lastReflection,trailLength:f.trail.length,muDev:f.maxMuRelDev,vParallel:fusionParallelVelocity(f.velocity,f.bField),mode:p.mode});
         container.dataset.s01VelocityVectors=String(frameLayers.has('velocityComponents'));
+        if(fusionPoints)container.dataset.s01ScreenBounds=JSON.stringify(projectFusionFrame(fusionPoints,renderCamera,rw,rh));
+        container.dataset.s01AutoFit=String(b1AutoFit&&b1Policy.allowed);
       }
       if(b1){
         // Diagnostics and visible caption refer to the state just rendered.
@@ -890,7 +910,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       }
       if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
         flatNotified = true;
-        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)),isBoundedStage?b1AutoFit:undefined);
+        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)),(isBoundedStage||isTokamak3d)?b1AutoFit:undefined);
       }
       const renderDuration = performance.now() - renderStart;
       performanceGuard.observe(renderDuration);
