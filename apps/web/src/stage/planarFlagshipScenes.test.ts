@@ -26,7 +26,10 @@ describe('flagship physical display alignment', () => {
           const safe=fusionSafeRect(width,height,presentation);
           const camera=new CameraMorphController(plugin.spatial3D,width,height);
           fitFusionSpatialFrame(camera,points,width,height,safe);
-          expect(fusionScreenFits(projectFusionFrame(points,camera.getActiveCamera(),width,height),safe)).toBe(true);
+          const framed=projectFusionFrame(points,camera.getActiveCamera(),width,height);
+          expect(fusionScreenFits(framed,safe)).toBe(true);
+          const occupancy=Math.max((framed.right-framed.left)/(safe.right-safe.left-64),(framed.bottom-framed.top)/(safe.bottom-safe.top-64));
+          expect(occupancy).toBeGreaterThan(.80);
           const vp=fitFusionFlatViewport(points,{width,height,dpr:1,scale:1,offsetX:0,offsetY:0},safe);
           expect(fusionScreenFits(fusionFlatScreenBounds(points,vp),safe)).toBe(true);
         }
