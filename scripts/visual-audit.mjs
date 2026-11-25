@@ -557,6 +557,90 @@ async function auditM03Constraints(page,origin){
 }
 
 
+
+async function auditM06Vertical(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-vertical-circular');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-vertical-circular');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),plot=page.getByTestId('uplot-container');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-vertical-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M06 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(m=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.verticalRendered||'null');return s?.mode===m&&s.t===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey==='normalForceN'&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey==='speed');
+  };
+  const sync=async()=>{
+    await page.waitForFunction(()=>{
+      const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.verticalRendered||'null'),t=Number(document.querySelector('[data-testid="vertical-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);
+      return d&&Math.abs(d.t-t)<1e-10&&Math.abs(d.t-p)<1e-10;
+    },null,{timeout:5000});
+    return read();
+  };
+  const runTo=async(t)=>{
+    await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.verticalRendered||'null')?.t>t,t,{timeout:20000});
+    await play.click();return sync();
+  };
+  const ballistic=(d,R,theta,td,outer,v0)=>{
+    if(d.derailed!==1)throw Error('M06 not released '+JSON.stringify(d));
+    check(d.derailTime,td,'release time');check(d.derailAngleDeg,theta*180/Math.PI,'release angle',1e-5);
+    const v=v0??Math.sqrt(9.8*R*Math.cos(theta)),vx=outer?v*Math.cos(theta):-v*Math.cos(theta),vy=outer?-v*Math.sin(theta):v*Math.sin(theta),dt=d.t-td;
+    check(d.x,R*Math.sin(theta)+vx*dt,'ballistic x',2e-6);check(d.y,R*Math.cos(theta)+vy*dt-4.9*dt*dt,'ballistic y',2e-6);check(d.vx,vx,'vx',2e-6);check(d.vy,vy-9.8*dt,'vy',2e-6);check(d.normalForceN,0,'released reaction',1e-12);
+  };
+  await select('outer-launch-release','outer-dome');
+  await page.getByTestId('vertical-scope-empty').waitFor({state:'visible'});
+  const immediate=await read();ballistic(immediate,1.6,Math.PI/6,0,true,5);
+  await page.screenshot({path:path.join(OUT_DIR,'H25_M06_initial_release.png')});
+  await page.getByTestId('btn-step').click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.verticalRendered||'null')?.t>0);
+  const step=await sync();check(step.t,1/60,'single step',1e-10);ballistic(step,1.6,Math.PI/6,0,true,5);
+  const late=await runTo(2.1);ballistic(late,1.6,Math.PI/6,0,true,5);
+  const vp=JSON.parse(await canvas.getAttribute('data-vertical-viewport')),ppm=.24*Math.min(vp.width,vp.height)*vp.scale,bx=.45*vp.width+vp.offsetX+late.x*ppm,by=.5*vp.height+vp.offsetY-late.y*ppm;
+  if(!(bx>25&&bx<vp.width-25&&by>25&&by<vp.height-25&&ppm>15))throw Error('M06 late projectile visibility '+JSON.stringify({vp,bx,by,ppm}));
+  await page.screenshot({path:path.join(OUT_DIR,'H25_M06_free_follow.png')});
+  const rect=await canvas.boundingBox();await page.mouse.move(rect.x+90,rect.y+120);
+  const before=JSON.parse(await canvas.getAttribute('data-vertical-viewport'));await page.mouse.down();await page.mouse.move(rect.x+130,rect.y+145,{steps:4});await page.mouse.up();
+  const after=JSON.parse(await canvas.getAttribute('data-vertical-viewport'));
+  check(after.offsetX-before.offsetX,40,'manual pan x',.5);check(after.offsetY-before.offsetY,25,'manual pan y',.5);
+  if(await canvas.getAttribute('data-vertical-auto-fit')!=='false')throw Error('M06 camera ownership lost');
+  await page.getByTestId('btn-reset-view').click();
+  await page.waitForFunction(()=>document.querySelector('[data-testid="simulation-canvas"]')?.dataset.verticalAutoFit==='true');
+  await select('smooth-dome-derail','outer-dome');
+  const dome=await runTo(2.12);ballistic(dome,1.6,48.19147298944372*Math.PI/180,2.0292738208672785,true);
+  await page.screenshot({path:path.join(OUT_DIR,'H25_M06_dome_release.png')});
+  await select('inner-loop-subcritical','inner-loop');
+  const inner=await runTo(.67);ballistic(inner,1.4,62.82214502966877*Math.PI/180,.5693585335711913,false);
+  await page.screenshot({path:path.join(OUT_DIR,'H25_M06_inner_release.png')});
+  await select('inner-loop-critical','inner-loop');
+  const critical=await runTo(1.05);
+  if(critical.derailed!==0||critical.normalForceN<0)throw Error('M06 critical contact lost '+JSON.stringify(critical));
+  check(Math.hypot(critical.x,critical.y),1.6,'critical radius',1e-10);check(critical.energy,1.5*9.8*1.6,'critical energy',1e-7);
+  if(await page.getByTestId('param-slider-startAngleDeg').count())throw Error('M06 inactive dome angle leaked into inner mode');
+  if(await page.getByTestId('floating-scope-dock').getAttribute('data-scope-units')!=='separate'||!await plot.isVisible())throw Error('M06 missing true two-unit plot');
+  await page.screenshot({path:path.join(OUT_DIR,'H25_M06_critical_loop.png')});
+  await select('inner-loop-side-turn','inner-loop');
+  const side=await runTo(1.1);if(side.derailed!==0||side.normalForceN<0)throw Error('M06 side tangency wrongly detached');
+  check(Math.hypot(side.x,side.y),1.6,'side radius',1e-10);check(side.energy,0,'zero-reference energy',1e-8);
+  await page.screenshot({path:path.join(OUT_DIR,'H25_M06_side_turn.png')});
+  await select('light-rod-full-loop','light-rod');await play.click();
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.verticalRendered||'null')?.normalForceN<-.5,null,{timeout:15000});
+  await play.click();const rod=await sync();if(rod.derailed!==0||rod.normalForceN>=0)throw Error('M06 rod compression not displayed '+JSON.stringify(rod));
+  check(Math.hypot(rod.x,rod.y),1.4,'rod radius',1e-10);check(rod.normalForceN,rod.speed**2/1.4-9.8*rod.y/1.4,'signed rod force');
+  const force=page.getByLabel('实际受力矢量（等比例）');if(!await force.isVisible())await page.locator('details').filter({has:force}).locator('summary').click();
+  await force.check();await page.screenshot({path:path.join(OUT_DIR,'H25_M06_rod_compression.png')});
+  const theme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+  if(theme!=='projector'){
+    if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+    await page.getByTestId('btn-theme').click();await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+  }
+  await page.screenshot({path:path.join(OUT_DIR,'H25_M06_rod_paper.png')});
+  if(theme!=='projector'){
+    if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+    await page.getByTestId('btn-theme').click();
+  }
+  const report={immediate,step,late,dome,inner,critical,side,rod,manualPan:true};console.log('H25 M06 online '+JSON.stringify(report));return report;
+}
+
 async function auditM05Contact(page,origin){
   const url=new URL(origin);url.searchParams.set('model','mech-block-conveyor');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2100,6 +2184,7 @@ async function main() {
     const m03ConstraintReport=await auditM03Constraints(page,origin);
     const m04ProjectileReport=await auditM04Projectile(page,origin);
     const m05ContactReport=await auditM05Contact(page,origin);
+    const m06VerticalReport=await auditM06Vertical(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2394,7 +2479,35 @@ async function main() {
       Object.assign(m05OfflineReport,{step,terminal,errors:m05Errors,network:m05Network});
     }finally{await m05Context.close();}
 
-    const summary = { m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+
+    const m06File=path.join(OUT_DIR,'H25_M06_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-vertical-circular','--preset','outer-launch-release','--out',m06File],{stdio:'inherit'});
+    const m06Context=await browser.newContext({viewport:VIEWPORT,offline:true}),m06Page=await m06Context.newPage(),m06Errors=[],m06Network=[],m06OfflineReport={};
+    m06Page.on('pageerror',e=>m06Errors.push(e.message));m06Page.on('console',m=>{if(m.type()==='error')m06Errors.push(m.text());});m06Page.on('request',r=>{if(/^https?:/.test(r.url()))m06Network.push(r.url());});
+    try{
+      await m06Page.goto(pathToFileURL(m06File).href);
+      const canvas=m06Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-vertical-rendered'));
+      await m06Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.verticalRendered||'null')?.derailed===1);
+      await m06Page.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      await m06Page.getByRole('button',{name:'单步',exact:true}).click();
+      await m06Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.verticalRendered||'null')?.t>0);
+      const step=await read(),th=Math.PI/6;
+      if(step.derailTime!==0||Math.abs(step.t-1/60)>1e-10||Math.abs(step.x-(1.6*Math.sin(th)+5*Math.cos(th)*step.t))>1e-9||Math.abs(step.y-(1.6*Math.cos(th)-5*Math.sin(th)*step.t-4.9*step.t**2))>1e-9)throw Error('M06 offline step '+JSON.stringify(step));
+      await m06Page.locator('[data-preset-id="inner-loop-critical"]').click();
+      await m06Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.verticalRendered||'null');return s?.mode==='inner-loop'&&s.t===0;});
+      await m06Page.getByTestId('sf-play-pause').click();
+      await m06Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.verticalRendered||'null')?.t>1.05);
+      await m06Page.getByTestId('sf-play-pause').click();
+      await m06Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]').dataset.verticalRendered),t=Number(document.querySelector('[data-testid="sf-summary-clock"]').dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]').dataset.lastSampleT);return Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;});
+      const critical=await read();if(critical.derailed!==0||critical.normalForceN<0||Math.abs(Math.hypot(critical.x,critical.y)-1.6)>1e-10||Math.abs(critical.energy-1.5*9.8*1.6)>1e-7)throw Error('M06 offline critical '+JSON.stringify(critical));
+      if(await m06Page.getByTestId('sf-param-startAngleDeg').count()||await m06Page.getByTestId('sf-uplot').getAttribute('data-scope-units')!=='separate')throw Error('M06 offline mode or units');
+      await m06Page.getByRole('button',{name:'黑板深蓝'}).click();await m06Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await m06Page.screenshot({path:path.join(OUT_DIR,'H25_M06_offline_critical_paper.png')});
+      if(m06Errors.length||m06Network.length)throw Error('M06 offline errors '+JSON.stringify({m06Errors,m06Network}));
+      Object.assign(m06OfflineReport,{step,critical,errors:m06Errors,network:m06Network});
+    }finally{await m06Context.close();}
+
+    const summary = { m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

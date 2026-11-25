@@ -28,6 +28,8 @@ export interface VerticalCircularState {
   readonly derailed: boolean;
   readonly derailAngleDeg: number | null;
   readonly initialEnergy: number;
+  readonly release: Readonly<{t:number;x:number;y:number;vx:number;vy:number}> | null;
+  readonly trailContactCount: number;
   readonly trail: readonly Vec2[];
   readonly events: readonly PhysicsEvent[];
 }
@@ -60,165 +62,116 @@ function evaluateConstrainedReaction(
   };
 }
 
-export function createInitialState(params: VerticalCircularParams): VerticalCircularState {
-  const R = Math.max(0.4, params.radius);
-  const g = CLASSROOM_GRAVITY;
-  let x = 0;
-  let y = R;
-  let vx = params.vLaunch;
-  let vy = 0;
-
-  if (params.trackMode === 'outer-dome') {
-    const th = degToRad(Math.max(1e-4, Math.min(80, params.startAngleDeg)));
-    x = R * Math.sin(th);
-    y = R * Math.cos(th);
-    vx = params.vLaunch * Math.cos(th);
-    vy = -params.vLaunch * Math.sin(th);
-  } else {
-    // inner-loop or light-rod: launch horizontally from bottom (0, -R)
-    x = 0;
-    y = -R;
-    vx = params.vLaunch;
-    vy = 0;
-  }
-
-  const react = evaluateConstrainedReaction(x, y, vx, vy, params.mass, g, params.trackMode);
-  const initE = 0.5 * params.mass * (vx * vx + vy * vy) + params.mass * g * y;
-
-  return {
-    t: 0,
-    x,
-    y,
-    vx,
-    vy,
-    normalForceN: react.radialScalarForce,
-    derailed: false,
-    derailAngleDeg: null,
-    initialEnergy: initE,
-    trail: [{ x, y }],
-    events: []
-  };
+type AngularState={t:number;theta:number;omega:number};
+type CartesianState={t:number;x:number;y:number;vx:number;vy:number};
+const radius=(p:VerticalCircularParams)=>Math.max(.4,p.radius);
+const toCartesian=(a:AngularState,R:number):CartesianState=>({t:a.t,x:R*Math.sin(a.theta),y:R*Math.cos(a.theta),vx:R*a.omega*Math.cos(a.theta),vy:-R*a.omega*Math.sin(a.theta)});
+const angleDeg=(s:CartesianState)=>Math.atan2(Math.abs(s.x),s.y)*180/Math.PI;
+function releaseEvent(s:CartesianState,bracketWidth=0):PhysicsEvent{
+  return {id:'derail-'+s.t.toFixed(6),time:s.t,label:'脱轨切换自由抛体 (θ_d='+angleDeg(s).toFixed(2)+'°)',position:{x:s.x,y:s.y},metrics:{derailAngleDeg:angleDeg(s),vx:s.vx,vy:s.vy,bracketWidth}};
 }
-
-function advanceConstrained(
-  s: { t: number; x: number; y: number; vx: number; vy: number },
-  params: VerticalCircularParams,
-  dt: number
-): { t: number; x: number; y: number; vx: number; vy: number } {
-  const R = Math.max(0.4, params.radius);
-  const g = CLASSROOM_GRAVITY;
-  // Project angle theta smoothly and step angular ODE d2theta/dt2 = ... for exact circle geometry, then verify force via UdwadiaKalaba!
-  const theta0 = Math.atan2(s.x, s.y); // angle from +y vertical axis (0 at top, pi at bottom)
-  const omega0 = (s.vx * s.y - s.vy * s.x) / (R * R);
-
-  const next = stepRK4([theta0, omega0], s.t, dt, (_t, yv) => [
-    yv[1]!,
-    (g / R) * Math.sin(yv[0]!)
-  ]);
-  const th = next[0]!;
-  const om = next[1]!;
-  return {
-    t: s.t + dt,
-    x: R * Math.sin(th),
-    y: R * Math.cos(th),
-    vx: R * om * Math.cos(th),
-    vy: -R * om * Math.sin(th)
-  };
+export function createInitialState(p:VerticalCircularParams):VerticalCircularState{
+  const R=radius(p),g=CLASSROOM_GRAVITY,outer=p.trackMode==='outer-dome';
+  const theta=outer?degToRad(Math.max(0,Math.min(80,p.startAngleDeg))):Math.PI;
+  const a={t:0,theta,omega:(outer?1:-1)*p.vLaunch/R};
+  const s=toCartesian(a,R);
+  // Exact bottom is (0,-R), not a roundoff displacement.
+  if(!outer){s.x=0;s.y=-R;s.vx=p.vLaunch;s.vy=0;}
+  const react=evaluateConstrainedReaction(s.x,s.y,s.vx,s.vy,p.mass,g,p.trackMode);
+  const eps=32*Number.EPSILON*Math.max(1,p.mass*g,p.mass*p.vLaunch**2/R);
+  const released=outer&&react.radialScalarForce<=eps;
+  const event=released?releaseEvent(s):null;
+  return {...s,normalForceN:released?0:react.radialScalarForce,derailed:released,
+    derailAngleDeg:released?angleDeg(s):null,release:released?s:null,
+    initialEnergy:.5*p.mass*(s.vx*s.vx+s.vy*s.vy)+p.mass*g*s.y,
+    trail:[{x:s.x,y:s.y}],trailContactCount:1,events:event?[event]:[]};
 }
-
-export function stepVerticalCircular(
-  state: VerticalCircularState,
-  params: VerticalCircularParams,
-  dt: number
-): StepResult<VerticalCircularState> {
-  if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
-  if (dt === 0) return { nextState: state, events: [] };
-
-  const g = CLASSROOM_GRAVITY;
-  if (state.derailed) {
-    const nextVy = state.vy - g * dt;
-    const nextX = state.x + state.vx * dt;
-    const nextY = state.y + 0.5 * (state.vy + nextVy) * dt;
-    return {
-      nextState: {
-        ...state,
-        t: state.t + dt,
-        x: nextX,
-        y: nextY,
-        vy: nextVy,
-        normalForceN: 0,
-        trail: [...state.trail, { x: nextX, y: nextY }]
-      },
-      events: []
-    };
+function advanceAngle(s:AngularState,p:VerticalCircularParams,h:number):AngularState{
+  const [theta,omega]=stepRK4([s.theta,s.omega],s.t,h,(_t,v)=>[v[1]!,CLASSROOM_GRAVITY/radius(p)*Math.sin(v[0]!)]);
+  return {t:s.t+h,theta:theta!,omega:omega!};
+}
+// The initial energy gives a reaction-zero angle independently of RK drift.
+// At the side/top limiting cases N touches zero but does not cross into an
+// inadmissible interval. Only the intermediate energy range has a true guard.
+function releaseGuard(p:VerticalCircularParams):((s:AngularState)=>number)|null{
+  const gR=CLASSROOM_GRAVITY*radius(p),ratio=p.vLaunch**2/gR;
+  if(p.trackMode==='outer-dome'){
+    const c=(2*Math.cos(degToRad(Math.max(0,Math.min(80,p.startAngleDeg))))+ratio)/3;
+    const theta=Math.acos(Math.max(-1,Math.min(1,c)));
+    return s=>theta-s.theta;
   }
-
-  const cur = { t: state.t, x: state.x, y: state.y, vx: state.vx, vy: state.vy };
-  const cand = advanceConstrained(cur, params, dt);
-  const reactEnd = evaluateConstrainedReaction(
-    cand.x,
-    cand.y,
-    cand.vx,
-    cand.vy,
-    params.mass,
-    g,
-    params.trackMode
-  );
-
-  const stepEvents: PhysicsEvent[] = [];
-  if (params.trackMode !== 'light-rod' && state.normalForceN > 0 && reactEnd.radialScalarForce <= 0) {
-    const hit = bisectEvent(
-      cur,
-      cur.t,
-      dt,
-      (s, subDt) => advanceConstrained(s, params, subDt),
-      (s) =>
-        evaluateConstrainedReaction(s.x, s.y, s.vx, s.vy, params.mass, g, params.trackMode)
-          .radialScalarForce,
-      { timeTolerance: 1e-8, biasEndpoint: 'midpoint' }
-    );
-    if (hit) {
-      const rem = dt - hit.timeOffset;
-      const b = hit.state;
-      const derailAngDeg = (Math.atan2(Math.abs(b.x), b.y) * 180) / Math.PI;
-      const nextVy = b.vy - g * rem;
-      const nextX = b.x + b.vx * rem;
-      const nextY = b.y + 0.5 * (b.vy + nextVy) * rem;
-      stepEvents.push({
-        id: `derail-${hit.time.toFixed(6)}`,
-        time: hit.time,
-        label: `脱轨切换自由抛体 (θ_d=${derailAngDeg.toFixed(2)}°)`,
-        position: { x: b.x, y: b.y },
-        metrics: { derailAngleDeg: derailAngDeg }
-      });
-      return {
-        nextState: {
-          ...state,
-          t: state.t + dt,
-          x: nextX,
-          y: nextY,
-          vx: b.vx,
-          vy: nextVy,
-          normalForceN: 0,
-          derailed: true,
-          derailAngleDeg: derailAngDeg,
-          trail: [...state.trail, { x: b.x, y: b.y }, { x: nextX, y: nextY }],
-          events: [...state.events, ...stepEvents]
-        },
-        events: stepEvents
-      };
+  const eps=32*Number.EPSILON*Math.max(1,ratio);
+  if(p.trackMode==='inner-loop'&&ratio>2+eps&&ratio<5-eps){
+    const theta=Math.acos((ratio-2)/3);
+    return s=>s.theta-theta;
+  }
+  return null;
+}
+function projectile(s:CartesianState,h:number):CartesianState{
+  const g=CLASSROOM_GRAVITY;
+  return {t:s.t+h,x:s.x+s.vx*h,y:s.y+s.vy*h-.5*g*h*h,vx:s.vx,vy:s.vy-g*h};
+}
+// Keep actual sampled points, not extrapolated history; preserve phase boundary
+// index through bounded history eviction. Release metadata is retained separately.
+function appendTrail(s:VerticalCircularState,points:readonly Vec2[],contactCount:number){
+  const all=[...s.trail,...points],drop=Math.max(0,all.length-1201);
+  return {trail:all.slice(drop),trailContactCount:Math.max(0,contactCount-drop)};
+}
+export function stepVerticalCircular(state:VerticalCircularState,p:VerticalCircularParams,dt:number):StepResult<VerticalCircularState>{
+  if(!Number.isFinite(dt)||dt<0)throw Error('Invalid dt: '+dt);
+  if(dt===0)return {nextState:state,events:[]};
+  if(state.derailed){
+    const next=projectile(state,dt);
+    // The initial event is also exposed to hosts that collect step events only.
+    const events=state.t===0&&state.release?.t===0?state.events.slice(0,1):[];
+    return {nextState:{...state,...next,...appendTrail(state,[{x:next.x,y:next.y}],state.trailContactCount),normalForceN:0},events};
+  }
+  const R=radius(p),g=CLASSROOM_GRAVITY;
+  // Exact bottom-launch separatrix of the bilateral rod. Ordinary RK can
+  // preserve energy to 1e-10 and still eventually flip the unstable branch.
+  // This is the closed form of the same pendulum ODE, not a visual animation.
+  const ratio=p.vLaunch*p.vLaunch/(g*R);
+  if(p.trackMode==='light-rod'&&Math.abs(ratio-4)<=32*Number.EPSILON*Math.max(1,ratio)){
+    const t=state.t+dt,k=Math.sqrt(g/R),theta=4*Math.atan(Math.exp(-k*t)),omega=-2*k*Math.sin(theta/2);
+    const next=toCartesian({t,theta,omega},R);
+    const react=evaluateConstrainedReaction(next.x,next.y,next.vx,next.vy,p.mass,g,p.trackMode);
+    return {nextState:{...state,...next,...appendTrail(state,[{x:next.x,y:next.y}],state.trail.length+1),normalForceN:react.radialScalarForce},events:[]};
+  }
+  let a:AngularState={t:state.t,theta:Math.atan2(state.x,state.y),omega:(state.vx*state.y-state.vy*state.x)/(R*R)};
+  const end=state.t+dt,guard=releaseGuard(p);
+  let count=0;
+  while(a.t<end){
+    if(++count>200000)throw Error('M06 constrained substep budget exceeded');
+    // Very near the side-turn threshold the forbidden contact interval
+    // can be shorter than a single RK substep. Refine the local integration
+    // and split the guard bracket at the actual angular-velocity turning point.
+    const nearSide=p.trackMode==='inner-loop'&&ratio>2&&ratio<2.0001;
+    const h=Math.min(end-a.t,nearSide?.00025:.0015,.02/(1+Math.abs(a.omega)+Math.sqrt(g/R)));
+    if(h<=0||a.t+h===a.t)break;
+    const next=advanceAngle(a,p,h);
+    let bracket=h;
+    let crosses=Boolean(guard&&guard(a)>=0&&guard(next)<=0);
+    if(!crosses&&guard&&p.trackMode==='inner-loop'&&guard(a)>=0&&a.omega<0&&next.omega>=0){
+      const turn=bisectEvent(a,a.t,h,(s,d)=>advanceAngle(s,p,d),s=>s.omega,{timeTolerance:1e-13});
+      if(!turn)throw Error('M06 turning bracket failed');
+      if(guard(turn.state)<=0){crosses=true;bracket=turn.timeOffset;}
     }
+    if(guard&&crosses){
+      const hit=bisectEvent(a,a.t,bracket,(s,d)=>advanceAngle(s,p,d),guard,{timeTolerance:1e-11,triggerOnStartZero:true});
+      if(!hit)throw Error('M06 release bracket failed');
+      const b=toCartesian(hit.state,R),event=releaseEvent(b,hit.bracketWidth),free=projectile(b,end-b.t);
+      const pts=[{x:b.x,y:b.y},...(end>b.t?[{x:free.x,y:free.y}]:[])];
+      return {nextState:{...state,...free,...appendTrail(state,pts,state.trail.length+1),
+        normalForceN:0,derailed:true,derailAngleDeg:angleDeg(b),release:b,events:[...state.events,event]},events:[event]};
+    }
+    a=next;
   }
-
-  return {
-    nextState: {
-      ...state,
-      ...cand,
-      normalForceN: reactEnd.radialScalarForce,
-      trail: [...state.trail, { x: cand.x, y: cand.y }]
-    },
-    events: []
-  };
+  const next=toCartesian(a,R),react=evaluateConstrainedReaction(next.x,next.y,next.vx,next.vy,p.mass,g,p.trackMode);
+  // In physically admissible zero-force tangencies, numerical roundoff must
+  // not display a spurious pulling contact force. The energy audit is separate.
+  if(p.trackMode!=='light-rod'&&react.radialScalarForce < -1e-8*Math.max(1,p.mass*g))throw Error('M06 inadmissible constrained reaction: '+react.radialScalarForce);
+  const N=p.trackMode==='light-rod'?react.radialScalarForce:Math.max(0,react.radialScalarForce);
+  return {nextState:{...state,...next,...appendTrail(state,[{x:next.x,y:next.y}],state.trail.length+1),normalForceN:N},events:[]};
 }
 
 export function computeObservables(state: VerticalCircularState, params: VerticalCircularParams): Record<string, number> {
@@ -230,12 +183,20 @@ export function computeObservables(state: VerticalCircularState, params: Vertica
     y: state.y,
     speed,
     normalForceN: state.normalForceN,
-    energy
+    energy,
+    thetaDeg:Math.atan2(Math.abs(state.x),state.y)*180/Math.PI,
+    vx:state.vx,vy:state.vy,derailed:state.derailed?1:0,
+    ...(state.release?{derailTime:state.release.t,derailAngleDeg:state.derailAngleDeg!}:{}),
+    kineticEnergy:.5*params.mass*speed*speed,potentialEnergy:params.mass*g*state.y
   };
 }
 
 export function checkInvariants(state: VerticalCircularState, _init: VerticalCircularState, params: VerticalCircularParams): InvariantReport[] {
   const obs = computeObservables(state, params);
-  const relErr = Math.abs(obs.energy! - state.initialEnergy) / Math.max(Math.abs(state.initialEnergy), 1e-6);
+  const absoluteError=Math.abs(obs.energy!-state.initialEnergy);
+  // At zero reference energy the relative error is undefined. Audit the
+  // absolute SI residual as well, rather than normalize by an arbitrary 1e-6 J.
+  if(Math.abs(state.initialEnergy)<1e-8*Math.max(1,params.mass*CLASSROOM_GRAVITY*radius(params)))return [{name:'机械能绝对残差（初始能量近零）',measuredError:absoluteError,tolerance:1e-8,passed:absoluteError<1e-8,unit:'J'}];
+  const relErr = absoluteError / Math.max(Math.abs(state.initialEnergy), 1e-6);
   return [{ name: '竖直圆周机械能守恒 ΔE/E₀', measuredError: relErr, tolerance: 1e-6, passed: relErr < 1e-6 }];
 }
