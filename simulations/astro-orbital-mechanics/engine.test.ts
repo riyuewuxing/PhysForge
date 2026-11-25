@@ -179,3 +179,22 @@ describe('M10 physical boundary and mode contracts',()=>{
     expect(checkInvariants(s,initial,p).every(x=>x.passed)).toBe(true);
   });
 });
+
+describe('M10 close approach physical precision',()=>{
+  it.each([
+    [.08,[-.72301618,-.12073021,.50582142,-.24248433]],
+    [.2,[9.96309178,3.38677413,.99720546,.53633826]],
+    [.4,[-1.99543809,-1.56657718,.162522,-.4108712]]
+  ] as const)('resolves near-primary passages for q=%s without false numerical escape',(q,reference)=>{
+    const p={...getPreset(3),massRatioQ:q,simSpeed:1},initial=createInitialState(p);
+    let s=initial,maxDrift=0;
+    const c0=computeObservables(s,p).jacobiConstant!;
+    for(let i=0;i<1600;i++){
+      s=stepAstroOrbital(s,p,.0125).nextState;
+      const c=computeObservables(s,p).jacobiConstant!;
+      maxDrift=Math.max(maxDrift,Math.abs(c-c0));
+    }
+    expect(maxDrift).toBeLessThan(1e-6);
+    expect(Math.hypot(s.xNorm-reference[0],s.yNorm-reference[1],s.vxNorm-reference[2],s.vyNorm-reference[3])).toBeLessThan(3e-5);
+  });
+});
