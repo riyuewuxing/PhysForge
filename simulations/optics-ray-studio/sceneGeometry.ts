@@ -4,7 +4,8 @@ import { prismVertices, slitIntensity, type OpticsParams, type OpticsState } fro
 type Point={x:number;y:number};
 type Layer='medium'|'normalLine'|'rays';
 type Tone='glass'|'clad'|'axis'|'warm'|'cool'|'image'|'virtual'|'text'|'spectral';
-export type OpticalMark={layer:Layer;tone:Tone;primitive:DiagramPrimitive;color?:string;power?:number};
+export type OpticalMark={layer:Layer;tone:Tone;primitive:DiagramPrimitive;color?:string;power?:number;fixedLabel?:boolean};
+export const SLIT_SCREEN={x:.35,halfWidth:.09,halfHeight:1.6,mmPerWorld:2.5,curveX:1.15,curveWidth:1.45};
 export interface OpticalScene { marks:OpticalMark[]; bounds:{minX:number;minY:number;maxX:number;maxY:number}; profile?:{x:number;y:number;intensity:number}[]; }
 
 export function opticalScene(state:OpticsState,p:OpticsParams):OpticalScene {
@@ -73,7 +74,7 @@ export function opticalScene(state:OpticsState,p:OpticsParams):OpticalScene {
     label('理想薄凸透镜 · 近轴模型',0,-2);
   }else if(p.sceneMode==='double-slit'){
     // Separate schematic apparatus coordinates and a fixed physical screen scale.
-    const gap=.29,barrier=-2.35,screen=.65,half=1.6,mmPerWorld=2.5,curveX=1.04,curveWidth=1.55;
+    const gap=.29,barrier=-2.35,{x:screen,halfHeight:half,mmPerWorld,curveX,curveWidth}=SLIT_SCREEN;
     const color=p.wavelengthNm<490?'#60a5fa':p.wavelengthNm<570?'#4ade80':p.wavelengthNm<605?'#fbbf24':'#f87171';
     for(const [a,b] of [[-half,-gap-.035],[-gap+.035,gap-.035],[gap+.035,half]] as const)
       line(P(barrier,a),P(barrier,b),'medium','axis');
@@ -85,12 +86,18 @@ export function opticalScene(state:OpticsState,p:OpticsParams):OpticalScene {
     line(P(curveX,-half),P(curveX+curveWidth,-half),'normalLine','axis');
     for(const mm of [-4,-2,0,2,4]){
       const y=mm/mmPerWorld;line(P(curveX-.045,y),P(curveX,y),'normalLine','axis');
-      label(String(mm)+' mm',curveX-.35,y,'normalLine');
+      // Tick labels are part of the quantitative coordinate system. They must
+      // not be moved by the ordinary annotation avoidance algorithm.
+      marks.push({layer:'normalLine',tone:'text',fixedLabel:true,primitive:{kind:'text',x:curveX-.12,y,text:String(mm)+' mm',align:'end'}});
     }
     profile=Array.from({length:1201},(_,i)=>{const y=-half+2*half*i/1200,intensity=slitIntensity(y*mmPerWorld,state.fringeSpacingMm);return{x:curveX+curveWidth*intensity,y,intensity};});
     put('rays','spectral',{kind:'polyline',points:profile},color);
     label('Δx='+state.fringeSpacingMm.toFixed(3)+' mm',-1.15,-1.85,'normalLine','warm');
-    label('屏面固定 ±4 mm · 近轴等幅窄缝',1.35,-1.9,'normalLine');
+    for(const [x,text] of [[curveX,'0'],[curveX+curveWidth,'1']] as const){
+      line(P(x,-half),P(x,-half-.045),'normalLine','axis');
+      marks.push({layer:'normalLine',tone:'text',fixedLabel:true,primitive:{kind:'text',x,y:-half-.14,text,align:'middle'}});
+    }
+    label('屏面固定 ±4 mm · 近轴等幅窄缝',1.35,-2.02,'normalLine');
   }
   if(p.sceneMode==='prism-dispersion'||p.sceneMode==='optical-fiber')for(const r of state.rays)for(const q of [r.from,r.to]){
     bounds.minX=Math.min(bounds.minX,q.x-.15);bounds.maxX=Math.max(bounds.maxX,q.x+.15);

@@ -1,5 +1,5 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
-import { opticalScene, type OpticalMark } from './sceneGeometry.js';
+import { opticalScene, SLIT_SCREEN, type OpticalMark } from './sceneGeometry.js';
 import { degToRad } from '@physforge/physics-core';
 import {
   createWorldMapper,
@@ -149,7 +149,12 @@ function renderOpticalScene(ctx:CanvasRenderingContext2D,state:OpticsState,param
   for(const mark of scene.marks){
     if(!layers.has(mark.layer))continue;
     const g=mark.primitive,c=color(mark);
-    if(g.kind==='text'){const p=m.toScreen(g.x,g.y);labels.push({...p,text:g.text,color:c,font});continue;}
+    if(g.kind==='text'){
+      const p=m.toScreen(g.x,g.y);
+      if(mark.fixedLabel){ctx.save();ctx.font=font;ctx.fillStyle=c;ctx.textBaseline='middle';ctx.textAlign=g.align==='end'?'right':g.align==='start'?'left':'center';ctx.fillText(g.text,p.x,p.y);ctx.restore();}
+      else labels.push({...p,text:g.text,color:c,font});
+      continue;
+    }
     ctx.save();ctx.strokeStyle=c;ctx.fillStyle=c;ctx.lineWidth=1.5;ctx.lineCap='round';ctx.lineJoin='round';
     if(g.kind==='polyline'){
       const pts=g.points.map(p=>m.toScreen(p.x,p.y));
@@ -178,7 +183,7 @@ function renderOpticalScene(ctx:CanvasRenderingContext2D,state:OpticsState,param
     for(let i=0;i<samples.length-1;i++){
       const a=samples[i]!,b=samples[i+1]!;
       ctx.fillStyle=c;ctx.globalAlpha=paper?.08+.92*a.intensity:.035+.965*a.intensity;
-      ctx.fillRect(m.toX(.56),m.toY(b.y),m.len(.18),m.len(b.y-a.y)+.2);
+      ctx.fillRect(m.toX(SLIT_SCREEN.x-SLIT_SCREEN.halfWidth),m.toY(b.y),m.len(2*SLIT_SCREEN.halfWidth),m.len(b.y-a.y)+.2);
     }
     ctx.globalAlpha=1;
   }

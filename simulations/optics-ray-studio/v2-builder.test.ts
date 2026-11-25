@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createWorldMapper, resolveInitialCameraTransform, resolvePluginParams } from '@physforge/sim-sdk';
 import { opticsRayStudioPlugin } from './plugin.js';
 import { createInitialState, slitIntensity, type OpticsParams } from './engine.js';
-import { opticalScene } from './sceneGeometry.js';
+import { opticalScene, SLIT_SCREEN } from './sceneGeometry.js';
 
 describe('B3 builder-optics-ray V2 verification', () => {
   it('fits real interface rays in the desktop workbench without distorting angles', () => {
@@ -96,7 +96,14 @@ describe('H9 shared optical scene',()=>{
     expect(slitIntensity(0,state.fringeSpacingMm)).toBe(1);
     expect(slitIntensity(state.fringeSpacingMm/2,state.fringeSpacingMm)).toBeCloseTo(0,12);
     expect(slitIntensity(state.fringeSpacingMm,state.fringeSpacingMm)).toBeCloseTo(1,12);
-    for(const q of scene.profile!)expect((q.x-1.04)/1.55).toBeCloseTo(Math.cos(Math.PI*q.y*2.5/state.fringeSpacingMm)**2,12);
+    for(const q of scene.profile!)expect((q.x-SLIT_SCREEN.curveX)/SLIT_SCREEN.curveWidth).toBeCloseTo(Math.cos(Math.PI*q.y*2.5/state.fringeSpacingMm)**2,12);
+    for(const mm of [-4,-2,0,2,4]){
+      const mark=scene.marks.find(m=>m.primitive.kind==='text'&&m.primitive.text===String(mm)+' mm');
+      expect(mark?.fixedLabel).toBe(true);
+      if(mark?.primitive.kind!=='text')throw Error('Missing metric tick');
+      expect(mark.primitive.y).toBe(mm/2.5);
+      expect(mark.primitive.align).toBe('end');
+    }
     expect(scene.profile![0]!.y).toBe(-1.6);expect(scene.profile!.at(-1)!.y).toBe(1.6);
   });
 });
