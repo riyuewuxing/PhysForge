@@ -17,9 +17,10 @@ export interface CameraTransform {
 export const MIN_ZOOM_SCALE = 0.1;
 export const MAX_ZOOM_SCALE = 20.0;
 
-export function clampZoomScale(scale: number): number {
+export function clampZoomScale(scale: number, minimum=MIN_ZOOM_SCALE): number {
   if (!Number.isFinite(scale)) return 1;
-  return Math.max(MIN_ZOOM_SCALE, Math.min(MAX_ZOOM_SCALE, scale));
+  const lower=Number.isFinite(minimum)?Math.max(.0001,Math.min(MIN_ZOOM_SCALE,minimum)):MIN_ZOOM_SCALE;
+  return Math.max(lower, Math.min(MAX_ZOOM_SCALE, scale));
 }
 
 export function getViewportAnchor(width: number, height: number): { cx: number; cy: number } {
@@ -35,9 +36,10 @@ export function zoomViewportAtCursor(
   cursorY: number,
   width: number,
   height: number,
-  zoomFactor: number
+  zoomFactor: number,
+  minimum=MIN_ZOOM_SCALE
 ): CameraTransform {
-  const nextScale = clampZoomScale(prev.scale * zoomFactor);
+  const nextScale = clampZoomScale(prev.scale * zoomFactor,minimum);
   if (Math.abs(nextScale - prev.scale) < 1e-9) return prev;
   const { cx, cy } = getViewportAnchor(width, height);
   const ratio = nextScale / prev.scale;

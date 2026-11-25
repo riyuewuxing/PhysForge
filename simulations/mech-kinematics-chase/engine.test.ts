@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, stepKinematicsChase, type KinematicsChaseParams } from './engine.js';
+import { createInitialState, stepKinematicsChase, computeObservables, checkInvariants, type KinematicsChaseParams } from './engine.js';
 
 describe('M01 mech-kinematics-chase verification', () => {
   it('captures exact co-velocity (t=4s) and catch-up (t=4+4√2 s) within < 1e-7 s', () => {
@@ -95,5 +95,41 @@ describe('H12 analytic event boundaries',()=>{
     for(const dt of [.13,.27,.8,1.1,2.7,3])s=stepKinematicsChase(s,params,dt).nextState;
     for(const key of ['t','xA','xB','vA','vB','minGap'] as const)expect(s[key]).toBeCloseTo(full[key],9);
     expect(s.events.map(e=>e.id)).toEqual(full.events.map(e=>e.id));
+  });
+});
+
+import { mechKinematicsChasePlugin } from './plugin.js';
+import { resolveInitialCameraTransform, worldToScreen, screenToWorld } from '@physforge/sim-sdk';
+describe('H12 real metre geometry and teaching contracts',()=>{
+  const p:KinematicsChaseParams={scenario:'accelerate-chase',vA0:0,aA:2,reactionTime:0,xB0:16,vB0:8,aB:0};
+  it('maps initial handle, reference origin and exported centres in actual metres',()=>{
+    const s=createInitialState(p),plugin=mechKinematicsChasePlugin;
+    const h=plugin.getControlHandles!(s,p)[0]!;
+    expect(h.position.x).toBe(16);
+    expect(h.onDrag({x:41,y:h.position.y})).toEqual({xB0:41});
+    const later=stepKinematicsChase(s,p,12).nextState;
+    expect(plugin.referenceFrames![0]!.getOrigin(later,p)).toEqual({x:144,y:0});
+    expect(plugin.referenceFrames![0]!.getVelocity!(later,p)).toEqual({x:24,y:0});
+    expect(plugin.getControlHandles!(later,p)).toEqual([]);
+    const ir=plugin.exportDiagramIR!(later,p),blocks=ir.primitives.filter(x=>x.kind==='block');
+    expect(blocks.map(x=>x.cx)).toEqual([144,112]);
+    expect(ir.viewBox.maxX).toBeGreaterThan(144);
+    expect(plugin.getForceVectors).toBeUndefined();
+  });
+  it('fits the default ten-second physical extent without scaling metres into fake units',()=>{
+    const v={width:1280,height:760,dpr:1,...resolveInitialCameraTransform(mechKinematicsChasePlugin,p,1280,760)};
+    expect(v.scale).toBeLessThan(.1);
+    const a=worldToScreen(0,0,v),b=worldToScreen(100,0,v);
+    expect(a.x).toBeGreaterThan(0);expect(b.x).toBeLessThan(v.width*.75);
+    expect(screenToWorld(b.x,b.y,v).x).toBeCloseTo(100,12);
+  });
+  it('separates signed gap, absolute gap, and historical minimum after overtaking',()=>{
+    const s=stepKinematicsChase(createInitialState(p),p,12).nextState,o=computeObservables(s);
+    expect(o.deltaX).toBe(-32);expect(o.gap).toBe(32);expect(o.minGap).toBe(0);
+    expect(o.firstMeetTime).toBeCloseTo(4+4*Math.SQRT2,12);expect(checkInvariants(s)[0]!.passed).toBe(true);
+    const b={...p,vA0:20,aA:-4,reactionTime:.4,xB0:42,vB0:6,aB:0};
+    const stop=stepKinematicsChase(createInitialState(b),b,10).nextState;
+    expect(stop.minGap).toBeCloseTo(11.9,10);
+    expect(stop.events.find(e=>e.id.startsWith('co-vel'))?.time).toBeCloseTo(3.9,10);
   });
 });

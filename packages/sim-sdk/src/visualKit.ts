@@ -115,7 +115,8 @@ export function resolveInitialCameraTransform<TParams extends import('./index.js
   const rawOffsetY = typeof spec.offsetRatioY === 'function'
     ? spec.offsetRatioY(params, viewportSize)
     : (spec.offsetRatioY ?? 0);
-  const scale = Number.isFinite(rawScale) ? Math.max(0.1, Math.min(20, rawScale)) : 1;
+  const lower=typeof spec.minScale==='number'&&Number.isFinite(spec.minScale)?Math.max(.0001,Math.min(.1,spec.minScale)):.1;
+  const scale = Number.isFinite(rawScale) ? Math.max(lower, Math.min(20, rawScale)) : 1;
   const offsetX = Number.isFinite(rawOffsetX * viewportSize.width) ? rawOffsetX * viewportSize.width : 0;
   const offsetY = Number.isFinite(rawOffsetY * viewportSize.height) ? rawOffsetY * viewportSize.height : 0;
   return { scale, offsetX, offsetY };
