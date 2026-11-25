@@ -704,8 +704,9 @@ export const SingleFileApp: React.FC = () => {
           className="w-80 shrink-0 border-l p-3 overflow-y-auto space-y-3"
           style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
         >
-          <div className="text-xs font-bold text-sky-400">课堂预设速切</div>
-          <div className="space-y-1.5">
+          {equilibriumSlice&&<section className="space-y-1 text-xs" data-testid="sf-equilibrium-layers"><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
+          <div className="text-xs font-bold" style={{color:"var(--pf-accent)"}}>课堂预设速切</div>
+          <div className={equilibriumSlice?"grid grid-cols-2 gap-1.5":"space-y-1.5"}>
             {targetPlugin.presets.map((preset) => (
               <button
                 key={preset.id}
@@ -726,7 +727,7 @@ export const SingleFileApp: React.FC = () => {
                   backgroundColor: 'var(--pf-surface-elevated)'
                 }}
               >
-                <div className="font-semibold">{preset.name}</div>
+                <div className={equilibriumSlice?"font-semibold truncate":"font-semibold"} title={preset.name}>{equilibriumSlice?preset.name.split("：")[0]:preset.name}</div>
               </button>
             ))}
           </div>
@@ -740,7 +741,8 @@ export const SingleFileApp: React.FC = () => {
               style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
             >
               <div style={{ color: 'var(--pf-text-muted)' }}>{f.label}</div>
-              <div
+              {equilibriumSlice&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
+              <div className="overflow-x-auto"
                 dangerouslySetInnerHTML={{
                   __html: katex.renderToString(f.substitutedLatex ?? f.latex, { throwOnError: false })
                 }}
@@ -748,7 +750,7 @@ export const SingleFileApp: React.FC = () => {
             </div>
           ))}
 
-          {equilibriumSlice&&<section className="space-y-1 text-xs" data-testid="sf-equilibrium-layers"><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
+
           <div className="text-xs font-bold text-sky-400">参数调节</div>
           {(targetPlugin.getParamFields?.(params)??targetPlugin.paramSchema).filter(field=>circuitSlice?(CIRCUIT_FIELDS[String(params.topology)]??[]).includes(field.key):opticalSlice?(OPTICAL_FIELDS[String(params.sceneMode)]??[]).includes(field.key):mechanicsSlice?(MECHANICS_FIELDS[String(params.scenario)]??[]).includes(field.key):true).map((field) => {
             const val = params[field.key] ?? field.defaultValue;

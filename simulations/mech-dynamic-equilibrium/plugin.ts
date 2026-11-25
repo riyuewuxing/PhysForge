@@ -51,21 +51,24 @@ export function equilibriumGeometry(s: EquilibriumState) {
     }else{
       line({x:o.x,y:o.y-.25},{x:o.x,y:o.y+.25});
       for(let i=0;i<6;i++)line({x:o.x,y:o.y-.25+i*.1},{x:o.x-.13,y:o.y-.32+i*.1});
-      label({x:o.x-.13,y:o.y-.37},'固支 O');
+      label({x:o.x,y:o.y-.37},'固支 O');
       if(r.supportMomentNm!==undefined){
         const moment=r.supportMomentNm,sign=Math.sign(moment);
         if(Math.abs(moment)>1e-10){
-          const radius=.23,start=.2,end=start+sign*4.6;
-          const points=Array.from({length:33},(_,i)=>{const a=start+(end-start)*i/32;return {x:o.x+radius*Math.cos(a),y:o.y+radius*Math.sin(a)};});
+          // A couple is a free moment: locate its symbol beside the support,
+          // with a dashed association leader, rather than crossing the rod/hatching.
+          const center={x:o.x-.47,y:o.y+.35},radius=.17,start=.2,end=start+sign*4.6;
+          line({x:o.x-.14,y:o.y+.15},{x:center.x+.14,y:center.y-.1},true);
+          const points=Array.from({length:33},(_,i)=>{const a=start+(end-start)*i/32;return {x:center.x+radius*Math.cos(a),y:center.y+radius*Math.sin(a)};});
           structure.push({kind:'polyline',points});
           const tip=points.at(-1)!,tangent={x:-sign*Math.sin(end),y:sign*Math.cos(end)},normal={x:-tangent.y,y:tangent.x};
           line(tip,shift(shift(tip,tangent,-.075),normal,.035));line(tip,shift(shift(tip,tangent,-.075),normal,-.035));
         }
-        label({x:o.x-.05,y:o.y+.45},'M='+moment.toFixed(2)+' N·m（逆时针为正）');
+        label({x:o.x-.47,y:o.y+.63},'Mₒ='+moment.toFixed(2)+' N·m');
       }
     }
-    label({x:(o.x+p.x)/2,y:(o.y+p.y)/2+.16},'L='+r.lengthM.toFixed(1)+'m');
-    label({x:p.x+.13,y:p.y+.13},'P');
+    label({x:(o.x+p.x)/2+r.axis.y*.16,y:(o.y+p.y)/2-r.axis.x*.16},'L='+r.lengthM.toFixed(1)+'m');
+    label({x:p.x+.14,y:p.y-.15},'P');
   } else if (s.sphere) {
     const { radius: r, anchor, height, ropeLength } = s.sphere;
     const points = Array.from({length:65},(_,i)=>({x:r*Math.cos(i*Math.PI/64),y:r*Math.sin(i*Math.PI/64)}));
@@ -109,7 +112,7 @@ export function equilibriumGeometry(s: EquilibriumState) {
 }
 
 export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumParams,EquilibriumState>({
-  meta: { id:'mech-dynamic-equilibrium',title:'动态平衡几何图解（活结/死结/矢量三角形）(M02)',
+  meta: { id:'mech-dynamic-equilibrium',title:'动态平衡几何图解（绳结·杆·半球）(M02)',
     textbookRef:'人教版 必修第一册 第三章 第4节',curriculumTags:['物理观念','科学思维'],difficulty:'高三一轮',version:'2.2.0' },
   defaultView: {scale:p=>p.mode==='hemisphere-suspension'?Math.min(.78,1.76/((p.radiusM??1)+(p.anchorHeightM??.6))):isRodMode(p.mode)?.76:.80,offsetRatioX:-.14},
   paramSchema,
@@ -164,18 +167,24 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
   },
   formatFormulas:s=>{
     const angle=(s.mode==='dead-knot-rotate'||s.rod?'\\beta':'\\theta')+'='+s.activeAngleDeg.toFixed(1)+'^\\circ';
-    const law=s.mode==='dead-knot-rotate'?'T_1=\\frac{mg\\cos\\beta}{\\cos(\\alpha-\\beta)},\\quad T_2=\\frac{mg\\sin\\alpha}{\\cos(\\alpha-\\beta)}':
+    // Explicit stacked equations avoid relying on horizontal scrolling or
+    // shrinking an entire formula in the 272 px classroom inspector.
+    const pair=(a:string,b:string)=>'\\begin{gathered}'+a+'\\\\'+b+'\\end{gathered}';
+    const law=s.mode==='dead-knot-rotate'?pair('T_1=\\frac{mg\\cos\\beta}{\\cos(\\alpha-\\beta)}','T_2=\\frac{mg\\sin\\alpha}{\\cos(\\alpha-\\beta)}'):
       s.mode==='active-pulley-knot'?'T_1=T_2=\\frac{mg}{2\\sin\\theta}':
-      s.mode==='hinged-rod'?'C=\\frac{mg\\cos\\beta}{\\sin(\\alpha+\\beta)},\\quad T=\\frac{mg\\cos\\alpha}{\\sin(\\alpha+\\beta)}':
-      s.mode==='fixed-rod'?'R_x=T_0\\cos\\beta,\\quad R_y=mg-T_0\\sin\\beta':
-      s.sphere?'N=\\frac{mgR}{R+h},\\quad T=\\frac{mgL}{R+h}':'N=\\frac{mg}{\\cos\\theta},\\quad F=mg\\tan\\theta';
+      s.mode==='hinged-rod'?pair('C=\\frac{mg\\cos\\beta}{\\sin(\\alpha+\\beta)}','T=\\frac{mg\\cos\\alpha}{\\sin(\\alpha+\\beta)}'):
+      s.mode==='fixed-rod'?pair('R_x=T_0\\cos\\beta','R_y=mg-T_0\\sin\\beta'):
+      s.sphere?pair('N=\\frac{mgR}{R+h}','T=\\frac{mgL}{R+h}'):pair('N=\\frac{mg}{\\cos\\theta}','F=mg\\tan\\theta');
+    const n=(value:number)=>value.toFixed(2)+'\\,\\mathrm N';
+    const first=s.rod?.axialForceN!==undefined?'C='+n(s.rod.axialForceN):s.mode==='fixed-rod'?'|R|='+n(s.force1.mag):isSupport(s)?'N='+n(s.force1.mag):'T_1='+n(s.force1.mag);
+    const second=(s.mode==='hemisphere-similar'?'F=':s.rod||s.sphere?'T=':'T_2=')+n(s.force2.mag);
     return [
       {id:'eq-forces',label:'准静态平衡条件（非运动轨迹）',latex:'\\vec{F}_1+\\vec{F}_2+m\\vec g=\\mathbf 0',substitutedLatex:angle},
       {id:'eq-law',label:s.status==='balanced'?'解析力值':statusLabel(s),latex:law,substitutedLatex:s.status==='balanced'?
-        (s.rod?.axialForceN!==undefined?'C='+s.rod.axialForceN.toFixed(2):s.mode==='fixed-rod'?'|R|='+s.force1.mag.toFixed(2):'F_1='+s.force1.mag.toFixed(2))+'\\,\\mathrm N,\\quad F_2='+s.force2.mag.toFixed(2)+'\\,\\mathrm N':
+        pair(first,second):
         '\\text{无可靠有限平衡解}'},
       ...(s.minPullForceN!==undefined?[{id:'eq-bound',label:'理论拉力下界'+(s.mode==='active-pulley-knot'?'（竖直绳极限不在滑块范围内）':s.sphere?'（球顶连续极限）':''),latex:'F_{2,\\min}='+s.minPullForceN.toFixed(2)+'\\,\\mathrm N'}]:[]),
-      ...(s.mode==='fixed-rod'?[{id:'eq-moment',label:'固定支座力矩（逆时针为正）',latex:'M_O=L(\\cos\\alpha R_y-\\sin\\alpha R_x)',...(s.rod?.supportMomentNm!==undefined?{substitutedLatex:'M_O='+s.rod.supportMomentNm.toFixed(3)+'\\,\\mathrm{N\\cdot m}'}:{})}]:[])
+      ...(s.mode==='fixed-rod'?[{id:'eq-moment',label:'固定支座力矩（逆时针为正）',latex:'M_O=L(R_y\\cos\\alpha-R_x\\sin\\alpha)',...(s.rod?.supportMomentNm!==undefined?{substitutedLatex:'M_O='+s.rod.supportMomentNm.toFixed(3)+'\\,\\mathrm{N\\cdot m}'}:{})}]:[])
     ];
   },
   renderCanvas:(ctx,s,p,vp,layers)=>{
@@ -196,7 +205,15 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
       ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();
       if(Math.hypot(q.x-p.x,q.y-p.y)>2){
         ctx.beginPath();ctx.moveTo(q.x,q.y);ctx.lineTo(q.x-9*Math.cos(ang-.4),q.y-9*Math.sin(ang-.4));ctx.lineTo(q.x-9*Math.cos(ang+.4),q.y-9*Math.sin(ang+.4));ctx.closePath();ctx.fill();
-      }ctx.restore();label(a.to,a.label+'='+a.force.mag.toFixed(1)+' N',a.id,color(a.color));
+      }ctx.restore();
+      const value=a.label+'='+a.force.mag.toFixed(1)+' N';
+      // Keep the text beside, rather than centered on, the vector line.
+      const dx=q.x-p.x,dy=q.y-p.y,len=Math.hypot(dx,dy),nx=len>1?dy/len:1,ny=len>1?-dx/len:0;
+      ctx.font='bold 13px sans-serif';
+      const clearance=Math.abs(nx)*(ctx.measureText(value).width/2+4)+Math.abs(ny)*10+6;
+      const pos={x:(p.x+q.x)/2+nx*clearance,y:(p.y+q.y)/2+ny*clearance};
+      labels.push({id:a.id,x:pos.x,y:pos.y,text:value,color:color(a.color),font:'bold 13px sans-serif'});
+
     };
     if(layers.has('ropes')){
       for(const [i,d] of g.structure.entries()){
@@ -226,7 +243,7 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
       label({x:2.05,y:1.15},s.status==='balanced'?'力矢量三角形':statusLabel(s),'triangle-title',s.status==='balanced'?ink:color('#f472b6'));
       g.triangle.forEach(arrow);
     }
-    label({x:-1.5,y:-1.45},'准静态构型 · 力箭头同比例自适应','scale-note');
+    label({x:-1.5,y:-1.65},'准静态 · 力箭头同比例自适应','scale-note');
     resolveAndDrawLabels(ctx,labels,vp.width,vp.height);
   }
 });
