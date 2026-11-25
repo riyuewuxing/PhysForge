@@ -558,6 +558,66 @@ async function auditM03Constraints(page,origin){
 
 
 
+
+async function auditM07Turntable(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-conical-turntable');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-conical-turntable');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),plot=page.getByTestId('uplot-container');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-turntable-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M07 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(m=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.turntableRendered||'null');return s?.mode===m&&s.t===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(m=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey==='tensionN'&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===(m==='turntable-dual'?'frictionAN':'coneAngleDeg'),mode);
+  };
+  const sync=async()=>{
+    await page.waitForFunction(()=>{
+      const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.turntableRendered||'null'),t=Number(document.querySelector('[data-testid="turntable-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);
+      return d&&Math.abs(d.t-t)<1e-10&&Math.abs(d.t-p)<1e-10;
+    },null,{timeout:5000});
+    return read();
+  };
+  await select('turntable-friction-flip','turntable-dual');
+  await page.getByTestId('turntable-scope-empty').waitFor({state:'visible'});
+  const stat=await read();check(stat.tensionN,2.79,'static T');check(stat.frictionAN,-1.056,'static fA');check(stat.frictionBN,5.88,'static fB');
+  check(stat.omega1,1.4,'omega1');check(stat.omega2,Math.sqrt(5.88/2.4),'omega2');check(stat.omega3,Math.sqrt(8.82/2.4),'omega3');
+  await page.screenshot({path:path.join(OUT_DIR,'H26_M07_static_flip.png')});
+  await select('turntable-a-dominant','turntable-dual');const rev=await read();
+  if(!(rev.frictionBN<0&&rev.frictionAN>0&&rev.slippingOut===0))throw Error('M07 A-dominant branch '+JSON.stringify(rev));
+  await page.screenshot({path:path.join(OUT_DIR,'H26_M07_A_dominant.png')});
+  await select('turntable-balanced','turntable-dual');const balanced=await read();
+  if('omega3' in balanced||'omega2' in balanced||balanced.slippingOut!==0)throw Error('M07 fictitious balanced threshold');
+  if(!(await page.getByTestId('turntable-omega3').innerText()).includes('不存在'))throw Error('M07 balanced label');
+  await page.screenshot({path:path.join(OUT_DIR,'H26_M07_balanced.png')});
+  await select('turntable-breakout','turntable-dual');
+  await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.turntableRendered||'null')?.t>.45);
+  await play.click();const mid=await sync();
+  check(mid.actualSeparation,2.1,'actual string',1e-10);check(mid.energyResidual,0,'energy ledger',1e-6);
+  if(mid.heat<=0||mid.slippingOut!==1)throw Error('M07 no real slip '+JSON.stringify(mid));
+  await page.screenshot({path:path.join(OUT_DIR,'H26_M07_sliding.png')});
+  await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.turntableRendered||'null')?.terminal===1,null,{timeout:15000});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="topbar"] [data-testid="btn-play-pause"]')?.getAttribute('aria-label')==='运行');
+  const edge=await sync();check(edge.t,1.0328840546699718,'first edge time');check(edge.rA,2.6,'fixed disk edge');check(edge.rB,2.575707141884828,'other radius');check(edge.actualSeparation,2.1,'edge string',1e-10);check(edge.heat,25.77890864,'heat',1e-5);check(edge.diskWork,31.11921034,'disk work',1e-5);
+  await page.getByTestId('btn-step').click();await page.evaluate(()=>new Promise(requestAnimationFrame));check((await read()).t,edge.t,'terminal step',1e-10);
+  await page.screenshot({path:path.join(OUT_DIR,'H26_M07_edge.png')});
+  await select('conical-pendulum-steady','conical-pendulum');
+  const cone=await read();check(cone.tensionN,19.44,'true cone T');check(cone.coneTensionY,9.8,'true vertical tension');
+  if(await page.getByTestId('param-slider-radiusB').count()||!await page.getByTestId('param-slider-pendulumLength').count())throw Error('M07 mode fields');
+  await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.turntableRendered||'null')?.t>.38);await play.click();const rotated=await sync();
+  check(rotated.xA,rotated.rA*Math.cos(3.6*rotated.t),'side projection');check(rotated.coneTensionY,9.8,'vertical tension in motion');
+  if(await page.getByTestId('floating-scope-dock').getAttribute('data-scope-units')!=='separate'||!await plot.isVisible())throw Error('M07 independent cone axes');
+  await page.screenshot({path:path.join(OUT_DIR,'H26_M07_cone_linked.png')});
+  const theme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+  if(theme!=='projector'){if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');}
+  await page.screenshot({path:path.join(OUT_DIR,'H26_M07_cone_paper.png')});
+  if(theme!=='projector'){if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();}
+  await select('conical-pendulum-rest','conical-pendulum');const rest=await read();check(rest.rA,0,'rest radius');check(rest.tensionN,9.8,'rest tension');if('period' in rest||rest.rotatingCone!==0)throw Error('M07 fictitious stationary period');
+  await page.screenshot({path:path.join(OUT_DIR,'H26_M07_cone_rest.png')});
+  const report={stat,rev,balanced,mid,edge,rotated,rest};console.log('H26 M07 online '+JSON.stringify(report));return report;
+}
+
 async function auditM06Vertical(page,origin){
   const url=new URL(origin);url.searchParams.set('model','mech-vertical-circular');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2185,6 +2245,7 @@ async function main() {
     const m04ProjectileReport=await auditM04Projectile(page,origin);
     const m05ContactReport=await auditM05Contact(page,origin);
     const m06VerticalReport=await auditM06Vertical(page,origin);
+    const m07TurntableReport=await auditM07Turntable(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2507,7 +2568,36 @@ async function main() {
       Object.assign(m06OfflineReport,{step,critical,errors:m06Errors,network:m06Network});
     }finally{await m06Context.close();}
 
-    const summary = { m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+
+    const m07File=path.join(OUT_DIR,'H26_M07_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-conical-turntable','--preset','turntable-breakout','--out',m07File],{stdio:'inherit'});
+    const m07Context=await browser.newContext({viewport:VIEWPORT,offline:true}),m07Page=await m07Context.newPage(),m07Errors=[],m07Network=[],m07OfflineReport={};
+    m07Page.on('pageerror',e=>m07Errors.push(e.message));m07Page.on('console',m=>{if(m.type()==='error')m07Errors.push(m.text());});m07Page.on('request',r=>{if(/^https?:/.test(r.url()))m07Network.push(r.url());});
+    try{
+      await m07Page.goto(pathToFileURL(m07File).href);
+      const canvas=m07Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-turntable-rendered'));
+      await m07Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.turntableRendered||'null')?.slippingOut===1);
+      await m07Page.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      await m07Page.getByTestId('sf-play-pause').click();
+      await m07Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.turntableRendered||'null')?.terminal===1);
+      await m07Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]').dataset.turntableRendered),t=Number(document.querySelector('[data-testid="sf-summary-clock"]').dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]').dataset.lastSampleT);return Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;});
+      const edge=await read();if(Math.abs(edge.t-1.0328840546699718)>1e-7||Math.abs(edge.rA-2.6)>1e-7||Math.abs(edge.actualSeparation-2.1)>1e-10||Math.abs(edge.energyResidual)>1e-6)throw Error('M07 offline edge '+JSON.stringify(edge));
+      await m07Page.getByRole('button',{name:'单步',exact:true}).click();await m07Page.evaluate(()=>new Promise(requestAnimationFrame));if(Math.abs((await read()).t-edge.t)>1e-10)throw Error('M07 offline terminal single step');
+      await m07Page.screenshot({path:path.join(OUT_DIR,'H26_M07_offline_edge.png')});
+      await m07Page.locator('[data-preset-id="conical-pendulum-steady"]').click();
+      await m07Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.turntableRendered||'null');return s?.mode==='conical-pendulum'&&s.t===0;});
+      await m07Page.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-b"]')?.value==='coneAngleDeg'&&document.querySelector('[data-testid="sf-uplot"]')?.getAttribute('data-scope-units')==='separate');
+      if(await m07Page.getByTestId('sf-param-radiusB').count()||!await m07Page.getByTestId('sf-param-pendulumLength').count())throw Error('M07 offline mode fields');
+      await m07Page.getByRole('button',{name:'单步',exact:true}).click();
+      await m07Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.turntableRendered||'null')?.t>0);
+      const cone=await read();if(Math.abs(cone.coneTensionY-9.8)>1e-9||Math.abs(cone.xA-cone.rA*Math.cos(3.6*cone.t))>1e-9)throw Error('M07 offline projection '+JSON.stringify(cone));
+      await m07Page.getByRole('button',{name:'黑板深蓝'}).click();await m07Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await m07Page.screenshot({path:path.join(OUT_DIR,'H26_M07_offline_cone_paper.png')});
+      if(m07Errors.length||m07Network.length)throw Error('M07 offline errors '+JSON.stringify({m07Errors,m07Network}));
+      Object.assign(m07OfflineReport,{edge,cone,errors:m07Errors,network:m07Network});
+    }finally{await m07Context.close();}
+
+    const summary = { m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

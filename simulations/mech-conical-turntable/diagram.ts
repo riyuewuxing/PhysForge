@@ -91,7 +91,7 @@ export function turntableDiagram(s:ConicalTurntableState,p:ConicalTurntableParam
     if(q.yMin<0)txt({x:x0-.15*R,y:at(0,q.yMin).y},q.yMin.toFixed(1),'ink','sweep');
     txt({x:(x0+x1)/2,y:-1.07*R},'ω² / rad²·s⁻²','ink','sweep');txt({x:x1,y:y0-.13*R},q.xMax.toFixed(1),'ink','sweep');
     for(const [key,role,dashed] of [['T','tension',false],['fa','friction-a',true],['fb','friction-b',false]] as const){
-      if(q.points.length>=2)push({kind:'polyline',points:q.points.map(z=>at(z.w2,z[key])),dashed},role,'sweep');
+      if(q.points.length>=2){push({kind:'polyline',points:q.points.map(z=>at(z.w2,z[key])),dashed},role,'sweep');const z=q.points.at(-1)!;const pt=at(z.w2,z[key]);txt({x:pt.x+.09*R,y:pt.y+(key==='fa'?-.07:.07)*R},key==='T'?'T':key==='fa'?'fA':'fB',role,'sweep');}
     }
     for(const [index,w] of [q.critical.omega1,q.critical.omega2,q.critical.omega3].entries()){
       if(w===null||w*w>q.xMax)continue;

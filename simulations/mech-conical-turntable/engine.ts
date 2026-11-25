@@ -152,7 +152,8 @@ export function computeObservables(s:ConicalTurntableState):Record<string,number
     omega1:s.omega1,...(s.omega2===null?{}:{omega2:s.omega2}),...(s.omega3===null?{}:{omega3:s.omega3}),
     kineticEnergy:s.kineticEnergy,heat:s.heat,diskWork:s.diskWork,energyResidual:s.kineticEnergy-s.initialEnergy+s.heat-s.diskWork,
     slippingOut:s.slippingOut?1:0,terminal:s.terminal?1:0,rotatingCone:s.rotatingCone?1:0,
-    ...(s.rotatingCone?{period:2*Math.PI/(s.angleRad!==0?s.angleRad/s.t:Math.sqrt(g/(s.ropeLength*Math.cos(s.coneAngleDeg*Math.PI/180))))}:{})};
+    ...(s.rotatingCone?{period:2*Math.PI*Math.sqrt(s.ropeLength*Math.cos(s.coneAngleDeg*Math.PI/180)/g)}:{}),phaseRad:s.angleRad,
+    ...(s.body.length===0?{coneTensionY:s.tensionN*(1.1-s.a.y)/s.ropeLength,coneNetY:s.tensionN*(1.1-s.a.y)/s.ropeLength-s.tensionN*Math.cos(s.coneAngleDeg*Math.PI/180)}:{})};
 }
 export function checkInvariants(s:ConicalTurntableState,_init:ConicalTurntableState,p:ConicalTurntableParams):InvariantReport[]{
   const report=(name:string,err:number,tolerance:number,unit?:string):InvariantReport=>({name,measuredError:Math.abs(err),tolerance,passed:Math.abs(err)<tolerance,...(unit?{unit}:{})});
