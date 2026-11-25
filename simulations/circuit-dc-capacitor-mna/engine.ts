@@ -55,6 +55,8 @@ export interface CircuitState {
   readonly divider?: DividerReadouts;
   /** No finite/unique current exists for an all-ideal short. Numeric fields are safe placeholders, not measurements. */
   readonly idealShort?: boolean;
+  /** Direct ideal diode beyond the supported exponential interval. */
+  readonly modelError?: 'diode-outside-model';
   /** Explicit source terminals; RC discharge has no connected source. */
   readonly sourceTerminalVoltage?: number;
   readonly sourceCurrent?: number;
@@ -189,7 +191,16 @@ function solveTopology(
 
   if (params.topology === 'nonlinear-lamp-diode') {
     // Node 0=GND, 1=E+, 2=经 internalR + r1 后的非线性节点 (串联小灯泡与二极管，按 switchClosed 切换灯泡/肖克利二极管)
-    const seriesR = Math.max(1e-4, r + params.sliderR);
+    const seriesR = r + Rp;
+    if(seriesR===0){
+      // Exact ideal connection, not a fictitious series resistor. The diode
+      // exponential model is only supported through exponent 40.
+      const invalid=params.switchClosed&&E/.026>40;
+      const i=invalid?0:params.switchClosed?1e-12*Math.expm1(E/.026):dividerLampCurrent(E);
+      return {nodeVoltages:[0,E,E],totalCurrent:i,branchCurrent1:i,branchCurrent2:0,terminalVoltage:E,
+        outputPower:E*i,efficiency:E*i>0?1:0,sourceTerminalVoltage:E,sourceCurrent:i,
+        capVoltage:0,capCurrent:0,capCharge:0,capEnergy:0,...(invalid?{modelError:'diode-outside-model' as const}:{})};
+    }
     const elements: NonlinearCircuitElement[] = [
       { kind: 'voltageSource', id: 'V_main', pos: 1, neg: 0, voltage: E },
       { kind: 'resistor', id: 'R_series', a: 1, b: 2, resistance: seriesR },
@@ -320,6 +331,9 @@ export function stepCircuit(
 }
 
 export function computeObservables(state: CircuitState): Record<string, number> {
+  // Invalid solutions have no electrical measurements; state-level finite
+  // placeholders are deliberately not published as physical observables.
+  if(state.idealShort||state.modelError)return {solutionDefined:0};
   return {
     totalCurrent: state.totalCurrent,
     terminalVoltage: state.terminalVoltage,
@@ -348,7 +362,7 @@ export function checkInvariants(
   _initial: CircuitState,
   params: CircuitParams
 ): InvariantReport[] {
-  if(state.idealShort)return [];
+  if(state.idealShort||state.modelError)return [];
   if (params.topology === 'closed-power') {
     const expected = params.emf;
     const actual = state.terminalVoltage + state.totalCurrent * params.internalR;

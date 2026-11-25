@@ -74,9 +74,9 @@ function getDefaultScopeChannels(
     const pair=preferred[String(params.device)];
     if(pair&&pair.every(k=>channels.some(c=>c.key===k)))return [pair[0],pair[1]];
   }
-  if(modelId==='builder-circuit-mna' && params.topology==='divider-lamp'){
-    const a=channels.find(c=>c.key==='totalCurrent')?.key,b=channels.find(c=>c.key==='lampCurrent')?.key;
-    if(a&&b)return [a,b];
+  if(modelId==='builder-circuit-mna'||modelId==='circuit-dc-capacitor-mna'){
+    const pairs:Record<string,[string,string]>={'divider-lamp':['totalCurrent','lampCurrent'],'closed-power':['totalCurrent','outputPower'],'series-parallel-dynamic':['branchCurrent1','branchCurrent2'],'rc-transient':['capVoltage','capCurrent'],'rc-bridge-charge':['capVoltage','capCurrent'],'nonlinear-lamp-diode':['totalCurrent','terminalVoltage']};
+    const pair=pairs[String(params.topology)];if(pair&&pair.every(k=>channels.some(c=>c.key===k)))return pair;
   }
   const singleRodE04 = modelId === 'em-induction-double-rod' && params.rodMode === 'single';
   const defaultA = singleRodE04
@@ -257,7 +257,14 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const uplotInstanceRef = useRef<uPlot | null>(null);
   const lastPlotSyncMsRef = useRef(0);
 
-  const channels=useMemo(()=>plugin.meta.id==='astro-orbital-mechanics'?plugin.telemetryChannels.filter(c=>params.mode==='binary-lagrange'||!['jacobiConstant','rotatingSpeedNorm'].includes(c.key)):plugin.telemetryChannels,[plugin.meta.id,plugin.telemetryChannels,params.mode]);
+  const channels=useMemo(()=>{
+    if(plugin.meta.id==='astro-orbital-mechanics')return plugin.telemetryChannels.filter(c=>params.mode==='binary-lagrange'||!['jacobiConstant','rotatingSpeedNorm'].includes(c.key));
+    if(plugin.meta.id==='builder-circuit-mna'||plugin.meta.id==='circuit-dc-capacitor-mna'){
+      const allowed:Record<string,string[]>={'divider-lamp':['totalCurrent','lampCurrent','lampVoltage','outputPower'],'closed-power':['totalCurrent','terminalVoltage','outputPower'],'series-parallel-dynamic':['totalCurrent','branchCurrent1','branchCurrent2','terminalVoltage','outputPower'],'rc-transient':['capVoltage','capCurrent'],'rc-bridge-charge':['capVoltage','capCurrent','totalCurrent','branchCurrent1','branchCurrent2'],'nonlinear-lamp-diode':['totalCurrent','terminalVoltage','outputPower']};
+      const keys=allowed[String(params.topology)];if(keys)return plugin.telemetryChannels.filter(c=>keys.includes(c.key));
+    }
+    return plugin.telemetryChannels;
+  },[plugin.meta.id,plugin.telemetryChannels,params.mode,params.topology]);
   const [channelA, setChannelA] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[0]);
   const [channelB, setChannelB] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[1]);
 

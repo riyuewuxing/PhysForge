@@ -7,7 +7,8 @@ import {
   drawShortCircuitGlow,
   voltageToColor
 } from './plugin.js';
-import { createInitialState, type CircuitParams } from './engine.js';
+import { createInitialState, computeObservables, stepCircuit, type CircuitParams } from './engine.js';
+import { topologyEdges } from './topologyView.js';
 import { dividerPotentialColor, dividerWiperLabelAnchor, dividerWiperX, dividerWiperY } from './dividerView.js';
 
 function createMockContext(): CanvasRenderingContext2D {
@@ -176,5 +177,67 @@ describe('circuit-dc-capacitor-mna visual helpers', () => {
       expect.any(Number),
       expect.any(Number)
     );
+  });
+});
+
+
+describe('H8 non-divider topology contracts',()=>{
+  const get=(overrides:Partial<CircuitParams>)=>resolvePluginParams<CircuitParams>(circuitDcCapacitorMnaPlugin.paramSchema,overrides);
+  it('matches mixed parallel and bridge net identities, currents, and component counts',()=>{
+    for(const topology of ['series-parallel-dynamic','rc-bridge-charge'] as const){
+      const p=get({topology,emf:12,internalR:2,r1:4,r2:6,sliderR:3});
+      const initial=createInitialState(p),s=topology==='rc-bridge-charge'?stepCircuit(initial,{...p,sliderR:7},.07).nextState:initial;
+      const q=topology==='rc-bridge-charge'?{...p,sliderR:7}:p,edges=topologyEdges(s,q);
+      const r=edges.find(e=>e.id==='R1')!,rp=edges.find(e=>e.id==='Rp')!;
+      if(topology==='series-parallel-dynamic'){
+        expect(r.nb).toBe(rp.na);expect(rp.nb).toBe(0);
+        expect(s.totalCurrent).toBeCloseTo(1.5,12);expect(s.branchCurrent1).toBeCloseTo(.5,12);expect(s.branchCurrent2).toBeCloseTo(1,12);
+        expect(edges.filter(e=>e.kind==='capacitor')).toHaveLength(0);
+      }else{
+        const cap=edges.find(e=>e.id==='C')!,lb=edges.find(e=>e.id==='R1-bottom')!,rb=edges.find(e=>e.id==='Rp-bottom')!;
+        expect([r.nb,rp.nb]).toEqual([cap.na,cap.nb]);
+        expect([lb.na,rb.na]).toEqual([cap.na,cap.nb]);expect(lb.nb).toBe(0);expect(rb.nb).toBe(0);
+        expect(r.i-lb.i).toBeCloseTo(cap.i,10);expect(rb.i-rp.i).toBeCloseTo(cap.i,10);
+        expect(cap.i).not.toBe(0);
+        expect(edges.filter(e=>e.kind==='resistor')).toHaveLength(5);
+      }
+      // Every geometrically shared terminal is one electrical node.
+      const nets=new Map<string,number>();
+      for(const e of edges)for(const [a,n] of [[e.a,e.na],[e.b,e.nb]] as const){
+        const k=a.x+','+a.y;
+        if(nets.has(k))expect(nets.get(k)).toBe(n);else nets.set(k,n);
+      }
+      expect(circuitDcCapacitorMnaPlugin.exportDiagramIR?.(s,q)?.primitives.some(a=>a.kind==='polyline')).toBe(true);
+    }
+  });
+  it('omits the source for discharge, renders negative signed flow, and distinguishes diode from lamp',()=>{
+    const p=get({topology:'rc-transient',switchClosed:false,emf:10,r1:9});
+    const s=createInitialState(p),edges=topologyEdges(s,p);
+    expect(edges.some(e=>e.kind==='battery')).toBe(false);expect(edges.find(e=>e.id==='C')!.i).toBeCloseTo(-10/9,12);
+    expect(edges.find(e=>e.id==='R1')!.na).toBe(0);
+    const n=get({topology:'nonlinear-lamp-diode',switchClosed:true,emf:5,internalR:.5,sliderR:10});
+    for(const closed of [true,false]){
+      const q={...n,switchClosed:closed},a=createInitialState(q);
+      expect(topologyEdges(a,q).find(e=>e.id==='load')?.kind).toBe(closed?'diode':'lamp');
+      const ir=circuitDcCapacitorMnaPlugin.exportDiagramIR?.(a,q);
+      expect(ir?.primitives.some(z=>z.kind==='circle'&&!z.fill)).toBe(!closed);
+      expect(circuitDcCapacitorMnaPlugin.formatFormulas?.(a,q)[0]?.id).toBe('nonlinear-load');
+    }
+  });
+  it('does not publish fictitious readings for undefined ideal circuits',()=>{
+    const p=get({topology:'closed-power',emf:12,internalR:0,sliderR:0}),s=createInitialState(p);
+    expect(computeObservables(s)).toEqual({solutionDefined:0});
+    expect(circuitDcCapacitorMnaPlugin.formatFormulas?.(s,p)[0]?.id).toBe('ideal-short');
+    const n=get({topology:'nonlinear-lamp-diode',emf:5,internalR:0,sliderR:0,switchClosed:true});
+    expect(computeObservables(createInitialState(n))).toEqual({solutionDefined:0});
+    const lamp=createInitialState({...n,switchClosed:false});
+    expect(lamp.terminalVoltage).toBe(5);expect(lamp.totalCurrent).toBeCloseTo(.25*Math.pow(5+1e-6,-.35)*5,12);
+    expect(createInitialState({...n,emf:.78}).totalCurrent).toBeCloseTo(1e-12*Math.expm1(30),9);
+  });
+  it('anchors bridge drag to upper Rp rather than the lower resistor',()=>{
+    const p=get({topology:'rc-bridge-charge',sliderR:10}),s=createInitialState(p);
+    const h=circuitDcCapacitorMnaPlugin.getControlHandles?.(s,p)?.[0],r=topologyEdges(s,p).find(e=>e.id==='Rp')!;
+    expect(h?.position.x).toBe(r.a.x);expect(h?.position.y).toBeCloseTo((r.a.y+r.b.y)/2,12);
+    expect(h?.onDrag({x:r.a.x,y:r.b.y}).sliderR).toBe(0);expect(h?.onDrag({x:r.a.x,y:r.a.y}).sliderR).toBe(20);
   });
 });

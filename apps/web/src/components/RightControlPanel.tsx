@@ -39,9 +39,19 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   const [showLiveSubstituted, setShowLiveSubstituted] = useState(false);
 
   const { coreFields, extraFields } = useMemo(() => {
-    const preferred = plugin.meta.id === 'modern-photoelectric-compton'
+    const circuit=plugin.meta.id==='builder-circuit-mna'||plugin.meta.id==='circuit-dc-capacitor-mna';
+    const circuitFields:Record<string,string[]>={
+      'divider-lamp':['emf','sliderR','internalR','topology'],
+      'closed-power':['emf','sliderR','internalR','topology'],
+      'series-parallel-dynamic':['emf','sliderR','internalR','r1','r2','topology'],
+      'rc-transient':['emf','r1','capacitance','internalR','switchClosed','topology'],
+      'rc-bridge-charge':['emf','sliderR','internalR','r1','r2','capacitance','topology'],
+      'nonlinear-lamp-diode':['emf','sliderR','internalR','switchClosed','topology']
+    };
+    const valid=circuit?circuitFields[String(params.topology)]:undefined;
+    const preferred = valid ?? (plugin.meta.id === 'modern-photoelectric-compton'
       ? params.mode === 'compton' ? ['xrayWavelengthNm', 'scatterAngleDeg'] : ['wavelengthNm', 'intensityRel', 'anodeVoltageV']
-      : CONTEXT_CORE_KEYS[plugin.meta.id];
+      : CONTEXT_CORE_KEYS[plugin.meta.id]);
     const numericFields = plugin.paramSchema.filter((field) => field.kind === 'number');
     const core = preferred
       ? preferred.flatMap((key) => {
@@ -52,7 +62,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
     const coreKeys = new Set(core.map((field) => field.key));
     return {
       coreFields: core,
-      extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!(plugin.meta.id==='builder-circuit-mna' && params.topology==='divider-lamp') || field.key==='topology'))
+      extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!valid||valid.includes(field.key)))
     };
   }, [plugin, params.mode, params.topology]);
 
@@ -92,7 +102,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       const checked = typeof value === 'boolean' ? value : field.defaultValue;
       return (
         <label key={field.key} className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-white/10 bg-slate-950/35 px-2.5 py-1.5 text-[11px] text-slate-200">
-          <span>{field.label}</span>
+          <span>{plugin.meta.id==='builder-circuit-mna'&&field.key==='switchClosed'?(params.topology==='rc-transient'?'充电初态（取消为放电；重置时间）':'二极管（取消为灯泡）'):field.label}</span>
           <input type="checkbox" checked={checked} onChange={(event) => onUpdateParam(field.key, event.target.checked)} className="h-4 w-4 accent-sky-400" />
         </label>
       );
@@ -111,6 +121,13 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   const isCircuit = plugin.meta.id === 'builder-circuit-mna' || plugin.meta.id === 'circuit-dc-capacitor-mna';
   const emf = typeof params.emf === 'number' ? params.emf : 12;
   const divider = isCircuit && params.topology==='divider-lamp';
+  const circuitReadouts:Record<string,{key:string;label:string;unit:string}[]>={
+    'closed-power':[{key:'totalCurrent',label:'干路 I',unit:'A'},{key:'terminalVoltage',label:'路端 U',unit:'V'},{key:'outputPower',label:'负载功率 P',unit:'W'}],
+    'series-parallel-dynamic':[{key:'totalCurrent',label:'干路 I',unit:'A'},{key:'branchCurrent1',label:'R₂ 支路 I₂',unit:'A'},{key:'branchCurrent2',label:'Rₚ 支路 Iₚ',unit:'A'}],
+    'rc-transient':[{key:'capVoltage',label:'电容 U꜀',unit:'V'},{key:'capCurrent',label:'电容 I꜀',unit:'A'},{key:'capCharge',label:'电荷 Q',unit:'C'}],
+    'rc-bridge-charge':[{key:'capVoltage',label:'左−右电势差 U꜀',unit:'V'},{key:'capCurrent',label:'左→右 I꜀',unit:'A'},{key:'capCharge',label:'左板电荷 Q',unit:'C'}],
+    'nonlinear-lamp-diode':[{key:'totalCurrent',label:'干路 I',unit:'A'},{key:'terminalVoltage',label:'器件电压 U',unit:'V'},{key:'outputPower',label:'器件功率 P',unit:'W'}]
+  };
   const isInduction = plugin.meta.id === 'em-induction-double-rod';
   const isOpticalInterface = plugin.meta.id === 'builder-optics-ray' && params.sceneMode === 'tir-interface';
   const energyReadouts = [
@@ -177,6 +194,10 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
                 const value=telemetry.observables[key];
                 return <div key={key} className="flex justify-between gap-2 text-xs"><span>{label}</span><span data-testid={'b2-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof value==='number'&&Number.isFinite(value)?value.toFixed(3)+' '+unit:'—'}</span></div>;
               })}
+            </section>}
+            {!divider&&<section data-testid="b2-topology-readouts" className="space-y-1.5" style={{color:'var(--pf-text-muted)'}}>
+              {telemetry.observables.solutionDefined===0&&<div data-testid="b2-invalid" className="text-xs text-rose-400">{params.topology==='nonlinear-lamp-diode'?'超出模型适用范围':emf===0?'理想零阻回路：电流不唯一':'理想短路：无有限解'}</div>}
+              {(circuitReadouts[String(params.topology)]??[]).map(({key,label,unit})=>{const value=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2 text-xs"><span>{label}</span><span data-testid={'b2-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{telemetry.observables.solutionDefined!==0&&typeof value==='number'&&Number.isFinite(value)?value.toFixed(3)+' '+unit:'—'}</span></div>;})}
             </section>}
             <div className="flex justify-between font-mono text-[10px]" style={{color:'var(--pf-text-muted)'}}><span>0V</span><span>电势分布</span><span>{emf.toFixed(0)}V</span></div>
             <div data-testid="b2-inspector-potential" data-divider-palette={divider?(emf===0?'zero':'range'):undefined} className="h-1.5 w-full rounded-full bg-gradient-to-r from-sky-400 via-amber-300 to-rose-400 shadow-[0_0_8px_rgba(56,189,248,0.4)]" />

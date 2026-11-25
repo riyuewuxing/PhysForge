@@ -1379,6 +1379,39 @@ async function main() {
           layout.issues.push(`B2 failed to switch to RC transient mode: ${JSON.stringify(rcCheck)}`);
         }
         await page.screenshot({ path: path.join(OUT_DIR, 'B2_04_rc_no_handle.png') });
+        // Independent preset readout expectations. No mock model, no screenshot-only pass.
+        const b2Cases=[
+          ['closed-circuit-max-power','closed_power',{totalCurrent:3,terminalVoltage:6,outputPower:18}],
+          ['series-parallel-branches','mixed',{totalCurrent:1.5,branchCurrent1:.5,branchCurrent2:1}],
+          ['rc-charging-curve','rc_charge',{capVoltage:0,capCurrent:1,capCharge:0}],
+          ['rc-discharging-curve','rc_discharge',{capVoltage:10,capCurrent:-10/9,capCharge:.5}],
+          ['bridge-capacitor-polarity','bridge',{capVoltage:-144/89,capCurrent:0,capCharge:-14.4/89}],
+          ['nonlinear-diode-iv','diode',null],['nonlinear-lamp-iv','lamp',null],['closed-power-short-circuit','ideal_short',null]
+        ];
+        for(const [preset,tag,expected] of b2Cases){
+          await selectPreset(page,preset);
+          await page.waitForTimeout(300);
+          if(expected){await page.waitForFunction(values=>Object.entries(values).every(([k,v])=>Math.abs(parseFloat(document.querySelector('[data-testid="b2-'+k+'"]')?.textContent??'')-v)<.0015),expected,{timeout:5000});}
+          if(tag==='ideal_short'){
+            await page.getByTestId('b2-invalid').waitFor({state:'visible'});
+            if(await page.getByTestId('b2-totalCurrent').textContent()!=='—')throw new Error('B2 undefined current shown as numeric measurement');
+          }
+          if(tag==='diode'||tag==='lamp'){
+            const i=parseFloat(await page.getByTestId('b2-totalCurrent').textContent()),u=parseFloat(await page.getByTestId('b2-terminalVoltage').textContent());
+            const expectedI=tag==='diode'?1e-12*Math.expm1(u/.026):.25*Math.pow(u+1e-6,-.35)*u;
+            if(Math.abs(5-10.5*i-u)>.008||Math.abs(expectedI-i)>.012)throw new Error('B2 nonlinear displayed KVL/law mismatch '+JSON.stringify({tag,u,i,expectedI}));
+          }
+          await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'.png')});
+        }
+        await selectPreset(page,'bridge-capacitor-polarity');
+        await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+        if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+        await page.screenshot({path:path.join(OUT_DIR,'H8_B2_bridge_projector.png')});
+        await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();
+        await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='chalkboard');
+        if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+        await selectPreset(page,'rc-charging-curve');
       }
 
       if (testCase.id === 'em-induction-double-rod') {

@@ -577,6 +577,7 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     {key:'terminalVoltage',label:'负载 / 路端电压 U',unit:'V',color:'#38bdf8'}
   ],
   formatFormulas: (state, params) => {
+    if(state.modelError)return [{id:'diode-invalid',label:'零串阻二极管超出指数模型适用范围',latex:'R_p+r=0,\\quad U_D/V_T>40',substitutedLatex:'I_D\\;\\text{不提供数值解}'}];
     if(state.idealShort)return [{id:'ideal-short',label:'理想零阻回路不可求唯一有限解',latex:params.emf===0?'0=0\\quad\\text{电流不唯一}':'E\\ne0,\\quad R+r=0',substitutedLatex:'I\\;\\text{不可定义}'}];
     if (params.topology === 'closed-power') {
       return [
@@ -611,13 +612,13 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     }];
     if(params.topology==='nonlinear-lamp-diode')return [{
       id:'nonlinear-load',label:params.switchClosed?'肖克利二极管（指数限幅近似）':'小灯泡幂律近似',
-      latex:params.switchClosed?'I_D=I_s(e^{U_D/V_T}-1)':'I_L\\approx0.25U_L^{0.65}',
+      latex:params.switchClosed?'I_D=I_s(e^{\\min(U_D/V_T,40)}-1)':'I_L\\approx0.25U_L^{0.65}',
       substitutedLatex:`U=${state.terminalVoltage.toFixed(3)}\\text{ V},\\quad I=${state.totalCurrent.toFixed(3)}\\text{ A}`
     }];
     return [
       {
         id: 'cap-charge',
-        label: '电容电量与储能方程（MNA 求解）',
+        label: '电容电量与储能方程（一阶 RC 等效）',
         latex: 'Q = C \\cdot U_C, \\quad E_C = \\frac{1}{2} C U_C^2',
         substitutedLatex: `U_C = ${state.capVoltage.toFixed(2)}\\text{ V},\\; Q = ${state.capCharge.toFixed(3)}\\text{ C},\\; I_C = ${state.capCurrent.toFixed(3)}\\text{ A}`
       }

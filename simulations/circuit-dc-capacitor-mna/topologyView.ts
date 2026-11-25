@@ -88,8 +88,7 @@ export function topologyEdges(s:CircuitState,q:CircuitParams):Edge[]{
     bottom([L,R],[I]);
   }else if(q.topology==='nonlinear-lamp-diode'){
     source(3,-.4);
-    // Existing nonlinear solver retains its explicit minimum series resistance.
-    const rp=Math.max(q.sliderR,Math.max(0,1e-4-q.internalR));
+    const rp=q.sliderR;
     resist('Rp',p(-.4,T),p(.65,T),3,2,I,rp,'Rₚ',p(.12,T+.18));
     wire('load-top',p(.65,T),p(R,T),2,I);
     wire('load-upper',p(R,T),p(R,.4),2,I);
@@ -144,7 +143,7 @@ export function exportTopologyDiagram(s:CircuitState,q:CircuitParams):DiagramIR{
     // Explicit symbol geometry is supported by both SVG and TikZ, including
     // the diode, rather than relying on their incomplete circuitElement cases.
     const a=symbol(e);
-    for(const st of a.strokes)primitives.push({kind:'polyline',points:st.points,closed:st.closed});
+    for(const st of a.strokes)primitives.push({kind:'polyline',points:st.points,...(st.closed?{closed:true}:{})});
     for(const r of a.rings)primitives.push({kind:'circle',cx:r.center.x,cy:r.center.y,r:r.r});
     if(e.label&&e.labelAt)primitives.push({kind:'text',x:e.labelAt.x,y:e.labelAt.y,text:e.label,align:'middle'});
   }
@@ -157,7 +156,8 @@ export function renderTopology(ctx:CanvasRenderingContext2D,s:CircuitState,q:Cir
   const edges=topologyEdges(s,q),m=createWorldMapper(vp),screen=(a:Point)=>m.toScreen(a.x,a.y),paper=vp.theme==='projector';
   const ink=paper?'#334155':'#dce6ef',size=Math.max(10,Math.min(16,m.len(.086)));
   const voltage=(n:number)=>n===3&&q.topology==='nonlinear-lamp-diode'?(s.sourceTerminalVoltage??0):(s.nodeVoltages[n]??0);
-  const color=(n:number)=>s.idealShort?'#94a3b8':n<0?ink:dividerPotentialColor(voltage(n),q.emf,paper);
+  const invalid=Boolean(s.idealShort||s.modelError);
+  const color=(n:number)=>invalid?'#94a3b8':n<0?ink:dividerPotentialColor(voltage(n),q.emf,paper);
   function trace(points:Point[],paint:string|CanvasGradient,width:number,closed=false){
     const a=points.map(screen);ctx.beginPath();ctx.moveTo(a[0]!.x,a[0]!.y);
     for(const x of a.slice(1))ctx.lineTo(x.x,x.y);if(closed)ctx.closePath();
@@ -189,7 +189,7 @@ export function renderTopology(ctx:CanvasRenderingContext2D,s:CircuitState,q:Cir
       // One bounded arrow per sufficiently long ideal wire. State time,
       // not wall clock, controls phase; no arrows across capacitor gaps.
       const d=Math.hypot(e.b.x-e.a.x,e.b.y-e.a.y);
-      if(!s.idealShort&&layers.has('current-flow')&&e.kind==='wire'&&d>.20&&Math.abs(e.i)>1e-7){
+      if(!invalid&&layers.has('current-flow')&&e.kind==='wire'&&d>.20&&Math.abs(e.i)>1e-7){
         const dir=Math.sign(e.i),phase=(s.t*.65*Math.tanh(Math.abs(e.i))+.13)%1;
         const t=dir>0?.2+.6*phase:.8-.6*phase;
         const z=screen(p(e.a.x+(e.b.x-e.a.x)*t,e.a.y+(e.b.y-e.a.y)*t)),h=m.len(.046);
@@ -199,14 +199,15 @@ export function renderTopology(ctx:CanvasRenderingContext2D,s:CircuitState,q:Cir
       }
     }
     for(const j of junctions(edges)){const z=screen(j.point);ctx.fillStyle=color(j.net);ctx.beginPath();ctx.arc(z.x,z.y,m.len(.028),0,Math.PI*2);ctx.fill();}
-    if(layers.has('potential-labels')&&!s.idealShort){
+    if(layers.has('potential-labels')&&!invalid){
       const nodes=q.topology==='rc-bridge-charge'?[[3,-.45,.16],[4,1.45,.16]]:q.topology==='series-parallel-dynamic'?[[3,.9,.92]]:[[2,1.23,.91]];
       for(const [n,x,y] of nodes)label(p(x!,y!),'N'+n+' '+f(voltage(n!))+' V',color(n!));
       label(p(0,B-.13),'0 V',color(0));
     }
   }
   if(layers.has('meters')){
-    if(s.idealShort)label(p(0,-.73),q.emf===0?'理想零阻回路：电流不唯一':'理想短路：无有限解',paper?'#b91c1c':'#fda4af');
+    if(s.modelError)label(p(0,-.73),'直连二极管超出模型适用范围',paper?'#b91c1c':'#fda4af');
+    else if(s.idealShort)label(p(0,-.73),q.emf===0?'理想零阻回路：电流不唯一':'理想短路：无有限解',paper?'#b91c1c':'#fda4af');
     else if(q.topology==='rc-transient'||q.topology==='rc-bridge-charge'){
       label(p(-.9,-1.46),'U꜀ '+f(s.capVoltage)+' V');label(p(.83,-1.46),'I꜀ '+f(s.capCurrent)+' A');
     }else if(q.topology==='series-parallel-dynamic'){
