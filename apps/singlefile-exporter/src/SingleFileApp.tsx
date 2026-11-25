@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import katex from 'katex';
 import uPlot from 'uplot';
 import { Play, Pause, RotateCcw, StepForward, Eye, EyeOff, SunMoon, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
@@ -198,7 +198,7 @@ export const SingleFileApp: React.FC = () => {
     channelB
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
@@ -309,7 +309,9 @@ export const SingleFileApp: React.FC = () => {
     });
   };
 
-  useEffect(() => {
+  // Commit a discrete display transition before the browser paints; continuous
+  // integration still uses rAF and the existing throttled React summaries.
+  useLayoutEffect(() => {
     const camera = resolveInitialCameraTransform(
       targetPlugin as SimulationPluginV2<ParamRecord, unknown>,
       latestRef.current.params,
@@ -336,7 +338,7 @@ export const SingleFileApp: React.FC = () => {
 
   // Preserve the exact final integration sample on pause. A frame may have
   // advanced fewer than SNAPSHOT_INTERVAL seconds since the last plot sample.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isPlaying) return;
     const state = simStateRef.current;
     const t = simulationTimeRef.current;
@@ -350,7 +352,7 @@ export const SingleFileApp: React.FC = () => {
     emitSummary(true);
   }, [isPlaying]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (stepOnceNonce === 0) return;
     let cur = simStateRef.current;
     if (cur === null) return;
@@ -374,7 +376,7 @@ export const SingleFileApp: React.FC = () => {
     emitSummary(true);
   }, [stepOnceNonce]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     drawCanvas();
     emitSummary(true);
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime]);
@@ -550,6 +552,9 @@ export const SingleFileApp: React.FC = () => {
             type="button"
             data-testid="sf-play-pause"
             onClick={() => {
+              // Freeze the integrator immediately on a user pause, then commit
+              // the final sample, canvas, plot and summary before the next paint.
+              if(latestRef.current.isPlaying)latestRef.current.isPlaying=false;
               setIsPlaying((p) => !p);
               setScrubTime(null);
             }}

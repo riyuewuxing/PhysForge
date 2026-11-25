@@ -2044,14 +2044,14 @@ async function main() {
       // Inspect the first painted paused frame, not a later retry that could
       // hide a canvas/React summary phase mismatch.
       const pauseSamples=await m01Page.evaluate(async()=>{
-        const canvas=document.querySelector('[data-testid="sf-canvas"]'),clock=document.querySelector('[data-testid="sf-summary-clock"]'),gap=document.querySelector('[data-testid="sf-chase-gap"]'),plot=document.querySelector('[data-testid="sf-uplot-container"]');
+        const canvas=document.querySelector('[data-testid="sf-canvas"]'),clock=document.querySelector('[data-testid="sf-summary-clock"]'),gap=document.querySelector('[data-testid="sf-chase-gap"]'),plot=document.querySelector('[data-testid="sf-uplot"]');
         const play=document.querySelector('[data-testid="sf-play-pause"]');
         const read=()=>{const state=JSON.parse(canvas.dataset.chaseRendered);return {t:state.t,clock:Number(clock.dataset.sampleTime),gap:state.gap,shownGap:parseFloat(gap.textContent),plot:plot?.dataset.lastSampleT,paused:play.textContent.includes('运行')};};
         const result=[];
         for(let i=0;i<8;i++){await new Promise(requestAnimationFrame);result.push(read());}
         return result;
       });
-      const bad=pauseSamples.filter(x=>x.paused&&(Math.abs(x.t-x.clock)>1e-10||Math.abs(x.gap-x.shownGap)>.00051));
+      const bad=pauseSamples.filter(x=>x.paused&&(Math.abs(x.t-x.clock)>1e-10||Math.abs(x.gap-x.shownGap)>.00051||Math.abs(x.t-Number(x.plot))>1e-10||!Number.isFinite(x.shownGap)||!Number.isFinite(Number(x.plot))));
       if(bad.length)throw Error('M01 offline paused snapshot mismatch '+JSON.stringify(bad));
       console.log('H15 M01 paused snapshots '+JSON.stringify(pauseSamples));
       const long=await read();
