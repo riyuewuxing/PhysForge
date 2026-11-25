@@ -44,20 +44,27 @@ const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.m
 const scaled = (v: Point, mag: number): Force => ({ x: v.x * mag, y: v.y * mag, mag });
 const zero = (): Force => ({ x: 0, y: 0, mag: 0 });
 const RESIDUAL_TOLERANCE = 1e-10;
-export function angleRange(mode: EquilibriumMode): readonly [number, number] {
+export function sphereDimensions(p?: Partial<EquilibriumParams>) {
+  return {radius:clamp(finite(p?.radiusM,1),0.5,1.5),height:clamp(finite(p?.anchorHeightM,0.6),0.2,1.2)};
+}
+export function angleRange(mode: EquilibriumMode,p?: Partial<EquilibriumParams>): readonly [number, number] {
   if (mode === 'dead-knot-rotate') return [-30, 75];
   if (mode === 'active-pulley-knot') return [10, 85];
-  if (mode === 'hemisphere-suspension') return [0, 75];
+  if (mode === 'hemisphere-suspension') {
+    const {radius,height}=sphereDimensions(p);
+    // A straight rope must remain outside the sphere. At the pole the force split is nonunique.
+    return [1, Math.floor(Math.acos(radius/(radius+height))*180/Math.PI)];
+  }
   return [10, 75];
 }
-export function boundedAngle(mode: EquilibriumMode, angle: number): number {
-  const [lo, hi] = angleRange(mode);
+export function boundedAngle(mode: EquilibriumMode, angle: number,p?:Partial<EquilibriumParams>): number {
+  const [lo, hi] = angleRange(mode,p);
   return clamp(finite(angle, 37), lo, hi);
 }
 export function solveEquilibriumAtAngle(params: EquilibriumParams, angleDeg: number): Solution {
   const mg = Math.max(0.1, finite(params.mass, 2)) * CLASSROOM_GRAVITY;
   const gravity: Force = { x: 0, y: -mg, mag: mg };
-  const actual = boundedAngle(params.mode, angleDeg);
+  const actual = boundedAngle(params.mode, angleDeg,params);
   const theta = degToRad(actual);
   const c = Math.cos(theta), sn = Math.sin(theta);
   const base = { mode: params.mode, activeAngleDeg: actual, requestedAngleDeg: finite(angleDeg, actual), gravity };
@@ -78,8 +85,7 @@ export function solveEquilibriumAtAngle(params: EquilibriumParams, angleDeg: num
     else if (cosine < 0) { status = 'infeasible'; mag1 = mag2 = 0; }
     else { mag1 = mg * c / cosine; mag2 = minPullForceN / cosine; }
   } else if (params.mode === 'hemisphere-suspension') {
-    const radius = clamp(finite(params.radiusM, 1), 0.5, 1.5);
-    const height = clamp(finite(params.anchorHeightM, 0.6), 0.2, 1.2);
+    const {radius,height}=sphereDimensions(params);
     point = { x: -radius * sn, y: radius * c };
     const anchor = { x: 0, y: radius + height };
     const rope = { x: anchor.x - point.x, y: anchor.y - point.y };
@@ -111,9 +117,9 @@ export function stepEquilibrium(state: EquilibriumState, params: EquilibriumPara
   if (!Number.isFinite(dt) || dt < 0) throw new Error('Invalid dt: ' + dt);
   if (dt === 0) return { nextState: state, events: [] };
   const nextT = state.t + dt;
-  const [lo, hi] = angleRange(params.mode);
+  const [lo, hi] = angleRange(params.mode,params);
   const mid = (lo + hi) / 2, amplitude = (hi - lo) / 2;
-  const initial = boundedAngle(params.mode, params.sweepAngleDeg);
+  const initial = boundedAngle(params.mode, params.sweepAngleDeg,params);
   const phase = Math.asin(clamp((initial - mid) / amplitude, -1, 1));
   const angle = params.autoSweep ? mid + amplitude * Math.sin(nextT * 0.9 + phase) : params.sweepAngleDeg;
   return { nextState: { t: nextT, ...solveEquilibriumAtAngle(params, angle), events: state.events }, events: [] };

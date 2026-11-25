@@ -82,7 +82,7 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
   getParamFields: p => paramSchema.filter(f => f.key==='baseAngleDeg'?p.mode==='dead-knot-rotate':
     f.key==='radiusM'||f.key==='anchorHeightM'?p.mode==='hemisphere-suspension':true).map(f=>{
       if(f.key!=='sweepAngleDeg'||f.kind!=='number')return f;
-      const [min,max]=angleRange(p.mode);
+      const [min,max]=angleRange(p.mode,p);
       return {...f,min,max,label:p.mode==='dead-knot-rotate'?'右绳与水平夹角 β':p.mode==='active-pulley-knot'?'绳与水平夹角 θ':'法线与竖直夹角 θ'};
     }),
   presets:equilibriumPresets,
@@ -90,10 +90,10 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
   layers:[{id:'ropes',label:'结构与受力',defaultVisible:true},{id:'triangle',label:'真实力矢量三角形',defaultVisible:true}],
   telemetryChannels:[{key:'force1',label:'F₁ 张力/支持力',unit:'N',color:'#38bdf8'},
     {key:'force2',label:'F₂ 拉力/张力',unit:'N',color:'#f472b6'},{key:'angleDeg',label:'扫描角度',unit:'°',color:'#fbbf24'}],
-  getControlHandles:s=>[{
+  getControlHandles:(s,p)=>[{
     id:'pull-angle',label:(s.mode==='dead-knot-rotate'?'β=':'θ=')+s.activeAngleDeg.toFixed(0)+'°',
     position:s.sphere?s.point:shift(O,isSupport(s)?s.direction1:s.direction2,1.48),origin:O,handleKind:'angle',color:'#f472b6',
-    onDrag:wp=>({sweepAngleDeg:boundedAngle(s.mode,Math.round(Math.atan2(isSupport(s)?-wp.x:wp.y,isSupport(s)?wp.y:wp.x)*180/Math.PI)),autoSweep:false})
+    onDrag:wp=>({sweepAngleDeg:boundedAngle(s.mode,Math.round(Math.atan2(isSupport(s)?-wp.x:wp.y,isSupport(s)?wp.y:wp.x)*180/Math.PI),p),autoSweep:false})
   }],
   getForceVectors:s=>{
     const result:ForceVectorItem[]=[{id:'mg',label:'mg',origin:s.point,force:s.gravity,color:'#fbbf24',category:'gravity',unit:'N'}];
@@ -122,7 +122,7 @@ export const mechDynamicEquilibriumPlugin = defineSimulationPlugin<EquilibriumPa
       {id:'eq-law',label:s.status==='balanced'?'解析力值':statusLabel(s),latex:law,substitutedLatex:s.status==='balanced'?
         'F_1='+s.force1.mag.toFixed(2)+'\\,\\mathrm N,\\quad F_2='+s.force2.mag.toFixed(2)+'\\,\\mathrm N':
         '\\text{无可靠有限平衡解}'},
-      {id:'eq-bound',label:'理论拉力下界'+(s.mode==='active-pulley-knot'?'（水平极限不在滑块范围内）':''),latex:'F_{2,\\min}='+s.minPullForceN.toFixed(2)+'\\,\\mathrm N'}
+      {id:'eq-bound',label:'理论拉力下界'+(s.mode==='active-pulley-knot'?'（水平极限不在滑块范围内）':s.sphere?'（球顶连续极限）':''),latex:'F_{2,\\min}='+s.minPullForceN.toFixed(2)+'\\,\\mathrm N'}
     ];
   },
   renderCanvas:(ctx,s,_p,vp,layers)=>{

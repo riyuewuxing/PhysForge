@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
-import { createInitialState, solveEquilibriumAtAngle, stepEquilibrium, computeObservables, checkInvariants, type EquilibriumParams } from './engine.js';
+import { createInitialState, solveEquilibriumAtAngle, stepEquilibrium, computeObservables, checkInvariants, angleRange, type EquilibriumParams } from './engine.js';
 
 describe('M02 mech-dynamic-equilibrium verification', () => {
   it('maintains vector equilibrium residual < 1e-10 N across all angles and equal active-knot tension', () => {
@@ -82,7 +82,7 @@ describe('M02 independent boundary and initial-state regressions', () => {
 describe('M02 hemisphere and invalid telemetry',()=>{
   const p:EquilibriumParams={mode:'hemisphere-suspension',mass:2,baseAngleDeg:37,sweepAngleDeg:35,autoSweep:false,radiusM:1.2,anchorHeightM:.8};
   it('derives actual rope length and constant normal force from sphere geometry',()=>{
-    for(const theta of [0,15,35,60,75]){
+    for(const theta of [1,15,35,53]){
       const s=solveEquilibriumAtAngle(p,theta),mg=p.mass*CLASSROOM_GRAVITY;
       const L=Math.sqrt(1.2**2+2**2-2*1.2*2*Math.cos(degToRad(theta)));
       expect(s.sphere?.ropeLength).toBeCloseTo(L,12);
@@ -103,4 +103,20 @@ describe('M02 hemisphere and invalid telemetry',()=>{
     expect(computeObservables(s).solutionDefined).toBe(0);
     expect(checkInvariants(s)[0]?.passed).toBe(false);
   });
+});
+
+it('keeps the hemisphere rope outside the solid sphere and avoids the nonunique pole',()=>{
+  for(const radiusM of [.5,1,1.5])for(const anchorHeightM of [.2,.6,1.2]){
+    const p:EquilibriumParams={mode:'hemisphere-suspension',mass:2,baseAngleDeg:37,sweepAngleDeg:75,autoSweep:true,radiusM,anchorHeightM};
+    const [lo,hi]=angleRange(p.mode,p);
+    expect(lo).toBeGreaterThan(0);
+    expect(hi).toBeLessThanOrEqual(Math.acos(radiusM/(radiusM+anchorHeightM))*180/Math.PI);
+    for(const requested of [-20,0,35,75,100]){
+      const s=solveEquilibriumAtAngle(p,requested),a=s.sphere!.anchor;
+      expect(s.point.x*(a.x-s.point.x)+s.point.y*(a.y-s.point.y)).toBeGreaterThanOrEqual(-1e-12);
+      expect(s.activeAngleDeg).toBeGreaterThanOrEqual(lo);
+      expect(s.activeAngleDeg).toBeLessThanOrEqual(hi);
+      expect(s.netResidualN).toBeLessThan(1e-10);
+    }
+  }
 });
