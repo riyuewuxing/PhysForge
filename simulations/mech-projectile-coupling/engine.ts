@@ -20,6 +20,7 @@ export interface ProjectileCouplingState {
   readonly vx: number;
   readonly vy: number;
   readonly landed: boolean;
+  readonly termination?: 'impact' | 'escaped';
   readonly impactTime: number | null;
   readonly initialEnergy: number;
   readonly trail: readonly Vec2[];
@@ -34,7 +35,8 @@ function surfaceSignedDistance(x: number, y: number, params: ProjectileCouplingP
   }
   if (params.mode === 'semicircle-trough') {
     const R = Math.max(0.5, params.troughRadius);
-    return R * R - ((x - R) * (x - R) + y * y);
+    // Lower semicircular wall only. The opening above y=0 is empty space.
+    return y + Math.sqrt(Math.max(0, x * (2 * R - x)));
   }
   return y;
 }
@@ -67,6 +69,7 @@ function advanceProjectile(
   const g = CLASSROOM_GRAVITY;
   const m = Math.max(0.1, params.mass);
   const c = Math.max(0, params.dragCoeff);
+  if(c===0)return {t:s.t+dt,x:s.x+s.vx*dt,y:s.y+s.vy*dt-.5*g*dt*dt,vx:s.vx,vy:s.vy-g*dt};
   const nextVec = stepRK4([s.x, s.y, s.vx, s.vy], s.t, dt, (_t, yv) => {
     const vx = yv[2]!;
     const vy = yv[3]!;
@@ -77,64 +80,78 @@ function advanceProjectile(
   return { t: s.t + dt, x: nextVec[0]!, y: nextVec[1]!, vx: nextVec[2]!, vy: nextVec[3]! };
 }
 
-export function stepProjectileCoupling(
-  state: ProjectileCouplingState,
-  params: ProjectileCouplingParams,
-  dt: number
-): StepResult<ProjectileCouplingState> {
-  if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
-  if (dt === 0 || state.landed) return { nextState: state, events: [] };
+type KinematicState={t:number;x:number;y:number;vx:number;vy:number};
+const MAX_SUBSTEP=1/240;
+const EVENT_TOLERANCE=1e-9;
 
-  const curKin = { t: state.t, x: state.x, y: state.y, vx: state.vx, vy: state.vy };
-  const candEnd = advanceProjectile(curKin, params, dt);
-  const gEnd = surfaceSignedDistance(candEnd.x, candEnd.y, params);
-
-  const stepEvents: PhysicsEvent[] = [];
-  let landed = false;
-  let impactTime = state.impactTime;
-  let finalKin = candEnd;
-
-  if (state.t > 1e-4 && gEnd <= 0) {
-    const hit = bisectEvent(
-      curKin,
-      curKin.t,
-      dt,
-      (s, subDt) => advanceProjectile(s, params, subDt),
-      (s) => surfaceSignedDistance(s.x, s.y, params),
-      { timeTolerance: 1e-8, biasEndpoint: 'midpoint' }
-    );
-    if (hit) {
-      finalKin = hit.state;
-      landed = true;
-      impactTime = hit.time;
-      stepEvents.push({
-        id: `impact-${hit.time.toFixed(6)}`,
-        time: hit.time,
-        label: '撞击斜面/曲面临界点',
-        position: { x: hit.state.x, y: hit.state.y },
-        metrics: { speed: Math.hypot(hit.state.vx, hit.state.vy) }
-      });
+/** Find the first returning root, not the launch point itself.
+ * The bounded substep normally establishes the interior sample. Halving
+ * also handles arbitrarily shallow positive launch angles within one step.
+ */
+function returningImpact(start:KinematicState,end:KinematicState,params:ProjectileCouplingParams):KinematicState|null{
+  const gap=(s:KinematicState)=>surfaceSignedDistance(s.x,s.y,params);
+  if(gap(end)>0)return null;
+  let interior=start;
+  if(gap(start)<=0){
+    let h=(end.t-start.t)/2;
+    for(let k=0;k<48;k++,h/=2){
+      if(start.t+h===start.t)break;
+      const probe=advanceProjectile(start,params,h);
+      if(gap(probe)>0){interior=probe;break;}
     }
+    // No departure into the physically valid domain.
+    if(gap(interior)<=0)return start;
   }
+  const hit=bisectEvent(interior,interior.t,end.t-interior.t,(s,h)=>advanceProjectile(s,params,h),gap,
+    {timeTolerance:EVENT_TOLERANCE,biasEndpoint:'midpoint'});
+  if(!hit)throw Error('M04 failed to bracket physical impact');
+  return hit.state;
+}
 
-  const trail = [...state.trail, { x: finalKin.x, y: finalKin.y }];
-  const g = CLASSROOM_GRAVITY;
-  const ang = params.mode === 'incline-flat' ? 0 : degToRad(params.launchAngleDeg);
-  const vacX = params.v0 * Math.cos(ang) * finalKin.t;
-  const vacY = params.v0 * Math.sin(ang) * finalKin.t - 0.5 * g * finalKin.t * finalKin.t;
-
-  return {
-    nextState: {
-      ...state,
-      ...finalKin,
-      landed,
-      impactTime,
-      trail,
-      vacuumTrail: [...state.vacuumTrail, { x: vacX, y: vacY }],
-      events: [...state.events, ...stepEvents]
-    },
-    events: stepEvents
+export function stepProjectileCoupling(
+  state:ProjectileCouplingState,params:ProjectileCouplingParams,dt:number
+):StepResult<ProjectileCouplingState>{
+  if(!Number.isFinite(dt)||dt<0)throw new Error('Invalid dt: '+dt);
+  if(state.landed||state.termination)return {nextState:state,events:[],advancedTime:0,halt:true};
+  if(dt===0)return {nextState:state,events:[]};
+  let cur:KinematicState={t:state.t,x:state.x,y:state.y,vx:state.vx,vy:state.vy};
+  const endT=state.t+dt,points:Vec2[]=[],vacuumPoints:Vec2[]=[];
+  let termination:'impact'|'escaped'|undefined;
+  const g=CLASSROOM_GRAVITY,angle=params.mode==='incline-flat'?0:degToRad(params.launchAngleDeg);
+  const append=(s:KinematicState)=>{
+    points.push({x:s.x,y:s.y});
+    vacuumPoints.push({x:params.v0*Math.cos(angle)*s.t,y:params.v0*Math.sin(angle)*s.t-.5*g*s.t*s.t});
   };
+  // A horizontal launch exactly at the flat ground has no free-flight segment.
+  if(params.mode==='safety-envelope'&&state.t===0&&state.vy<=0)termination='impact';
+  while(!termination&&cur.t<endT){
+    const h=Math.min(MAX_SUBSTEP,endT-cur.t);
+    if(cur.t+h===cur.t)break;
+    let candidate=advanceProjectile(cur,params,h),rim=false;
+    if(params.mode==='semicircle-trough'){
+      const R=Math.max(.5,params.troughRadius),right=(s:KinematicState)=>2*R-s.x;
+      if(right(candidate)<=0){
+        const hit=bisectEvent(cur,cur.t,h,(s,t)=>advanceProjectile(s,params,t),right,
+          {timeTolerance:EVENT_TOLERANCE,biasEndpoint:'positive',triggerOnStartZero:true});
+        if(!hit)throw Error('M04 failed to bracket right rim');
+        candidate=hit.state;rim=true;
+      }
+    }
+    const impact=returningImpact(cur,candidate,params);
+    if(impact){cur=impact;termination='impact';}
+    else{cur=candidate;if(rim)termination=cur.y<=EVENT_TOLERANCE?'impact':'escaped';}
+    append(cur);
+  }
+  const landed=termination==='impact',advancedTime=Math.max(0,cur.t-state.t);
+  const events:PhysicsEvent[]=termination?[{
+    id:termination==='impact'?'m04-impact':'m04-escaped',
+    time:cur.t,label:landed?'撞击物理表面（保留撞前瞬时值）':'飞出半圆槽口（后续未建模）',
+    position:{x:cur.x,y:cur.y},metrics:{speed:Math.hypot(cur.vx,cur.vy)}
+  }]:[];
+  return {nextState:{...state,...cur,landed,impactTime:landed?cur.t:null,
+    ...(termination?{termination}:{}),trail:[...state.trail,...points],
+    vacuumTrail:[...state.vacuumTrail,...vacuumPoints],events:[...state.events,...events]},
+    events,advancedTime,...(termination?{halt:true}:{})};
 }
 
 export function computeObservables(state: ProjectileCouplingState, params: ProjectileCouplingParams): Record<string, number> {
@@ -147,7 +164,9 @@ export function computeObservables(state: ProjectileCouplingState, params: Proje
     vx: state.vx,
     vy: state.vy,
     kineticEnergy: ke,
-    totalMechanicalEnergy: ke + pe
+    totalMechanicalEnergy: ke + pe,
+    speed:Math.hypot(state.vx,state.vy),terminal:state.termination||state.landed?1:0,landed:state.landed?1:0,
+    ...(state.impactTime!==null?{impactTime:state.impactTime}:{})
   };
 }
 

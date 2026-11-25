@@ -114,3 +114,24 @@ describe('H20 M04 independent impact and terminal semantics',()=>{
     expect(Math.abs((r.nextState.x-2.5)**2+r.nextState.y**2-2.5**2)).toBeLessThan(1e-6);
   });
 });
+
+it('terminates above the right rim as escape, never as a fictitious collision',()=>{
+  const p:ProjectileCouplingParams={mode:'semicircle-trough',v0:8,launchAngleDeg:60,inclineDeg:30,troughRadius:1,dragCoeff:0,mass:1};
+  const r=stepProjectileCoupling(createInitialState(p),p,2),s=r.nextState;
+  expect(r.halt).toBe(true);expect(s.landed).toBe(false);expect(s.impactTime).toBeNull();expect(s.termination).toBe('escaped');
+  expect(Math.abs(s.t-.5)).toBeLessThan(1e-7);expect(s.y).toBeGreaterThan(0);
+  expect(r.events[0]!.id).toBe('m04-escaped');
+  expect(stepProjectileCoupling(s,p,1).advancedTime).toBe(0);
+});
+it('preserves exact flight and impact under different outer step sizes, with or without drag',()=>{
+  for(const mode of ['incline-flat','semicircle-trough','safety-envelope'] as const)for(const dragCoeff of [0,.08,.3]){
+    const p:ProjectileCouplingParams={mode,v0:6,launchAngleDeg:mode==='semicircle-trough'?0:35,inclineDeg:30,troughRadius:2.5,dragCoeff,mass:1};
+    const a=stepProjectileCoupling(createInitialState(p),p,20).nextState;
+    let b=createInitialState(p);
+    for(let i=0;i<2000&&!b.termination;i++)b=stepProjectileCoupling(b,p,1/240).nextState;
+    expect(a.termination).toBeTruthy();expect(b.termination).toBe(a.termination);
+    expect(Math.abs(a.t-b.t)).toBeLessThan(1e-7);
+    expect(Math.hypot(a.x-b.x,a.y-b.y)).toBeLessThan(1e-6);
+    expect(Math.hypot(a.vx-b.vx,a.vy-b.vy)).toBeLessThan(1e-6);
+  }
+});
