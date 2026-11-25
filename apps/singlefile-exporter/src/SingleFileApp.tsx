@@ -236,7 +236,6 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (circuitSlice && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-      uplotWrapRef.current.dataset.scopeMax = String(plot.scales.x?.max ?? '');
     }
   };
 
@@ -451,6 +450,9 @@ export const SingleFileApp: React.FC = () => {
           { label: specB?.label ?? 'B', stroke: paint(specB?.color ?? '#f472b6'), width: 2,...(split?{scale:'y2'}:{}) }
         ],
         hooks: {
+          // uPlot commits scale changes during its draw; reading immediately
+          // after setData may return the previous frame's range.
+          draw: [(u) => { if (circuitSlice) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
           setCursor: [
             (u) => {
               const idx = u.cursor.idx;

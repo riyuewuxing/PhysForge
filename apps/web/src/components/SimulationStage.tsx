@@ -745,7 +745,6 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       uplotWrapRef.current.dataset.sampleCount = String(snaps.length);
       if (circuit) {
         uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-        uplotWrapRef.current.dataset.scopeMax = String(plot.scales.x?.max ?? '');
       }
     }
     lastPlotSyncMsRef.current = now;
@@ -1267,6 +1266,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       ],
       hooks: {
+        draw: [(u) => { if (circuitScope) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
         setCursor: [
           (u) => {
             const idx = u.cursor.idx;

@@ -1411,7 +1411,7 @@ async function main() {
             await page.waitForFunction(()=>{const x=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b2-rendered')||'null');return x&&x.t>.35&&Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-sample-count'))>=5;},null,{timeout:10000});
             if(await play.getAttribute('aria-label')==='暂停')await play.click();
             // A pause must commit one shared physical frame to canvas, inspector and scope.
-            await page.waitForFunction(()=>{
+            try { await page.waitForFunction(()=>{
               const x=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b2-rendered')||'null');
               const readout=document.querySelector('[data-testid="b2-topology-readouts"]');
               const scope=document.querySelector('[data-testid="uplot-container"]');
@@ -1423,7 +1423,17 @@ async function main() {
               return x && readout && scope && Math.abs(inspectorT-x.t)<1e-10 && Math.abs(scopeT-x.t)<1e-10 &&
                 Math.abs(v-x.capVoltage)<.000501 && Math.abs(i-x.capCurrent)<.000501 &&
                 scopeMax>=x.t-1e-9 && scopeMax<=Math.max(.1,x.t)+.01;
-            },null,{timeout:5000});
+            },null,{timeout:5000}); } catch(error) {
+              const probe=await page.evaluate(()=>{
+                const el=id=>document.querySelector('[data-testid="'+id+'"]');
+                return {canvas:el('simulation-canvas')?.getAttribute('data-b2-rendered'),inspectorT:el('b2-topology-readouts')?.getAttribute('data-sample-time'),
+                  voltage:el('b2-capVoltage')?.textContent,current:el('b2-capCurrent')?.textContent,
+                  scopeT:el('uplot-container')?.getAttribute('data-last-sample-t'),scopeMax:el('uplot-container')?.getAttribute('data-scope-max'),
+                  play:el('btn-play-pause')?.getAttribute('aria-label'),scopeText:el('floating-scope-dock')?.textContent};
+              });
+              await page.screenshot({path:path.join(OUT_DIR,'H8_B2_'+tag+'_pause_failure.png')});
+              throw Error('B2 pause alignment failed '+JSON.stringify(probe),{cause:error});
+            }
             const x=JSON.parse(await page.getByTestId('simulation-canvas').getAttribute('data-b2-rendered')||'null');
             const charging=tag==='rc_charge',tau=charging?.5:.45,voltage=charging?10*(-Math.expm1(-x.t/tau)):10*Math.exp(-x.t/tau),current=charging?(10-voltage)/10:-voltage/9;
             if(Math.abs(x.capVoltage-voltage)>1e-8||Math.abs(x.capCurrent-current)>1e-8)throw new Error('B2 RC real rendered state differs from independent law '+JSON.stringify({tag,x,voltage,current}));
@@ -1559,7 +1569,7 @@ async function main() {
       await sf.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null')?.t>.35,null,{timeout:10000});
       await sf.getByTestId('sf-play-pause').click();
       const pausedOfflineRC=async()=>{
-        await sf.waitForFunction(()=>{
+        try { await sf.waitForFunction(()=>{
           const x=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b2-rendered')||'null');
           const summary=document.querySelector('[data-testid="sf-summary-clock"]');
           const scope=document.querySelector('[data-testid="sf-uplot"]');
@@ -1567,7 +1577,15 @@ async function main() {
             Math.abs(Number(scope.getAttribute('data-last-sample-t'))-x.t)<1e-10 &&
             Number(scope.getAttribute('data-scope-max'))>=x.t-1e-9 &&
             Number(scope.getAttribute('data-scope-max'))<=Math.max(.1,x.t)+.01;
-        },null,{timeout:5000});
+        },null,{timeout:5000}); } catch(error) {
+          const probe=await sf.evaluate(()=>{
+            const el=id=>document.querySelector('[data-testid="'+id+'"]');
+            return {canvas:el('sf-canvas')?.getAttribute('data-b2-rendered'),summaryT:el('sf-summary-clock')?.getAttribute('data-sample-time'),
+              scopeT:el('sf-uplot')?.getAttribute('data-last-sample-t'),scopeMax:el('sf-uplot')?.getAttribute('data-scope-max'),play:el('sf-play-pause')?.textContent};
+          });
+          await sf.screenshot({path:path.join(OUT_DIR,'H8_B2_offline_pause_failure.png')});
+          throw Error('B2 offline pause alignment failed '+JSON.stringify(probe),{cause:error});
+        }
         const x=JSON.parse(await sf.getByTestId('sf-canvas').getAttribute('data-b2-rendered'));
         if(Math.abs(x.capVoltage-10*(-Math.expm1(-x.t/.5)))>1e-8 ||
            Math.abs(x.capCurrent-(10-x.capVoltage)/10)>1e-8)
