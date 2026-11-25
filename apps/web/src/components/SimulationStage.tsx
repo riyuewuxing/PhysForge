@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import { ChevronDown, ChevronUp, Crosshair, MoveDiagonal2, RotateCcw, Ruler } from 'lucide-react';
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
@@ -786,7 +786,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
-    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium'].includes(latestRef.current.plugin.meta.id)||Boolean(latestRef.current.plugin.getTelemetryChannels);
+    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity'].includes(latestRef.current.plugin.meta.id)||Boolean(latestRef.current.plugin.getTelemetryChannels);
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
@@ -999,6 +999,20 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     };
   }, [storyDeck, plugin.meta.id, storyNavigationRef]);
 
+  // M03 uses the same measured-sample contract as the other analytical models.
+  // Publish its paused frame before paint, without changing continuous cadence.
+  useLayoutEffect(()=>{
+    const current=latestRef.current;
+    if(current.plugin.meta.id!=='mech-constrained-velocity'||isPlaying)return;
+    if(current.scrubTime===null&&simStateModelIdRef.current===current.plugin.meta.id&&
+      simStateResetNonceRef.current===current.resetNonce&&simStateRef.current!==null&&simulationTimeRef.current>lastSnapshotTRef.current){
+      const state=simStateRef.current,t=simulationTimeRef.current;
+      snapshotsRef.current.push({t,state,observables:current.plugin.engine.computeObservables(state,current.params)});
+      if(snapshotsRef.current.length>MAX_SNAPSHOTS)snapshotsRef.current.shift();
+      lastSnapshotTRef.current=t;
+    }
+    renderFrameToCanvas();syncUPlotData(true);emitTelemetrySummary(true);
+  },[isPlaying,plugin.meta.id]);
   useEffect(() => {
     if (isPlaying) {
       lastFrameMsRef.current = null;
