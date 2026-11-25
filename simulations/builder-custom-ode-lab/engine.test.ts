@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runParameterSweep } from '@physforge/analysis-lab/sweep';
 import { resolvePluginParams } from '@physforge/sim-sdk';
 import { compileSafeFormula, preloadMathjsCompiler } from './safeAstCompiler.js';
 import {
+  checkInvariants,
   computeObservables,
   createInitialState,
   stepCustomOde,
@@ -69,11 +70,13 @@ describe('B5 builder-custom-ode-lab verification', () => {
 describe('H11 expression semantics and physical mode boundaries',()=>{
   const p=(overrides:Partial<CustomOdeParams>)=>resolvePluginParams<CustomOdeParams>(builderCustomOdeLabPlugin.paramSchema,overrides);
   it('uses standard power precedence, right associativity and scientific notation',async()=>{
+    vi.resetModules();
+    const cold=await import('./safeAstCompiler.js');
     for(const [expr,expected] of [['-x^2',-4],['2^-2',.25],['2^3^2',512],['1e-3*x',.002]] as const){
-      expect(compileSafeFormula(expr).evaluate({x:2})).toBeCloseTo(expected,12);
+      expect(cold.compileSafeFormula(expr).evaluate({x:2})).toBeCloseTo(expected,12);
     }
-    await preloadMathjsCompiler();
-    expect(compileSafeFormula('-x^2').evaluate({x:2})).toBe(-4);
+    await cold.preloadMathjsCompiler();
+    expect(cold.compileSafeFormula('-x^2').evaluate({x:2})).toBe(-4);
   });
   it('rejects undefined variables and nonfinite intermediate results, never silently returns zero',()=>{
     for(const expr of ['1/0','sqrt(-1)','0*exp(1000)','1/exp(1000)','x+v']){
