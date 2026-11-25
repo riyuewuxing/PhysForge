@@ -1,379 +1,171 @@
-import { bisectEvent, CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
+import { bisectEvent, CLASSROOM_GRAVITY as g, degToRad } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 
-export type ConveyorSystemMode = 'conveyor' | 'plank';
-
-export type BlockConveyorParams = {
-  systemMode: ConveyorSystemMode;
-  massBlock: number;
-  massPlank: number;
-  muBlockCarrier: number;
-  muGround: number;
-  inclineDeg: number;
-  beltVelocity: number;
-  blockInitialV: number;
-  plankInitialV: number;
-  externalForcePlank: number;
+export type ConveyorSystemMode='conveyor'|'plank';
+export type BlockConveyorParams={
+  systemMode:ConveyorSystemMode;
+  massBlock:number;massPlank:number;muBlockCarrier:number;muGround:number;
+  inclineDeg:number;beltVelocity:number;blockInitialV:number;plankInitialV:number;externalForcePlank:number;
+  /** 0 or omitted: ideal unlimited support; positive: full length centered at s=0. */
+  carrierLengthM?:number;
 };
-
-export interface BlockConveyorState {
-  readonly t: number;
-  readonly xBlock: number;
-  readonly vBlock: number;
-  readonly xCarrier: number;
-  readonly vCarrier: number;
-  readonly relativeScratch: number;
-  readonly frictionHeat: number;
-  readonly groundHeat: number;
-  readonly carrierWork: number; // 传送带驱动力或外力做功
-  readonly coMovingLocked: boolean;
-  readonly plankStopped: boolean;
-  readonly events: readonly PhysicsEvent[];
+export interface BlockConveyorState{
+  readonly t:number;readonly xBlock:number;readonly vBlock:number;readonly xCarrier:number;readonly vCarrier:number;
+  readonly relativeScratch:number;readonly scratchMinM:number;readonly scratchMaxM:number;
+  readonly frictionHeat:number;readonly groundHeat:number;readonly carrierWork:number;
+  readonly coMovingLocked:boolean;readonly plankStopped:boolean;
+  readonly frictionOnBlockN:number;readonly groundFrictionN:number;
+  readonly accelerationBlock:number;readonly accelerationCarrier:number;
+  readonly terminal?:'left-edge'|'right-edge';
+  readonly events:readonly PhysicsEvent[];
 }
+interface ContactPhase{
+  readonly locked:boolean;readonly stopped:boolean;
+  readonly f1:number;readonly fg:number;readonly a1:number;readonly a2:number;
+}
+const m1=(p:BlockConveyorParams)=>Math.max(1e-6,p.massBlock);
+const m2=(p:BlockConveyorParams)=>Math.max(1e-6,p.massPlank);
+const edgeHalf=(p:BlockConveyorParams)=>typeof p.carrierLengthM==='number'&&Number.isFinite(p.carrierLengthM)&&p.carrierLengthM>0?p.carrierLengthM/2:Infinity;
+const EPS=1e-12;
+const ground=(v:number,drive:number,limit:number)=>v!==0?-Math.sign(v)*limit:-Math.max(-limit,Math.min(limit,drive));
 
-export function createInitialState(params: BlockConveyorParams): BlockConveyorState {
-  const vCarrier0 = params.systemMode === 'conveyor' ? params.beltVelocity : params.plankInitialV;
-  const isAlreadyCoMoving = Math.abs(params.blockInitialV - vCarrier0) < 1e-9;
-
-  let locked = false;
-  if (isAlreadyCoMoving) {
-    if (params.systemMode === 'conveyor') {
-      const theta = degToRad(params.inclineDeg);
-      const maxStatic = params.muBlockCarrier * Math.cos(theta);
-      locked = Math.sin(theta) <= maxStatic + 1e-12;
-    } else {
-      locked = true;
-    }
+/** Solve the actual Coulomb contact state at the beginning of a constant-force
+ * segment. The teaching model explicitly uses mu_s=mu_k at each interface. */
+export function solveContactPhase(s:Pick<BlockConveyorState,'vBlock'|'vCarrier'>,p:BlockConveyorParams):ContactPhase{
+  const M=m1(p),N=m2(p),rel=s.vBlock-s.vCarrier;
+  const mu=Math.max(0,p.muBlockCarrier);
+  if(p.systemMode==='conveyor'){
+    const theta=degToRad(p.inclineDeg),weightAlong=M*g*Math.sin(theta),limit=mu*M*g*Math.cos(theta);
+    const locked=Math.abs(rel)<=EPS&&Math.abs(weightAlong)<=limit+EPS;
+    const f1=locked?weightAlong:Math.abs(rel)<=EPS?Math.sign(weightAlong)*limit:-Math.sign(rel)*limit;
+    return {locked,stopped:false,f1,fg:0,a1:locked?0:(f1-weightAlong)/M,a2:0};
   }
-
-  return {
-    t: 0,
-    xBlock: 0,
-    vBlock: params.blockInitialV,
-    xCarrier: 0,
-    vCarrier: vCarrier0,
-    relativeScratch: 0,
-    frictionHeat: 0,
-    groundHeat: 0,
-    carrierWork: 0,
-    coMovingLocked: locked,
-    plankStopped: false,
-    events: []
+  const F=p.externalForcePlank,L=mu*M*g,G=Math.max(0,p.muGround)*(M+N)*g;
+  const commonFg=ground(s.vCarrier,F,G),commonA=(F+commonFg)/(M+N);
+  const locked=Math.abs(rel)<=EPS&&Math.abs(M*commonA)<=L+EPS;
+  if(locked)return {locked:true,stopped:s.vCarrier===0&&commonA===0,f1:M*commonA,fg:commonFg,a1:commonA,a2:commonA};
+  // At equal velocity, the sign of the attempted COMMON acceleration
+  // determines which way static contact fails (including F=0 and a<0).
+  const f1=Math.abs(rel)<=EPS?Math.sign(commonA)*L:-Math.sign(rel)*L;
+  const drive=F-f1,fg=ground(s.vCarrier,drive,G),a2=(drive+fg)/N;
+  return {locked:false,stopped:s.vCarrier===0&&a2===0,f1,fg,a1:f1/M,a2};
+}
+function withPhase(s:BlockConveyorState,q:ContactPhase):BlockConveyorState{
+  return {...s,coMovingLocked:q.locked,plankStopped:q.stopped,frictionOnBlockN:q.f1,
+    groundFrictionN:q.fg,accelerationBlock:q.a1,accelerationCarrier:q.a2};
+}
+export function createInitialState(p:BlockConveyorParams):BlockConveyorState{
+  const vCarrier=p.systemMode==='conveyor'?p.beltVelocity:p.plankInitialV;
+  const s:BlockConveyorState={t:0,xBlock:0,vBlock:p.blockInitialV,xCarrier:0,vCarrier,
+    relativeScratch:0,scratchMinM:0,scratchMaxM:0,frictionHeat:0,groundHeat:0,carrierWork:0,
+    coMovingLocked:false,plankStopped:false,frictionOnBlockN:0,groundFrictionN:0,accelerationBlock:0,accelerationCarrier:0,events:[]};
+  return withPhase(s,solveContactPhase(s,p));
+}
+/** Frozen phase only. A trial crossing is never accepted; the caller finds
+ * its earliest guard before integrating the segment's physical work/heat. */
+function advance(s:BlockConveyorState,p:BlockConveyorParams,q:ContactPhase,dt:number):BlockConveyorState{
+  const dx1=s.vBlock*dt+.5*q.a1*dt*dt,dx2=s.vCarrier*dt+.5*q.a2*dt*dt;
+  const ds=q.locked?0:dx1-dx2,rel=s.xBlock-s.xCarrier+dx1-dx2;
+  return {...s,t:s.t+dt,xBlock:s.xBlock+dx1,xCarrier:s.xCarrier+dx2,
+    vBlock:s.vBlock+q.a1*dt,vCarrier:s.vCarrier+q.a2*dt,
+    relativeScratch:s.relativeScratch+Math.abs(ds),
+    scratchMinM:Math.min(s.scratchMinM,rel),scratchMaxM:Math.max(s.scratchMaxM,rel),
+    frictionHeat:s.frictionHeat+Math.abs(q.f1*ds),
+    groundHeat:s.groundHeat+(p.systemMode==='plank'?Math.abs(q.fg*dx2):0),
+    carrierWork:s.carrierWork+(p.systemMode==='conveyor'?q.f1*p.beltVelocity*dt:p.externalForcePlank*dx2)};
+}
+type GuardId='relative-zero'|'ground-zero'|'left-edge'|'right-edge';
+type Hit={id:GuardId;dt:number};
+const supportCoordinate=(s:BlockConveyorState,p:BlockConveyorParams)=>p.systemMode==='conveyor'?s.xBlock:s.xBlock-s.xCarrier;
+function candidateEvents(s:BlockConveyorState,p:BlockConveyorParams,q:ContactPhase,dt:number):Hit[]{
+  const result:Hit[]=[];
+  const move=(state:BlockConveyorState,h:number)=>advance(state,p,q,h);
+  const add=(id:GuardId,state:BlockConveyorState,h:number,fn:(z:BlockConveyorState)=>number,offset=0)=>{
+    const hit=bisectEvent(state,state.t,h,move,fn,{timeTolerance:1e-13,triggerOnStartZero:false});
+    if(hit)result.push({id,dt:offset+hit.timeOffset});
   };
-}
-
-function advanceConveyorSegment(
-  s: BlockConveyorState,
-  params: BlockConveyorParams,
-  dt: number
-): BlockConveyorState {
-  if (dt === 0) return s;
-  const m = Math.max(params.massBlock, 1e-6);
-  const g = CLASSROOM_GRAVITY;
-  const theta = degToRad(params.inclineDeg);
-  const gParallel = m * g * Math.sin(theta);
-  const fk = params.muBlockCarrier * m * g * Math.cos(theta);
-  const vBelt = params.beltVelocity;
-
-  if (s.coMovingLocked) {
-    // 静摩擦平衡重力沿斜面向下分力: f_static = +gParallel 沿斜面向上
-    const fStatic = gParallel;
-    const dx = vBelt * dt;
-    // 传送带维持匀速克服物块对皮带反作用力做功
-    const work = fStatic * vBelt * dt;
-    return {
-      ...s,
-      t: s.t + dt,
-      xBlock: s.xBlock + dx,
-      vBlock: vBelt,
-      xCarrier: s.xCarrier + dx,
-      vCarrier: vBelt,
-      carrierWork: s.carrierWork + work
-    };
-  }
-
-  const vRel0 = s.vBlock - vBelt;
-  // 若初始恰好共速但不能锁定（tan(theta) > mu），重力下滑占优，相对速度立即趋向负方向 -> 摩擦沿斜面向上 (+fk)
-  const fricOnBlock =
-    Math.abs(vRel0) < 1e-12
-      ? fk
-      : vRel0 > 0
-        ? -fk
-        : fk;
-
-  const acc = (fricOnBlock - gParallel) / m;
-  const nextV = s.vBlock + acc * dt;
-  const dxBlock = s.vBlock * dt + 0.5 * acc * dt * dt;
-  const dxBelt = vBelt * dt;
-  const dScratch = Math.abs(dxBlock - dxBelt);
-  const dHeat = fk * dScratch;
-  const dWork = fricOnBlock * vBelt * dt;
-
-  return {
-    ...s,
-    t: s.t + dt,
-    xBlock: s.xBlock + dxBlock,
-    vBlock: nextV,
-    xCarrier: s.xCarrier + dxBelt,
-    vCarrier: vBelt,
-    relativeScratch: s.relativeScratch + dScratch,
-    frictionHeat: s.frictionHeat + dHeat,
-    carrierWork: s.carrierWork + dWork
-  };
-}
-
-function advancePlankSegment(
-  s: BlockConveyorState,
-  params: BlockConveyorParams,
-  dt: number
-): BlockConveyorState {
-  if (dt === 0) return s;
-  const m1 = Math.max(params.massBlock, 1e-6);
-  const m2 = Math.max(params.massPlank, 1e-6);
-  const g = CLASSROOM_GRAVITY;
-  const f1Max = params.muBlockCarrier * m1 * g;
-  const f2Max = params.muGround * (m1 + m2) * g;
-
-  if (s.coMovingLocked) {
-    const v = s.vCarrier;
-    const fGround =
-      Math.abs(v) < 1e-9
-        ? Math.abs(params.externalForcePlank) <= f2Max
-          ? -params.externalForcePlank
-          : -Math.sign(params.externalForcePlank) * f2Max
-        : -Math.sign(v) * f2Max;
-    const aCommon = (params.externalForcePlank + fGround) / (m1 + m2);
-    // 检查是否突破块间最大静摩擦
-    const requiredF1 = m1 * Math.abs(aCommon);
-    if (requiredF1 <= f1Max + 1e-9) {
-      const nextV =
-        Math.abs(v) < 1e-9 && Math.abs(params.externalForcePlank) <= f2Max
-          ? 0
-          : v + aCommon * dt;
-      const dx = 0.5 * (v + nextV) * dt;
-      const dGroundHeat = Math.abs(fGround * dx);
-      const dExtWork = params.externalForcePlank * dx;
-      return {
-        ...s,
-        t: s.t + dt,
-        xBlock: s.xBlock + dx,
-        vBlock: nextV,
-        xCarrier: s.xCarrier + dx,
-        vCarrier: nextV,
-        groundHeat: s.groundHeat + dGroundHeat,
-        carrierWork: s.carrierWork + dExtWork
-      };
-    }
-  }
-
-  const vRel = s.vBlock - s.vCarrier;
-  const f1OnBlock =
-    Math.abs(vRel) < 1e-12
-      ? Math.sign(params.externalForcePlank) * f1Max
-      : vRel > 0
-        ? -f1Max
-        : f1Max;
-  const a1 = f1OnBlock / m1;
-
-  const netDrive2 = params.externalForcePlank - f1OnBlock;
-  const fGround =
-    Math.abs(s.vCarrier) < 1e-9
-      ? Math.abs(netDrive2) <= f2Max
-        ? -netDrive2
-        : -Math.sign(netDrive2) * f2Max
-      : -Math.sign(s.vCarrier) * f2Max;
-  const a2 = (netDrive2 + fGround) / m2;
-
-  const nextV1 = s.vBlock + a1 * dt;
-  const nextV2 = s.vCarrier + a2 * dt;
-  const dx1 = 0.5 * (s.vBlock + nextV1) * dt;
-  const dx2 = 0.5 * (s.vCarrier + nextV2) * dt;
-  const dScratch = Math.abs(dx1 - dx2);
-  const dHeat = f1Max * dScratch;
-  const dGroundHeat = Math.abs(fGround * dx2);
-  const dExtWork = params.externalForcePlank * dx2;
-
-  return {
-    ...s,
-    t: s.t + dt,
-    xBlock: s.xBlock + dx1,
-    vBlock: nextV1,
-    xCarrier: s.xCarrier + dx2,
-    vCarrier: nextV2,
-    relativeScratch: s.relativeScratch + dScratch,
-    frictionHeat: s.frictionHeat + dHeat,
-    groundHeat: s.groundHeat + dGroundHeat,
-    carrierWork: s.carrierWork + dExtWork
-  };
-}
-
-export function stepBlockConveyor(
-  state: BlockConveyorState,
-  params: BlockConveyorParams,
-  dt: number
-): StepResult<BlockConveyorState> {
-  if (!Number.isFinite(dt) || dt < 0) {
-    throw new Error(`Time step dt must be non-negative finite, got ${dt}.`);
-  }
-  if (dt === 0) {
-    return { nextState: state, events: [] };
-  }
-
-  let cur = state;
-  let remaining = dt;
-  const events: PhysicsEvent[] = [];
-
-  if (params.systemMode === 'conveyor') {
-    if (!cur.coMovingLocked && Math.abs(cur.vBlock - params.beltVelocity) > 1e-10) {
-      const ev = bisectEvent(
-        cur,
-        cur.t,
-        remaining,
-        (s, sub) => advanceConveyorSegment(s, params, sub),
-        (s) => s.vBlock - params.beltVelocity,
-        { timeTolerance: 1e-8 }
-      );
-      if (ev) {
-        const theta = degToRad(params.inclineDeg);
-        const canLock = Math.sin(theta) <= params.muBlockCarrier * Math.cos(theta) + 1e-12;
-        cur = {
-          ...ev.state,
-          vBlock: params.beltVelocity,
-          coMovingLocked: canLock
-        };
-        events.push({
-          id: `comove-${ev.time.toFixed(6)}`,
-          time: ev.time,
-          label: canLock ? '与传送带共速锁定' : '共速瞬间摩擦力方向突变',
-          position: { x: cur.xBlock, y: 0 },
-          metrics: {
-            relativeScratch: cur.relativeScratch,
-            frictionHeat: cur.frictionHeat
-          }
-        });
-        remaining -= ev.timeOffset;
+  if(!q.locked&&Math.abs(s.vBlock-s.vCarrier)>EPS)add('relative-zero',s,dt,z=>z.vBlock-z.vCarrier);
+  if(p.systemMode==='plank'&&Math.abs(s.vCarrier)>EPS)add('ground-zero',s,dt,z=>z.vCarrier);
+  const half=edgeHalf(p);
+  if(Number.isFinite(half)){
+    const v=p.systemMode==='conveyor'?s.vBlock:s.vBlock-s.vCarrier,a=p.systemMode==='conveyor'?q.a1:q.a1-q.a2;
+    // A quadratic position may hit an edge and return within a coarse dt.
+    // Split at the sole stationary point before bracketing each monotonic leg.
+    const turn=a!==0?-v/a:Infinity;
+    const cuts=turn>0&&turn<dt?[0,turn,dt]:[0,dt];
+    for(const [id,sign] of [['left-edge',-1],['right-edge',1]] as const){
+      const fn=(z:BlockConveyorState)=>half-sign*supportCoordinate(z,p);
+      for(let i=0;i<cuts.length-1;i++){
+        const offset=cuts[i]!,h=cuts[i+1]!-offset,from=offset===0?s:move(s,offset),end=move(from,h);
+        if(fn(from)<=0){
+          // On an initial edge, only terminate for an outward velocity or acceleration.
+          const vv=v+a*offset;if(sign*vv>0||(Math.abs(vv)<=EPS&&sign*a>0))result.push({id,dt:offset});
+          break;
+        }
+        if(fn(end)<=0){add(id,from,h,fn,offset);break;}
       }
     }
-
-    if (remaining > 1e-12) {
-      cur = advanceConveyorSegment(cur, params, remaining);
-    }
-  } else {
-    // plank 模式：捕获块板共速瞬间
-    if (!cur.coMovingLocked && Math.abs(cur.vBlock - cur.vCarrier) > 1e-10) {
-      const ev = bisectEvent(
-        cur,
-        cur.t,
-        remaining,
-        (s, sub) => advancePlankSegment(s, params, sub),
-        (s) => s.vBlock - s.vCarrier,
-        { timeTolerance: 1e-8 }
-      );
-      if (ev) {
-        const m1 = Math.max(params.massBlock, 1e-6);
-        const m2 = Math.max(params.massPlank, 1e-6);
-        const f1Max = params.muBlockCarrier * m1 * CLASSROOM_GRAVITY;
-        const f2Max = params.muGround * (m1 + m2) * CLASSROOM_GRAVITY;
-        const vCommon = ev.state.vCarrier;
-        const fGround = Math.abs(vCommon) < 1e-9 ? 0 : -Math.sign(vCommon) * f2Max;
-        const aCommon = (params.externalForcePlank + fGround) / (m1 + m2);
-        const canLock = m1 * Math.abs(aCommon) <= f1Max + 1e-9;
-
-        cur = {
-          ...ev.state,
-          vBlock: vCommon,
-          vCarrier: vCommon,
-          coMovingLocked: canLock
-        };
-        events.push({
-          id: `plank-comove-${ev.time.toFixed(6)}`,
-          time: ev.time,
-          label: '物块与木板达到共速',
-          position: { x: cur.xBlock, y: 0 },
-          metrics: { relativeScratch: cur.relativeScratch, vCommon }
-        });
-        remaining -= ev.timeOffset;
-      }
-    }
-
-    if (remaining > 1e-12) {
-      cur = advancePlankSegment(cur, params, remaining);
-    }
   }
-
-  return {
-    nextState: { ...cur, events: [...state.events, ...events] },
-    events
-  };
+  return result.sort((a,b)=>a.dt-b.dt);
 }
-
-export function computeObservables(
-  state: BlockConveyorState,
-  params: BlockConveyorParams
-): Record<string, number> {
-  const m1 = Math.max(params.massBlock, 1e-6);
-  const m2 = Math.max(params.massPlank, 1e-6);
-  const g = CLASSROOM_GRAVITY;
-  const theta = params.systemMode === 'conveyor' ? degToRad(params.inclineDeg) : 0;
-
-  const keBlock = 0.5 * m1 * state.vBlock * state.vBlock;
-  const kePlank = params.systemMode === 'plank' ? 0.5 * m2 * state.vCarrier * state.vCarrier : 0;
-  const peBlock = m1 * g * state.xBlock * Math.sin(theta);
-
-  return {
-    vBlock: state.vBlock,
-    vCarrier: state.vCarrier,
-    xBlock: state.xBlock,
-    xCarrier: state.xCarrier,
-    relativeScratch: state.relativeScratch,
-    frictionHeat: state.frictionHeat,
-    groundHeat: state.groundHeat,
-    kineticEnergy: keBlock + kePlank,
-    potentialEnergy: peBlock,
-    carrierWork: state.carrierWork
-  };
-}
-
-export function checkInvariants(
-  state: BlockConveyorState,
-  initial: BlockConveyorState,
-  params: BlockConveyorParams
-): InvariantReport[] {
-  const obs0 = computeObservables(initial, params);
-  const obs1 = computeObservables(state, params);
-
-  const e0 = obs0.kineticEnergy! + obs0.potentialEnergy!;
-  const e1 =
-    obs1.kineticEnergy! + obs1.potentialEnergy! + state.frictionHeat + state.groundHeat;
-  const expected = e0 + state.carrierWork;
-  const relErr = Math.abs(e1 - expected) / Math.max(Math.abs(expected), Math.abs(e0), 1e-9);
-
-  const reports: InvariantReport[] = [
-    {
-      name: '系统功能关系守恒 (ΔEk + ΔEp + Q = W外/带)',
-      measuredError: relErr,
-      tolerance: 1e-4,
-      passed: relErr < 1e-4
+export function stepBlockConveyor(s:BlockConveyorState,p:BlockConveyorParams,dt:number):StepResult<BlockConveyorState>{
+  if(!Number.isFinite(dt)||dt<0)throw Error('Invalid dt: '+dt);
+  if(s.terminal)return {nextState:s,events:[],advancedTime:0,halt:true};
+  if(dt===0)return {nextState:s,events:[]};
+  let cur=s,remaining=dt,transitions=0;
+  const events:PhysicsEvent[]=[];
+  while(remaining>0){
+    if(++transitions>16)throw Error('M05 unresolved contact transition (no invalid fallback integration)');
+    const q=solveContactPhase(cur,p);cur=withPhase(cur,q);
+    const hits=candidateEvents(cur,p,q,remaining),first=hits[0];
+    if(!first){cur=advance(cur,p,q,remaining);break;}
+    const h=first.dt;
+    cur=advance(cur,p,q,h);
+    remaining=Math.max(0,remaining-h);
+    const simultaneous=hits.filter(x=>Math.abs(x.dt-h)<=1e-11).map(x=>x.id);
+    const co=simultaneous.includes('relative-zero'),stop=simultaneous.includes('ground-zero');
+    // Exact reset maps at a localized root; conserve momentum for the
+    // tiny numerical correction to common velocity, not a physical impulse.
+    if(co){
+      const v=p.systemMode==='conveyor'?p.beltVelocity:stop?0:(m1(p)*cur.vBlock+m2(p)*cur.vCarrier)/(m1(p)+m2(p));
+      cur={...cur,vBlock:v,vCarrier:v};
+    }else if(stop)cur={...cur,vCarrier:0,...(q.locked?{vBlock:0}:{})};
+    const edge=simultaneous.find((id):id is 'left-edge'|'right-edge'=>id==='left-edge'||id==='right-edge');
+    const post=solveContactPhase(cur,p);
+    const label=(id:GuardId)=>id==='relative-zero'?post.locked?'达到共速 · 静摩擦锁定':'共速 · 摩擦方向切换':
+      id==='ground-zero'?post.stopped?'木板停止 · 地面静摩擦':'木板速度过零 · 重新判定摩擦':'到达承载面边界 · 接触段终止';
+    for(const id of simultaneous)events.push({id:'m05-'+id+'-'+cur.t.toFixed(9),time:cur.t,label:label(id),
+      position:{x:cur.xBlock,y:0},metrics:{relativeScratch:cur.relativeScratch,frictionHeat:cur.frictionHeat,
+        vBlock:cur.vBlock,vCarrier:cur.vCarrier,groundHeat:cur.groundHeat}});
+    if(edge){
+      // End at loss of support; preserve incoming contact phase and velocity.
+      cur={...cur,terminal:edge,events:[...s.events,...events]};
+      return {nextState:cur,events,advancedTime:cur.t-s.t,halt:true};
     }
-  ];
-
-  if (
-    params.systemMode === 'plank' &&
-    params.muGround === 0 &&
-    params.externalForcePlank === 0
-  ) {
-    const m1 = Math.max(params.massBlock, 1e-6);
-    const m2 = Math.max(params.massPlank, 1e-6);
-    const p0 = m1 * initial.vBlock + m2 * initial.vCarrier;
-    const p1 = m1 * state.vBlock + m2 * state.vCarrier;
-    const pErr = Math.abs(p1 - p0) / Math.max(Math.abs(p0), 1e-9);
-    reports.push({
-      name: '光滑地面板块动量守恒',
-      measuredError: pErr,
-      tolerance: 1e-8,
-      passed: pErr < 1e-8
-    });
+    cur=withPhase(cur,post);
   }
-
+  cur=withPhase(cur,solveContactPhase(cur,p));
+  return {nextState:{...cur,events:[...s.events,...events]},events,advancedTime:dt};
+}
+export function computeObservables(s:BlockConveyorState,p:BlockConveyorParams):Record<string,number>{
+  const M=m1(p),N=m2(p),theta=p.systemMode==='conveyor'?degToRad(p.inclineDeg):0,
+    kineticEnergy=.5*M*s.vBlock*s.vBlock+(p.systemMode==='plank'?.5*N*s.vCarrier*s.vCarrier:0),
+    potentialEnergy=M*g*s.xBlock*Math.sin(theta);
+  return {vBlock:s.vBlock,vCarrier:s.vCarrier,xBlock:s.xBlock,xCarrier:s.xCarrier,
+    relativeDisplacement:s.xBlock-s.xCarrier,relativeScratch:s.relativeScratch,scratchSpanM:s.scratchMaxM-s.scratchMinM,
+    frictionHeat:s.frictionHeat,groundHeat:s.groundHeat,carrierWork:s.carrierWork,
+    kineticEnergy,potentialEnergy,totalMechanicalEnergy:kineticEnergy+potentialEnergy,dissipatedEnergy:s.frictionHeat+s.groundHeat,
+    frictionOnBlockN:s.frictionOnBlockN,groundFrictionN:s.groundFrictionN,
+    accelerationBlock:s.accelerationBlock,accelerationCarrier:s.accelerationCarrier,
+    coMovingLocked:s.coMovingLocked?1:0,plankStopped:s.plankStopped?1:0,terminal:s.terminal?1:0};
+}
+export function checkInvariants(s:BlockConveyorState,initial:BlockConveyorState,p:BlockConveyorParams):InvariantReport[]{
+  const e0=computeObservables(initial,p).totalMechanicalEnergy!,e=computeObservables(s,p).totalMechanicalEnergy!;
+  const residual=Math.abs(e-e0+s.frictionHeat-initial.frictionHeat+s.groundHeat-initial.groundHeat-(s.carrierWork-initial.carrierWork));
+  const reports:InvariantReport[]=[{name:'系统功能关系绝对残差 ΔE+Q−W',unit:'J',measuredError:residual,tolerance:1e-7,passed:residual<1e-7}];
+  if(p.systemMode==='plank'&&p.muGround===0&&p.externalForcePlank===0){
+    const error=Math.abs(m1(p)*(s.vBlock-initial.vBlock)+m2(p)*(s.vCarrier-initial.vCarrier));
+    reports.push({name:'光滑地面板块动量守恒',unit:'kg·m/s',measuredError:error,tolerance:1e-8,passed:error<1e-8});
+  }
   return reports;
 }
