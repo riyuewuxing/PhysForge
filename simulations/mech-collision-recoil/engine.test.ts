@@ -169,3 +169,14 @@ describe('H28 exact event boundaries and common diagrams',()=>{
     const end=stepCollisionRecoil(s,p,2).nextState;expect(mechCollisionRecoilPlugin.getForceVectors!(end,p)).toEqual([]);
   });
 });
+
+it('uses the shared event bisection bracket for actual sphere and penetration events',()=>{
+  const p=getPreset(0),s=stepCollisionRecoil(createInitialState(p),p,2).nextState;
+  expect(s.impact!.bracketWidth).toBeLessThanOrEqual(1e-13);
+  expect(s.events[0]!.metrics!.bracketWidth).toBeLessThanOrEqual(1e-13);
+  for(const L of [1,1.28,1.8]){
+    const q={...getPreset(2),blockLength:L},out=stepCollisionRecoil(createInitialState(q),q,2).nextState;
+    expect(out.events).toHaveLength(2);
+    for(const ev of out.events)expect(ev.metrics!.bracketWidth).toBeLessThanOrEqual(1e-13);
+  }
+});
