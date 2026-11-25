@@ -1,9 +1,6 @@
-# B5 通用方程与拉格朗日实验室（`builder-custom-ode-lab`）物理建模规范
+# B5 通用方程与拉格朗日实验室
 
-- **规范 ID**：`builder-custom-ode-lab`
-- **公式安全沙箱**：禁止一切 `eval` / `new Function` / 原型链与对象索引访问；仅按需动态加载 `mathjs >= 15.2.0` 进行表达式语法树校验，白名单变量（`x, v, y, vx, vy, t, theta, omega, k, m, g, A, w, gamma, mu, pi, e`）与白名单初等函数，并限制表达式长度 `<= 256`、AST 节点总数 `<= 80`。
-- **内置物理模板**：
-  1. `harmonic-custom`：受驱阻尼线性/非线性振子 $a = F(x,v,t)/m$（`RK4` 积分）；
-  2. `lagrangian-pendulum`：一自由度受驱阻尼拉格朗日单摆 $\ddot{\theta} = -\frac{g}{L}\sin\theta - \gamma\dot{\theta} + A\cos(\omega_d t)$（`RK4`）；
-  3. `kepler-2d`：二维中心万有引力 $\ddot{\mathbf{r}} = -\frac{\mu}{r^3}\mathbf{r}$（`VelocityVerlet` 对称辛积分保持能量与角动量守恒 $< 10^{-6}$）；
-  4. `custom-expr`：自定义白名单表达式加速度模板 `dv/dt = expr(x, v, t)`（`RK4`）。
+- 单一确定性白名单 AST：256 字符、80 节点，显式乘法，科学计数法、幂右结合且优先于一元负号；不执行用户代码。变量 x,v,vx(=v),theta(=x),omega(=v),t,k,m,g,A,w,gamma,mu(=k),pi,e。禁止未提供的二维 y/vy；缺失变量、除零、非有限中间量均报告错误。原 mathjs 动态预加载仅保留独立参考测试兼容入口，不决定运行语义；生产内核不加载它。
+- 自定义方程为一维加速度 a(x,v,t)，不推断机械势能/角动量，只提供平动动能。错误保持最后有效状态，真实时间不前进，发出单次停止事件；无头验收不得通过。未声称能预知所有连续时间奇点或自动判定刚性。
+- 受驱线性振子 m x''=-kx-γv+A cos(wt)；摆 θ''=−g/L sinθ−γω+A cos(wt)，L=max(.3,.1k) m（沿用旧参数映射）；机械能为 .5mL²ω²+mgL(1−cosθ)。只在无驱无阻尼时检查机械能守恒。
+- Kepler 保留原 .2m 有限核心；外部点质量反平方引力，内部均匀球引力 a=−μr/R³，势能 U=m[−μ/R+μ(r²−R²)/(2R³)]，边界力/势能连续。零切向初速是真实合法输入；初半径=max(.4,|initialPos|)。机械能、角动量均为总量 SI（非单位质量量）。固定参数子步界、有限工作量；不宣称任意步长或近点都有 1e−6 能量精度。

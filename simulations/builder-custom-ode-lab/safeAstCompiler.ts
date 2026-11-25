@@ -4,9 +4,7 @@ const MAX_AST_NODES = 80;
 const ALLOWED_VARIABLES = new Set([
   'x',
   'v',
-  'y',
   'vx',
-  'vy',
   't',
   'theta',
   'omega',
@@ -82,36 +80,9 @@ export interface CompiledSafeFormula {
   readonly evaluate: (scope: Readonly<Record<string, number>>) => number;
 }
 
-interface MathjsNodeLike {
-  readonly type: string;
-  readonly value?: unknown;
-  readonly name?: string;
-  readonly op?: string;
-  readonly fn?: string | { readonly name?: string };
-  readonly args?: readonly MathjsNodeLike[];
-  readonly content?: MathjsNodeLike;
-}
-
-let cachedMathjsParse: ((expr: string) => MathjsNodeLike) | null = null;
-let mathjsLoadPromise: Promise<void> | null = null;
-
-/**
- * 仅在进入 B5 模型时动态按需加载 mathjs >= 15.2.0 AST 解析器，绝不污染首屏主包与其它切片
- */
-export function preloadMathjsCompiler(): Promise<void> {
-  if (cachedMathjsParse) return Promise.resolve();
-  if (!mathjsLoadPromise) {
-    mathjsLoadPromise = import('mathjs')
-      .then((mod) => {
-        if (typeof mod.parse === 'function') {
-          cachedMathjsParse = (expr: string) => mod.parse(expr) as unknown as MathjsNodeLike;
-        }
-      })
-      .catch(() => {
-        mathjsLoadPromise = null;
-      });
-  }
-  return mathjsLoadPromise;
+/** Compatibility/reference-test hook; production expressions use one deterministic grammar. */
+export async function preloadMathjsCompiler(): Promise<void> {
+  await import('mathjs');
 }
 
 function precheckRawExpression(expr: string): void {
@@ -135,60 +106,6 @@ function precheckRawExpression(expr: string): void {
   }
 }
 
-function convertMathjsAst(node: MathjsNodeLike, counter: { count: number }): SafeAstNode {
-  counter.count += 1;
-  if (counter.count > MAX_AST_NODES) {
-    throw new Error(`AST complexity exceeds safe maximum (${MAX_AST_NODES} nodes).`);
-  }
-
-  if (node.type === 'ParenthesisNode' && node.content) {
-    return convertMathjsAst(node.content, counter);
-  }
-  if (node.type === 'ConstantNode') {
-    const num = Number(node.value);
-    if (!Number.isFinite(num)) {
-      throw new Error(`Invalid numeric constant in expression.`);
-    }
-    return { kind: 'num', value: num };
-  }
-  if (node.type === 'SymbolNode') {
-    const name = node.name ?? '';
-    if (!ALLOWED_VARIABLES.has(name)) {
-      throw new Error(`Identifier "${name}" is not in the physics variable whitelist.`);
-    }
-    return { kind: 'var', name };
-  }
-  if (node.type === 'OperatorNode') {
-    const op = node.op ?? '';
-    const args = node.args ?? [];
-    if (args.length === 1 && (op === '+' || op === '-')) {
-      return { kind: 'unary', op, arg: convertMathjsAst(args[0]!, counter) };
-    }
-    if (args.length === 2 && (op === '+' || op === '-' || op === '*' || op === '/' || op === '^')) {
-      return {
-        kind: 'binary',
-        op,
-        left: convertMathjsAst(args[0]!, counter),
-        right: convertMathjsAst(args[1]!, counter)
-      };
-    }
-    throw new Error(`Disallowed operator "${op}" in AST.`);
-  }
-  if (node.type === 'FunctionNode') {
-    const fnName = typeof node.fn === 'string' ? node.fn : (node.fn?.name ?? '');
-    const args = (node.args ?? []).map((a) => convertMathjsAst(a, counter));
-    if (fnName in UNARY_FUNCTIONS && args.length === 1) {
-      return { kind: 'call', fn: fnName, args };
-    }
-    if (fnName in BINARY_FUNCTIONS && args.length === 2) {
-      return { kind: 'call', fn: fnName, args };
-    }
-    throw new Error(`Function "${fnName}" with ${args.length} args is not whitelisted.`);
-  }
-
-  throw new Error(`Disallowed AST node type "${node.type}".`);
-}
-
 function tokenizeFallback(expr: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
@@ -199,9 +116,10 @@ function tokenizeFallback(expr: string): Token[] {
       continue;
     }
     if (/\d/.test(ch) || (ch === '.' && i + 1 < expr.length && /\d/.test(expr[i + 1]!))) {
-      let end = i;
-      while (end < expr.length && /[\d.]/.test(expr[end]!)) end += 1;
-      const val = Number(expr.slice(i, end));
+      const literal=expr.slice(i).match(/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/)?.[0];
+      if(!literal)throw new Error('Invalid number token.');
+      const end=i+literal.length;
+      const val=Number(literal);
       if (!Number.isFinite(val)) throw new Error(`Invalid number token in "${expr}".`);
       tokens.push({ kind: 'num', value: val });
       i = end;
@@ -282,8 +200,8 @@ function parseTokensToAst(tokens: readonly Token[]): { ast: SafeAstNode; nodeCou
         if (peek()?.kind !== 'rparen') throw new Error(`Expected closing ")" for ${tok.value}.`);
         consume();
         if (
-          (tok.value in UNARY_FUNCTIONS && args.length === 1) ||
-          (tok.value in BINARY_FUNCTIONS && args.length === 2)
+          (Object.prototype.hasOwnProperty.call(UNARY_FUNCTIONS,tok.value) && args.length === 1) ||
+          (Object.prototype.hasOwnProperty.call(BINARY_FUNCTIONS,tok.value) && args.length === 2)
         ) {
           bump();
           return { kind: 'call', fn: tok.value, args };
@@ -306,28 +224,28 @@ function parseTokensToAst(tokens: readonly Token[]): { ast: SafeAstNode; nodeCou
       bump();
       return { kind: 'unary', op: tok.value, arg: parseUnary() };
     }
-    return parsePrimary();
+    return parsePower();
   };
 
   const parsePower = (): SafeAstNode => {
-    const left = parseUnary();
+    const left = parsePrimary();
     const tok = peek();
     if (tok && tok.kind === 'op' && tok.value === '^') {
       consume();
       bump();
-      return { kind: 'binary', op: '^', left, right: parsePower() };
+      return { kind: 'binary', op: '^', left, right: parseUnary() };
     }
     return left;
   };
 
   const parseMulDiv = (): SafeAstNode => {
-    let node = parsePower();
+    let node = parseUnary();
     while (true) {
       const tok = peek();
       if (!tok || tok.kind !== 'op' || (tok.value !== '*' && tok.value !== '/')) break;
       consume();
       bump();
-      node = { kind: 'binary', op: tok.value, left: node, right: parsePower() };
+      node = { kind: 'binary', op: tok.value, left: node, right: parseUnary() };
     }
     return node;
   };
@@ -352,13 +270,19 @@ function parseTokensToAst(tokens: readonly Token[]): { ast: SafeAstNode; nodeCou
 }
 
 function evalSafeAst(node: SafeAstNode, scope: Readonly<Record<string, number>>): number {
+  const value=evalNode(node,scope);
+  if(!Number.isFinite(value))throw new Error('Expression produced a non-finite real value.');
+  return value;
+}
+function evalNode(node: SafeAstNode, scope: Readonly<Record<string, number>>): number {
   switch (node.kind) {
     case 'num':
       return node.value;
     case 'var': {
       if (node.name === 'pi') return Math.PI;
       if (node.name === 'e') return Math.E;
-      return scope[node.name] ?? 0;
+      if(!Object.prototype.hasOwnProperty.call(scope,node.name))throw new Error('Missing variable '+node.name);
+      return scope[node.name]!;
     }
     case 'unary': {
       const v = evalSafeAst(node.arg, scope);
@@ -375,7 +299,8 @@ function evalSafeAst(node: SafeAstNode, scope: Readonly<Record<string, number>>)
         case '*':
           return l * r;
         case '/':
-          return Math.abs(r) > 1e-12 ? l / r : 0;
+          if(r===0)throw new Error('Division by zero.');
+          return l/r;
         case '^':
           return Math.pow(l, r);
       }
@@ -391,32 +316,9 @@ function evalSafeAst(node: SafeAstNode, scope: Readonly<Record<string, number>>)
   }
 }
 
-/**
- * 白名单 AST 沙箱编译器：优先采用动态懒加载的 mathjs >= 15.2.0 语法树校验，零 eval / new Function
- */
+/** One bounded, explicit grammar; no readiness-dependent interpretation or executable code. */
 export function compileSafeFormula(expr: string): CompiledSafeFormula {
   precheckRawExpression(expr);
-
-  let ast: SafeAstNode;
-  let nodeCount: number;
-
-  if (cachedMathjsParse) {
-    const parsed = cachedMathjsParse(expr);
-    const counter = { count: 0 };
-    ast = convertMathjsAst(parsed, counter);
-    nodeCount = counter.count;
-  } else {
-    const out = parseTokensToAst(tokenizeFallback(expr));
-    ast = out.ast;
-    nodeCount = out.nodeCount;
-  }
-
-  return {
-    expr: expr.trim(),
-    nodeCount,
-    evaluate: (scope) => {
-      const val = evalSafeAst(ast, scope);
-      return Number.isFinite(val) ? val : 0;
-    }
-  };
+  const {ast,nodeCount}=parseTokensToAst(tokenizeFallback(expr));
+  return {expr:expr.trim(),nodeCount,evaluate:scope=>evalSafeAst(ast,scope)};
 }

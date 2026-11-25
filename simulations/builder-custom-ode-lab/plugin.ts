@@ -1,11 +1,12 @@
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
-import { preloadMathjsCompiler } from './safeAstCompiler.js';
 import { customOdePresets } from './presets.js';
 import {
   checkInvariants,
   computeObservables,
   createInitialState,
   stepCustomOde,
+  keplerAcceleration,
+  KEPLER_CORE_RADIUS,
   type CustomOdeParams,
   type CustomOdeState
 } from './engine.js';
@@ -57,21 +58,17 @@ export const builderCustomOdeLabPlugin = defineSimulationPlugin<CustomOdeParams,
   paramSchema,
   presets: customOdePresets,
   engine: {
-    createInitialState: (params) => {
-      void preloadMathjsCompiler();
-      return createInitialState(params);
-    },
+    createInitialState,
     step: stepCustomOde,
     computeObservables,
     checkInvariants
   },
   getForceVectors: (state, params) => {
     if (params.template === 'kepler-2d') {
-      const r2 = Math.max(0.04, state.x * state.x + state.y * state.y);
-      const scale = (-params.mass * Math.max(0.5, params.stiffness)) / (r2 * Math.sqrt(r2));
+      const a=keplerAcceleration(state.x,state.y,params);
       return [{
         id: 'kepler-gravity', label: 'F_g', origin: { x: state.x, y: state.y },
-        force: { x: scale * state.x, y: scale * state.y }, color: '#fbbf24', category: 'gravity', unit: 'N'
+        force: { x: params.mass*a.x, y: params.mass*a.y }, color: '#fbbf24', category: 'gravity', unit: 'N'
       }];
     }
     if (params.template !== 'harmonic-custom') return [];
@@ -192,7 +189,7 @@ export const builderCustomOdeLabPlugin = defineSimulationPlugin<CustomOdeParams,
       ctx.fillStyle = '#fbbf24';
       ctx.beginPath();
       const origin = m.toScreen(0, 0);
-      ctx.arc(origin.x, origin.y, m.len(0.045), 0, Math.PI * 2);
+      ctx.arc(origin.x, origin.y, m.len(KEPLER_CORE_RADIUS), 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.fillStyle = '#f472b6';
