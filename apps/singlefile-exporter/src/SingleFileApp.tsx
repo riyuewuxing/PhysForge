@@ -9,6 +9,8 @@ import type { BlockConveyorState,BlockConveyorParams } from '../../../simulation
 type ContactSlicePlugin=typeof import('../../../simulations/mech-block-conveyor/plugin.js').mechBlockConveyorPlugin;
 import type { VerticalCircularParams,VerticalCircularState } from '../../../simulations/mech-vertical-circular/engine.js';
 type VerticalSlicePlugin=typeof import('../../../simulations/mech-vertical-circular/plugin.js').mechVerticalCircularPlugin;
+import type { ConicalTurntableParams,ConicalTurntableState } from '../../../simulations/mech-conical-turntable/engine.js';
+type TurntableSlicePlugin=typeof import('../../../simulations/mech-conical-turntable/plugin.js').mechConicalTurntablePlugin;
 import {
   resolvePluginParams,
   resolveInitialCameraTransform,
@@ -35,14 +37,15 @@ const MAX_SNAPSHOTS = 2400;
 const circuitSlice=targetPlugin.paramSchema.some(f=>f.key==='topology'&&f.kind==='select'&&f.options.some(o=>o.value==='divider-lamp'));
 const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind==='select'&&f.options.some(o=>o.value==='thin-lens-imaging'));
 const mechanicsSlice=targetPlugin.paramSchema.some(f=>f.key==='scenario'&&f.kind==='select'&&f.options.some(o=>o.value==='atwood-constrained'));
-const odeSlice=Boolean(targetPlugin.getTelemetryChannels);
+const odeSlice=Boolean(targetPlugin.getTelemetryChannels)&&targetPlugin.paramSchema.some(f=>f.key==='template');
 const chaseSlice=targetPlugin.paramSchema.some(f=>f.key==='vA0')&&targetPlugin.paramSchema.some(f=>f.key==='xB0')&&targetPlugin.paramSchema.some(f=>f.key==='reactionTime');
 const equilibriumSlice=targetPlugin.paramSchema.some(f=>f.key==='baseAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='sweepAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='autoSweep');
 const constrainedSlice=targetPlugin.paramSchema.some(f=>f.key==='secondarySpeedRatio')&&targetPlugin.paramSchema.some(f=>f.key==='driveSpeed')&&targetPlugin.paramSchema.some(f=>f.key==='heightOrLength');
 const projectileSlice=targetPlugin.paramSchema.some(f=>f.key==='troughRadius')&&targetPlugin.paramSchema.some(f=>f.key==='inclineDeg')&&targetPlugin.paramSchema.some(f=>f.key==='launchAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='dragCoeff');
 const contactSlice=targetPlugin.paramSchema.some(f=>f.key==='carrierLengthM')&&targetPlugin.paramSchema.some(f=>f.key==='muBlockCarrier');
 const verticalSlice=targetPlugin.paramSchema.some(f=>f.key==='trackMode'&&f.kind==='select'&&f.options.some(o=>o.value==='outer-dome'));
-const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice;
+const turntableSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='turntable-dual'));
+const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -150,7 +153,7 @@ export const SingleFileApp: React.FC = () => {
     formulas: FormulaDisplayItem[];
   }>({ t: 0, observables: {}, events: [], invariants: [], formulas: [] });
 
-  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario,params.template]);
+  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario,params.template,turntableSlice?params.mode:undefined]);
   const [channelA, setChannelA] = useState(channels[0]?.key ?? '');
   const [channelB, setChannelB] = useState(channels[1]?.key ?? channels[0]?.key ?? '');
   useEffect(()=>{if(measuredScope){setChannelA(channels[0]?.key??'');setChannelB(channels[1]?.key??channels[0]?.key??'');}},[channels]);
@@ -240,6 +243,11 @@ export const SingleFileApp: React.FC = () => {
       const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
       if(!model.verticalBoundsFit(s,p,v,safe)){const next=model.fitVerticalViewport(s,p,v,safe);if(next)viewportRef.current=next;}
     }
+    if(turntableSlice&&drawState!==null){
+      const model=targetPlugin as unknown as TurntableSlicePlugin,v=viewportRef.current,s=drawState as ConicalTurntableState,p=pm as ConicalTurntableParams;
+      const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
+      if(!model.turntableBoundsFit(s,p,v,safe)){const next=model.fitTurntableViewport(s,p,v,safe);if(next)viewportRef.current=next;}
+    }
     const vp = viewportRef.current;
     ctx.save();
     ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
@@ -261,6 +269,7 @@ export const SingleFileApp: React.FC = () => {
       if(chaseSlice&&frame){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...frame.observables});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(contactSlice&&frame){canvas.dataset.contactRendered=JSON.stringify({t:frame.t,mode:pm.systemMode,...frame.observables});canvas.dataset.contactViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(verticalSlice&&frame){canvas.dataset.verticalRendered=JSON.stringify({t:frame.t,mode:pm.trackMode,...frame.observables});canvas.dataset.verticalViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
+      if(turntableSlice&&frame){canvas.dataset.turntableRendered=JSON.stringify({t:frame.t,mode:pm.mode,...frame.observables});canvas.dataset.turntableViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(equilibriumSlice&&frame){canvas.dataset.equilibriumRendered=JSON.stringify({t:frame.t,...frame.observables});canvas.dataset.equilibriumView=layerSet.has('angle-curve')?'angle-curve':layerSet.has('aux-circle')?'aux-circle':layerSet.has('triangle')?'triangle':'none';}
       if(projectileSlice&&frame)canvas.dataset.projectileRendered=JSON.stringify({t:frame.t,mode:pm.mode,...frame.observables});
       if(constrainedSlice&&frame)canvas.dataset.constrainedRendered=JSON.stringify({t:frame.t,mode:pm.mode,...frame.observables});
@@ -302,7 +311,7 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (measuredScope && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-      if(contactSlice||verticalSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
+      if(contactSlice||verticalSlice||turntableSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
       const empty = snaps.length < 2;
       uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
@@ -728,7 +737,7 @@ export const SingleFileApp: React.FC = () => {
           className="w-80 shrink-0 border-l p-3 overflow-y-auto space-y-3"
           style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
         >
-          {(equilibriumSlice||projectileSlice||contactSlice||verticalSlice)&&<section className="space-y-1 text-xs" data-testid={verticalSlice?'sf-vertical-layers':contactSlice?'sf-contact-layers':equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
+          {(equilibriumSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice)&&<section className="space-y-1 text-xs" data-testid={turntableSlice?'sf-turntable-layers':verticalSlice?'sf-vertical-layers':contactSlice?'sf-contact-layers':equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
           <div className="text-xs font-bold" style={{color:"var(--pf-accent)"}}>课堂预设速切</div>
           <div className={equilibriumSlice?"grid grid-cols-2 gap-1.5":"space-y-1.5"}>
             {targetPlugin.presets.map((preset) => (
@@ -760,6 +769,7 @@ export const SingleFileApp: React.FC = () => {
           {chaseSlice&&<section data-testid="sf-chase-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{([['deltaX','有向位置差','m'],['gap','实际间距','m'],['minGap','历史最小间距','m'],['firstCoVelocityTime','首次共速','s'],['firstMeetTime','首次相遇','s']] as const).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-chase-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>质点模型 · 不模拟碰撞。</div></section>}
           {contactSlice&&<section data-testid="sf-contact-readouts" data-sample-time={summary.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>{([['xBlock','物块位置 x₁','m'],['xCarrier','带/板材料位移 x₂','m'],['relativeDisplacement','有向相对位移','m'],['relativeScratch','累计相对滑移路程','m'],['scratchSpanM','材料划痕覆盖跨度','m'],['frictionOnBlockN','有向摩擦力 f₁','N'],['groundFrictionN','地面对板摩擦力','N'],['kineticEnergy','系统动能 Eₖ','J'],['potentialEnergy','有向重力势能 Eₚ','J'],['frictionHeat','界面生热 Q₁','J'],['groundHeat','地面生热 Q₂','J'],['carrierWork','外力/电机功 W','J']] as const).filter(([key])=>!['groundHeat','groundFrictionN'].includes(key)||params.systemMode==='plank').map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-contact-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div className="text-[10px]">速度双曲线间阴影为可见采样区间的相对滑移路程近似；累计读数由物理事件积分给出。</div>{summary.observables.terminal===1&&<div className="font-semibold text-rose-500">已到承载面端点 · 接触模型结束</div>}</section>}
           {verticalSlice&&<section data-testid="sf-vertical-readouts" data-sample-time={summary.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}><div className="font-semibold">{summary.observables.derailed===1?'自由抛体 · 约束已解除':params.trackMode==='light-rod'?'双边约束 · 向内为正':'单边接触'}</div>{([['normalForceN','实际约束力','N'],['speed','速率 v','m/s'],['kineticEnergy','动能 Eₖ','J'],['potentialEnergy','有向势能 Eₚ','J'],['energy','机械能 E','J'],['derailTime','脱轨时刻','s'],['derailAngleDeg','脱轨角','°']] as const).filter(([key])=>!key.startsWith('derail')||summary.observables.derailed===1).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-vertical-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div className="text-[10px]">外凸向外为正；内轨/杆向内为正，杆可为负。脱轨后不模拟再接触或落地。</div></section>}
+          {turntableSlice&&<section data-testid="sf-turntable-readouts" data-sample-time={summary.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}><div className="font-semibold">{params.mode==='conical-pendulum'?(summary.observables.rotatingCone===1?'定态圆锥摆 · 正投影':'竖直静止支'):summary.observables.terminal===1?'接触模型已到边界':summary.observables.slippingOut===1?'二维滑移 · 库仑动摩擦':'共转 · 最小可行张力'}</div>{((params.mode==='conical-pendulum'?[['tensionN','真实绳张力 T','N'],['coneAngleDeg','真实半顶角 θ','°'],['rA','水平圆周半径','m'],['omega1','非零支临界 ω','rad/s'],['period','实际周期','s']]:[['tensionN','实际张力 T','N'],['frictionAN','A 向内摩擦分量','N'],['frictionBN','B 向内摩擦分量','N'],['staticTMin','共转需求 T下界','N'],['staticTMax','共转需求 T上界','N'],['omega1','首次饱和 ω₁','rad/s'],['omega2','摩擦反号 ω₂','rad/s'],['omega3','静态极限 ω₃','rad/s'],['actualSeparation','实际绳端间距','m'],['kineticEnergy','地面系动能','J'],['heat','摩擦热 Q','J'],['diskWork','盘面做功 W','J']]) as readonly (readonly [string,string,string])[]).filter(([key])=>key!=='period'||summary.observables.rotatingCone===1).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-turntable-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:(key==='omega2'||key==='omega3')?'不存在':'—'}</span></div>;})}<div className="text-[10px]">{params.mode==='conical-pendulum'?'俯视与侧面同相位；正投影不改变真实 T。':'向内分量可为负；静态折线不是滑移力。动静 μ 暂同；盘边或松绳后停止。'}</div></section>}
           {summary.formulas.map((f) => (
             <div
               key={f.id}
@@ -767,7 +777,7 @@ export const SingleFileApp: React.FC = () => {
               style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
             >
               <div style={{ color: 'var(--pf-text-muted)' }}>{f.label}</div>
-              {(equilibriumSlice||projectileSlice||verticalSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
+              {(equilibriumSlice||projectileSlice||verticalSlice||turntableSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
               <div className="overflow-x-auto"
                 dangerouslySetInnerHTML={{
                   __html: katex.renderToString(f.substitutedLatex ?? f.latex, { throwOnError: false })
@@ -803,7 +813,7 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
-                      if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice){setIsPlaying(false);setScrubTime(null);}
+                      if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                     className="w-full h-9"
@@ -845,7 +855,7 @@ export const SingleFileApp: React.FC = () => {
                         [field.key]: e.target.value
                       })
                     );
-                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice){setIsPlaying(false);setScrubTime(null);}
+                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice){setIsPlaying(false);setScrubTime(null);}
                     setResetNonce((n) => n + 1);
                   }}
                   className="w-full rounded border px-2 py-1.5"
