@@ -294,14 +294,13 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const userTransformedViewRef = useRef<boolean>(false);
   const b1FitKeyRef=useRef('');
   const b1FitAtRef=useRef(-Infinity);
-  const b1AlignedViewportRef=useRef<Viewport|null>(null);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale]);};
   const applyDefaultCameraView = (width: number, height: number) => {
     const v2 = latestRef.current.plugin as SimulationPluginV2<ParamRecord, unknown>;
     const initialCamera = resolveInitialCameraTransform(v2, latestRef.current.params, width, height);
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
-    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;b1AlignedViewportRef.current=null;
+    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -340,7 +339,6 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     // orbit remains manual; an automatic camera remains automatic.
     userTransformedViewRef.current=!(b1Stage&&b1Automatic===true);
     if(b1Stage){
-      b1AlignedViewportRef.current=aligned;
       b1FitKeyRef.current=b1FitKey(aligned);b1FitAtRef.current=performance.now();
     }
     setZoomPercent(Math.round(100 * aligned.scale / Math.max(1e-6, baseScaleRef.current)));
@@ -983,6 +981,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const width = Math.max(320, Math.floor(rect.width));
       const height = Math.max(240, Math.floor(rect.height));
+      const changedSize=viewportRef.current.width!==width||viewportRef.current.height!==height;
       canvas.width = Math.floor(width * dpr);
       canvas.height = Math.floor(height * dpr);
       canvas.style.width = `${width}px`;
@@ -993,11 +992,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         height,
         dpr
       };
-      const aligned=b1AlignedViewportRef.current;
-      // Do not replace a just-transferred aligned flat camera during mount.
-      if(aligned&&aligned.width===width&&aligned.height===height){
-        b1AlignedViewportRef.current=null;
-      }else if(!userTransformedViewRef.current){
+      // A duplicate ResizeObserver notification is not a change of camera.
+      // Preserve the exact B1 orthographic transfer when CSS size is unchanged.
+      if(!userTransformedViewRef.current&&(latestRef.current.plugin.meta.id!=='builder-composite-em-field'||changedSize)){
         applyDefaultCameraView(width,height);
       }
       setOverlayViewport(viewportRef.current);

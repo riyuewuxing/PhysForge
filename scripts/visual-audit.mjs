@@ -604,6 +604,10 @@ async function auditB1Physics(page,origin,screenshot){
   // re-enable automatic framing; explicit center reset is the owner switch.
   const flat=page.getByTestId('simulation-canvas');
   await flat.waitFor({state:'visible'});
+  await page.waitForFunction(()=>{
+    const e=document.querySelector('[data-testid="simulation-canvas"]'),v=JSON.parse(e?.getAttribute('data-b1-viewport')||'null'),r=e?.getBoundingClientRect();
+    return !!v&&!!r&&Math.abs(v.width-r.width)<1&&Math.abs(v.height-r.height)<1&&e.getAttribute('data-b1-auto-fit')==='true';
+  });
   const before=JSON.parse(await flat.getAttribute('data-b1-viewport')||'null');
   const time=await flat.getAttribute('data-b1-time');
   const rect=await flat.boundingBox();
