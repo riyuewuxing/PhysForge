@@ -89,3 +89,43 @@ describe('H18 M03 independently differentiated physical paths',()=>{
     expect(((3-s.posA.x)*s.velA.x-s.posA.y*s.velA.y)/l2).toBeCloseTo(.9,10);
   });
 });
+
+describe('H18 M03 geometry, orthogonal decomposition and terminal guards',()=>{
+  it('preserves constraints and decomposes actual velocities for every mode, parameter extreme and time',()=>{
+    for(const mode of ['rope-pull-boat','ladder-wall','wedge-rod','dual-rope-pull'] as const)
+      for(const driveSpeed of [0,.5,5])for(const heightOrLength of [1,4])for(const initialAngleDeg of [15,45,75])
+      for(const secondarySpeedRatio of [0,.6,1.5]){
+        const p:ConstrainedVelocityParams={mode,driveSpeed,heightOrLength,initialAngleDeg,secondarySpeedRatio};
+        let s=createInitialState(p);
+        for(const dt of [0,.0001,.03,.4,20]){
+          s=stepConstrainedVelocity(s,p,dt).nextState;
+          expect(checkInvariants(s).every(x=>x.passed)).toBe(true);
+          for(const c of s.constraints){
+            expect(Math.hypot(c.unit.x,c.unit.y)).toBeCloseTo(1,12);
+            expect(c.parallel.x+c.perpendicular.x).toBeCloseTo(c.velocity.x,10);
+            expect(c.parallel.y+c.perpendicular.y).toBeCloseTo(c.velocity.y,10);
+            expect(c.perpendicular.x*c.unit.x+c.perpendicular.y*c.unit.y).toBeCloseTo(0,10);
+            expect(Math.abs(c.velocity.x*c.unit.x+c.velocity.y*c.unit.y-c.expected)).toBeLessThan(1e-10);
+          }
+          if(driveSpeed===0)expect(Math.hypot(s.velA.x,s.velA.y,s.velB.x,s.velB.y)).toBe(0);
+        }
+      }
+  });
+  it('captures independent analytic terminal times for rod and ramp',()=>{
+    const q={driveSpeed:2,heightOrLength:3,initialAngleDeg:40};
+    for(const [mode,expected] of [['ladder-wall',3*Math.sin(40*Math.PI/180)/2],['wedge-rod',.75*3/2]] as const){
+      const p={...q,mode},r=stepConstrainedVelocity(createInitialState(p),p,20);
+      expect(r.halt).toBe(true);expect(r.events).toHaveLength(1);
+      expect(Math.abs(r.nextState.t-expected)).toBeLessThan(1e-7);
+      expect(r.nextState.terminal).toBeTruthy();
+      expect(stepConstrainedVelocity(r.nextState,p,1).advancedTime).toBe(0);
+    }
+  });
+  it('dual rope terminates before degeneracy with an independent exact time',()=>{
+    const p:ConstrainedVelocityParams={mode:'dual-rope-pull',driveSpeed:1.5,heightOrLength:3,initialAngleDeg:45,secondarySpeedRatio:.6};
+    const expected=(3/Math.cos(Math.PI/4)-3.06)/2.4,r=stepConstrainedVelocity(createInitialState(p),p,10);
+    expect(r.halt).toBe(true);expect(Math.abs(r.nextState.t-expected)).toBeLessThan(1e-7);
+    expect(r.nextState.posA.y).toBeLessThan(0);
+    expect(r.nextState.projectionResidual).toBeLessThan(1e-10);
+  });
+});
