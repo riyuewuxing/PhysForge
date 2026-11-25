@@ -83,7 +83,12 @@ describe('H9 shared optical scene',()=>{
       for(const ray of state.rays)expect(ir.primitives.some(q=>(q.kind==='line'||q.kind==='arrow')&&q.x1===ray.from.x&&q.y1===ray.from.y&&q.x2===ray.to.x&&q.y2===ray.to.y&&Boolean(q.dashed)===Boolean(ray.dashed))).toBe(true);
       expect(scene.marks.length).toBeGreaterThan(5);
       if(p.sceneMode==='double-slit')expect(opticsRayStudioPlugin.getControlHandles!(state,p)).toEqual([]);
-      else if(p.sceneMode!=='thin-lens-imaging'){
+      else if(p.sceneMode==='thin-lens-imaging'){
+        const handle=opticsRayStudioPlugin.getControlHandles!(state,p)[0]!;
+        expect(handle.position).toEqual({x:-(p.objectDistanceM??1.2),y:.55});
+        expect(handle.showWhenIdle).toBe(false);
+        expect(handle.onDrag({x:-.65,y:.55}).objectDistanceM).toBe(.65);
+      }else{
         const handle=opticsRayStudioPlugin.getControlHandles!(state,p)[0]!;
         expect(handle.position).toEqual(state.rays[0]!.from);
         expect(handle.onDrag(handle.position).incidentAngleDeg).toBe(state.activeAngleDeg);

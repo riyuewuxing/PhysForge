@@ -591,6 +591,7 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
           label: `物距 u=${u.toFixed(2)}m`,
           position: { x: -u, y: 0.55 },
           handleKind: 'point',
+          showWhenIdle: false,
           color: '#fbbf24',
           onDrag: (wp) => ({
             objectDistanceM: Number(Math.max(0.25, Math.min(2.5, -wp.x)).toFixed(2))
