@@ -4,6 +4,7 @@ import {
   extractIsolines,
   findRootBrent,
   stepVelocityVerlet,
+  integrateAdaptiveRK45,
   type IsolineContour,
   type ScaleContext
 } from '@physforge/physics-core';
@@ -128,15 +129,9 @@ function stepYoshida4Verlet(
   pos: readonly number[],
   vel: readonly number[],
   t: number,
-  h: number,
-  mode: AstroMode,
-  q: number
+  h: number
 ): { positions: readonly number[]; velocities: readonly number[]; t: number } {
-  const accelFn =
-    mode === 'binary-lagrange'
-      ? (p: readonly number[], _v: readonly number[], tau: number) =>
-          restricted3BodyAccelNorm(p, tau, q)
-      : (p: readonly number[]) => twoBodyAccelNorm(p);
+  const accelFn=(p:readonly number[])=>twoBodyAccelNorm(p);
 
   const s1 = stepVelocityVerlet({ positions: pos, velocities: vel, t }, YOSHIDA_W1 * h, accelFn);
   const s2 = stepVelocityVerlet(s1, YOSHIDA_W0 * h, accelFn);
@@ -348,7 +343,18 @@ export function stepAstroOrbital(
   let deltaV2SI = state.deltaV2SI;
   const newEvents: PhysicsEvent[] = [];
 
-  const advSub = (s: VerletSubState, h: number) => stepYoshida4Verlet(s.positions, s.velocities, s.t, h, params.mode, q);
+  const advSub=(s:VerletSubState,h:number):VerletSubState=>{
+    if(params.mode!=='binary-lagrange')return stepYoshida4Verlet(s.positions,s.velocities,s.t,h);
+    // A fixed symplectic step that works for the two-body ellipse can fail
+    // catastrophically when a test particle grazes a moving primary. Use the
+    // shared adaptive Dormand-Prince solver with local error control for the
+    // time-dependent restricted-three-body system; never renormalize C.
+    const result=integrateAdaptiveRK45([...s.positions,...s.velocities],s.t,h,(t,v)=>{
+      const a=restricted3BodyAccelNorm(v,t,q);
+      return [v[2]!,v[3]!,a[0]!,a[1]!];
+    },{absTol:1e-13,relTol:1e-12,minStep:1e-14,maxSubsteps:10000});
+    return {positions:result.state.slice(0,2),velocities:result.state.slice(2,4),t:result.t};
+  };
   const radialVelFn = (s: VerletSubState) => s.positions[0]! * s.velocities[0]! + s.positions[1]! * s.velocities[1]!;
 
   // Split at the actual .55 normalized-time boundaries, including multiple
