@@ -66,6 +66,7 @@ export function computeHallVoltageV(params: EmDevicesParams): number {
   const qAbs = 1.602176634e-19;
   const n = Math.max(1e20, params.hallDensityPerM3);
   const d = Math.max(1e-5, params.hallThicknessM);
+  if (params.hallCurrentA === 0 || params.bFieldT === 0) return 0;
   return (sgn * params.hallCurrentA * params.bFieldT) / (n * qAbs * d);
 }
 
@@ -141,7 +142,7 @@ export function solveAllDeviceMetrics(params: EmDevicesParams): Omit<
 
 /** Sensor motion is explicitly a schematic steady-state tracer, not a microscopic trajectory. */
 export function sensorDisplayVelocity(params: EmDevicesParams): number {
-  if(params.device==='hall-sensor')return 1.2*Math.sign(params.hallCurrentA)*(params.carrierType==='electron'?-1:1);
+  if(params.device==='hall-sensor')return params.hallCurrentA===0?0:1.2*Math.sign(params.hallCurrentA)*(params.carrierType==='electron'?-1:1);
   return 1.2*Math.sign(params.particleSpeedMps);
 }
 export function isSensorDevice(device: EmDeviceKind): boolean {
@@ -150,9 +151,11 @@ export function isSensorDevice(device: EmDeviceKind): boolean {
 /** In the displayed xy plane: +x conventional current/flow, +z B, U=V_lower−V_upper. */
 export function sensorReadout(state:EmDevicesState,params:EmDevicesParams):string {
   const reference='U=V下−V上';
-  if(params.device==='hall-sensor')return `I→ · ${params.carrierType==='electron'?'电子漂移←':'空穴漂移→'} · ${reference}=${(state.hallVoltageV*1000).toFixed(4)} mV`;
-  if(params.device==='mhd-generator')return `开路 ℰ=${state.mhdEmfV.toFixed(2)} V · ${reference}=${state.mhdTerminalVoltageV.toFixed(2)} V · I外=${state.mhdLoadCurrentA.toFixed(2)} A`;
-  return `开路 ${reference}=${state.flowVoltageV.toFixed(3)} V · Q=${state.flowRateM3ps.toExponential(3)} m³/s`;
+  const direction=(v:number)=>v>0?'→':v<0?'←':'静止';
+  const polarity=(u:number)=>u>0?'下+ / 上−':u<0?'下− / 上+':'两极等势';
+  if(params.device==='hall-sensor')return `I ${direction(params.hallCurrentA)} · ${params.carrierType==='electron'?'电子':'空穴'}漂移 ${direction(state.particleVel.x)} · ${reference}=${(state.hallVoltageV*1000).toFixed(4)} mV · ${polarity(state.hallVoltageV)}`;
+  if(params.device==='mhd-generator')return `开路 ℰ=${state.mhdEmfV.toFixed(2)} V · ${reference}=${state.mhdTerminalVoltageV.toFixed(2)} V · I外=${state.mhdLoadCurrentA.toFixed(2)} A · ${polarity(state.mhdTerminalVoltageV)}`;
+  return `开路 ${reference}=${state.flowVoltageV.toFixed(3)} V · Q=${state.flowRateM3ps.toExponential(3)} m³/s · ${polarity(state.flowVoltageV)}`;
 }
 export function createInitialState(params: EmDevicesParams): EmDevicesState {
   const metrics = solveAllDeviceMetrics(params);

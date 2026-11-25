@@ -1066,7 +1066,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     [channels, channelB]
   );
 
-  const heroScope = plugin.meta.id === 'em-induction-double-rod';
+  const deviceScope = plugin.meta.id === 'stse-em-devices-suite';
+  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope;
   const splitScopeUnits = heroScope && !!specA && !!specB && specA.unit !== specB.unit;
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {
@@ -1104,6 +1105,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
           values: (_u, splits) => splits.map((v) => `${v.toFixed(1)}s`),
+          ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : {}),
           ...(heroScope ? { size: 30 } : {})
         },
         {
@@ -1180,7 +1182,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       plot.destroy();
       uplotInstanceRef.current = null;
     };
-  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits]);
+  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope]);
 
   return (
     <div className="relative flex flex-1 min-h-0">
@@ -1507,7 +1509,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             <div className="flex min-w-0 items-center gap-1.5">
               <button
                 type="button"
-                data-testid="scope-channel-a"
+                data-testid="scope-channel-a" data-channel-key={channelA}
                 aria-label="切换示波器通道 A"
                 title={`${specA?.label ?? '通道 A'} (${specA?.unit ?? ''}) · 点击切换`}
                 style={heroScope ? {color:scopeColorA, borderColor:scopeColorA, backgroundColor:scopeColorA+'20'} : undefined}
@@ -1521,7 +1523,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               </button>
               <button
                 type="button"
-                data-testid="scope-channel-b"
+                data-testid="scope-channel-b" data-channel-key={channelB}
                 aria-label="切换示波器通道 B"
                 title={`${specB?.label ?? '通道 B'} (${specB?.unit ?? ''}) · 点击切换`}
                 style={heroScope ? {color:scopeColorB, borderColor:scopeColorB, backgroundColor:scopeColorB+'20'} : undefined}

@@ -499,6 +499,9 @@ async function auditV3DeviceGeometry(page, origin, screenshot) {
     if(device==='hall-sensor')await selectPreset(page,'hall-electron-vs-hole');
     if(device==='mhd-generator')await selectPreset(page,'mhd-peak-power');
     if(device==='em-flowmeter')await selectPreset(page,'flowmeter-open-circuit');
+    const expectedScope={ 'velocity-selector':['selectedSpeed','particleSpeedMps','shared'], 'mass-spectrometer':['spectrometerRadiusM','particleSpeedMps','separate'],cyclotron:['cyclotronEnergyJ','cyclotronPhaseSlipRad','separate'],'hall-sensor':['hallVoltageMv','hallCurrentA','separate'],'mhd-generator':['mhdOutputWatt','mhdLoadCurrentA','separate'],'em-flowmeter':['flowVoltageMv','flowRateM3ps','separate']}[device];
+    await page.waitForFunction(([a,b,units])=>document.querySelector('[data-testid="scope-channel-a"]')?.getAttribute('data-channel-key')===a&&document.querySelector('[data-testid="scope-channel-b"]')?.getAttribute('data-channel-key')===b&&document.querySelector('[data-testid="floating-scope-dock"]')?.getAttribute('data-scope-units')===units,expectedScope);
+    if(screenshot)await screenshot('S02_'+device+'_scope');
     await page.getByTestId('btn-fullscreen-speech').click();
     const toggle = page.getByTestId('btn-view-3d-fullscreen');
     if ((await toggle.textContent())?.includes('3D 空间')) await toggle.click();
