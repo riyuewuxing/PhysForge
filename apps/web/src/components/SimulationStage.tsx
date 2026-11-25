@@ -745,13 +745,14 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
+    const mechanics=latestRef.current.plugin.meta.id==='builder-mechanics-lab';
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
       const s = snaps[i]!;
       ts[i] = s.t;
-      seriesA[i] = chA ? (s.observables[chA] ?? (circuit?null:0)) : (circuit?null:0);
-      seriesB[i] = chB ? (s.observables[chB] ?? (circuit?null:0)) : (circuit?null:0);
+      seriesA[i] = chA ? (s.observables[chA] ?? (circuit||mechanics?null:0)) : (circuit||mechanics?null:0);
+      seriesB[i] = chB ? (s.observables[chB] ?? (circuit||mechanics?null:0)) : (circuit||mechanics?null:0);
     }
     syncingPlotRef.current = true;
     try { plot.setData([ts, seriesA, seriesB]); }
@@ -759,10 +760,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     // Update only the instrument DOM, not React state on every animation frame.
     if (uplotWrapRef.current) {
       uplotWrapRef.current.dataset.sampleCount = String(snaps.length);
-      const emptyCircuit = circuit && latestRef.current.params.topology !== 'divider-lamp' && snaps.length < 2;
+      const emptyCircuit = (mechanics||(circuit && latestRef.current.params.topology !== 'divider-lamp')) && snaps.length < 2;
       uplotWrapRef.current.style.visibility = emptyCircuit ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = emptyCircuit ? 'grid' : 'none';
-      if (circuit) {
+      if (circuit||mechanics) {
         uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
       }
     }
@@ -1208,6 +1209,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const orbitScope=plugin.meta.id==='astro-orbital-mechanics';
   const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror'||orbitScope;
   const circuitScope=plugin.meta.id==='builder-circuit-mna'&&params.topology!=='divider-lamp';
+  const mechanicsScope=plugin.meta.id==='builder-mechanics-lab';
+  const measuredScope=circuitScope||mechanicsScope;
   const semanticScope=heroScope||circuitScope||plugin.meta.id==='builder-mechanics-lab';
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
   // Same semantic channel colors on paper, with sufficient contrast on white.
@@ -1224,7 +1227,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (!wrap || oscilloscopeCollapsed || presentationMode) return;
 
     const width = Math.max(1, wrap.clientWidth);
-    const height = heroScope ? (wrap.parentElement?.clientHeight || 152) : circuitScope ? 104 : 84;
+    const height = heroScope ? (wrap.parentElement?.clientHeight || 152) : measuredScope ? 104 : 84;
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.16)';
 
@@ -1237,7 +1240,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       },
       legend: { show: false },
       scales: {
-        x: { time: false, ...(circuitScope ? { range: (_u: uPlot, min: number, max: number): [number,number] => {
+        x: { time: false, ...(measuredScope ? { range: (_u: uPlot, min: number, max: number): [number,number] => {
           const lo = Number.isFinite(min) ? min : 0;
           return [lo, Math.max(lo + .1, Number.isFinite(max) ? max : lo)];
         }} : {}) },
@@ -1248,9 +1251,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         {
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
-          values: (_u, splits) => splits.map((v) => circuitScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
+          values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
           ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : {}),
-          ...(heroScope ? { size: 30 } : circuitScope ? { size: 24 } : {})
+          ...(heroScope ? { size: 30 } : measuredScope ? { size: 24 } : {})
         },
         {
           stroke: semanticScope ? scopeColorA : textColor,
@@ -1293,7 +1296,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       ],
       hooks: {
-        draw: [(u) => { if (circuitScope) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
+        draw: [(u) => { if (measuredScope) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); }],
         setCursor: [
           (u) => {
             const idx = u.cursor.idx;
@@ -1316,7 +1319,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       if (!uplotWrapRef.current) return;
       plot.setSize({
         width: Math.max(1, uplotWrapRef.current.clientWidth),
-        height: heroScope ? (uplotWrapRef.current.parentElement?.clientHeight || 152) : circuitScope ? 104 : 84
+        height: heroScope ? (uplotWrapRef.current.parentElement?.clientHeight || 152) : measuredScope ? 104 : 84
       });
     });
     ro.observe(wrap);
@@ -1327,7 +1330,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       plot.destroy();
       uplotInstanceRef.current = null;
     };
-  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope,semanticScope,circuitScope]);
+  }, [plugin.meta.id, channelA, channelB, theme, oscilloscopeCollapsed, presentationMode, heroScope, splitScopeUnits, deviceScope,semanticScope,circuitScope,mechanicsScope,measuredScope]);
 
   return (
     <div className="relative flex flex-1 min-h-0">
@@ -1705,10 +1708,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               <ChevronDown className="h-4 w-4" />
             </button>
           </div>
-          <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : circuitScope ? 'h-[104px]' : 'h-[76px]'}`}>
+          <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : measuredScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
-            {circuitScope && <div ref={circuitScopeEmptyRef} data-testid="b2-scope-empty" className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽

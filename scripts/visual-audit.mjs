@@ -245,6 +245,8 @@ async function auditB4Analytic(page,origin){
   if(initial.rapierActive!==0||Math.abs(initial.constraintTensionN-4*9.8/3)>1e-9)throw Error('B4 initial Atwood tension '+JSON.stringify(initial));
   if(!await page.getByTestId('param-slider-massRatio').isVisible()||await page.getByTestId('param-slider-restitution').count())throw Error('B4 Atwood mode controls are incorrect');
   await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('左重物速度')&&document.querySelector('[data-testid="scope-channel-b"]')?.textContent?.includes('右重物速度'));
+  await page.getByTestId('b4-scope-empty').waitFor({state:'visible'});
+  if(await page.getByTestId('uplot-container').isVisible())throw Error('B4 one sample fabricated time axis');
   await page.screenshot({path:path.join(OUT_DIR,'H10_B4_atwood_initial.png')});
   const atwood=await runTo(.18),a=9.8/3;
   if(atwood.t>.65||atwood.rapierActive!==0||Math.abs(atwood.primaryY-(.1+.5*a*atwood.t**2))>1e-9||Math.abs(atwood.primaryY+atwood.secondaryY-.2)>1e-9||Math.abs(atwood.primaryVy-a*atwood.t)>1e-9||Math.abs(atwood.primaryVy+atwood.secondaryVy)>1e-9)throw Error('B4 Atwood independent trajectory '+JSON.stringify(atwood));
@@ -253,6 +255,7 @@ async function auditB4Analytic(page,origin){
   await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.getAttribute('data-b4-rendered')||'null')?.atwoodAtLimit===1,null,{timeout:10000});
   const terminal=await read(),limit=Math.sqrt(2*(1.4-Math.sqrt(.28**2-(.28-.22)**2)-.1-.22)/a);
   if(Math.abs(terminal.t-limit)>1e-9||Math.abs(terminal.primaryVy-a*limit)>1e-9||Math.abs(terminal.primaryY+terminal.secondaryY-.2)>1e-9)throw Error('B4 terminal event '+JSON.stringify(terminal));
+  await page.waitForFunction(t=>Math.abs(Number(document.querySelector('[data-testid="uplot-container"]')?.getAttribute('data-last-sample-t'))-t)<1e-10,terminal.t);
   await page.waitForTimeout(150);
   if((await read()).t!==terminal.t)throw Error('B4 terminal physical time continued');
   await page.screenshot({path:path.join(OUT_DIR,'H10_B4_atwood_terminal.png')});
@@ -1803,7 +1806,49 @@ async function main() {
       if(b3Errors.length||b3Network.length)throw Error('B3 offline errors '+JSON.stringify({b3Errors,b3Network}));
       Object.assign(b3OfflineReport,{real,focus,slit,errors:b3Errors,network:b3Network});
     }finally{await b3Context.close();}
-    const summary = { b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const b4File=path.join(OUT_DIR,'H10_B4_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','builder-mechanics-lab','--preset','atwood-udwadia-analytical','--out',b4File],{stdio:'inherit'});
+    const b4Context=await browser.newContext({viewport:VIEWPORT,offline:true});
+    const b4Page=await b4Context.newPage(),b4Errors=[],b4Network=[],b4OfflineReport={};
+    b4Page.on('pageerror',e=>b4Errors.push(e.message));b4Page.on('console',m=>{if(m.type()==='error')b4Errors.push(m.text());});
+    b4Page.on('request',r=>{if(/^https?:/.test(r.url()))b4Network.push(r.url());});
+    try{
+      await b4Page.goto(pathToFileURL(b4File).href);
+      const b4Canvas=b4Page.getByTestId('sf-canvas'),play=b4Page.getByTestId('sf-play-pause');
+      const read=async()=>JSON.parse(await b4Canvas.getAttribute('data-b4-rendered'));
+      const waitMode=async scenario=>b4Page.waitForFunction(m=>{const d=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b4-rendered')||'null');return d?.scenario===m&&d.t===0;},scenario);
+      await waitMode('atwood-constrained');
+      await b4Page.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      if(await b4Page.getByTestId('sf-uplot').isVisible()||await b4Page.getByTestId('sf-param-restitution').count())throw Error('B4 offline initial controls/scope');
+      await b4Page.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='primaryVy'&&document.querySelector('[data-testid="sf-scope-channel-b"]')?.value==='secondaryVy');
+      await play.click();
+      await b4Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b4-rendered')||'null')?.atwoodAtLimit===1,null,{timeout:10000});
+      const terminal=await read(),a=9.8/3,limit=Math.sqrt(2*(1.4-Math.sqrt(.28**2-(.28-.22)**2)-.1-.22)/a);
+      if(Math.abs(terminal.t-limit)>1e-9||Math.abs(terminal.primaryVy-a*limit)>1e-9)throw Error('B4 offline terminal physical event '+JSON.stringify(terminal));
+      await b4Page.waitForFunction(t=>Math.abs(Number(document.querySelector('[data-testid="sf-summary-clock"]')?.getAttribute('data-sample-time'))-t)<1e-10&&Math.abs(Number(document.querySelector('[data-testid="sf-uplot"]')?.getAttribute('data-last-sample-t'))-t)<1e-10,terminal.t);
+      await b4Page.getByRole('button',{name:'单步',exact:true}).click();
+      await b4Page.waitForTimeout(100);
+      if((await read()).t!==terminal.t)throw Error('B4 offline continued after terminal event');
+      await b4Page.getByRole('button',{name:'黑板深蓝'}).click();
+      await b4Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await b4Page.screenshot({path:path.join(OUT_DIR,'H10_B4_offline_terminal_paper.png')});
+      await b4Page.locator('[data-preset-id="ideal-spring-oscillator"]').click();await waitMode('spring-oscillator');
+      await b4Page.waitForFunction(()=>document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='kineticEnergy'&&document.querySelector('[data-testid="sf-scope-channel-b"]')?.value==='springPotentialEnergy');
+      await b4Page.getByRole('button',{name:'单步',exact:true}).click();
+      await b4Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b4-rendered')||'null')?.t>0);
+      const spring=await read();if(Math.abs(spring.t-4/240)>1e-10||Math.abs(spring.primaryX-(-.45+1.25*Math.cos(Math.sqrt(20)*spring.t)))>1e-9)throw Error('B4 offline spring step '+JSON.stringify(spring));
+      await b4Page.screenshot({path:path.join(OUT_DIR,'H10_B4_offline_spring_paper.png')});
+      await b4Page.locator('[data-preset-id="elastic-equal-mass"]').click();await waitMode('elastic-collision');
+      await play.click();
+      await b4Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.getAttribute('data-b4-rendered')||'null')?.t>1.02,null,{timeout:15000});
+      await play.click();
+      const collision=await read();
+      if(collision.rapierActive!==1||Math.abs(collision.primaryVx)>.15||Math.abs(collision.totalMomentumX-2.6)>.01||Math.abs(collision.kineticEnergy-3.38)/3.38>.02)throw Error('B4 offline WASM collision '+JSON.stringify(collision));
+      await b4Page.screenshot({path:path.join(OUT_DIR,'H10_B4_offline_collision_paper.png')});
+      if(b4Errors.length||b4Network.length)throw Error('B4 offline errors '+JSON.stringify({b4Errors,b4Network}));
+      Object.assign(b4OfflineReport,{terminal,spring,collision,errors:b4Errors,network:b4Network});
+    }finally{await b4Context.close();}
+    const summary = { b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

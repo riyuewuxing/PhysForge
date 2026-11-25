@@ -352,6 +352,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
     const pxPerM = m.ppm;
+    const paper=viewport.theme==='projector';
     const toScreen = (wx: number, wy: number) => {
       const point = m.toScreen(wx, wy);
       return { sx: point.x, sy: point.y };
@@ -368,7 +369,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
           const pR = toScreen(right.x, right.y + right.halfH);
           const rPx = pulley.halfW * pxPerM;
           ctx.save();
-          ctx.strokeStyle = '#cbd5e1';
+          ctx.strokeStyle = paper?'#475569':'#cbd5e1';
           ctx.lineWidth = 2.2;
           ctx.beginPath();
           ctx.moveTo(pL.sx, pL.sy);
@@ -390,7 +391,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
           const pA = toScreen(anchor.x + anchor.halfW, anchor.y);
           const pB = toScreen(block.x - block.halfW, block.y);
           ctx.save();
-          ctx.strokeStyle = '#fbbf24';
+          ctx.strokeStyle = paper?'#92400e':'#fbbf24';
           ctx.lineWidth = 2.5;
           ctx.beginPath();
           const coils = 12;
@@ -412,8 +413,9 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
         ctx.save();
         ctx.translate(p.sx, p.sy);
         ctx.rotate(-b.angle);
-        ctx.fillStyle = b.color;
-        ctx.strokeStyle = '#e2e8f0';
+        const paperColors:Record<string,string>={'#38bdf8':'#bae6fd','#f472b6':'#fbcfe8','#fbbf24':'#fde68a','#4ade80':'#bbf7d0','#475569':'#cbd5e1','#64748b':'#94a3b8','#94a3b8':'#cbd5e1'};
+        ctx.fillStyle = paper?paperColors[b.color]??b.color:b.color;
+        ctx.strokeStyle = paper?'#334155':'#e2e8f0';
         ctx.lineWidth = 1.5;
 
         if (b.shape === 'ball') {
@@ -444,7 +446,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
     }
 
     ctx.save();
-    ctx.fillStyle = usesAnalyticSolver(params.scenario)||state.rapierActive ? '#4ade80' : '#fbbf24';
+    ctx.fillStyle = paper?(usesAnalyticSolver(params.scenario)||state.rapierActive?'#166534':'#92400e'):(usesAnalyticSolver(params.scenario)||state.rapierActive ? '#4ade80' : '#fbbf24');
     ctx.font = 'bold 13px system-ui, sans-serif';
     ctx.fillText(
       `引擎状态：${params.scenario==='spring-oscillator'?'理想简谐运动解析流':params.scenario==='atwood-constrained'?(state.terminal==='pulley-contact'?'首次接触滑轮 · 碰撞前一瞬':'Udwadia-Kalaba 轻绳约束'):state.terminal==='engine-unavailable'?'刚体引擎加载失败 · 请复位重试':state.rapierActive?'Rapier2D WASM 刚体内核运行中':'等待 Rapier2D WASM · 物理时间暂停'}`,
