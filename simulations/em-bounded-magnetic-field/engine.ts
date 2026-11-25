@@ -1,5 +1,4 @@
 import {
-  bisectEvent,
   degToRad,
   kineticEnergy3D,
   len2,
@@ -8,7 +7,6 @@ import {
   signedDistanceHalfSpace2D,
   signedDistanceRect2D,
   solveBoundaryParameter,
-  stepBorisPusher,
   vec2,
   vec3,
   ZERO_VEC3,
@@ -18,6 +16,7 @@ import {
   type Vec3
 } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
+import { advanceUniformField, firstBoundaryCrossing } from './fieldFlight.js';
 
 export type FieldGeometryMode = 'half-space' | 'circular' | 'rectangular' | 'crossed-eb';
 export type DynamicCircleFamily = 'single' | 'scaling' | 'rotating' | 'translating' | 'focusing';
@@ -132,7 +131,7 @@ export function createInitialState(params: BoundedMagneticParams): BoundedMagnet
         // 从圆形左边界水平向右入射，y0 均匀分布，展示 R_c = R_field 时的磁聚焦
         const y0 = (offsetIndex / Math.max(1, Math.ceil(count / 2))) * 0.72 * R;
         const xBoundary = -Math.sqrt(Math.max(0, R * R - y0 * y0));
-        // 微微置于边界内侧以保证在圆形边界处平稳起始
+        // 微微置于边界外侧，实际入射由边界事件捕获
         pos = vec3(xBoundary - 0.04 * R, y0, 0);
         angle = 0;
       } else if (params.family === 'scaling') {
@@ -204,9 +203,26 @@ function appendTrail(trail: readonly Vec2[], pt: Vec2): Vec2[] {
   return [...trail, pt];
 }
 
-/**
- * 单步演化：内置 BorisPusher + bisectEvent 精确进出边界捕获与分段积分
- */
+/** Record real points of each continuous flight, not a chord across a long arc.
+ * The tail is bounded; for an unusually long external step retain the latest
+ * samples, never join them to a nonadjacent historical point. */
+function appendFlightTrail(trail:readonly Vec2[],start:ChargedParticleState,dt:number,omega:number,a:number):Vec2[]{
+  if(dt<=0)return [...trail];
+  const pieces=Math.max(1,Math.ceil(Math.abs(omega)*dt/(Math.PI/12)));
+  const count=Math.min(pieces,MAX_TRAIL_POINTS-1);
+  let result=[...trail];
+  if(count<pieces){
+    const first=advanceUniformField(start,dt*(1-count/pieces),omega,a);
+    result=[vec2(first.position.x,first.position.y)];
+  }
+  for(let i=1;i<=count;i++){
+    const next=advanceUniformField(start,dt*(1-(count-i)/pieces),omega,a);
+    result=appendTrail(result,vec2(next.position.x,next.position.y));
+  }
+  return result;
+}
+
+/** Exact constant-field subflows with independently bracketed, bisected boundary events. */
 export function stepBoundedMagnetic(
   state: BoundedMagneticState,
   params: BoundedMagneticParams,
@@ -220,12 +236,9 @@ export function stepBoundedMagnetic(
   }
 
   const mass = Math.max(params.mass, 1e-12);
-  const fields = createFieldEvaluator(params);
-  const pureBFields: EmFieldEvaluator = () => ({
-    E: params.mode === 'crossed-eb' ? vec3(0, params.electricFieldY, 0) : ZERO_VEC3,
-    B: vec3(0, 0, params.magneticFieldZ)
-  });
-  const freeFields: EmFieldEvaluator = () => ({ E: ZERO_VEC3, B: ZERO_VEC3 });
+  const omega=params.charge*params.magneticFieldZ/mass;
+  const a=params.charge*params.electricFieldY/mass;
+  const distance=(s:ChargedParticleState)=>fieldSignedDistance(s.position,params.mode,params.fieldScale);
 
   const stepEvents: PhysicsEvent[] = [];
   const nextParticles: ParticleTrack[] = [];
@@ -242,43 +255,26 @@ export function stepBoundedMagnetic(
     let trail = [...track.trail];
 
     if (params.mode === 'crossed-eb') {
-      cur = stepBorisPusher(cur, fields, params.charge, mass, dt);
-      trail = appendTrail(trail, vec2(cur.position.x, cur.position.y));
+      trail=appendFlightTrail(trail,cur,dt,omega,a);
+      cur=advanceUniformField(cur,dt,omega,a);
     } else {
-      // 最多允许本步发生一次入射与一次出射分段，保证精确过界
-      let remaining = dt;
-      for (let seg = 0; seg < 2 && remaining > 1e-12; seg++) {
-        const segFields = inField ? pureBFields : freeFields;
-        const advanceSeg = (s: ChargedParticleState, subDt: number): ChargedParticleState =>
-          stepBorisPusher(s, segFields, params.charge, mass, subDt);
-
-        const candidateEnd = advanceSeg(cur, remaining);
-        const gStart = fieldSignedDistance(cur.position, params.mode, params.fieldScale);
-        const gEnd = fieldSignedDistance(candidateEnd.position, params.mode, params.fieldScale);
-
-        // 单向边界门控：场外只检测进入(g<=0)，场内只检测穿出(g>0)，彻底避免落点微小浮点偏差导致跨界震荡
-        const shouldCross = (!inField && gStart > 0 && gEnd <= 0) || (inField && gStart <= 0 && gEnd > 0);
-        const eventRes = shouldCross
-          ? bisectEvent(
-              cur,
-              cur.t,
-              remaining,
-              advanceSeg,
-              (s) => fieldSignedDistance(s.position, params.mode, params.fieldScale),
-              {
-                timeTolerance: 1e-8,
-                biasEndpoint: inField ? 'positive' : 'negative'
-              }
-            )
-          : null;
-
-        if (!eventRes) {
-          cur = candidateEnd;
-          trail = appendTrail(trail, vec2(cur.position.x, cur.position.y));
-          remaining = 0;
-        } else {
-          const hitPos = vec2(eventRes.state.position.x, eventRes.state.position.y);
-          trail = appendTrail(trail, hitPos);
+      let remaining=dt,transitions=0;
+      while(remaining>0){
+        // A convex static field admits at most entry + exit for a free ray
+        // followed by a magnetic arc. Never discard residual time on a guard.
+        if(transitions>=8)throw new Error('Too many B1 boundary transitions in one step');
+        const activeOmega=inField?omega:0;
+        const advanceSeg=(s:ChargedParticleState,h:number)=>advanceUniformField(s,h,activeOmega,0);
+        const eventRes=firstBoundaryCrossing(cur,params,remaining,inField,activeOmega,distance,advanceSeg);
+        if(!eventRes){
+          trail=appendFlightTrail(trail,cur,remaining,activeOmega,0);
+          cur=advanceSeg(cur,remaining);
+          remaining=0;
+        }else{
+          transitions++;
+          trail=appendFlightTrail(trail,cur,eventRes.timeOffset,activeOmega,0);
+          const hitPos=vec2(eventRes.state.position.x,eventRes.state.position.y);
+          trail=appendTrail(trail,hitPos);
 
           if (!inField) {
             inField = true;
@@ -318,14 +314,14 @@ export function stepBoundedMagnetic(
           }
 
           cur = eventRes.state;
-          remaining -= eventRes.timeOffset;
+          remaining=Math.max(0,remaining-eventRes.timeOffset);
         }
       }
     }
 
     nextParticles.push({
       ...track,
-      state: cur,
+      state: {...cur,t:state.t+dt},
       inField,
       hasEntered,
       hasExited,
@@ -363,12 +359,12 @@ export function computeObservables(
   const speed = Math.hypot(velocity.x, velocity.y);
   const ke = kineticEnergy3D(Math.max(params.mass, 1e-12), velocity);
   const qB = Math.abs(params.charge * params.magneticFieldZ);
-  const larmorRadius = qB > 0 ? (params.mass * speed) / qB : 0;
-
-  let vDriftX = 0;
-  if (params.mode === 'crossed-eb' && Math.abs(params.magneticFieldZ) > 0) {
-    vDriftX = params.electricFieldY / params.magneticFieldZ;
-  }
+  let vDriftX=0;
+  if(params.mode==='crossed-eb'&&qB>0)vDriftX=params.electricFieldY/params.magneticFieldZ;
+  const vRotMag=Math.hypot(velocity.x-vDriftX,velocity.y);
+  // For crossed fields the radius belongs to the translating drift frame.
+  // In a bounded pure-B model this is the radius IF the particle is in B.
+  const larmorRadius=qB>0?params.mass*vRotMag/qB:0;
 
   return {
     x: position.x,
@@ -379,7 +375,7 @@ export function computeObservables(
     kineticEnergy: ke,
     larmorRadius,
     vDriftX,
-    vRotMag: Math.hypot(velocity.x - vDriftX, velocity.y)
+    vRotMag
   };
 }
 
@@ -432,7 +428,12 @@ export function checkInvariants(
     ];
   }
 
-  return [];
+  // In uniform crossed fields the electric work is exactly q E_y Δy.
+  const work=params.charge*params.electricFieldY*(p1.state.position.y-p0.state.position.y);
+  const k0=kineticEnergy3D(Math.max(params.mass,1e-12),p0.state.velocity);
+  const k1=kineticEnergy3D(Math.max(params.mass,1e-12),p1.state.velocity);
+  const err=Math.abs(k1-k0-work)/Math.max(Math.abs(k0),Math.abs(k1),Math.abs(work),1e-12);
+  return [{name:'匀强电场功与动能变化一致',measuredError:err,tolerance:1e-8,passed:err<1e-8}];
 }
 
 /**

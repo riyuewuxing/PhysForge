@@ -2,6 +2,8 @@ import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import { ChevronDown, ChevronUp, Crosshair, MoveDiagonal2, RotateCcw, Ruler } from 'lucide-react';
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
+import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
+type B1StagePlugin=typeof import('../../../../simulations/em-bounded-magnetic-field/plugin.js').emBoundedMagneticFieldPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -217,7 +219,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
   const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
   const [heldThreeId, setHeldThreeId] = useState<string | null>(() => view3dEnabled ? plugin.meta.id : null);
-  const showThree = view3dEnabled || Boolean(presentationMode && spatial && heldThreeId === plugin.meta.id);
+  const b1Stage=plugin.meta.id==='builder-composite-em-field';
+  const morphInThisView=Boolean((presentationMode||b1Stage)&&spatial);
+  const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
   const showThreeRef = useRef(showThree);
   showThreeRef.current = showThree;
   const storySpatialCommandRef = useRef<StorySpatialCommand | null>(null);
@@ -227,14 +231,14 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const threeLayers = selectDisplayLayers(activeLayers, poeMasked);
   const previouslyShowThreeRef = useRef(showThree);
   const initialFlatViewportRef = useRef<Viewport | undefined>(undefined);
-  const enterFromCanvas = showThree && !previouslyShowThreeRef.current && Boolean(presentationMode && spatial);
+  const enterFromCanvas = showThree && !previouslyShowThreeRef.current && morphInThisView;
   useEffect(() => {
     previouslyShowThreeRef.current = showThree;
     if (view3dEnabled) setHeldThreeId(plugin.meta.id);
-    else if (!presentationMode || !spatial) setHeldThreeId(null);
+    else if (!morphInThisView) setHeldThreeId(null);
     if (!showThree) onMorphProgress?.(1);
     else if (!spatial) onMorphProgress?.(0);
-  }, [showThree, view3dEnabled, plugin.meta.id, presentationMode, spatial]);
+  }, [showThree, view3dEnabled, plugin.meta.id, morphInThisView, spatial]);
   const uplotWrapRef = useRef<HTMLDivElement | null>(null);
   const uplotInstanceRef = useRef<uPlot | null>(null);
   const lastPlotSyncMsRef = useRef(0);
@@ -288,11 +292,15 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const cameraRef = useRef<CameraTransform>(DEFAULT_CAMERA_TRANSFORM);
   const baseScaleRef = useRef<number>(1);
   const userTransformedViewRef = useRef<boolean>(false);
+  const b1FitKeyRef=useRef('');
+  const b1FitAtRef=useRef(-Infinity);
+  const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale]);};
   const applyDefaultCameraView = (width: number, height: number) => {
     const v2 = latestRef.current.plugin as SimulationPluginV2<ParamRecord, unknown>;
     const initialCamera = resolveInitialCameraTransform(v2, latestRef.current.params, width, height);
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
+    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -323,11 +331,16 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (finished) storyCameraTweenRef.current = null;
     return true;
   };
-  const completeFlatMorph = (aligned: Viewport) => {
+  const completeFlatMorph = (aligned: Viewport,b1Automatic?:boolean) => {
     const transform = { scale: aligned.scale, offsetX: aligned.offsetX, offsetY: aligned.offsetY };
     cameraRef.current = transform;
     viewportRef.current = aligned;
-    userTransformedViewRef.current = true;
+    // A camera morph transfers ownership, not just its projection. A teacher's
+    // orbit remains manual; an automatic camera remains automatic.
+    userTransformedViewRef.current=!(b1Stage&&b1Automatic===true);
+    if(b1Stage){
+      b1FitKeyRef.current=b1FitKey(aligned);b1FitAtRef.current=performance.now();
+    }
     setZoomPercent(Math.round(100 * aligned.scale / Math.max(1e-6, baseScaleRef.current)));
     setOverlayViewport(aligned);
     setHeldThreeId(null);
@@ -479,6 +492,26 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       scrubTime: scrub
     } = latestRef.current;
 
+    const frame=readDisplayedFrame(p.meta.id);
+    const drawState=frame?.state??null;
+    const b1Automatic=p.meta.id==='builder-composite-em-field'&&!userTransformedViewRef.current&&
+       !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&scrub===null;
+    if(b1Automatic&&drawState!==null){
+      const model=p as unknown as B1StagePlugin,cur=latestRef.current,vp=viewportRef.current;
+      const key=b1FitKey(vp);
+      const now=performance.now(),fresh=key!==b1FitKeyRef.current;
+      if(fresh||now-b1FitAtRef.current>=250){
+        b1FitKeyRef.current=key;b1FitAtRef.current=now;
+        const bounds=model.b1FrameBounds(drawState as BoundedMagneticState,pm as BoundedMagneticParams,readDisplayedLayers());
+        const safe=model.b1SafeRect(vp.width,vp.height,cur.presentationMode,!cur.oscilloscopeCollapsed);
+        if(fresh||!model.b1BoundsInViewport(bounds,vp,safe)){
+          const next=model.b1FitViewport(bounds,vp,safe);
+          cameraRef.current=next;viewportRef.current=next;
+          if(fresh)baseScaleRef.current=next.scale;
+          setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+        }
+      }
+    }
     const baseVp = viewportRef.current;
     ctx.save();
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
@@ -494,8 +527,6 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       }
     }
 
-    const frame = readDisplayedFrame(p.meta.id);
-    const drawState = frame?.state ?? null;
     const { effectiveVp: vp, frameOrigin } = computeEffectiveViewport(baseVp, drawState);
 
     if (drawState !== null) {
@@ -631,6 +662,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
 
     ctx.restore();
+    if(p.meta.id==='builder-composite-em-field'&&frame){
+      const v=viewportRef.current;
+      canvas.dataset.b1AutoFit=String(b1Automatic);
+      canvas.dataset.b1Viewport=JSON.stringify({scale:v.scale,offsetX:v.offsetX,offsetY:v.offsetY,width:v.width,height:v.height});
+      canvas.dataset.b1Time=String(frame.t);
+    }
   };
 
   const syncUPlotData = (force = false) => {
@@ -842,6 +879,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if (isPlaying) {
       lastFrameMsRef.current = null;
       emitTelemetrySummary(true);
+    } else if(latestRef.current.plugin.meta.id==='builder-composite-em-field'){
+      // The final displayed physical sample and chart must agree after pause.
+      renderFrameToCanvas();syncUPlotData(true);emitTelemetrySummary(true);
     }
   }, [isPlaying]);
 
@@ -941,6 +981,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const width = Math.max(320, Math.floor(rect.width));
       const height = Math.max(240, Math.floor(rect.height));
+      const changedSize=viewportRef.current.width!==width||viewportRef.current.height!==height;
       canvas.width = Math.floor(width * dpr);
       canvas.height = Math.floor(height * dpr);
       canvas.style.width = `${width}px`;
@@ -951,8 +992,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         height,
         dpr
       };
-      if (!userTransformedViewRef.current) {
-        applyDefaultCameraView(width, height);
+      // A duplicate ResizeObserver notification is not a change of camera.
+      // Preserve the exact B1 orthographic transfer when CSS size is unchanged.
+      if(!userTransformedViewRef.current&&(latestRef.current.plugin.meta.id!=='builder-composite-em-field'||changedSize)){
+        applyDefaultCameraView(width,height);
       }
       setOverlayViewport(viewportRef.current);
       renderFrameToCanvas();
@@ -1067,7 +1110,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   );
 
   const deviceScope = plugin.meta.id === 'stse-em-devices-suite';
-  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope;
+  const heroScope = plugin.meta.id === 'em-induction-double-rod' || deviceScope || plugin.meta.id==='builder-composite-em-field';
   const splitScopeUnits = heroScope && !!specA && !!specB && specA.unit !== specB.unit;
   // Same semantic channel colors on paper, with sufficient contrast on white.
   const paperColors: Readonly<Record<string, string>> = {
@@ -1217,6 +1260,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               presentationMode={presentationMode}
               morphTarget={view3dEnabled ? 0 : 1}
               initialFlatViewport={initialFlatViewportRef.current}
+              initialB1AutoFit={!userTransformedViewRef.current}
+              b1AutoFitAllowed={!storyDeck&&activeFrameId==='ground'&&scrubTime===null}
+              b1ResetViewNonce={resetViewNonce}
+              b1ScopeCollapsed={oscilloscopeCollapsed}
               onMorphProgress={onMorphProgress}
               onMorphFlat={completeFlatMorph}
               onWebGLFallback={() => { setHeldThreeId(null); onWebGLFallback?.(); }}

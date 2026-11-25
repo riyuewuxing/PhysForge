@@ -8,7 +8,9 @@ import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop } from './spatialMaterials.js';
-import { createPlanarFlagshipScene } from './planarFlagshipScenes.js';
+import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
+import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
+import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 import { createRemainingFlagshipScene } from './remainingFlagshipScenes.js';
 import { magnetic3dDisplayPoint, magnetic3dDefaultVisibleHeight } from '@physforge/simulations/em-3d-magnetic-fields';
 import { fusionDisplayPoint } from '@physforge/simulations/stse-tokamak-magnetic-mirror';
@@ -46,7 +48,11 @@ interface ThreeStageProps {
   readonly morphTarget?: 0 | 1;
   readonly initialFlatViewport?: Viewport;
   readonly onMorphProgress?: (progress: number) => void;
-  readonly onMorphFlat?: (viewport: Viewport) => void;
+  readonly onMorphFlat?: (viewport: Viewport,b1Automatic?:boolean) => void;
+  readonly initialB1AutoFit?:boolean;
+  readonly b1AutoFitAllowed?:boolean;
+  readonly b1ResetViewNonce?:number;
+  readonly b1ScopeCollapsed?:boolean;
   readonly onWebGLFallback?: () => void;
 }
 
@@ -86,8 +92,8 @@ const magneticAxisColors = [
   { name: 'Z', color: '#38bdf8', direction: { x: 0, y: 0, z: 1 } }
 ] as const;
 
-function updateMagneticAxisWidget(widget: SVGSVGElement, camera: THREE.Camera): void {
-  const directions = magneticAxisColors.map(axis => projectCameraDirection(mapMagneticPoint(axis.direction), camera));
+function updateMagneticAxisWidget(widget: SVGSVGElement, camera: THREE.Camera, directPhysicalAxes=false): void {
+  const directions = magneticAxisColors.map(axis => projectCameraDirection(directPhysicalAxes?new THREE.Vector3(axis.direction.x,axis.direction.y,axis.direction.z):mapMagneticPoint(axis.direction), camera));
   const orientation = directions.map(v => v.toArray().map(x => x.toFixed(3)).join(',')).join(';');
   if (widget.getAttribute('data-axis-orientation') === orientation) return;
   widget.setAttribute('data-axis-orientation', orientation);
@@ -235,7 +241,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   activeLayers,
   getFrameLayers,
   presentationMode = false,
-  morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback
+  morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback,
+  initialB1AutoFit=true,b1AutoFitAllowed=true,b1ResetViewNonce=0,b1ScopeCollapsed=false
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const bridgeRef = useRef<ThreeSceneBridge<ParamRecord, unknown> | null>(null);
@@ -245,6 +252,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   const morphPropsRef = useRef({ morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback });
   morphPropsRef.current = { morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback };
   const initialViewportRef = useRef(initialFlatViewport);
+  const b1PolicyRef=useRef({allowed:b1AutoFitAllowed,nonce:b1ResetViewNonce,presentation:presentationMode,scopeCollapsed:b1ScopeCollapsed});
+  b1PolicyRef.current={allowed:b1AutoFitAllowed,nonce:b1ResetViewNonce,presentation:presentationMode,scopeCollapsed:b1ScopeCollapsed};
   latestStateRef.current = simState;
   latestParamsRef.current = params;
   latestLayersRef.current = activeLayers;
@@ -277,15 +286,18 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const isMag3d = plugin.meta.id === 'em-3d-magnetic-fields';
     const isTokamak3d = plugin.meta.id === 'stse-tokamak-magnetic-mirror';
-    const magneticAxisWidget = isMag3d ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
+    const isBoundedStage=plugin.meta.id==='builder-composite-em-field';
+    const magneticAxisWidget = isMag3d||isBoundedStage ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
 
     const width = Math.max(320, container.clientWidth);
     const height = Math.max(240, container.clientHeight);
     const scene = new THREE.Scene();
     const isDeviceStage=plugin.meta.id==='stse-em-devices-suite';
-    const magneticBackdrop=isMag3d||isDeviceStage?createMagneticBackdrop():null;
+    const magneticBackdrop=isMag3d||isDeviceStage||isBoundedStage?createMagneticBackdrop():null;
     scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
-    scene.fog = new THREE.FogExp2('#0b0f17', 0.085);
+    // An abstract electromagnetic field has no atmospheric attenuation.
+    // Keep B1's small physical symbols legible when fitting a long trajectory.
+    scene.fog = isBoundedStage?null:new THREE.FogExp2('#0b0f17',0.085);
 
     const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
     const initialMagneticParams = isMag3d ? (getFrameParams?.() ?? params) as Magnetic3dParams : null;
@@ -331,10 +343,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     cssRenderer.domElement.setAttribute('aria-hidden', 'true');
     container.appendChild(cssRenderer.domElement);
 
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    const roomEnvironment = new RoomEnvironment();
-    const environmentTarget = pmremGenerator.fromScene(roomEnvironment, 0.04);
-    scene.environment = environmentTarget.texture;
+    // B1 has no reflective matter or transmissive box. Avoid allocating and
+    // sampling a room environment solely to depict an abstract field.
+    const pmremGenerator=isBoundedStage?null:new THREE.PMREMGenerator(renderer);
+    const roomEnvironment=pmremGenerator?new RoomEnvironment():null;
+    const environmentTarget=pmremGenerator&&roomEnvironment?pmremGenerator.fromScene(roomEnvironment,.04):null;
+    if(environmentTarget)scene.environment=environmentTarget.texture;
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -436,6 +450,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     renderer.domElement.addEventListener('webglcontextlost', onContextLost, false);
     renderer.domElement.addEventListener('webglcontextrestored', onContextRestored, false);
     controls.addEventListener('change', markDirty);
+    let b1AutoFit=initialB1AutoFit,b1FramingKey='',b1FramedAt=-Infinity,b1RenderCount=0;
+    let b1LastPolicy=b1PolicyRef.current;
+    const lockB1Camera=()=>{b1AutoFit=false;};
+    if(isBoundedStage)controls.addEventListener('start',lockB1Camera);
 
     const velocityLabelAnchor = new THREE.Vector3();
     const forceLabelAnchor = new THREE.Vector3();
@@ -714,6 +732,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
+        if(isBoundedStage)controls.removeEventListener('start',lockB1Camera);
         planarDriver?.dispose();
         clearDeviceLabels();
         disposeGroupChildren(staticGroup);
@@ -727,9 +746,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         sphereMat.dispose();
         disposeObjectResources(grid);
         magneticBackdrop?.dispose();
-        environmentTarget.dispose();
-        pmremGenerator.dispose();
-        disposeObjectResources(roomEnvironment);
+        environmentTarget?.dispose();
+        pmremGenerator?.dispose();
+        if(roomEnvironment)disposeObjectResources(roomEnvironment);
         controls.dispose();
         renderer.dispose();
         renderer.forceContextLoss();
@@ -760,6 +779,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if (morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
+          if(isBoundedStage)b1AutoFit=false;
           morph.startKeyframe(command.view, now, command.durationMs);
           if (storyCameraCommandRef) storyCameraCommandRef.current = null;
           lastMorphTarget = target;
@@ -788,31 +808,67 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         controls.update();
       }
 
+      const b1Policy=b1PolicyRef.current;
+      if(isBoundedStage){
+        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';b1FramedAt=-Infinity;dirty=true;}
+        if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
+        b1LastPolicy=b1Policy;
+      }
       const latestState = readState();
       const frameParams = getFrameParams?.() ?? latestParamsRef.current;
       const frameLayers = readLayers();
-      if (latestState !== null && latestState !== undefined && (latestState !== lastSyncedState || frameParams !== lastSyncedParams || frameLayers !== lastSyncedLayers)) {
-        syncState(latestState, frameParams, frameLayers);
-        lastSyncedState = latestState;
-        lastSyncedParams = frameParams;
-        lastSyncedLayers = frameLayers;
-      }
-
-      if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) {
-        return;
-      }
+      const changed=latestState!==null&&latestState!==undefined&&(latestState!==lastSyncedState||frameParams!==lastSyncedParams||frameLayers!==lastSyncedLayers);
+      const syncLatest=()=>{
+        syncState(latestState,frameParams,frameLayers);
+        lastSyncedState=latestState;lastSyncedParams=frameParams;lastSyncedLayers=frameLayers;
+      };
+      // B1's tube buffers are computed for a rendered frame, not every rAF
+      // callback that the adaptive frame guard is about to discard.
+      if(changed&&!isBoundedStage)syncLatest();
+      if(changed&&isBoundedStage)dirty=true;
+      if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) return;
 
       const renderStart = performance.now();
+      if(changed&&isBoundedStage)syncLatest();
+      const b1=isBoundedStage&&latestState!==null&&latestState!==undefined?latestState as BoundedMagneticState:null;
+      const bp=frameParams as BoundedMagneticParams;
+      const rw=renderer.domElement.clientWidth||width,rh=renderer.domElement.clientHeight||height;
+      if(b1&&morph&&morph.getMorphT()===0&&!morph.isAnimating){
+        const key=JSON.stringify([bp.mode,bp.fieldScale,rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed]);
+        const fresh=key!==b1FramingKey;
+        if(fresh){b1FramingKey=key;}
+        if(b1AutoFit&&b1Policy.allowed&&(fresh||now-b1FramedAt>=250)){
+          b1FramedAt=now;
+          const bounds=b1FrameBounds(b1,bp,frameLayers),safe=b1SafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
+          if(fresh||!b1ProjectionFits(bounds,camera,rw,rh,safe)){
+            morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
+            fitB1SpatialFrame(morph,bounds,rw,rh,safe);
+            controls.target.copy(morph.getOrbitTarget());controls.update();
+          }
+        }
+      }
       if (isMag3d || isDeviceStage) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
       const renderCamera = morph?.getActiveCamera() ?? camera;
-      if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget, renderCamera);
+      if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget, renderCamera,isBoundedStage);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
+      if(b1){
+        // Diagnostics and visible caption refer to the state just rendered.
+        // No React state is updated at animation frequency.
+        container.dataset.b1RenderTime=String(b1.t);
+        container.dataset.b1RenderPrimary=JSON.stringify(b1.particles[0]?.state??null);
+        container.dataset.b1RenderExits=JSON.stringify(b1.particles.flatMap(t=>t.exitPoint?[t.exitPoint]:[]));
+        container.dataset.b1RenderMode=bp.mode;
+        container.dataset.b1RenderCount=String(++b1RenderCount);
+        container.dataset.b1AutoFit=String(b1AutoFit&&b1Policy.allowed);
+        const b=b1FrameBounds(b1,bp,frameLayers);
+        container.dataset.b1ScreenBounds=JSON.stringify(b1ProjectedBounds(b,renderCamera,rw,rh));
+      }
       if (morph && morphPropsRef.current.morphTarget === 1 && morph.getMorphT() === 1 && !morph.isAnimating && !flatNotified) {
         flatNotified = true;
-        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)));
+        morphPropsRef.current.onMorphFlat?.(alignedCanvasViewport(morph.get2DAlignMetrics(), Math.min(window.devicePixelRatio || 1, 2)),isBoundedStage?b1AutoFit:undefined);
       }
       const renderDuration = performance.now() - renderStart;
       performanceGuard.observe(renderDuration);
@@ -838,6 +894,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     && typeof simState === 'object'
     ? simState as Magnetic3dState
     : null;
+  const b1State=plugin.meta.id==='builder-composite-em-field'?simState as BoundedMagneticState|null:null;
+  const b1Params=params as BoundedMagneticParams;
+  const b1Primary=b1State?.particles[0];
   const deviceState=plugin.meta.id==='stse-em-devices-suite'?simState as EmDevicesState|null:null;
   const deviceFlight=deviceState?.flight;
   const cyclotron=deviceState?.cyclotron;
@@ -883,6 +942,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-cyclotron-time={cyclotron?.physicalTimeS}
       data-cyclotron-radius={cyclotron?.radiusM}
       data-cyclotron-rf={cyclotron?.rfVoltageV}
+      data-b1-time={b1State?.t}
+      data-b1-primary={b1Primary?JSON.stringify(b1Primary.state):undefined}
+      data-b1-exits={b1State?JSON.stringify(b1State.particles.flatMap(t=>t.exitPoint?[t.exitPoint]:[])):undefined}
       data-sensor-drift={deviceState&&isSensorDevice((params as EmDevicesParams).device)?deviceState.particleVel.x:undefined}
       data-hall-voltage={deviceState?.hallVoltageV}
       data-mhd-emf={deviceState?.mhdEmfV}
@@ -892,6 +954,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       data-flow-rate={deviceState?.flowRateM3ps}
       className="relative w-full h-full min-h-[260px] rounded-xl overflow-hidden"
     >
+      {b1State&&<div data-testid="b1-field-caption" className={`pointer-events-none absolute ${presentationMode?'bottom-3':'bottom-[78px]'} left-3 z-10 max-w-[38%] rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200`}><div>{b1FieldCaption(b1Params)}</div><div>{b1StateCaption(b1State,b1Params)}</div>{b1Params.mode==='crossed-eb'&&b1Params.charge!==0&&b1Params.magneticFieldZ!==0&&activeLayers.has('speedDecomposition')&&<div><span className="text-emerald-300">v</span> = <span className="text-amber-300">v_d</span> + <span className="text-pink-300">v_rot</span></div>}</div>}
       {lossCone !== undefined && <div data-testid="mirror-loss-cone" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg border border-white/10 bg-slate-950/80 px-2 py-1 text-[11px] text-slate-200">
         <div>速度空间逃逸锥 θc={lossCone.toFixed(1)}°</div>
         <svg viewBox="0 0 104 60" width="104" height="60" aria-label="速度空间示意">
@@ -910,7 +973,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         </div>
       )}
       <div aria-hidden="true" data-testid="three-axis-widget" className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-lg border border-white/10 bg-slate-950/70 p-1 shadow-lg backdrop-blur">
-        {plugin.meta.id === 'em-3d-magnetic-fields' ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
+        {(plugin.meta.id === 'em-3d-magnetic-fields'||plugin.meta.id==='builder-composite-em-field') ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
           <circle cx="30" cy="30" r="1.8" fill="#cbd5e1" />
           {magneticAxisColors.map(axis => <g key={axis.name} data-physical-axis={axis.name}>
             <line x1="30" y1="30" x2="30" y2="30" stroke={axis.color} strokeWidth="1.8" strokeLinecap="round" />

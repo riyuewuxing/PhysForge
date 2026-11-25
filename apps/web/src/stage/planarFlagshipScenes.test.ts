@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { createWorldMapper, resolvePluginParams } from '@physforge/sim-sdk';
 import { emInductionDoubleRodPlugin, rodDisplayX } from '@physforge/simulations/em-induction-double-rod';
 import {inductionDiagramGeometry,inductionDiagramCurrent,inductionFieldPoints,inductionLoadDimensions} from '../../../../simulations/em-induction-double-rod/diagramGeometry.js';
-import { emBoundedMagneticFieldPlugin } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
+import { emBoundedMagneticFieldPlugin,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
-import { createPlanarFlagshipScene, inductionDisplayPoint } from './planarFlagshipScenes.js';
+import { createPlanarFlagshipScene, inductionDisplayPoint, fitB1SpatialFrame,b1ProjectionFits } from './planarFlagshipScenes.js';
 import { CameraMorphController, alignedCanvasViewport } from './cameraMorphController.js';
 
 describe('flagship physical display alignment', () => {
@@ -206,6 +206,54 @@ describe('flagship physical display alignment', () => {
     expect(new THREE.Vector3(0,1,0).applyQuaternion(rotation.quaternion).y).toBeCloseTo(1);
     driver.sync(state,{...params,charge:0},layers);
     expect(center.visible).toBe(false);expect(drift.visible).toBe(false);expect(rotation.visible).toBe(false);
+    driver.dispose();
+  });
+  it('uses actual B1 trajectory samples and signed field arrows; no fictitious walls in infinite fields',()=>{
+    const p=emBoundedMagneticFieldPlugin,params=resolvePluginParams<BoundedMagneticParams>(p.paramSchema,{mode:'half-space',family:'single',magneticFieldZ:-2});
+    const scene=new THREE.Scene(),driver=createPlanarFlagshipScene('builder-composite-em-field',scene)!;
+    const state=p.engine.step(p.engine.createInitialState(params),params,.8).nextState;
+    const layers=new Set(['fieldRegion','trajectory']);
+    driver.sync(state,params,layers);
+    expect(scene.getObjectByName('b1-halfspace-boundary')).toBeDefined();
+    expect(scene.getObjectByName('b1-field-wire')).toBeUndefined();
+    const arrow=scene.getObjectByName('b1-field-arrow') as THREE.ArrowHelper;
+    expect(new THREE.Vector3(0,1,0).applyQuaternion(arrow.quaternion).z).toBeCloseTo(-1,10);
+    const tube=scene.getObjectByName('b1-primary-trajectory') as THREE.Mesh;
+    expect(tube.visible).toBe(true);expect(tube.geometry.drawRange.count).toBeGreaterThan(0);
+    driver.sync(state,{...params,mode:'crossed-eb',magneticFieldZ:0},new Set(['fieldRegion']));
+    expect(scene.getObjectByName('b1-halfspace-boundary')).toBeUndefined();
+    expect(scene.getObjectByName('b1-field-wire')).toBeUndefined();
+    expect(scene.getObjectByName('b1-field-arrow')).toBeUndefined();
+    expect(tube.visible).toBe(false);driver.dispose();
+  });
+  it('frames real B1 motion in the unoccluded region and leaves full-space field free of a fake solid',()=>{
+    const plugin=emBoundedMagneticFieldPlugin;
+    const p=resolvePluginParams<BoundedMagneticParams>(plugin.paramSchema,{mode:'crossed-eb',family:'single',initialSpeed:0,magneticFieldZ:2,electricFieldY:3});
+    const state=plugin.engine.step(plugin.engine.createInitialState(p),p,3.8).nextState;
+    const layers=new Set(['fieldRegion','trajectory','velocityVector','speedDecomposition']);
+    const bounds=b1FrameBounds(state,p,layers);
+    for(const [width,height] of [[1440,900],[1024,768]] as const){
+      const camera=new CameraMorphController(plugin.spatial3D,width,height),safe=b1SafeRect(width,height,true);
+      fitB1SpatialFrame(camera,bounds,width,height,safe);
+      expect(b1ProjectionFits(bounds,camera.getActiveCamera(),width,height,safe)).toBe(true);
+      const position=state.particles[0]!.state.position,screen=camera.project3DToScreen(position);
+      expect(screen.x).toBeGreaterThan(safe.left);expect(screen.x).toBeLessThan(safe.right);
+      expect(screen.y).toBeGreaterThan(safe.top);expect(screen.y).toBeLessThan(safe.bottom);
+      camera.startMorphTo(1,0,0);
+      const flat=camera.project3DToScreen(position),mapper=createWorldMapper(alignedCanvasViewport(camera.get2DAlignMetrics()));
+      const actual=mapper.toScreen(position.x,position.y);
+      expect(Math.hypot(actual.x-flat.x,actual.y-flat.y)).toBeLessThan(.5);
+    }
+    const scene=new THREE.Scene(),driver=createPlanarFlagshipScene('builder-composite-em-field',scene)!;
+    driver.sync(state,p,layers);
+    let glass=0;scene.traverse(o=>{if(o instanceof THREE.Mesh&&o.material instanceof THREE.MeshPhysicalMaterial)glass++;});
+    expect(glass).toBe(0);expect(scene.getObjectByName('b1-bounded-field-tint')).toBeUndefined();
+    const particle=scene.getObjectByName('b1-particle-0') as THREE.Mesh;
+    expect(particle.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect((particle.material as THREE.MeshBasicMaterial).toneMapped).toBe(false);
+    expect(scene.getObjectByName('b1-particle-halo-0')).toBeDefined();
+    let arrows=0;scene.traverse(o=>{if(o.name==='b1-field-arrow')arrows++;});
+    expect(arrows).toBeGreaterThan(0);expect(arrows).toBeLessThanOrEqual(30);
     driver.dispose();
   });
   it('removes the owned Three scene graph on dispose', () => {
