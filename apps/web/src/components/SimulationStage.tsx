@@ -762,7 +762,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     finally { syncingPlotRef.current = false; }
     // Update only the instrument DOM, not React state on every animation frame.
     if (uplotWrapRef.current) {
-      uplotWrapRef.current.dataset.sampleCount = String(snaps.length);
+      uplotWrapRef.current.dataset.sampleCount = String(plot.data[0].length);
+      uplotWrapRef.current.dataset.plotChannelA = chA;
+      uplotWrapRef.current.dataset.plotChannelB = chB;
       const emptyCircuit = (mechanics||(circuit && latestRef.current.params.topology !== 'divider-lamp')) && snaps.length < 2;
       uplotWrapRef.current.style.visibility = emptyCircuit ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = emptyCircuit ? 'grid' : 'none';
@@ -1319,7 +1321,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     const plot = new uPlot(opts, [[0], [0], [0]], wrap);
     uplotInstanceRef.current = plot;
-    syncUPlotData();
+    // A new instance must receive its snapshot history even if the old one just synced.
+    syncUPlotData(true);
 
     const ro = new ResizeObserver(() => {
       if (!uplotWrapRef.current) return;

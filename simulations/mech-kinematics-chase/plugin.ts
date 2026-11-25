@@ -119,13 +119,17 @@ export const mechKinematicsChasePlugin=defineSimulationPlugin<KinematicsChasePar
       // Same-instant events are distinct records; combine their labels into one readable pin.
       const groups=new Map<number,typeof s.events[number][]>();
       for(const ev of s.events){const a=groups.get(ev.time)??[];a.push(ev);groups.set(ev.time,a);}
+      const labelRows: {left:number;right:number}[][]=[];
       for(const [t,evs] of groups){
         // Stop positions belong to their own car, not always A.
         for(const ev of evs){if(!ev.position)continue;const q=m.toScreen(ev.position.x,0);ctx.fillStyle=amber;ctx.beginPath();ctx.arc(q.x,q.y,4,0,Math.PI*2);ctx.fill();}
         const ev=evs[0]!,x=ev.position?.x??s.xA,q=m.toScreen(x,-lane*2);
         ctx.fillStyle=amber;ctx.textAlign='center';ctx.font='11px system-ui';
         const names=evs.map(e=>e.id.startsWith('stop-a')?'A停':e.id.startsWith('stop-b')?'B停':e.id.startsWith('co-vel')?'共速':'相遇').join(' / ');
-        ctx.fillText(names+' '+t.toFixed(3)+'s',q.x,q.y);
+        const label=names+' '+t.toFixed(3)+'s', half=ctx.measureText(label).width/2+5;
+        let row=0;while(labelRows[row]?.some(b=>q.x-half<b.right&&q.x+half>b.left))row++;
+        (labelRows[row]??=[]).push({left:q.x-half,right:q.x+half});
+        ctx.fillText(label,q.x,q.y+row*15);
       }
     }
     ctx.restore();

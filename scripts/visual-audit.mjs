@@ -348,6 +348,7 @@ async function auditM01Chase(page,origin){
     const b=page.getByTestId(id);for(let i=0;i<8&&await b.getAttribute('data-channel-key')!==key;i++)await b.click();
     if(await b.getAttribute('data-channel-key')!==key)throw Error('M01 position channel missing '+key);
   }
+  await page.waitForFunction(t=>{const d=document.querySelector('[data-testid="uplot-container"]')?.dataset;return d?.plotChannelA==='xA'&&d?.plotChannelB==='xB'&&Number(d.sampleCount)>2&&Math.abs(Number(d.lastSampleT)-t)<1e-10;},catchup.t,{timeout:5000});
   await page.screenshot({path:path.join(OUT_DIR,'H12_M01_catchup_position.png')});
   await selectPreset(page,'brake-safe-margin',true);await waitInitial(42);
   const safe=await runTo(5.45);
