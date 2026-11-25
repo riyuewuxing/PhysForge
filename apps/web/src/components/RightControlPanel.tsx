@@ -258,6 +258,12 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
             {params.sceneMode==='thin-lens-imaging'&&telemetry.observables.imageAtInfinity===1&&<div data-testid="b3-focus-infinity" className="text-xs">物在焦平面 · 无有限像</div>}
             {params.sceneMode==='optical-fiber'&&Number(params.n1)<=Number(params.n2)&&<div className="text-xs">无全反射导光条件</div>}
           </section>
+        ) : plugin.meta.id==='mech-dynamic-equilibrium' ? (
+          <section data-testid="equilibrium-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
+            {telemetry.observables.solutionDefined===0&&<div data-testid="equilibrium-no-solution" className="font-semibold text-rose-500">当前构型无可靠有限平衡解</div>}
+            {([['angleDeg','实际角','°'],['force1','F₁','N'],['force2','F₂','N'],['minPullForceN','理论拉力下界','N'],['ropeLengthM','实际绳长','m']] as const).filter(([key])=>key!=='ropeLengthM'||params.mode==='hemisphere-suspension').map(([key,label,unit])=>{const v=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'equilibrium-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}
+            <div className="text-[10px]">演示时间仅用于准静态扫描；无解处曲线留空。</div>
+          </section>
         ) : plugin.meta.id==='mech-kinematics-chase' ? (
           <section data-testid="chase-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
             {([['deltaX','有向位置差 xB−xA','m'],['gap','实际间距','m'],['minGap','历史最小间距','m'],['deltaV','A 相对 B 速度','m/s'],['firstCoVelocityTime','首次共速','s'],['firstMeetTime','首次相遇','s']] as const).map(([key,label,unit])=>{const v=telemetry.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'chase-'+key} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}

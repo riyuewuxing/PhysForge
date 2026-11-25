@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
-import { createInitialState, solveEquilibriumAtAngle, stepEquilibrium, type EquilibriumParams } from './engine.js';
+import { createInitialState, solveEquilibriumAtAngle, stepEquilibrium, computeObservables, checkInvariants, type EquilibriumParams } from './engine.js';
 
 describe('M02 mech-dynamic-equilibrium verification', () => {
   it('maintains vector equilibrium residual < 1e-10 N across all angles and equal active-knot tension', () => {
@@ -76,5 +76,31 @@ describe('M02 independent boundary and initial-state regressions', () => {
         expect(s.netResidualN).toBeLessThan(1e-10);
       }
     }
+  });
+});
+
+describe('M02 hemisphere and invalid telemetry',()=>{
+  const p:EquilibriumParams={mode:'hemisphere-suspension',mass:2,baseAngleDeg:37,sweepAngleDeg:35,autoSweep:false,radiusM:1.2,anchorHeightM:.8};
+  it('derives actual rope length and constant normal force from sphere geometry',()=>{
+    for(const theta of [0,15,35,60,75]){
+      const s=solveEquilibriumAtAngle(p,theta),mg=p.mass*CLASSROOM_GRAVITY;
+      const L=Math.sqrt(1.2**2+2**2-2*1.2*2*Math.cos(degToRad(theta)));
+      expect(s.sphere?.ropeLength).toBeCloseTo(L,12);
+      expect(Math.hypot(s.point.x,s.point.y)).toBeCloseTo(1.2,12);
+      expect(s.force1.mag).toBeCloseTo(mg*.6,12);
+      expect(s.force2.mag).toBeCloseTo(mg*L/2,12);
+      expect(s.force1.x*s.point.y-s.force1.y*s.point.x).toBeCloseTo(0,12);
+      expect(s.force2.x*(2-s.point.y)+s.force2.y*s.point.x).toBeCloseTo(0,12);
+      expect(s.netResidualN).toBeLessThan(1e-10);
+      expect(s.minPullForceN).toBeCloseTo(mg*.4,12);
+    }
+  });
+  it('does not publish fictitious zero force data when there is no solution',()=>{
+    const s=createInitialState({...p,mode:'dead-knot-rotate',baseAngleDeg:75,sweepAngleDeg:-30});
+    expect(s.status).toBe('infeasible');
+    expect(computeObservables(s)).not.toHaveProperty('force1');
+    expect(computeObservables(s)).not.toHaveProperty('force2');
+    expect(computeObservables(s).solutionDefined).toBe(0);
+    expect(checkInvariants(s)[0]?.passed).toBe(false);
   });
 });

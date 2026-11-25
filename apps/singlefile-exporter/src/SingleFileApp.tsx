@@ -31,7 +31,8 @@ const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind=
 const mechanicsSlice=targetPlugin.paramSchema.some(f=>f.key==='scenario'&&f.kind==='select'&&f.options.some(o=>o.value==='atwood-constrained'));
 const odeSlice=Boolean(targetPlugin.getTelemetryChannels);
 const chaseSlice=targetPlugin.paramSchema.some(f=>f.key==='vA0')&&targetPlugin.paramSchema.some(f=>f.key==='xB0')&&targetPlugin.paramSchema.some(f=>f.key==='reactionTime');
-const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice;
+const equilibriumSlice=targetPlugin.paramSchema.some(f=>f.key==='baseAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='sweepAngleDeg')&&targetPlugin.paramSchema.some(f=>f.key==='autoSweep');
+const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -483,7 +484,7 @@ export const SingleFileApp: React.FC = () => {
           ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false}}]:[])
         ],
         series: [
-          { label: 't (s)' },
+          { label: equilibriumSlice?'演示时间 (s)':'t (s)' },
           { label: specA?.label ?? 'A', stroke: paint(specA?.color ?? '#38bdf8'), width: 2 },
           { label: specB?.label ?? 'B', stroke: paint(specB?.color ?? '#f472b6'), width: 2,...(split?{scale:'y2'}:{}) }
         ],
