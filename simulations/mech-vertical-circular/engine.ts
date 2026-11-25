@@ -127,6 +127,16 @@ export function stepVerticalCircular(state:VerticalCircularState,p:VerticalCircu
     return {nextState:{...state,...next,...appendTrail(state,[{x:next.x,y:next.y}],state.trailContactCount),normalForceN:0},events};
   }
   const R=radius(p),g=CLASSROOM_GRAVITY;
+  // Exact bottom-launch separatrix of the bilateral rod. Ordinary RK can
+  // preserve energy to 1e-10 and still eventually flip the unstable branch.
+  // This is the closed form of the same pendulum ODE, not a visual animation.
+  const ratio=p.vLaunch*p.vLaunch/(g*R);
+  if(p.trackMode==='light-rod'&&Math.abs(ratio-4)<=32*Number.EPSILON*Math.max(1,ratio)){
+    const t=state.t+dt,k=Math.sqrt(g/R),theta=4*Math.atan(Math.exp(-k*t)),omega=-2*k*Math.sin(theta/2);
+    const next=toCartesian({t,theta,omega},R);
+    const react=evaluateConstrainedReaction(next.x,next.y,next.vx,next.vy,p.mass,g,p.trackMode);
+    return {nextState:{...state,...next,...appendTrail(state,[{x:next.x,y:next.y}],state.trail.length+1),normalForceN:react.radialScalarForce},events:[]};
+  }
   let a:AngularState={t:state.t,theta:Math.atan2(state.x,state.y),omega:(state.vx*state.y-state.vy*state.x)/(R*R)};
   const end=state.t+dt,guard=releaseGuard(p);
   let count=0;

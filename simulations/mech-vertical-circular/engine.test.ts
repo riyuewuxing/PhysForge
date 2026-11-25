@@ -137,3 +137,18 @@ it('audits zero-reference-energy side turn in joules rather than dividing by nea
     expect(report.unit).toBe('J');expect(report.measuredError).toBeLessThan(1e-8);expect(report.passed).toBe(true);
   }
 });
+
+it('keeps the exact bilateral-rod separatrix asymptotic for 25 seconds without numerical branch reversal',()=>{
+  const p:VerticalCircularParams={trackMode:'light-rod',mass:1,radius:1.6,vLaunch:Math.sqrt(4*9.8*1.6),startAngleDeg:0};
+  const init=createInitialState(p);let s=init;
+  for(let i=0;i<6000;i++){
+    s=stepVerticalCircular(s,p,1/240).nextState;
+    const k=Math.sqrt(9.8/p.radius),theta=4*Math.atan(Math.exp(-k*s.t));
+    expect(s.x).toBeGreaterThanOrEqual(0);expect(s.vy).toBeGreaterThanOrEqual(0);
+    expect(s.x).toBeCloseTo(p.radius*Math.sin(theta),12);
+    expect(s.y).toBeCloseTo(p.radius*Math.cos(theta),12);
+    expect(s.vx).toBeCloseTo(-2*k*p.radius*Math.sin(theta/2)*Math.cos(theta),12);
+    expect(checkInvariants(s,init,p)[0]?.passed).toBe(true);
+  }
+  expect(s.x).toBeLessThan(1e-23);expect(s.derailed).toBe(false);
+});
