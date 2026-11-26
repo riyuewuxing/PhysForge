@@ -76,3 +76,29 @@ describe('E08 independent power boundaries and actual-state audit',()=>{
 function computeStatus(s: ReturnType<typeof createInitialState>){
   return computeObservables(s).operatingPointValid;
 }
+
+describe('E08 grid operating domain',()=>{
+  it('uses actual I²R, receiving voltage, and power ledger without clipping in the valid region',()=>{
+    const p={...getPreset(1),sourceU0:250,stepUpRatioK1:20,lineResistanceR:20,genPowerKw:100};
+    const s=createInitialState(p),m=s.current;
+    expect(m.lineVoltageV).toBe(5000);expect(m.lineCurrentA).toBe(20);
+    expect(m.u2).toBe(4600);expect(m.pLineLossW).toBe(8000);expect(m.pUserW).toBe(92000);
+    expect(m.u3*m.i3).toBeCloseTo(92000,8);expect(m.efficiency).toBeCloseTo(.92,10);
+    expect(checkInvariants(s,s,p).every(r=>r.passed)).toBe(true);
+  });
+  it('distinguishes the short-circuit boundary and zero resistance from a normal regulated bus',()=>{
+    const p={...getPreset(1),sourceU0:100,stepUpRatioK1:5,lineResistanceR:50,genPowerKw:5};
+    const s=createInitialState(p),m=s.current;
+    expect(m.operatingPointValid).toBe(1);expect(m.u2).toBe(0);expect(m.u3).toBe(0);
+    expect(m.pLineLossW).toBe(5000);expect(m.pUserW).toBe(0);
+    const z=createInitialState({...p,lineResistanceR:0}).current;
+    expect(z.powerLimitDefined).toBe(0);expect(z.pLineLossW).toBe(0);expect(z.efficiency).toBe(1);
+  });
+  it('disconnected secondary retains induced voltage but carries no current',()=>{
+    const p={...getPreset(0),branch3Closed:false,parallelUsersCount:0};
+    const s=createInitialState(p),m=s.current;
+    expect(m.u3).toBeGreaterThan(0);expect(m.i3).toBe(0);expect(m.i2).toBe(0);
+    expect(m.pInW).toBe(0);expect(m.efficiencyDefined).toBe(0);
+    expect(checkInvariants(s,s,p).every(r=>r.passed)).toBe(true);
+  });
+});
