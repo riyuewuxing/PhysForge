@@ -1471,7 +1471,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   // Publish its paused frame before paint, without changing continuous cadence.
   useLayoutEffect(()=>{
     const current=latestRef.current;
-    if(!['mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd'].includes(current.plugin.meta.id)||isPlaying)return;
+    if(!['mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md'].includes(current.plugin.meta.id)||isPlaying)return;
     if(current.scrubTime===null&&simStateModelIdRef.current===current.plugin.meta.id&&
       simStateResetNonceRef.current===current.resetNonce&&simStateRef.current!==null&&simulationTimeRef.current>lastSnapshotTRef.current){
       const state=simStateRef.current,t=simulationTimeRef.current;
