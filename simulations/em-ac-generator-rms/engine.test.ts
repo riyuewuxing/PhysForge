@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { emAcGeneratorRmsPlugin } from './plugin.js';
 import { acGeneratorPresets } from './presets.js';
 import {
+  checkInvariants,
   computeRmsSimpson,
   createInitialState,
   stepAcGeneratorRms,
@@ -61,5 +62,47 @@ describe('em-ac-generator-rms Simpson RMS & waveform tests (E07)', () => {
     const s0 = createInitialState(zeroB);
     expect(stepAcGeneratorRms(s0, zeroB, 0).nextState).toEqual(s0);
     expect(Number.isFinite(stepAcGeneratorRms(s0, zeroB, 0.1).nextState.uRmsV)).toBe(true);
+  });
+});
+
+describe('E07 independent interval heat and truthful audit', () => {
+  const base = { ...getPreset(0), freqHz: 1, loadR: 7 };
+  const amplitude = base.turnsN * base.magneticB * base.coilAreaS * 2 * Math.PI;
+  const scale = amplitude * amplitude / base.loadR;
+  it('integrates a full rectangular pulse period even when one step crosses both jumps', () => {
+    const p: AcGeneratorParams = { ...base, waveform: 'duty-square', dutyCycleD: 0.23 };
+    const s = stepAcGeneratorRms(createInitialState(p), p, 1).nextState;
+    expect(s.jouleHeatJ / scale).toBeCloseTo(0.23, 10);
+  });
+  it('integrates a fractional sine period without depending on step partition', () => {
+    const p: AcGeneratorParams = { ...base, waveform: 'sine' };
+    const dt = 0.37;
+    const expected = scale * (dt / 2 - Math.sin(4 * Math.PI * dt) / (8 * Math.PI));
+    const s0 = createInitialState(p);
+    const one = stepAcGeneratorRms(s0, p, dt).nextState;
+    let split = s0;
+    for (let i = 0; i < 37; i++) split = stepAcGeneratorRms(split, p, dt / 37).nextState;
+    expect(one.jouleHeatJ / scale).toBeCloseTo(expected / scale, 10);
+    expect(split.jouleHeatJ / scale).toBeCloseTo(one.jouleHeatJ / scale, 10);
+  });
+  it('integrates a sawtooth across a reset and several complete cycles', () => {
+    const p: AcGeneratorParams = { ...base, waveform: 'sawtooth' };
+    const f = 0.27;
+    const expected = 3 / 3 + 4 * f ** 3 / 3 - 2 * f ** 2 + f;
+    const s = stepAcGeneratorRms(createInitialState(p), p, 3 + f).nextState;
+    expect(s.jouleHeatJ / scale).toBeCloseTo(expected, 10);
+  });
+  it('integrates half-wave heat across off and on intervals', () => {
+    const p: AcGeneratorParams = { ...base, waveform: 'half-wave' };
+    const s = stepAcGeneratorRms(createInitialState(p), p, 1.75).nextState;
+    expect(s.jouleHeatJ / scale).toBeCloseTo(0.5, 10);
+  });
+  it('reports a deliberately corrupted RMS and heat state as an invariant failure', () => {
+    const p: AcGeneratorParams = { ...base, waveform: 'sine' };
+    const initial = createInitialState(p);
+    const s = stepAcGeneratorRms(initial, p, 0.75).nextState;
+    const bad = { ...s, uRmsV: s.uRmsV * 1.5, jouleHeatJ: s.jouleHeatJ + scale };
+    const reports = checkInvariants(bad, initial, p);
+    expect(reports.some(r => !r.passed && r.measuredError > r.tolerance)).toBe(true);
   });
 });
