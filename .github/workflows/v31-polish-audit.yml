@@ -76,7 +76,7 @@ jobs:
           REVIEW_REPO: ${{ github.repository }}
           REVIEW_HEAD: ${{ github.event.pull_request.base.sha }}
           REVIEW_PHASE: ${{ matrix.phase }}
-        run: python scripts/visual_review_pack.py --resolve-base --repo "$REVIEW_REPO" --head "$REVIEW_HEAD" --phase "$REVIEW_PHASE" --out artifacts/base-review --prefixes H53_F07,H56_F08
+        run: python scripts/visual_review_pack.py --resolve-base --repo "$REVIEW_REPO" --head "$REVIEW_HEAD" --phase "$REVIEW_PHASE" --out artifacts/base-review --prefixes H53_F07,H56_F08,H59_F09
         timeout-minutes: 4
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && hashFiles('artifacts/base-review/manifest.json') != '' }}
@@ -180,7 +180,7 @@ jobs:
           REVIEW_HEAD: ${{ github.event.pull_request.head.sha }}
           REVIEW_BASE: ${{ github.event.pull_request.base.sha }}
           REVIEW_PHASE: ${{ matrix.phase }}
-        run: python scripts/visual_review_pack.py --raw artifacts/raw-review --out artifacts/small-review --head "$REVIEW_HEAD" --base-sha "$REVIEW_BASE" --phase "$REVIEW_PHASE" --baseline artifacts/base-manifest/manifest.json --prefixes H53_F07,H56_F08
+        run: python scripts/visual_review_pack.py --raw artifacts/raw-review --out artifacts/small-review --head "$REVIEW_HEAD" --base-sha "$REVIEW_BASE" --phase "$REVIEW_PHASE" --baseline artifacts/base-manifest/manifest.json --prefixes H53_F07,H56_F08,H59_F09
         timeout-minutes: 3
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && hashFiles('artifacts/small-review/manifest.json') != '' }}
