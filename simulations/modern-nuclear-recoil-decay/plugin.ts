@@ -70,7 +70,9 @@ function halfLifePlot(state: NuclearRecoilDecayState) {
     const t = maxT * i / 120;
     return coord(t, 2 ** (-t / state.halfLifeS));
   });
-  return {sample,expected,maxT};
+  const ticksX=[0,maxT/2,maxT].map(t=>({x:coord(t,0).x,text:Number(t.toPrecision(4)).toString()}));
+  const ticksY=[0,.5,1].map(f=>({y:coord(0,f).y,text:String(f)}));
+  return {sample,expected,maxT,ticksX,ticksY,cursor:coord(state.t,state.remainingCount/state.decayedFlags.length)};
 }
 
 export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
@@ -149,8 +151,14 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
         {kind:'line',x1:.15,y1:-.9,x2:.15,y2:.9},
         {kind:'polyline',points:plot.sample},
         {kind:'polyline',points:plot.expected,dashed:true},
-        {kind:'text',x:.15,y:1.05,text:'样本阶梯 / 理论期望（虚线）'},
-        {kind:'text',x:2.1,y:-1.15,text:plot.maxT.toFixed(1)+' s',align:'end'});
+        {kind:'text',x:1.1,y:1.25,text:'样本阶梯 / 理论期望（虚线）',align:'middle'},
+        {kind:'text',x:.15,y:1.04,text:'N/N₀',align:'middle'},
+        {kind:'text',x:2.1,y:-1.30,text:'t / s',align:'end'},
+        {kind:'circle',cx:plot.cursor.x,cy:plot.cursor.y,r:.025,fill:true},
+        {kind:'text',x:-1.1,y:.5,text:'N(t) = '+state.remainingCount+' / '+state.decayedFlags.length,align:'middle'},
+        {kind:'text',x:-1.1,y:.22,text:'t = '+state.t.toFixed(3)+' s',align:'middle'});
+      for(const tick of plot.ticksX)primitives.push({kind:'line',x1:tick.x,y1:-.9,x2:tick.x,y2:-.95},{kind:'text',x:tick.x,y:-1.1,text:tick.text,align:'middle'});
+      for(const tick of plot.ticksY)primitives.push({kind:'line',x1:.1,y1:tick.y,x2:.15,y2:tick.y},{kind:'text',x:.06,y:tick.y,text:tick.text,align:'end'});
     } else {
       const maxN=Math.max(10,...state.chainGenerations.map(g=>g.neutrons));
       const barW=3.8/state.chainGenerations.length;
@@ -235,6 +243,9 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
     }
 
     if (params.mode === 'half-life-mc') {
+      const projector=viewport.theme==='projector';
+      const ink=projector?'#1e293b':'#e2e8f0';
+      const muted=projector?'#475569':'#94a3b8';
       const n = state.decayedFlags.length;
       const cols = Math.ceil(Math.sqrt(n));
       const cell = 1.6 / cols;
@@ -244,7 +255,7 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
       for (let i = 0; i < n; i++) {
         const r = Math.floor(i / cols);
         const c = i % cols;
-        ctx.fillStyle = state.decayedFlags[i] ? '#334155' : '#4ade80';
+        ctx.fillStyle = state.decayedFlags[i] ? (projector?'#cbd5e1':'#334155') : (projector?'#15803d':'#4ade80');
         const point = m.toScreen(gx0 + c * cell, gy0 - r * cell);
         ctx.fillRect(point.x, point.y, m.len(cell * 0.78), m.len(cell * 0.78));
       }
@@ -278,11 +289,19 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
         points.forEach((d,i)=>{const p=m.toScreen(d.x,d.y);if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);});
         ctx.stroke();ctx.setLineDash([]);
       };
-      drawPoly(plot.expected,'#f59e0b',true);
-      drawPoly(plot.sample,'#38bdf8',false);
-      labels.push({id:'half-life-legend',...m.toScreen(1.05,-1.35),text:'样本阶梯 / 理论期望（虚线） | '+plot.maxT.toFixed(1)+' s',font:'12px ui-sans-serif, system-ui',color:'#94a3b8'});
+      drawPoly(plot.expected,projector?'#b45309':'#f59e0b',true);
+      drawPoly(plot.sample,projector?'#0369a1':'#38bdf8',false);
+      const cursor=m.toScreen(plot.cursor.x,plot.cursor.y);
+      ctx.fillStyle=projector?'#0369a1':'#38bdf8';ctx.beginPath();ctx.arc(cursor.x,cursor.y,Math.max(2,m.len(.025)),0,2*Math.PI);ctx.fill();
+      // Axis ticks have fixed anchors; the graph and exported diagram use the same tick coordinates.
+      ctx.font='11px ui-sans-serif, system-ui';ctx.fillStyle=muted;ctx.strokeStyle=muted;ctx.lineWidth=1;
+      for(const tick of plot.ticksX){const a=m.toScreen(tick.x,-.9),b=m.toScreen(tick.x,-.95),p=m.toScreen(tick.x,-1.1);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.textAlign='center';ctx.fillText(tick.text,p.x,p.y);}
+      for(const tick of plot.ticksY){const a=m.toScreen(.1,tick.y),b=m.toScreen(.15,tick.y),p=m.toScreen(.06,tick.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.textAlign='right';ctx.fillText(tick.text,p.x,p.y+4);}
+      const yl=m.toScreen(.15,1.04),xl=m.toScreen(2.1,-1.3);ctx.textAlign='center';ctx.fillText('N/N₀',yl.x,yl.y);ctx.textAlign='right';ctx.fillText('t / s',xl.x,xl.y);
+      labels.push({id:'half-life-grid-legend',...m.toScreen(-1.05,-.92),text:'绿色：未衰变；灰色：已衰变',font:'12px ui-sans-serif, system-ui',color:muted});
+      labels.push({id:'half-life-legend',...m.toScreen(1.05,-1.47),text:'样本阶梯 / 理论期望（虚线）',font:'12px ui-sans-serif, system-ui',color:muted});
 
-      labels.push({ id: 'half-life-summary', ...m.toScreen(1.05, 1.05), text: `N(t) = ${state.remainingCount} / ${n} (${((100 * state.remainingCount) / n).toFixed(1)}%) | t / T₁/₂ = ${(state.t / state.halfLifeS).toFixed(2)}`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
+      labels.push({ id: 'half-life-summary', ...m.toScreen(1.05, 1.05), text: `N(t) = ${state.remainingCount} / ${n} (${((100 * state.remainingCount) / n).toFixed(1)}%) | t / T₁/₂ = ${(state.t / state.halfLifeS).toFixed(2)}`, color: ink, font: 'bold 14px ui-sans-serif, system-ui' });
       resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;

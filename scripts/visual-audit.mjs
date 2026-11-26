@@ -1327,9 +1327,9 @@ async function auditF05Cases(page,offline,select){
     const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!labels.every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F05 wrong SVG '+name);
     await preview.screenshot({path:path.join(OUT_DIR,prefix+name+'_svg.png')});await page.getByTestId('btn-close-export-studio').click();return {bytes:Buffer.byteLength(bytes),name:svg.suggestedFilename()};
   };
-  out.sampleExport=await exportSvg('sample',['样本阶梯','理论期望']);
+  out.sampleExport=await exportSvg('sample',['样本阶梯','理论期望','N/N₀','t / s']);
   await select('cloud-chamber-alpha-external');await sync({mode:'cloud-chamber-recoil',t:0,magneticFieldT:1.2});
-  out.recoilExport=await exportSvg('recoil',['α 二体理想化','同一比例']);
+  out.recoilExport=await exportSvg('recoil',['α 二体理想化','同一比例','子核局部放大','相对主图']);
  }
  return out;
 }
