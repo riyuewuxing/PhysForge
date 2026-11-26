@@ -48,7 +48,7 @@ const paramSchema: readonly ParamFieldSpec<WaveOpticsParams>[] = [
 const liveFormulas: readonly LiveFormulaSpec[] = [
   {
     "id": "wedge-fringe",
-    "title": "劈尖等厚干涉（近法线入射）",
+    "title": "劈尖等厚干涉（近法线，α>0）",
     "latex": "\\Delta x=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=wavelengthNm}{\\lambda}}}{2\\htmlClass{pf-live-var}{\\htmlData{param=refractiveIndexN2}{n}}\\tan \\htmlClass{pf-live-var}{\\htmlData{param=wedgeAngleDeg}{\\alpha}}}",
     "bindings": [
       {
@@ -263,13 +263,13 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
       {kind:'line',x1:-2,y1:0,x2:2,y2:0},
       {kind:'line',x1:-2,y1:0,x2:-2,y2:1},
       {kind:'text',x:-2,y:1.15,text:'I/I₀',align:'start'},
-      {kind:'text',x:2,y:-.16,text:profile.axis,align:'end'},
+      {kind:'text',x:0,y:-.29,text:profile.axis,align:'middle'},
       {kind:'text',x:0,y:1.32,text:opticsReadout(state,params),align:'middle'}
     ];
     if(profile.points.length)primitives.push({kind:'polyline',points:profile.points.map(v=>({x:-2+4*v.u,y:v.intensity}))});
     for(const tick of profile.ticks)primitives.push({kind:'text',x:-2+4*tick.u,y:-.13,text:tick.label,align:'middle'});
     for(const mark of profile.marks)primitives.push({kind:'line',x1:-2+4*mark.u,y1:0,x2:-2+4*mark.u,y2:1,dashed:true});
-    return {width:960,height:480,viewBox:{minX:-2.45,minY:-.36,maxX:2.45,maxY:1.55},title:'波动光学 · 中心截面光强',primitives};
+    return {width:960,height:480,viewBox:{minX:-2.45,minY:-.48,maxX:2.45,maxY:1.55},title:'波动光学 · 中心截面光强',primitives};
   },
   renderCanvas: (ctx,state,p,viewport,layers)=>{
     const m=createWorldMapper(viewport),profile=makeOpticsProfile(p),labels:CanvasLabel[]=[];
@@ -280,10 +280,10 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
     };
     const label=(id:string,x:number,y:number,text:string,color=ink)=>{const q=m.toScreen(x,y);labels.push({id,x:q.x,y:q.y,text,color,font:'12px sans-serif'});};
     ctx.save();
-    const pattern=layers.has('fringes')?makePattern(p,state.rgbHex):undefined;
+    const isRing=p.mode==='newtons-rings',x0=isRing?-.69:-2,x1=isRing?.69:2,y0=isRing?.28:.35,y1=isRing?1.66:1.43;
+    const a=m.toScreen(x0,y1),b=m.toScreen(x1,y0);
+    const pattern=layers.has('fringes')?makePattern(p,state.rgbHex,(b.x-a.x)*viewport.dpr,(b.y-a.y)*viewport.dpr):undefined;
     if(pattern){
-      const isRing=p.mode==='newtons-rings',x0=isRing?-.69:-2,x1=isRing?.69:2,y0=isRing?.28:.35,y1=isRing?1.66:1.43;
-      const a=m.toScreen(x0,y1),b=m.toScreen(x1,y0);
       ctx.drawImage(pattern,a.x,a.y,b.x-a.x,b.y-a.y);
       ctx.strokeStyle=projector?'#64748b':'#475569';ctx.lineWidth=1;ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);
       if(isRing){label('ring-ruler',1.25,1.1,'视场半径 '+profile.max.toFixed(2)+' mm');label('ring-center',1.25,.75,p.halfWaveLoss?'中心暗':'中心亮');}
@@ -301,7 +301,7 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
       ctx.strokeStyle=accent;ctx.lineWidth=1.6;ctx.stroke();
       ctx.setLineDash([3,3]);for(const mark of profile.marks)line(-2+4*mark.u,baseline,-2+4*mark.u,baseline+height,projector?'#b45309':'#fbbf24');ctx.setLineDash([]);
       for(let i=0;i<profile.ticks.length;i++){const tick=profile.ticks[i]!;const x=-2+4*tick.u;line(x,baseline,x,baseline-.035,ink);label('tick-'+i,x,baseline-.11,tick.label);}
-      label('axis',1.8,-1.01,profile.axis);label('readout',0,.16,opticsReadout(state,p),accent);
+      label('axis',0,-1.06,profile.axis);label('readout',0,.16,opticsReadout(state,p),accent);
     }
     line(-1.6,-1.28,1.6,-1.28,projector?'#92400e':'#fbbf24',2);
     label('wavelength-control-rail',0,-1.47,'波长 λ='+p.wavelengthNm+' nm',projector?'#92400e':'#fbbf24');

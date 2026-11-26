@@ -727,6 +727,7 @@ const o01Cases=[
   ['wedge-zero-angle',{mode:'thin-film-wedge',wedgeAngleDeg:0,centerIntensity:0}],
   ['newtons-rings-standard',{mode:'newtons-rings',halfWaveLoss:true,centerIntensity:0}],
   ['newton-bright-center',{mode:'newtons-rings',halfWaveLoss:false,centerIntensity:1}],
+  ['newton-dense-outer-rings',{mode:'newtons-rings',wavelengthNm:400,lensRadiusR:.5,refractiveIndexN2:1.8,centerIntensity:0}],
   ['grating-missing-order-3',{mode:'single-slit-grating',slitCountN:6,firstMissingOrder:3}],
   ['grating-rational-missing',{mode:'single-slit-grating',wavelengthNm:500,firstMissingOrder:5,missingOrderCount:2,gratingMaxOrder:10}],
   ['grating-single-slit',{mode:'single-slit-grating',slitCountN:1,centerIntensity:1}],
@@ -761,7 +762,7 @@ async function syncO01(page,offline,expected){
   await page.getByTestId(prefix+'-status').waitFor({state:'visible'});
   if(expectedMetric){
     const readout=await page.getByTestId(prefix+'-'+expectedMetric).innerText();
-    if(s[expectedMetric]===undefined?readout.trim()!=='—':Math.abs(parseFloat(readout)-s[expectedMetric])>0.000006)throw Error('O01 stale readout '+readout);
+    if(s[expectedMetric]===undefined?readout.trim()!=='—':!Number.isFinite(parseFloat(readout))||Math.abs(parseFloat(readout)-s[expectedMetric])>0.000006)throw Error('O01 stale readout '+readout);
   }
   const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
   if(!await play.isDisabled())throw Error('O01 static play enabled');

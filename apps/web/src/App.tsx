@@ -397,7 +397,7 @@ const ClassroomApp: React.FC = () => {
           </button>
 
           <select
-            aria-label="工具菜单播放倍速"
+            aria-label="工具菜单播放倍速" disabled={plugin.meta.id==='optics-wave-interference'}
             value={store.playbackSpeed}
             onChange={(e) => store.setPlaybackSpeed(Number(e.target.value))}
             className="pf-touch-target rounded-xl border px-2.5 py-1.5 text-sm cursor-pointer"

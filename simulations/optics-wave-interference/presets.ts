@@ -79,5 +79,6 @@ export const waveOpticsPresets: readonly PresetSpec<WaveOpticsParams>[] = [
   {id:'newton-bright-center',name:'牛顿环 · 无相对半波损失',description:'中心亮，第一正暗环半径改变',curriculumNotes:'反射相位对照',params:{mode:'newtons-rings',halfWaveLoss:false}},
   {id:'grating-rational-missing',name:'光栅 d/a=2.5 · 缺级 5、10',description:'非整数比也可能缺级',curriculumNotes:'整数阶次重合条件',params:{mode:'single-slit-grating',wavelengthNm:500,slitWidthMicron:2,gratingPitchMicron:5,slitCountN:6}},
   {id:'grating-single-slit',name:'单缝衍射 · 无光栅级次',description:'N=1 退化为单缝包络',curriculumNotes:'单缝极限',params:{mode:'single-slit-grating',slitCountN:1}},
-  {id:'grating-overlap-invalid',name:'重叠狭缝 · 无效几何',description:'d<a 时不隐式修改输入',curriculumNotes:'模型适用域',params:{mode:'single-slit-grating',slitWidthMicron:8,gratingPitchMicron:4,slitCountN:6}}
+  {id:'grating-overlap-invalid',name:'重叠狭缝 · 无效几何',description:'d<a 时不隐式修改输入',curriculumNotes:'模型适用域',params:{mode:'single-slit-grating',slitWidthMicron:8,gratingPitchMicron:4,slitCountN:6}},
+  {id:'newton-dense-outer-rings',name:'牛顿环 · 外圈密集的分辨率边界',description:'短波长、小曲率半径、高折射率；显示像素积分而非混叠伪条纹',curriculumNotes:'光学图样与有限显示分辨率',params:{mode:'newtons-rings',wavelengthNm:400,refractiveIndexN2:1.8,lensRadiusR:.5,halfWaveLoss:true}}
 ];

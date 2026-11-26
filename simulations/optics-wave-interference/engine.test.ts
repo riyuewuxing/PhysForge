@@ -2,6 +2,7 @@ import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { opticsWaveInterferencePlugin } from './plugin.js';
 import { waveOpticsPresets } from './presets.js';
+import { makeOpticsProfile, averageNewtonPixel } from './sceneGeometry.js';
 import {
   computeKeyOpticsMetrics,
   createInitialState,
@@ -123,6 +124,38 @@ describe('shared physical field invariants',()=>{
       const beta=Math.PI*p.slitWidthMicron*q/lambda;
       const env=beta===0?1:(Math.sin(beta)/beta)**2;
       expect(evalFraunhoferGratingIntensity(q,p)).toBeCloseTo(env*(re*re+im*im)/p.slitCountN**2,12);
+    }
+  });
+});
+
+describe('O01 display sampling and export consistency',()=>{
+  it('resolves dense outer Newton fringes at the legal wavelength/index/radius extrema',()=>{
+    const p={...getPreset(2),wavelengthNm:400,refractiveIndexN2:1.8,lensRadiusR:.5};
+    const profile=makeOpticsProfile(p),R=p.lensRadiusR;
+    const phase=(u:number)=>{const r=Math.abs(profile.min+u*(profile.max-profile.min))*1e-3;return 4*Math.PI*p.refractiveIndexN2*r*r/((R+Math.sqrt(R*R-r*r))*p.wavelengthNm*1e-9);};
+    let max=0;
+    for(let i=1;i<profile.points.length;i++)max=Math.max(max,Math.abs(phase(profile.points[i]!.u)-phase(profile.points[i-1]!.u)));
+    expect(max).toBeLessThan(Math.PI/4);
+  });
+  it('approximates independently integrated dense-fringe screen pixels without replacing point physics',()=>{
+    const p={...getPreset(2),wavelengthNm:400,refractiveIndexN2:1.8,lensRadiusR:.5},x=4.4,y=.8,dx=.04,dy=.04;
+    let sum=0;const count=100;
+    for(let i=0;i<count;i++)for(let j=0;j<count;j++)sum+=evalNewtonRingIntensity(Math.hypot(x+dx*((i+.5)/count-.5),y+dy*((j+.5)/count-.5)),p)!;
+    expect(averageNewtonPixel(p,x,y,dx,dy)).toBeCloseTo(sum/(count*count),2);
+    expect(averageNewtonPixel(p,x,y,0,0)).toBeCloseTo(evalNewtonRingIntensity(Math.hypot(x,y),p)!,14);
+  });
+  it('exports the actual mode-specific profile, including the Newton radial diameter and invalid geometry',()=>{
+    for(const p of [getPreset(0),getPreset(2),getPreset(3),{...getPreset(3),slitWidthMicron:8,gratingPitchMicron:4}]){
+      const profile=makeOpticsProfile(p),ir=opticsWaveInterferencePlugin.exportDiagramIR!(createInitialState(p),p);
+      const curve=ir.primitives.find(v=>v.kind==='polyline');
+      if(!profile.points.length)expect(curve).toBeUndefined();
+      else if(curve?.kind==='polyline'){
+        expect(curve.points.length).toBe(profile.points.length);
+        for(const i of [0,Math.floor(profile.points.length/2),profile.points.length-1]){
+          expect(curve.points[i]!.x).toBeCloseTo(-2+4*profile.points[i]!.u,12);
+          expect(curve.points[i]!.y).toBeCloseTo(profile.points[i]!.intensity,12);
+        }
+      }else throw Error('missing mode profile');
     }
   });
 });
