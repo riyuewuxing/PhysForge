@@ -7,7 +7,7 @@ export type RollingRole='ink'|'muted'|'velocity'|'rotation'|'contact'|'rolling'|
 export type RollingItem={role:RollingRole;primitive:DiagramPrimitive};
 const pt=(x:number,y:number):Point=>({x,y});
 const fmt=(n:number,d=2)=>Number(n.toFixed(d)).toString();
-export const SPEED_SCALE=.041;
+export const SPEED_SCALE=.030;
 export const V_LANE=1.24,W_LANE=.91,U_LANE=.58;
 export const SHAPES:readonly RigidBodyShape[]=['solid-sphere','solid-cylinder','hollow-sphere','thin-ring'];
 const names:Record<RigidBodyShape,string>={'solid-sphere':'实心球','solid-cylinder':'实心圆柱','hollow-sphere':'空心薄球壳','thin-ring':'薄圆环'};
