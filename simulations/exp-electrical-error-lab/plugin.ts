@@ -71,6 +71,16 @@ const paramSchema: readonly ParamFieldSpec<ElectricalErrorParams>[] = [
   { key: 'targetMicrometerMm', kind: 'number', label: '测微器待测长度（真值）', unit: 'mm', defaultValue: 5.73, min: 0, max: 20, step: 0.001 }
 ];
 
+const telemetryChannels = [
+    { key: 'eFittedV', label: '拟合电动势 E_测', unit: 'V', color: '#38bdf8' },
+    { key: 'rFittedOhm', label: '拟合内阻 r_测', unit: 'Ω', color: '#fbbf24' },
+    { key: 'rgMeasuredOhm', label: '半偏法测得 R_g', unit: 'Ω', color: '#4ade80' },
+    { key: 'vernierReadoutMm', label: '游标卡尺读数', unit: 'mm', color: '#a855f7' },
+    { key: 'microReadoutMm', label: '螺旋测微器读数', unit: 'mm', color: '#f472b6' },
+    { key: 'bulbVoltageV', label: '当前灯泡电压', unit: 'V', color: '#38bdf8' },
+    { key: 'bulbCurrentA', label: '当前灯泡电流', unit: 'A', color: '#fbbf24' }
+ ] as const;
+
 export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErrorParams, ElectricalErrorState>({
   meta: {
     id: 'exp-electrical-error-lab',
@@ -91,15 +101,25 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
   layers: [
     { id: 'main', label: 'MNA 误差曲线 / 刻度尺视图', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'eFittedV', label: '拟合电动势 E_测', unit: 'V', color: '#38bdf8' },
-    { key: 'rFittedOhm', label: '拟合内阻 r_测', unit: 'Ω', color: '#fbbf24' },
-    { key: 'rgMeasuredOhm', label: '半偏法测得 R_g', unit: 'Ω', color: '#4ade80' },
-    { key: 'vernierReadoutMm', label: '游标卡尺读数', unit: 'mm', color: '#a855f7' },
-    { key: 'microReadoutMm', label: '螺旋测微器读数', unit: 'mm', color: '#f472b6' },
-    { key: 'bulbVoltageV', label: '当前灯泡电压', unit: 'V', color: '#38bdf8' },
-    { key: 'bulbCurrentA', label: '当前灯泡电流', unit: 'A', color: '#fbbf24' }
-  ],
+  telemetryChannels,
+  getParamFields: params => {
+    const keys:Record<ElectricalErrorParams['mode'],readonly string[]>={
+      'emf-inner-outer':['mode','emfWiring','emfVolts','rInternalOhm','rAmmeterOhm','rVoltmeterOhm'],
+      'half-bias-rg':['mode','halfBiasSupplyV','rgTrueOhm'],
+      'bulb-iv-curve':['mode','bulbWiring','emfVolts','rheostatMaxOhm','rheostatTapFrac'],
+      'caliper-micrometer':['mode','vernierDivisions','targetVernierMm','targetMicrometerMm']
+    };
+    return keys[params.mode].map(key=>paramSchema.find(f=>f.key===key)!);
+  },
+  getTelemetryChannels: params => {
+    const keys:Record<ElectricalErrorParams['mode'],readonly string[]>={
+      'emf-inner-outer':['eFittedV','rFittedOhm'],
+      'half-bias-rg':['rgMeasuredOhm'],
+      'bulb-iv-curve':['bulbVoltageV','bulbCurrentA'],
+      'caliper-micrometer':['vernierReadoutMm','microReadoutMm']
+    };
+    return keys[params.mode].map(key=>telemetryChannels.find(f=>f.key===key)!);
+  },
   defaultView: {scale:.83,offsetRatioY:-.035},
   getControlHandles: (state, params) => {
     if (params.mode !== 'caliper-micrometer') return [];
@@ -232,7 +252,7 @@ export const expElectricalErrorLabPlugin = defineSimulationPlugin<ElectricalErro
       return [
         {id:'bulb-law',label:'既有非线性灯丝模型（非实测数据）',latex:'I=0.14U(U+10^{-6})^{-0.38}'},
         {id:'bulb-kcl',label:divider?'分压节点电流守恒':'限流串联',
-          latex:f===1?'U=E':divider&&f===0?'U=0':divider?'\\frac{E-U}{R_{上}}=\\frac{U}{R_{下}}+I':'E=U+IR_{串}'},
+          latex:f===1?'U=E':divider&&f===0?'U=0':divider?'\\frac{E-U}{R_{\\text{上}}}=\\frac{U}{R_{\\text{下}}}+I':'E=U+IR_{\\text{串}}'},
         {id:'bulb-point-U',label:'当前工作点电压',latex:'U_L',substitutedLatex:'U_L='+p.voltageV.toFixed(4)+'\\ \\mathrm{V}'},
         {id:'bulb-point-I',label:'当前工作点电流',latex:'I_L',substitutedLatex:'I_L='+p.currentA.toFixed(4)+'\\ \\mathrm{A}'}
       ];

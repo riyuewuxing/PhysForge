@@ -99,7 +99,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
           <div className="flex items-baseline justify-between gap-2 text-[11px] font-medium">
             <label htmlFor={`param-${field.key}`} className="min-w-0 truncate text-slate-300">{shortLabel}</label>
             <span data-testid={`param-value-${field.key}`} className="shrink-0 font-mono tabular-nums text-slate-100">
-              {numberValue.toFixed(plugin.meta.id==='modern-nuclear-recoil-decay'&&field.key==='massDefectU'?6:Math.min(Math.max(decimals, 1), field.key === 'xrayWavelengthNm' ? 3 : 2))} {field.unit ?? ''}
+              {numberValue.toFixed(plugin.meta.id==='modern-nuclear-recoil-decay'&&field.key==='massDefectU'?6:Math.min(Math.max(decimals, 1), ['xrayWavelengthNm','targetVernierMm','targetMicrometerMm'].includes(field.key) ? 3 : 2))} {field.unit ?? ''}
             </span>
           </div>
           <input
