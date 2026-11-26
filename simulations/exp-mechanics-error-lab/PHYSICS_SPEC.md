@@ -25,3 +25,10 @@ $$a_{\text{true}}(m) = \frac{m g + M g\sin\theta - f}{M + m}$$
 - Canvas and DiagramIR consume the same graph primitives. Measured, theory, OLS and CSV roles are separate; axes and limits are derived from data without numerical saturation. The ruler's affine domain depends on tape coordinates and the allowed zero offset range, never the current zero offset, so dragging cannot rescale itself. Labels are readings relative to that zero; translating it leaves differences and acceleration unchanged.
 - CSV is illustrative unless provenance is provided. The existing selector contains a built-in teaching sample, not verified real experimental data. Parser accepts exactly two finite numeric columns, 0≤F≤100 N and |a|≤100 m/s²; malformed/missing/out-of-domain rows are not plotted. This is a bounded input policy, not a real measurement guarantee.
 - This candidate is unverified until same-head tests and real screenshots. No claim of a full 50 Hz animation: the seven points shown are every fifth tick (0.1 s).
+
+## 5. H58 视觉与操作验收（候选，未运行）
+- 图例使用实线表示精确理论、虚线表示 OLS 拟合、实心圆表示纸带测点；测点不再以另一条虚线连起来。黑白导出无需依赖颜色区分，测点回归检查实际导出圆心与半径，不能只查模型数据。
+- 横纵轴、纸带定量标签固定在对应位置；七个纸带读数在独立的顺序单元格内显示，不能由通用避让算法移动或省略。纸带标识明确预先正向运动与恒阻力假设；不是从静止释放。
+- 离线示波图仅在实际采样后显示经过时间（s），不得用日历日期代替。符号公式与代入数值分开，浏览器应检查在线公式真实溢出、实际零点手柄拖动及离线采样坐标。
+- 内置 CSV 为明确标记的教学样例；当前选择器不宣称具备任意外部文件上传入口。此项保持现有范围。
+- 这些修改须在同一 HEAD 下通过单测、隔离构建、在线与离线浏览器审计及人工原图检查后才可准入。

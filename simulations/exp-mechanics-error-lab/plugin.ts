@@ -133,7 +133,7 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
         anchored(cx,tapeY-.40,'x'+d.index+'='+d.reading.toFixed(2),'center',Math.min(10,Math.max(6,cellPx/6.2)));
       }
       ctx.strokeStyle='#d97706';ctx.lineWidth=2;line(g.zeroX,tapeY+.14,g.zeroX,tapeY-.32);
-      put('tape-note',0,1.57,'50 Hz · 每5点取一个计数点 · T=0.10 s · x 读数/cm');
+      put('tape-note',0,1.57,'预先正向运动 · 恒阻力 · 50 Hz每5点取样 · T=0.10 s · x/cm');
     }
     if(activeLayers.has('afCurve')){
       const colors:Record<GraphRole,string>={axis:ink,tick:ink,theory:projector?'#075985':'#38bdf8',fit:projector?'#6d28d9':'#c4b5fd',measured:projector?'#92400e':'#fbbf24',overlay:projector?'#be123c':'#f43f5e',legend:projector?'#92400e':'#fbbf24'};
