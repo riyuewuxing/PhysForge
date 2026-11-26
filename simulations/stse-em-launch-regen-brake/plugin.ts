@@ -58,6 +58,14 @@ function regenEnergySlices(s:EmLaunchRegenState) {
     {label:'风阻及机械损耗',value:s.energyDragMechJ,color:'#94a3b8',paper:'#64748b'}
   ];
 }
+function regenDirectionArrows(state:EmLaunchRegenState,params:EmLaunchRegenParams):Extract<DiagramPrimitive,{kind:'arrow'}>[] {
+  const g=regenLayout(state,params),out:Extract<DiagramPrimitive,{kind:'arrow'}>[]=[];
+  if(state.v<=0)return out;
+  out.push({kind:'arrow',x1:g.cx,y1:g.cy+.27,x2:g.cx+.52,y2:g.cy+.27,label:'v'});
+  if(state.currentA>0)out.push({kind:'arrow',x1:g.cx,y1:g.cy,x2:g.cx-.65,y2:g.cy,label:'F_em'});
+  if(params.aeroDragCoeff*state.v*state.v+params.mechBrakeN>0)out.push({kind:'arrow',x1:g.cx,y1:g.cy-.12,x2:g.cx-.50,y2:g.cy-.12,label:'F_loss'});
+  return out;
+}
 function regenBrakingPrimitives(state:EmLaunchRegenState,params:EmLaunchRegenParams):DiagramPrimitive[] {
   const g=regenLayout(state,params), out:DiagramPrimitive[]=[
     {kind:'line',x1:-2.1,y1:g.trackY,x2:2.1,y2:g.trackY},
@@ -68,11 +76,7 @@ function regenBrakingPrimitives(state:EmLaunchRegenState,params:EmLaunchRegenPar
     {kind:'text',x:0,y:1.18,text:'t = '+state.t.toFixed(3)+' s；v = '+state.v.toFixed(3)+' m/s；x = '+state.x.toFixed(3)+' m',align:'middle'},
     {kind:'text',x:0,y:-.12,text:'初始动能账本（等效负载≠真实电池储能）',align:'middle'}
   ];
-  if(state.v>0){
-    out.push({kind:'arrow',x1:g.cx,y1:g.cy+.27,x2:g.cx+.52,y2:g.cy+.27,label:'v'});
-    if(state.currentA>0)out.push({kind:'arrow',x1:g.cx,y1:g.cy,x2:g.cx-.65,y2:g.cy,label:'F_em'});
-    if(params.aeroDragCoeff*state.v*state.v+params.mechBrakeN>0)out.push({kind:'arrow',x1:g.cx,y1:g.cy-.12,x2:g.cx-.50,y2:g.cy-.12,label:'F_loss'});
-  }
+  out.push(...regenDirectionArrows(state,params),{kind:'text',x:0,y:.04,text:'箭头仅示方向，不比较大小',align:'middle'});
   let x=-2; const slices=regenEnergySlices(state);
   for(const [i,item] of slices.entries()){
     const w=state.energyInitialJ>0?4*item.value/state.energyInitialJ:0;
@@ -148,6 +152,17 @@ export const stseEmLaunchRegenBrakePlugin = defineSimulationPlugin<EmLaunchRegen
       const body=m.toScreen(g.cx-.3,g.cy+.18);
       ctx.fillStyle=paper?'#dbeafe':'#164e63';ctx.fillRect(body.x,body.y,m.len(.6),m.len(.36));ctx.strokeStyle=paper?'#0369a1':'#38bdf8';ctx.strokeRect(body.x,body.y,m.len(.6),m.len(.36));
       for(const dx of [-.19,.19]){const w=m.toScreen(g.cx+dx,g.trackY+.08);ctx.fillStyle=paper?'#334155':'#64748b';ctx.beginPath();ctx.arc(w.x,w.y,m.len(.08),0,Math.PI*2);ctx.fill();}
+      // Draw the same schematic arrows as the exported IR, independently of the host overlay.
+      for(const arrow of regenDirectionArrows(state,params)){
+        const from=m.toScreen(arrow.x1,arrow.y1),to=m.toScreen(arrow.x2,arrow.y2);
+        const ang=Math.atan2(to.y-from.y,to.x-from.x),head=9;
+        const color=arrow.label==='v'?(paper?'#15803d':'#4ade80'):arrow.label==='F_em'?(paper?'#0369a1':'#38bdf8'):(paper?'#be123c':'#fb7185');
+        ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(from.x,from.y);ctx.lineTo(to.x,to.y);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(to.x,to.y);ctx.lineTo(to.x-head*Math.cos(ang-.5),to.y-head*Math.sin(ang-.5));ctx.lineTo(to.x-head*Math.cos(ang+.5),to.y-head*Math.sin(ang+.5));ctx.closePath();ctx.fill();
+        const name=arrow.label==='v'?'实时 v':arrow.label==='F_em'?'F_em':'F_loss';
+        labels.push({id:'regen-direction-'+arrow.label,x:to.x+(arrow.x2>arrow.x1?8:-8),y:to.y-13,text:name,color,font:'bold 13px ui-sans-serif, system-ui'});
+      }
+      labels.push({id:'regen-direction-note',...m.toScreen(0,.04),text:'箭头仅示方向，不比较大小',color:muted,font:'12px ui-sans-serif, system-ui'});
       const slices=regenEnergySlices(state),start=m.toScreen(-2,-.34);
       ctx.strokeStyle=muted;ctx.lineWidth=1;ctx.strokeRect(start.x,start.y,m.len(4),m.len(.22));
       let x=start.x;
@@ -210,6 +225,7 @@ export const stseEmLaunchRegenBrakePlugin = defineSimulationPlugin<EmLaunchRegen
   },
   getControlHandles: (state, params) => {
     const maxVisualX = params.mode === 'railgun' ? 25 : Math.max(10, computeAnalyticPureEmStopDistance(params) * 1.15);
+    if(params.mode==='regen-brake'&&state.t>0)return [];
     const carX = params.mode==='regen-brake'?regenLayout(state,params).cx:-2 + Math.min(1, state.x / maxVisualX) * 4;
     return [
       params.mode === 'railgun'
@@ -224,9 +240,9 @@ export const stseEmLaunchRegenBrakePlugin = defineSimulationPlugin<EmLaunchRegen
           }
         : {
             id: 'regen-v0',
-            label: `v₀=${params.v0Mps} m/s`,
-            position: { x: carX + (params.v0Mps / 50) * 1.2, y: regenLayout(state,params).cy },
-            origin: { x: carX, y: regenLayout(state,params).cy },
+            label: `调参 v₀=${params.v0Mps} m/s`,
+            position: { x: carX + (params.v0Mps / 50) * 1.2, y: .18 },
+            origin: { x: carX, y: .18 },
             handleKind: 'vector' as const,
             color: '#4ade80',
             onDrag: (world: { x: number; y: number }) => ({ v0Mps: Math.max(0, Math.min(50, Math.round(((world.x - carX) / 1.2) * 50))) })

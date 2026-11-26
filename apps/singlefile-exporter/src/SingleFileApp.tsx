@@ -88,7 +88,7 @@ const lcSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'
 const magneticSlice=targetPlugin.paramSchema.some(f=>f.key==='geometryType'&&f.kind==='select'&&f.options.some(o=>o.value==='uniform-helix'));
 const waveSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='doppler'));
 const rippleSlice=targetPlugin.paramSchema.some(f=>f.key==='wavelengthCells');
-const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice;
+const baseMeasuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -172,6 +172,7 @@ export const SingleFileApp: React.FC = () => {
       __INITIAL_PRESET_DATA__?.params ?? initialPreset?.params
     )
   );
+  const measuredScope=baseMeasuredScope||(regenSlice&&params.mode==='regen-brake');
   const thermoStaticSlice=(thermoSlice&&params.mode!=='stop-pin-cylinder')||(thermalCycleSlice&&params.mode!=='kinetic-md-box')||quantumSlice||(atomicSlice&&params.mode==='bohr')||(nuclearSlice&&params.mode!=='half-life-mc');
   const [activeLayers, setActiveLayers] = useState<string[]>(() =>
     __INITIAL_PRESET_DATA__?.visibleLayers?.length
@@ -464,6 +465,7 @@ export const SingleFileApp: React.FC = () => {
     if (!plot) return;
     const snaps = snapshotsRef.current;
     const { channelA: chA, channelB: chB } = latestRef.current;
+    const measuredScope=baseMeasuredScope||(regenSlice&&latestRef.current.params.mode==='regen-brake');
     syncingPlotRef.current = true;
     try {
       plot.setData([
@@ -474,10 +476,13 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (measuredScope && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
+      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||(regenSlice&&latestRef.current.params.mode==='regen-brake'))uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
       const empty = snaps.length < 2;
       uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
+    } else if (uplotWrapRef.current && regenSlice) {
+      uplotWrapRef.current.style.visibility='';
+      delete uplotWrapRef.current.dataset.lastSampleT;delete uplotWrapRef.current.dataset.sampleCount;delete uplotWrapRef.current.dataset.scopeTimeType;
     }
   };
 
@@ -725,7 +730,7 @@ export const SingleFileApp: React.FC = () => {
       plot.destroy();
       uplotRef.current = null;
     };
-  }, [channelA, channelB, theme,channels]);
+  }, [channelA, channelB, theme,channels,measuredScope]);
 
   return (
     <div

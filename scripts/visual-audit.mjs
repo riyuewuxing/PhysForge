@@ -1306,6 +1306,7 @@ async function auditF06Braking(page,offline,select){
  await save('pure_initial',pure);
  const pr=await run(1);if(!(pr.v<pure.v&&pr.x>0&&pr.energyRegenKj>0&&pr.energyJouleKj>0&&Math.abs(pr.energyDragMechKj)<1e-10))throw Error('F06 pure trajectory');
  await save('pure_paused',pr);
+ if(offline){const scope=page.getByTestId('sf-uplot');await page.waitForFunction(()=>{const d=document.querySelector('[data-testid="sf-uplot"]')?.dataset;return d?.scopeTimeType==='elapsed'&&d.scopeUnits==='separate'&&Number(d.sampleCount)>1&&Number(d.scopeMax)>0;});out.elapsedScope={timeType:await scope.getAttribute('data-scope-time-type'),units:await scope.getAttribute('data-scope-units')};}
  await input('loadResOhm').fill('0');
  const z=await sync({mode:'regen-brake',loadResOhm:0,t:0});await save('zero_load_initial',z);
  const zr=await run(.25);if(zr.energyRegenKj!==0||!(zr.energyJouleKj>0))throw Error('F06 zero load must not claim transfer');await save('zero_load_paused',zr);
@@ -1314,7 +1315,7 @@ async function auditF06Braking(page,offline,select){
  if(!offline){
    await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
    const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,file=path.join(OUT_DIR,prefix+'braking.svg');await svg.saveAs(file);
-   const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!['F_em','等效负载','内阻热','机械损耗',mr.t.toFixed(3)+' s'].every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F06 export mismatch');
+   const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!['F_em','F_loss','箭头仅示方向','等效负载','内阻热','机械损耗',mr.t.toFixed(3)+' s'].every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F06 export mismatch');
    await preview.screenshot({path:path.join(OUT_DIR,prefix+'braking_svg.png')});await page.getByTestId('btn-close-export-studio').click();out.export={bytes:Buffer.byteLength(bytes)};
  }
  return out;
