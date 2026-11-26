@@ -130,3 +130,10 @@ it('keeps screen averages tied to actual samples and detects corrupt field/clock
   expect(checkInvariants(a).every(r=>r.passed)).toBe(true);
   expect(checkInvariants({...a,fieldTime:a.fieldTime+.1}).some(r=>!r.passed)).toBe(true);
 },30000);
+
+it('adds exactly one independently recomputed screen mean sample at the next physical grid step',()=>{
+  const p={...getPreset(0),waveSpeed:2},i=createInitialState(p),s=stepWaveFdtd(i,p,i.averageStartTime+.12).nextState;
+  const a=stepWaveFdtd(s,p,s.fdtdRef.dt).nextState;
+  expect(a.screenAverageSamples).toBe(s.screenAverageSamples+1);
+  for(let j=0;j<a.ny;j++){const u=a.fieldSnapshot[j*a.nx+a.screenI]!,want=Math.fround((s.screenAverageSamples*s.screenIntensity[j]!+u*u)/a.screenAverageSamples);expect(Math.abs(a.screenIntensity[j]!-want)).toBeLessThan(2e-7);}
+},30000);
