@@ -4,6 +4,9 @@ import { emEddyVortexFieldPlugin } from './plugin.js';
 import { eddyVortexPresets } from './presets.js';
 import {
   computeClosedLoopCirculation,
+  evalVortexField,
+  computeObservables,
+  checkInvariants,
   createInitialState,
   stepEddyVortex,
   type EddyVortexParams
@@ -48,5 +51,88 @@ describe('em-eddy-vortex-field Maxwell circulation & damping (E06)', () => {
     expect(stepEddyVortex(s0, p0, 0).nextState).toEqual(s0);
     const s1 = stepEddyVortex(s0, p0, 0.05).nextState;
     expect(Number.isFinite(s1.px)).toBe(true);
+  });
+});
+
+describe('E06 signed induction, true overlap, independent energy and mode isolation',()=>{
+  it('checks intersecting and tangent loop circulation against independent two-circle lens area',()=>{
+    const lens=2*Math.PI/3-Math.sqrt(3)/2;
+    for(const d of [-1,1])for(const bDot of [-2,2]){
+      const o=computeClosedLoopCirculation(1,1,bDot,d);
+      expect(o.negDPhiDt).toBeCloseTo(-bDot*lens,12);
+      expect(o.lineIntegral).toBeCloseTo(-bDot*lens,10);
+    }
+    for(const d of [2,2.001,2.5,-3]){
+      const o=computeClosedLoopCirculation(1,1,2,d);
+      expect(Math.abs(o.negDPhiDt)).toBeLessThan(1e-12);
+      expect(Math.abs(o.lineIntegral)).toBeLessThan(1e-10);
+    }
+  });
+  it('has signed continuous inner/outer field and vanishing circulation at zero ramp',()=>{
+    const Rc=1.2;
+    for(const bDot of [-3,0,3]){
+      const inside=evalVortexField(.6,0,Rc,bDot),at=evalVortexField(Rc,0,Rc,bDot),outside=evalVortexField(2*Rc,0,Rc,bDot);
+      expect(inside.Ey).toBeCloseTo(-.3*bDot,12);
+      expect(at.Ey).toBeCloseTo(-.6*bDot,12);
+      expect(outside.Ey).toBeCloseTo(-.3*bDot,12);
+      expect(evalVortexField(0,0,Rc,bDot)).toEqual({Ex:0,Ey:0});
+      const across=evalVortexField(Rc+1e-9,0,Rc,bDot);
+      expect(across.Ey).toBeCloseTo(at.Ey,8);
+    }
+  });
+  it('captures exact inertial core exit without moving the inactive pendulums',()=>{
+    const p={...getPreset(0),cylinderRadiusR:1.2,particleInitRadius:.6,particleChargeRatio:0,bDotRate:0,bField0:1};
+    const init=createInitialState(p),end=stepEddyVortex(init,p,2).nextState;
+    const expected=Math.sqrt(1.2**2-.6**2)/.6;
+    expect(end.px).toBeCloseTo(.6,12);expect(end.py).toBeCloseTo(-1.2,12);
+    expect(end.events).toHaveLength(1);
+    expect(end.events[0]!.time).toBeCloseTo(expected,9);
+    expect(end.solidTheta).toBe(init.solidTheta);expect(end.solidOmega).toBe(init.solidOmega);
+    expect(end.slottedTheta).toBe(init.slottedTheta);expect(end.slottedOmega).toBe(init.slottedOmega);
+    const o=computeObservables(end,p);
+    expect(o.solidAngleDeg).toBeUndefined();
+    expect(o.specificElectricWork).toBe(0);
+    expect(o.specificEnergyResidual).toBeCloseTo(0,12);
+  });
+  it('keeps kinetic energy in a pure magnetic field, with signed charge and an absolute analytic orbit',()=>{
+    for(const eta of [-1,1]){
+      const p={...getPreset(0),cylinderRadiusR:1.8,particleInitRadius:.3,particleChargeRatio:eta,bDotRate:0,bField0:2};
+      const init=createInitialState(p),end=stepEddyVortex(init,p,Math.PI/4).nextState;
+      // v(0)=(0,-.6), v rotates with angular speed -eta B.
+      const w=eta*2;
+      expect(end.px).toBeCloseTo(.3+.6*(Math.cos(w*Math.PI/4)-1)/w,7);
+      expect(end.py).toBeCloseTo(-.6*Math.sin(w*Math.PI/4)/w,7);
+      expect(end.vx).toBeCloseTo(-.6*Math.sin(w*Math.PI/4),7);
+      expect(end.vy).toBeCloseTo(-.6*Math.cos(w*Math.PI/4),7);
+      const o=computeObservables(end,p);
+      expect(o.specificElectricWork).toBe(0);
+      expect(o.specificKineticEnergy).toBeCloseTo(.18,8);
+      expect(checkInvariants(end,init,p).every(r=>r.passed)).toBe(true);
+    }
+  });
+  it('balances the electric work ledger for a ramp and both charge signs',()=>{
+    for(const eta of [-1.6,1.6]){
+      const p={...getPreset(0),particleChargeRatio:eta,bDotRate:1.5,cylinderRadiusR:1.8};
+      const init=createInitialState(p),end=stepEddyVortex(init,p,.7).nextState,o=computeObservables(end,p);
+      expect(o.specificKineticEnergy).toBeCloseTo(.5*(end.vx**2+end.vy**2),12);
+      expect(o.specificKineticEnergy!-.18).toBeCloseTo(o.specificElectricWork!,7);
+      expect(checkInvariants(end,init,p).every(r=>r.passed)).toBe(true);
+    }
+  });
+  it('records nonnegative dissipated heat and balances both damped pendulums independently',()=>{
+    const p=getPreset(1),init=createInitialState(p);
+    let s=init;
+    for(let i=0;i<250;i++)s=stepEddyVortex(s,p,.02).nextState;
+    expect(s.px).toBe(init.px);expect(s.py).toBe(init.py);expect(s.trail).toEqual(init.trail);
+    const o=computeObservables(s,p),E0=9.8*p.pendulumLengthL*(1-Math.cos(init.solidTheta));
+    expect(o.eVortexMag).toBeUndefined();
+    expect(o.solidHeatSpecific).toBeGreaterThan(o.slottedHeatSpecific!);
+    expect(o.solidEnergySpecific!+o.solidHeatSpecific!).toBeCloseTo(E0,7);
+    expect(o.slottedEnergySpecific!+o.slottedHeatSpecific!).toBeCloseTo(E0,7);
+    expect(checkInvariants(s,init,p).every(r=>r.passed)).toBe(true);
+    const noDrag={...p,solidDampingGamma:0,slottedDampingGamma:0};
+    const z=stepEddyVortex(createInitialState(noDrag),noDrag,5).nextState,zo=computeObservables(z,noDrag);
+    expect(z.solidTheta).toBe(z.slottedTheta);expect(zo.solidHeatSpecific).toBe(0);
+    expect(zo.solidEnergySpecific).toBeCloseTo(E0,7);
   });
 });
