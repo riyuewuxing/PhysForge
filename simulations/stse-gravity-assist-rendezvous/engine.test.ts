@@ -72,3 +72,42 @@ describe('stse-gravity-assist-rendezvous invariants (S04)', () => {
     expect(handle?.onDrag({ x: handle.position.x, y: -0.7 })['flybySide']).toBe('trailing');
   });
 });
+
+describe('H53 F07 independent educational state/representation regressions',()=>{
+  it('preserves the target initial phase in both coordinates and reported angle',()=>{
+    const p=getPreset(2),a=createInitialState(p);
+    const b=stepGravityAssistRendezvous(a,p,.1).nextState;
+    expect(b.targetAngleRad-a.targetAngleRad).toBeCloseTo(.1,10);
+    expect(b.planetPos.x).toBeCloseTo(Math.cos(b.targetAngleRad),10);
+    expect(b.planetPos.y).toBeCloseTo(Math.sin(b.targetAngleRad),10);
+    expect(b.planetVel.x).toBeCloseTo(-Math.sin(b.targetAngleRad),10);
+    expect(b.planetVel.y).toBeCloseTo(Math.cos(b.targetAngleRad),10);
+  });
+  it('uses actual angular separation for the first target-period observation',()=>{
+    const p=getPreset(2),a=createInitialState(p);
+    let b=a;
+    for(let i=0;i<200;i++)b=stepGravityAssistRendezvous(b,p,a.targetOrbitPeriod/200).nextState;
+    expect(b.chaserPhaseLagAfterPeriod).not.toBeNull();
+    expect(b.chaserPhaseLagAfterPeriod!).toBeCloseTo(b.targetAngleRad-b.chaserAngleRad,6);
+  });
+  it('does not present finite-radius encounter speed as an asymptotic velocity',()=>{
+    const p=getPreset(0),a=createInitialState(p);
+    const o=stseGravityAssistRendezvousPlugin.engine.computeObservables(a,p);
+    expect(o.relativeSpeed).toBeCloseTo(Math.hypot(a.vel.x-a.planetVel.x,a.vel.y-a.planetVel.y),10);
+    expect(o.relativeSpecificEnergy).toBeCloseTo(.5*o.relativeSpeed!**2-p.muPlanet/Math.hypot(a.pos.x-a.planetPos.x,a.pos.y-a.planetPos.y),10);
+    const f=stseGravityAssistRendezvousPlugin.formatFormulas!(a,p);
+    expect(f.some(x=>x.label.includes('局部二体'))).toBe(true);
+    expect(f.some(x=>x.latex.includes('v}_{\\infty}'))).toBe(false);
+  });
+  it('keeps the two teaching modes separate and the planet marker in its actual world reference frame',()=>{
+    const a=getPreset(0),b=getPreset(2);
+    const fields=(p:GravityAssistRendezvousParams)=>(stseGravityAssistRendezvousPlugin.getParamFields?.(p)??stseGravityAssistRendezvousPlugin.paramSchema).map(f=>f.key);
+    expect(fields(a)).not.toContain('rendezvousBurn');
+    expect(fields(b)).not.toContain('impactParam');
+    expect(fields(b)).not.toContain('muPlanet');
+    const state=createInitialState(a);
+    const frame=stseGravityAssistRendezvousPlugin.referenceFrames!.find(f=>f.id==='planet-frame')!;
+    expect(frame.getOrigin(state,a)).toEqual(state.planetPos);
+    expect(frame.getVelocity!(state,a)).toEqual(state.planetVel);
+  });
+});
