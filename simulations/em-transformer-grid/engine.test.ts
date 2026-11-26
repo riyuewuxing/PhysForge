@@ -1,6 +1,6 @@
 import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
-import { emTransformerGridPlugin } from './plugin.js';
+import { emTransformerGridPlugin, transformerScene } from './plugin.js';
 import { transformerGridPresets } from './presets.js';
 import {
   createInitialState,
@@ -100,5 +100,29 @@ describe('E08 grid operating domain',()=>{
     expect(m.u3).toBeGreaterThan(0);expect(m.i3).toBe(0);expect(m.i2).toBe(0);
     expect(m.pInW).toBe(0);expect(m.efficiencyDefined).toBe(0);
     expect(checkInvariants(s,s,p).every(r=>r.passed)).toBe(true);
+  });
+});
+
+describe('E08 truthful topology export and mode controls',()=>{
+  const layers=new Set(['topology','powerWaterfall']);
+  it('shares the full visible geometry with print output and separates both topologies',()=>{
+    const p=getPreset(0),s=createInitialState(p),g=getPreset(1),gs=createInitialState(g);
+    const a=emTransformerGridPlugin.exportDiagramIR!(s,p),b=emTransformerGridPlugin.exportDiagramIR!(gs,g);
+    expect(a.primitives).toEqual(transformerScene(s,p,layers).map(m=>m.primitive));
+    expect(b.primitives).toEqual(transformerScene(gs,g,layers).map(m=>m.primitive));
+    expect(a.title).not.toBe(b.title);
+    expect(a.primitives.some(q=>q.kind==='text'&&q.text.includes('副路2'))).toBe(true);
+    expect(b.primitives.some(q=>q.kind==='text'&&q.text.includes('U送='))).toBe(true);
+    expect(emTransformerGridPlugin.getParamFields!(p).some(f=>f.key==='genPowerKw')).toBe(false);
+    expect(emTransformerGridPlugin.getParamFields!(g).some(f=>f.key==='primaryR0')).toBe(false);
+  });
+  it('renders an actual open switch gap and never a fake power ledger for an invalid request',()=>{
+    const p={...getPreset(0),branch3Closed:false},s=createInitialState(p);
+    const a=transformerScene(s,p,layers).map(m=>m.primitive);
+    expect(a.some(q=>q.kind==='line'&&q.x1===1.16&&q.x2===1.66&&q.y1!==q.y2)).toBe(true);
+    const g={...getPreset(1),sourceU0:100,stepUpRatioK1:5,genPowerKw:200,lineResistanceR:50},gs=createInitialState(g);
+    const b=transformerScene(gs,g,layers).map(m=>m.primitive);
+    expect(b.some(q=>q.kind==='text'&&q.text.includes('无无源受端工作点'))).toBe(true);
+    expect(b.some(q=>q.kind==='text'&&q.text.includes('效率 '))).toBe(false);
   });
 });
