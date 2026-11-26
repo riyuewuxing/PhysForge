@@ -74,11 +74,11 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
   paramSchema,
   presets: nuclearRecoilPresets,
   timeSemantics: p => p.mode === 'half-life-mc' ? 'evolving' : 'static-analytic',
-  getParamFields: p => paramSchema.filter(f => (
-    p.mode === 'cloud-chamber-recoil' ? ['mode','decayKind','parentZ','parentMassU','massDefectU','magneticFieldT'] :
+  getParamFields: p => (
+    p.mode === 'cloud-chamber-recoil' ? ['mode','decayKind','magneticFieldT','massDefectU','parentZ','parentMassU'] :
     p.mode === 'half-life-mc' ? ['mode','nucleiCountN0','halfLifeS','seed'] :
     ['mode','kEffectiveRaw','controlRodAbsorption']
-  ).includes(f.key)),
+  ).flatMap(key => paramSchema.filter(f=>f.key===key)),
   getTelemetryChannels: p => p.mode === 'half-life-mc'
     ? [{ key: 'remainingCount', label: '样本未衰变核数', unit: '个', color: '#38bdf8' },
        { key: 'expectedRemainingCount', label: '理论期望核数', unit: '个', color: '#f59e0b' }]
@@ -86,7 +86,7 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
     ? [{ key: 'qValueMev', label: '理想释能 Q', unit: 'MeV', color: '#f59e0b' },
        { key: 'emittedKineticMev', label: '出射动能', unit: 'MeV', color: '#38bdf8' },
        { key: 'daughterKineticMev', label: '反冲动能', unit: 'MeV', color: '#4ade80' },
-       ...(p.magneticFieldT === 0 ? [] : [{ key: 'radiusRatio', label: '实测半径比', unit: '', color: '#a855f7' }])]
+       ...(p.magneticFieldT === 0 ? [] : [{ key: 'radiusRatio', label: '数值拟合半径比', unit: '', color: '#a855f7' }, { key: 'radiusEmittedM', label: '出射拟合半径', unit: 'm', color: '#38bdf8' }, { key: 'radiusDaughterM', label: '反冲拟合半径', unit: 'm', color: '#f59e0b' }])]
     : [{ key: 'kEff', label: '抽象代际期望系数', unit: '', color: '#a855f7' }],
   engine: {
     createInitialState,
@@ -191,7 +191,7 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
 
       labels.push(
         { id: 'cloud-chamber-summary', ...m.toScreen(-0.1, 1.55), text: `${params.decayKind === 'alpha' ? 'α 二体理想化' : 'β⁻ 端点理想化'} | Q = ${state.recoil.qValueMev.toFixed(3)} MeV`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' },
-        { id: 'cloud-chamber-radius', ...m.toScreen(-0.1, 1.32), text: state.recoil.radiusRatioMeasured === undefined ? '无有限圆半径／无法拟合' : `实测半径比 R₁/R₂ = ${state.recoil.radiusRatioMeasured.toFixed(6)}（同一比例，轨迹截段）`, color: '#e2e8f0', font: '13px ui-sans-serif, system-ui' }
+        { id: 'cloud-chamber-radius', ...m.toScreen(-0.1, 1.32), text: state.recoil.radiusRatioMeasured === undefined ? '无有限圆半径／无法拟合' : `数值拟合 R₁/R₂ = ${state.recoil.radiusRatioMeasured.toFixed(6)}（同一比例，轨迹截段）`, color: '#e2e8f0', font: '13px ui-sans-serif, system-ui' }
       );
       resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();

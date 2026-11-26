@@ -1280,11 +1280,20 @@ async function auditF05Cases(page,offline,select){
   if(!Number.isFinite(r.outerTime)||!Number.isFinite(r.t)||Math.abs(r.outerTime-r.t)>1e-7)throw Error('F05 clock mismatch');
   return r;
  };
- const save=async(name,expected)=>{const r=await sync(expected);out[name]=r;await page.screenshot({path:path.join(OUT_DIR,prefix+name+'.png')});return r;};
- const assertStatic=async()=>{if(!await play.isDisabled())throw Error('F05 static mode can play');};
+ const readout=key=>page.getByTestId((offline?'sf-f05-':'f05-')+key);
+ const verifyReadouts=async r=>{
+  for(const key of (r.mode==='half-life-mc'?['remainingCount','expectedRemainingCount']:['qValueMev','emittedKineticMev','daughterKineticMev','radiusRatio','radiusEmittedM','radiusDaughterM'])){
+    if(!(key in r)){if(await readout(key).count())throw Error('F05 inapplicable readout '+key);continue;}
+    const v=r[key],want=Math.abs(v)>0&&Math.abs(v)<.001?v.toExponential(4):v.toFixed(3);
+    await page.waitForFunction(({id,want})=>document.querySelector('[data-testid="'+id+'"]')?.textContent?.trim().startsWith(want),{id:(offline?'sf-f05-':'f05-')+key,want},{timeout:5000});
+  }
+ };
+ const save=async(name,expected)=>{const r=await sync(expected);await verifyReadouts(r);out[name]=r;await page.screenshot({path:path.join(OUT_DIR,prefix+name+'.png')});return r;};
+ const assertStatic=async()=>{if(!await play.isDisabled())throw Error('F05 static mode can play');if(offline?await page.getByTestId('sf-uplot').isVisible():(await page.getByTestId('floating-scope-dock').count()||await page.getByTestId('btn-expand-oscilloscope').count()))throw Error('F05 static scope visible');};
  await select('cloud-chamber-alpha-external');
  const pos=await save('alpha_positive',{mode:'cloud-chamber-recoil',t:0,magneticFieldT:1.2});await assertStatic();
  if(Math.abs(pos.radiusRatio-43)>1e-4||Math.abs(pos.emittedKineticMev+pos.daughterKineticMev-pos.qValueMev)>1e-8)throw Error('F05 recoil budget');
+ if(!await input('magneticFieldT').isVisible())throw Error('F05 primary magnetic control hidden');
  await input('magneticFieldT').fill('-1.2');
  const neg=await save('alpha_negative',{mode:'cloud-chamber-recoil',t:0,magneticFieldT:-1.2});
  if(Math.abs(neg.radiusRatio-pos.radiusRatio)>1e-8)throw Error('F05 reflected radius ratio');
@@ -1302,7 +1311,7 @@ async function auditF05Cases(page,offline,select){
  await play.click();
  const sample=await sync({mode:'half-life-mc'});
  if(sample.t<1||sample.remainingCount>init.remainingCount||sample.remainingCount<0||!Number.isInteger(sample.remainingCount)||Math.abs(sample.expectedRemainingCount-1600*2**(-sample.t/2))>1e-8)throw Error('F05 sample/expectation mismatch');
- out.samplePaused=sample;await page.screenshot({path:path.join(OUT_DIR,prefix+'sample_paused.png')});
+ await verifyReadouts(sample);out.samplePaused=sample;await page.screenshot({path:path.join(OUT_DIR,prefix+'sample_paused.png')});
  return out;
 }
 
