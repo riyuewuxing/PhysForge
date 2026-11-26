@@ -125,7 +125,7 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
   return (
     <svg
       data-testid="ruler-toolbox-overlay"
-      className="absolute inset-0 w-full h-full z-20 pointer-events-auto select-none"
+      className="absolute inset-0 w-full h-full z-20 pointer-events-none select-none"
       onPointerMove={handlePointerMove}
       onPointerUp={() => setDragTarget(null)}
       onPointerLeave={() => setDragTarget(null)}
@@ -173,13 +173,14 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
             {[p1, p2].map((pt, idx) => (
               <circle
                 key={idx}
+                data-testid={"ruler-handle-"+idx}
                 cx={pt.x}
                 cy={pt.y}
                 r={8}
                 fill="#38bdf8"
                 stroke="#ffffff"
                 strokeWidth={2}
-                className="cursor-grab"
+                className="cursor-grab pointer-events-auto"
                 onPointerDown={(e) => {
                   e.stopPropagation();
                   (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
@@ -223,9 +224,10 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
                 fill={idx === 1 ? '#f59e0b' : '#fde68a'}
                 stroke="#ffffff"
                 strokeWidth={2}
-                className="cursor-grab"
+                className="cursor-grab pointer-events-auto"
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
                   setDragTarget({ tool: 'protractor', index: idx });
                 }}
               />
@@ -292,9 +294,10 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
                 fill="#34d399"
                 stroke="#ffffff"
                 strokeWidth={2}
-                className="cursor-grab"
+                className="cursor-grab pointer-events-auto"
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
                   setDragTarget({ tool: 'compass', index: idx });
                 }}
               />

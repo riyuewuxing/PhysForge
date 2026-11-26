@@ -696,7 +696,17 @@ async function auditE02Capacitor(page,origin){
   await page.getByRole('button',{name:'直尺',exact:true}).click();
   const capRuler=page.getByTestId('ruler-measurement');await capRuler.waitFor({state:'visible'});
   if(!(await capRuler.textContent()).includes('mm · 横向示意'))throw Error('E02 ruler physical vertical scale');
+  const capHandle=page.getByTestId('ruler-handle-1'),box=await capHandle.boundingBox();
+  if(!box)throw Error('E02 ruler handle missing');
+  const prior=await capRuler.textContent();
+  await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
+  await page.mouse.move(box.x+box.width/2,box.y+box.height/2+28,{steps:6});await page.mouse.up();
+  await page.waitForFunction(prior=>document.querySelector('[data-testid="ruler-measurement"]')?.textContent!==prior,prior);
+  const moved=await capRuler.textContent();
+  if(!moved.includes('Δy=-')||!moved.includes('mm · 横向示意'))throw Error('E02 ruler drag physical delta '+moved);
+  await photo('ruler_mm');
   await page.getByRole('button',{name:'直尺',exact:true}).click();
+  await page.getByTestId('ruler-toolbox-overlay').waitFor({state:'detached'});
   const openRun=await runTo(.2);check(openRun.chargeNC,open.chargeNC,'constant Q while running');
   const top=await select('top-plate-grounded-potential','open-const-q',200,false);
   check(top.phiTopV,0,'top grounded');check(top.phiPV,-168,'top gauge');await photo('top_grounded');
