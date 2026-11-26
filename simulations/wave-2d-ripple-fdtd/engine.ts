@@ -10,7 +10,7 @@ export interface RippleGeometry{
   readonly requestedWidth:number;readonly requestedSeparation:number;readonly separationCells:number;readonly widthCells:number;
 }
 export interface WaveFdtdState{
-  readonly t:number;readonly fieldTime:number;readonly stepsRun:number;readonly courantNumber:number;readonly nx:number;readonly ny:number;
+  readonly t:number;readonly timeCompensation:number;readonly fieldTime:number;readonly stepsRun:number;readonly courantNumber:number;readonly nx:number;readonly ny:number;
   readonly wallI:number;readonly screenI:number;readonly geometry:RippleGeometry;
   readonly fieldSnapshot:Float32Array;readonly speedSnapshot:Float32Array;readonly screenIntensity:Float32Array;
   readonly screenAverageSamples:number;readonly averageStartTime:number;readonly averageFirstTime?:number;
@@ -47,15 +47,18 @@ export function createInitialState(p:WaveFdtdParams):WaveFdtdState{
   const c=Math.max(.2,p.waveSpeed),lambda=Math.max(4,p.wavelengthCells)*DX,period=lambda/c;
   // Conservative nominal straight-path settling gate, not an exact FDTD causal arrival.
   const flight=Math.hypot((SCREEN_I-SOURCE_I)*DX,(GRID_NY/2-SPONGE_CELLS)*DX)/c*(p.mode==='refraction-prism'?Math.max(1,p.refractiveIndexN):1);
-  return {t:0,fieldTime:0,stepsRun:0,courantNumber:solver.courantNumber,nx:GRID_NX,ny:GRID_NY,wallI:WALL_I,screenI:SCREEN_I,geometry,fieldSnapshot,speedSnapshot,screenIntensity:new Float32Array(GRID_NY),screenAverageSamples:0,averageStartTime:flight+2*period,maxAmplitude:0,allFinite:true,fdtdRef:{dt:solver.dt,uCurr:fieldSnapshot,uPrev:prev}};
+  return {t:0,timeCompensation:0,fieldTime:0,stepsRun:0,courantNumber:solver.courantNumber,nx:GRID_NX,ny:GRID_NY,wallI:WALL_I,screenI:SCREEN_I,geometry,fieldSnapshot,speedSnapshot,screenIntensity:new Float32Array(GRID_NY),screenAverageSamples:0,averageStartTime:flight+2*period,maxAmplitude:0,allFinite:true,fdtdRef:{dt:solver.dt,uCurr:fieldSnapshot,uPrev:prev}};
 }
 export function stepWaveFdtd(s:WaveFdtdState,p:WaveFdtdParams,dt:number):StepResult<WaveFdtdState>{
   if(!Number.isFinite(dt)||dt<0)throw Error('Invalid dt: '+dt);
   if(dt===0)return {nextState:s,events:[]};
   if(!s.geometry.valid||!s.allFinite)return {nextState:s,events:[],advancedTime:0,halt:true};
-  const t=s.t+dt,h=s.fdtdRef.dt,n=Math.floor(t/h+32*Number.EPSILON*Math.max(1,t/h));
+  // Compensated elapsed-time sum prevents cumulative floating-point tick loss
+  // (naive summation misses a grid step around tick 1549 at 240 Hz).
+  const corrected=dt-s.timeCompensation,t=s.t+corrected,timeCompensation=(t-s.t)-corrected;
+  const h=s.fdtdRef.dt,n=Math.floor(t/h+32*Number.EPSILON*Math.max(1,t/h));
   if(!Number.isSafeInteger(n))throw Error('FDTD requested time exceeds representable step count');
-  if(n===s.stepsRun)return {nextState:{...s,t},events:[]};
+  if(n===s.stepsRun)return {nextState:{...s,t,timeCompensation},events:[]};
   let solver=scratch.get(s.speedSnapshot);
   if(!solver){solver=config(p,s.geometry);solver.speedGrid.set(s.speedSnapshot);scratch.set(s.speedSnapshot,solver);}
   solver.uCurr.set(s.fieldSnapshot);solver.uPrev.set(s.fdtdRef.uPrev);solver.uNext.fill(0);
@@ -73,7 +76,7 @@ export function stepWaveFdtd(s:WaveFdtdState,p:WaveFdtdParams,dt:number):StepRes
   for(const u of solver.uCurr){if(!Number.isFinite(u)){allFinite=false;break;}maxAmplitude=Math.max(maxAmplitude,Math.abs(u));}
   for(const value of intensity)if(!Number.isFinite(value)||value<0)allFinite=false;
   const fieldSnapshot=new Float32Array(solver.uCurr),prev=new Float32Array(solver.uPrev);
-  return {nextState:{...s,t,fieldTime:n*h,stepsRun:n,fieldSnapshot,fdtdRef:{dt:h,uCurr:fieldSnapshot,uPrev:prev},screenIntensity:intensity,screenAverageSamples:count,...(first===undefined?{}:{averageFirstTime:first}),maxAmplitude,allFinite},events:[],...(allFinite?{}:{halt:true,advancedTime:dt})};
+  return {nextState:{...s,t,timeCompensation,fieldTime:n*h,stepsRun:n,fieldSnapshot,fdtdRef:{dt:h,uCurr:fieldSnapshot,uPrev:prev},screenIntensity:intensity,screenAverageSamples:count,...(first===undefined?{}:{averageFirstTime:first}),maxAmplitude,allFinite},events:[],...(allFinite?{}:{halt:true,advancedTime:dt})};
 }
 export function computeObservables(s:WaveFdtdState,p?:WaveFdtdParams):Record<string,number>{
   const h=s.fdtdRef.dt,g=s.geometry,obs:Record<string,number>={t:s.t,fieldTime:s.fieldTime,fieldLag:s.t-s.fieldTime,stepsRun:s.stepsRun,solverDt:h,courantNumber:s.courantNumber,geometryValid:Number(g.valid),screenAverageSamples:s.screenAverageSamples,averageStartTime:s.averageStartTime,screenDistance:(SCREEN_I-WALL_I)*DX};

@@ -137,3 +137,13 @@ it('adds exactly one independently recomputed screen mean sample at the next phy
   expect(a.screenAverageSamples).toBe(s.screenAverageSamples+1);
   for(let j=0;j<a.ny;j++){const u=a.fieldSnapshot[j*a.nx+a.screenI]!,want=Math.fround((s.screenAverageSamples*s.screenIntensity[j]!+u*u)/a.screenAverageSamples);expect(Math.abs(a.screenIntensity[j]!-want)).toBeLessThan(2e-7);}
 },30000);
+
+it('never misses a physical grid tick during long 240 Hz sequential playback',()=>{
+  const p={...getPreset(0),amplitude:0},h=1/240;let s=createInitialState(p);
+  for(let k=1;k<=1800;k++){
+    s=stepWaveFdtd(s,p,h).nextState;
+    expect(s.stepsRun).toBe(k);
+    expect(Math.abs(s.fieldTime-k*h)).toBeLessThan(1e-12);
+  }
+  expect(s.t).toBeCloseTo(7.5,12);
+},30000);
