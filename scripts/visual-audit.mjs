@@ -1285,7 +1285,9 @@ async function auditF05Cases(page,offline,select){
   for(const key of (r.mode==='half-life-mc'?['remainingCount','expectedRemainingCount']:['qValueMev','emittedKineticMev','daughterKineticMev','radiusRatio','radiusEmittedM','radiusDaughterM'])){
     if(!(key in r)){if(await readout(key).count())throw Error('F05 inapplicable readout '+key);continue;}
     const v=r[key],want=Math.abs(v)>0&&Math.abs(v)<.001?v.toExponential(4):v.toFixed(3);
-    await page.waitForFunction(({id,want})=>document.querySelector('[data-testid="'+id+'"]')?.textContent?.trim().startsWith(want),{id:(offline?'sf-f05-':'f05-')+key,want},{timeout:5000});
+    const id=(offline?'sf-f05-':'f05-')+key;
+    try{await page.waitForFunction(({id,want})=>document.querySelector('[data-testid="'+id+'"]')?.textContent?.trim().startsWith(want),{id,want},{timeout:5000});}
+    catch(e){throw Error('F05 readout '+key+' expected '+want+' actual '+await readout(key).textContent()+' frame time '+r.t+'; '+e.message);}
   }
  };
  const save=async(name,expected)=>{const r=await sync(expected);await verifyReadouts(r);out[name]=r;await page.screenshot({path:path.join(OUT_DIR,prefix+name+'.png')});return r;};
@@ -1309,9 +1311,26 @@ async function auditF05Cases(page,offline,select){
  await play.click();
  await page.waitForFunction(id=>{const raw=document.querySelector('[data-testid="'+id+'"]')?.dataset.nuclearRendered;return raw&&JSON.parse(raw).outerTime>=1;},canvasId,{timeout:12000});
  await play.click();
+ // Observe the committed paused frame rather than racing React's pause update.
+ await page.waitForFunction(offline=>{const p=offline?document.querySelector('[data-testid="sf-play-pause"]'):document.querySelector('[data-testid="topbar"] [data-testid="btn-play-pause"]');return offline?p?.textContent?.includes('运行'):p?.getAttribute('aria-label')==='运行';},offline);
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
  const sample=await sync({mode:'half-life-mc'});
+ const panelId=offline?'sf-f05-readouts':'f05-readouts';
+ const panelT=Number(await page.getByTestId(panelId).getAttribute('data-sample-time'));
+ if(!Number.isFinite(panelT)||Math.abs(panelT-sample.t)>1e-9)throw Error('F05 paused panel/frame mismatch '+panelT+' vs '+sample.t);
  if(sample.t<1||sample.remainingCount>init.remainingCount||sample.remainingCount<0||!Number.isInteger(sample.remainingCount)||Math.abs(sample.expectedRemainingCount-1600*2**(-sample.t/2))>1e-8)throw Error('F05 sample/expectation mismatch');
  await verifyReadouts(sample);out.samplePaused=sample;await page.screenshot({path:path.join(OUT_DIR,prefix+'sample_paused.png')});
+ if(!offline){
+  const exportSvg=async(name,labels)=>{
+    await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
+    const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,file=path.join(OUT_DIR,prefix+name+'.svg');await svg.saveAs(file);
+    const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!labels.every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F05 wrong SVG '+name);
+    await preview.screenshot({path:path.join(OUT_DIR,prefix+name+'_svg.png')});await page.getByTestId('btn-close-export-studio').click();return {bytes:Buffer.byteLength(bytes),name:svg.suggestedFilename()};
+  };
+  out.sampleExport=await exportSvg('sample',['样本阶梯','理论期望']);
+  await select('cloud-chamber-alpha-external');await sync({mode:'cloud-chamber-recoil',t:0,magneticFieldT:1.2});
+  out.recoilExport=await exportSvg('recoil',['α 二体理想化','同一比例']);
+ }
  return out;
 }
 
