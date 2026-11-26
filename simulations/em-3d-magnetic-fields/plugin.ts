@@ -42,18 +42,18 @@ const paramSchema: readonly ParamFieldSpec<Magnetic3dParams>[] = [
       { value: 'helmholtz-coil', label: '亥姆霍兹双线圈' },
       { value: 'single-loop', label: '单匝环形电流' },
       { value: 'finite-solenoid', label: '有限长通电螺线管' },
-      { value: 'straight-wire', label: '长直导线右手螺旋' },
+      { value: 'straight-wire', label: '有限直导线右手螺旋' },
       { value: 'parallel-wires', label: '平行同向双导线' },
       { value: 'uniform-helix', label: '3D 匀强场等距螺旋线' }
     ]
   },
-  { key: 'currentI', kind: 'number', label: '线圈/导线电流 I', unit: 'A', min: 0, max: 5, step: 0.5, defaultValue: 2.0 },
+  { key: 'currentI', kind: 'number', label: '线圈/导线电流 I', unit: 'A', min: -5, max: 5, step: 0.5, defaultValue: 2.0 },
   { key: 'radiusR', kind: 'number', label: '线圈半径 R', unit: 'm', min: 0.4, max: 1.6, step: 0.1, defaultValue: 1.0 },
   { key: 'solenoidTurns', kind: 'number', label: '螺线管匝数 N', unit: '匝', min: 4, max: 16, step: 2, defaultValue: 10 },
-  { key: 'qOverM', kind: 'number', label: '试探粒子相对荷质比', unit: '', min: 0, max: 4, step: 0.2, defaultValue: 1.5 },
+  { key: 'qOverM', kind: 'number', label: '有向荷质比参数', unit: '', min: -4, max: 4, step: 0.2, defaultValue: 1.5 },
   { key: 'vPerp', kind: 'number', label: '垂直初速度 v⊥', unit: 'm/s', min: 0, max: 3, step: 0.2, defaultValue: 1.2 },
   { key: 'vParallel', kind: 'number', label: '轴向初速度 v∥', unit: 'm/s', min: -2, max: 2, step: 0.2, defaultValue: 0.7 },
-  { key: 'uniformBz', kind: 'number', label: '匀强模式磁感应强度 Bz', unit: 'T', min: 0.5, max: 4, step: 0.5, defaultValue: 2.0 }
+  { key: 'uniformBz', kind: 'number', label: '匀强模式磁感应强度 Bz', unit: 'T', min: -4, max: 4, step: 0.5, defaultValue: 2.0 }
 ];
 
 const liveFormulas: readonly LiveFormulaSpec[] = [
@@ -67,7 +67,7 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
         "paramKey": "currentI",
         "label": "线圈/导线电流 I",
         "unit": "A",
-        "min": 0,
+        "min": -5,
         "max": 5,
         "step": 0.5,
         "precision": 1
@@ -86,14 +86,14 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
   {
     "id": "uniform-gyro-frequency",
     "title": "匀强场初始回旋角频率与垂直加速度",
-    "latex": "\\begin{aligned}\\omega_c&=\\htmlClass{pf-live-var}{\\htmlData{param=qOverM}{\\left|q/m\\right|}}\\htmlClass{pf-live-var}{\\htmlData{param=uniformBz}{B_z}}\\\\a_{\\perp,0}&=\\omega_c \\htmlClass{pf-live-var}{\\htmlData{param=vPerp}{v_\\perp}}\\end{aligned}",
+    "latex": "\\begin{aligned}\\omega_c&=\\htmlClass{pf-live-var}{\\htmlData{param=qOverM}{\\left|q/m\\right|}}\\htmlClass{pf-live-var}{\\htmlData{param=uniformBz}{|B_z|}}\\\\a_{\\perp,0}&=\\omega_c \\htmlClass{pf-live-var}{\\htmlData{param=vPerp}{v_\\perp}}\\end{aligned}",
     "bindings": [
       {
         "tokenKey": "qOverM",
         "paramKey": "qOverM",
-        "label": "试探粒子相对荷质比",
+        "label": "有向荷质比参数",
         "unit": "",
-        "min": 0,
+        "min": -4,
         "max": 4,
         "step": 0.2,
         "precision": 1
@@ -103,7 +103,7 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
         "paramKey": "uniformBz",
         "label": "匀强模式磁感应强度 Bz",
         "unit": "T",
-        "min": 0.5,
+        "min": -4,
         "max": 4,
         "step": 0.5,
         "precision": 1
@@ -160,6 +160,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
   },
   renderMode: 'three3d',
   paramSchema,
+  getParamFields:p=>{const keys=p.geometryType==='uniform-helix'?['geometryType','uniformBz','qOverM','vPerp','vParallel']:p.geometryType==='finite-solenoid'?['geometryType','currentI','radiusR','solenoidTurns','qOverM','vPerp','vParallel']:p.geometryType==='straight-wire'?['geometryType','currentI','qOverM','vPerp','vParallel','radiusR']:['geometryType','currentI','radiusR','qOverM','vPerp','vParallel'];return keys.flatMap(k=>paramSchema.filter(f=>f.key===k));},
   presets: magnetic3dPresets,
   engine: {
     createInitialState,
@@ -195,7 +196,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
         kind: 'mathLabel',
         x: 1.8,
         y: 1.5,
-        text: `I=${params.currentI}\\text{A},\\; R=${params.radiusR.toFixed(1)}\\text{m}`,
+        text: params.geometryType==='uniform-helix'?`B_z=${params.uniformBz}\\text{T}`:`I=${params.currentI}\\text{A},\\; R=${params.radiusR.toFixed(1)}\\text{m}`,
         align: 'end'
       }
     ];
@@ -395,12 +396,12 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     if (params.geometryType === 'uniform-helix') {
       const omega = Math.abs(params.qOverM * params.uniformBz);
       const vPerp = Math.hypot(state.velocity.x, state.velocity.y);
-      const gyration = omega > 0
+      const gyration = omega > 0 && vPerp > 1e-12
         ? `\\begin{aligned}R&=${(vPerp / omega).toFixed(3)}\\text{ m}\\\\ T&=${(2 * Math.PI / omega).toFixed(3)}\\text{ s}\\end{aligned}`
-        : '\\text{荷质比为零：无磁回旋}';
+        : '\\text{零磁力：直线运动或静止，无实际回旋}';
       return [{
         id: 'uniform-helix-state', label: '均匀磁场中的实际速度与回旋参数',
-        latex: '\\omega_c=|q/m|B,\\quad R=v_\\perp/\\omega_c',
+        latex: '\\omega_c=|qB_z/m|,\\quad R=v_\\perp/\\omega_c',
         substitutedLatex: gyration
       }, {
         id: 'uniform-velocity-state', label: '速度分量与比动能',

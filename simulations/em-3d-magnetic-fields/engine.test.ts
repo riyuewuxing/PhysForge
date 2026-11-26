@@ -279,3 +279,30 @@ describe('E10 independent signed gyro and finite-wire physics',()=>{
     expect(ir.primitives.some(q=>(q.kind==='text'||q.kind==='mathLabel')&&q.text.includes('B'))).toBe(true);
   });
 });
+
+describe('E10 reversed fields and degeneracy',()=>{
+  it('analytic finite parallel wires superpose with exact central cancellation and reversed sign',()=>{
+    const p={...getPreset(2),geometryType:'parallel-wires' as const,currentI:2.3};
+    const x=.27,y=.41,z=1.1,R=p.radiusR;
+    let bx=0,by=0;
+    for(const x0 of [-.8*R,.8*R]){const dx=x-x0,r=Math.hypot(dx,y),c=MU_0*p.currentI/(4*Math.PI*r)*((4-z)/Math.hypot(r,4-z)+(4+z)/Math.hypot(r,4+z));bx-=c*y/r;by+=c*dx/r;}
+    const B=evalBiotSavartB({x,y,z},p),rev=evalBiotSavartB({x,y,z},{...p,currentI:-p.currentI});
+    expect(B.x).toBeCloseTo(bx,15);expect(B.y).toBeCloseTo(by,15);
+    expect(rev.x).toBeCloseTo(-bx,15);expect(rev.y).toBeCloseTo(-by,15);
+    expect(Math.hypot(...Object.values(evalBiotSavartB({x:0,y:0,z:0},p)))).toBeLessThan(1e-14);
+  });
+  it('checks real magnetic vector and analytic uniform trajectory, not merely speed',()=>{
+    const p={...getPreset(3),uniformBz:-4,qOverM:-4},i=createInitialState(p),s=stepMagnetic3d(i,p,.8).nextState;
+    expect(checkInvariants(s,i,p).every(r=>r.passed)).toBe(true);
+    expect(checkInvariants({...s,position:{...s.position,x:s.position.x+.2}},i,p).some(r=>!r.passed)).toBe(true);
+  });
+  it('zero charge, zero B and parallel-only yield exact straight motion',()=>{
+    for(const p of [{...getPreset(3),qOverM:0},{...getPreset(3),uniformBz:0},{...getPreset(3),vPerp:0}]){
+      const i=createInitialState(p),s=stepMagnetic3d(i,p,.7).nextState;
+      expect(s.position.x).toBeCloseTo(i.position.x+i.velocity.x*.7,10);
+      expect(s.position.y).toBeCloseTo(i.position.y+i.velocity.y*.7,10);
+      expect(s.position.z).toBeCloseTo(i.position.z+i.velocity.z*.7,10);
+      expect(s.lorentzForce).toEqual({x:0,y:0,z:0});
+    }
+  });
+});

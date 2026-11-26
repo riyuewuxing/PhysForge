@@ -147,6 +147,24 @@ function accumulateCircularArcB(
   return { bx, by, bz };
 }
 
+/** Exact integral of one finite straight z-directed filament on [-4,4].
+ * On the filament the ideal model is undefined; the public field evaluator
+ * retains its historical finite zero sentinel at exactly rho=0. This is NOT
+ * a prediction on the conductor itself. Off-axis points are not softened. */
+function finiteAxialWireB(pos:Vec3,x0:number,prefactor:number):Vec3 {
+  const x=pos.x-x0,y=pos.y,rho=Math.hypot(x,y);
+  if(prefactor===0||rho===0)return {x:0,y:0,z:0};
+  const a=4-pos.z,b=4+pos.z;
+  // Rationalized difference outside the segment avoids subtracting near-equal cosines.
+  let factor:number;
+  if(a*b<0){
+    const u=Math.abs(a),v=Math.abs(b),A=Math.hypot(rho,u),B=Math.hypot(rho,v);
+    factor=rho*rho*(v*v-u*u)/(A*B*(v*A+u*B));
+    if(b<0)factor=-factor;
+  }else factor=a/Math.hypot(rho,a)+b/Math.hypot(rho,b);
+  const mag=prefactor*factor/rho;
+  return {x:-mag*y/rho,y:mag*x/rho,z:0};
+}
 export function evalBiotSavartB(pos: Vec3, params: Magnetic3dParams): Vec3 {
   if (params.geometryType === 'uniform-helix') {
     return { x: 0, y: 0, z: params.uniformBz };
@@ -183,24 +201,9 @@ export function evalBiotSavartB(pos: Vec3, params: Magnetic3dParams): Vec3 {
     return { x: bx * prefactor, y: by * prefactor, z: bz * prefactor };
   }
 
-  const segs = buildConductorSegments(params);
-  let bx = 0;
-  let by = 0;
-  let bz = 0;
-
-  for (const s of segs) {
-    const dl = { x: s.b.x - s.a.x, y: s.b.y - s.a.y, z: s.b.z - s.a.z };
-    const mid = { x: 0.5 * (s.a.x + s.b.x), y: 0.5 * (s.a.y + s.b.y), z: 0.5 * (s.a.z + s.b.z) };
-    const r = { x: pos.x - mid.x, y: pos.y - mid.y, z: pos.z - mid.z };
-    const r2 = r.x * r.x + r.y * r.y + r.z * r.z;
-    if (r2 < 1e-8) continue;
-    const invR3 = s.currentSign / (r2 * Math.sqrt(r2));
-    const c = cross3(dl, r);
-    bx += c.x * invR3;
-    by += c.y * invR3;
-    bz += c.z * invR3;
-  }
-  return { x: bx * prefactor, y: by * prefactor, z: bz * prefactor };
+  if(params.geometryType==='straight-wire')return finiteAxialWireB(pos,0,prefactor);
+  const a=finiteAxialWireB(pos,-.8*R,prefactor),b=finiteAxialWireB(pos,.8*R,prefactor);
+  return {x:a.x+b.x,y:a.y+b.y,z:0};
 }
 
 export function trace3dFieldLines(params: Magnetic3dParams, displaySampling = false): Vec3[][] {
@@ -425,10 +428,14 @@ export function stepMagnetic3d(
   if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
   if (dt === 0) return { nextState: state, events: [] };
 
-  const subN = Math.max(1, Math.ceil(dt / 0.004));
-  const subH = dt / subN;
   const effQOverM =
     params.geometryType === 'uniform-helix' ? params.qOverM : params.qOverM / MAG3D_SCALE.chargeUnit;
+  // Cayley rotation has phase 2 atan(omega h/2), not omega h. Keep
+  // uniform-field relative phase error below (0.002)^2/12 while preserving
+  // the shared Boris step and its time-symmetric position update.
+  const omega=params.geometryType==='uniform-helix'?Math.abs(effQOverM*params.uniformBz):0;
+  const maxH=omega>0?Math.min(.004,.002/omega):.004;
+  const subN=Math.max(1,Math.ceil(dt/maxH)),subH=dt/subN;
 
   let curP = { position: state.position, velocity: state.velocity, t: state.t };
   for (let i = 0; i < subN; i++) {
@@ -472,6 +479,10 @@ export function computeObservables(state: Magnetic3dState): Record<string, numbe
     x: state.position.x,
     y: state.position.y,
     z: state.position.z,
+    vx:state.velocity.x,vy:state.velocity.y,vz:state.velocity.z,
+    bxT:state.bAtParticle.x,byT:state.bAtParticle.y,bzT:state.bAtParticle.z,
+    ax:state.lorentzForce.x,ay:state.lorentzForce.y,az:state.lorentzForce.z,
+    bMagT:Math.hypot(state.bAtParticle.x,state.bAtParticle.y,state.bAtParticle.z),
     bMagMicroT: Math.hypot(state.bAtParticle.x, state.bAtParticle.y, state.bAtParticle.z) * 1e6,
     speed,
     ke,
@@ -479,17 +490,31 @@ export function computeObservables(state: Magnetic3dState): Record<string, numbe
   };
 }
 
-export function checkInvariants(state: Magnetic3dState): InvariantReport[] {
-  const speedNow = Math.hypot(state.velocity.x, state.velocity.y, state.velocity.z);
-  const ke0 = 0.5 * state.speed0 * state.speed0;
-  const keNow = 0.5 * speedNow * speedNow;
-  const relErr = ke0 > 1e-12 ? Math.abs(keNow - ke0) / ke0 : Math.abs(keNow - ke0);
-  return [
-    {
-      name: '纯磁场 Boris 推粒器动能严格守恒 (ΔEk / Ek0)',
-      measuredError: relErr,
-      tolerance: 1e-8,
-      passed: Number.isFinite(relErr) && relErr < 1e-8
-    }
+
+export function checkInvariants(state:Magnetic3dState,initial?:Magnetic3dState,params?:Magnetic3dParams):InvariantReport[]{
+  const v=state.velocity,B=state.bAtParticle,a=state.lorentzForce;
+  const norm=(p:Vec3)=>Math.hypot(p.x,p.y,p.z);
+  const ke0=.5*(initial?norm(initial.velocity):state.speed0)**2,ke=.5*norm(v)**2;
+  const report=(name:string,error:number,tolerance:number):InvariantReport=>({name,measuredError:Number.isFinite(error)?error:Number.MAX_VALUE,tolerance,passed:Number.isFinite(error)&&error<=tolerance});
+  const out=[
+    report('纯磁场 Boris 比动能守恒',Math.abs(ke-ke0)/Math.max(1e-12,ke0),1e-8),
+    report('磁加速度与速度正交',Math.abs(dot3(v,a))/Math.max(1e-12,norm(v)*norm(a)),1e-10),
+    report('磁加速度与磁场正交',Math.abs(dot3(B,a))/Math.max(1e-20,norm(B)*norm(a)),1e-10)
   ];
+  if(params){
+    const expectedB=evalBiotSavartB(state.position,params),qm=params.geometryType==='uniform-helix'?params.qOverM:params.qOverM/MAG3D_SCALE.chargeUnit,cross=cross3(v,expectedB),
+      expectedA={x:qm*cross.x,y:qm*cross.y,z:qm*cross.z};
+    out.push(report('粒子位置处磁场',Math.hypot(B.x-expectedB.x,B.y-expectedB.y,B.z-expectedB.z)/Math.max(1e-15,norm(expectedB)),1e-10));
+    out.push(report('有向洛伦兹加速度 (q/m)v×B',Math.hypot(a.x-expectedA.x,a.y-expectedA.y,a.z-expectedA.z)/Math.max(1e-12,norm(expectedA)),1e-10));
+    if(initial&&params.geometryType==='uniform-helix'){
+      const t=state.t-initial.t,w=params.qOverM*params.uniformBz,c=Math.cos(w*t),s=Math.sin(w*t),
+        v0=initial.velocity,r0=initial.position,
+        vx=v0.x*c+v0.y*s,vy=-v0.x*s+v0.y*c,
+        x=r0.x+(w===0?v0.x*t:(v0.x*s+v0.y*(1-c))/w),
+        y=r0.y+(w===0?v0.y*t:(v0.x*(c-1)+v0.y*s)/w),z=r0.z+v0.z*t;
+      out.push(report('匀强场解析速度',Math.hypot(v.x-vx,v.y-vy,v.z-v0.z)/Math.max(1,norm(v0)),3e-5));
+      out.push(report('匀强场解析轨迹',Math.hypot(state.position.x-x,state.position.y-y,state.position.z-z)/Math.max(1,norm(v0)*Math.abs(t)),3e-5));
+    }
+  }
+  return out;
 }

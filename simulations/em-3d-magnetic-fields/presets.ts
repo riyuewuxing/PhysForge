@@ -53,7 +53,7 @@ export const magnetic3dPresets: readonly PresetSpec<Magnetic3dParams>[] = [
   {
     id: 'uniform-3d-helical-pitch',
     name: '3D 匀强磁场斜射等距螺旋线（螺距 p=v∥·T）',
-    description: '粒子斜射入匀强磁场做等螺距圆锥/圆柱螺旋运动，Boris 辛旋转能量严格无漂移',
+    description: '粒子斜射入匀强磁场做等螺距圆柱螺旋运动，Boris 辛旋转能量严格无漂移',
     curriculumNotes: '选择性必修二 第一章 · 洛伦兹力空间螺旋运动',
     params: {
       geometryType: 'uniform-helix',
@@ -65,5 +65,10 @@ export const magnetic3dPresets: readonly PresetSpec<Magnetic3dParams>[] = [
       vParallel: 1.0,
       uniformBz: 2.0
     }
-  }
+  },
+  {id:'uniform-negative-charge',name:'负电荷 · 反向回旋',description:'Bz=4 T，q/m=-4 C/kg，观察反向回旋及轴向速度。',curriculumNotes:'有向洛伦兹力',params:{geometryType:'uniform-helix',uniformBz:4,qOverM:-4,vPerp:2.4,vParallel:-.7}},
+  {id:'uniform-negative-field',name:'反向磁场 · 正电荷',description:'Bz=-4 T，正电荷与负电荷正磁场旋向相同。',curriculumNotes:'有向磁场',params:{geometryType:'uniform-helix',uniformBz:-4,qOverM:4,vPerp:2.4,vParallel:-.7}},
+  {id:'uniform-zero-field',name:'零磁场 · 匀速直线',description:'Bz=0，不存在实际磁回旋。',curriculumNotes:'磁场边界',params:{geometryType:'uniform-helix',uniformBz:0,qOverM:1,vPerp:1.5,vParallel:1}},
+  {id:'uniform-parallel-only',name:'沿轴向入射 · 无洛伦兹力',description:'v⊥=0，沿轴向匀速。',curriculumNotes:'洛伦兹力方向',params:{geometryType:'uniform-helix',uniformBz:2,qOverM:1,vPerp:0,vParallel:1}},
+  {id:'finite-wire-reverse',name:'有限直导线 · 反向电流',description:'有向电流为负，磁感线旋向反转。',curriculumNotes:'安培定则',params:{geometryType:'straight-wire',currentI:-2.5,radiusR:1,qOverM:1.2,vPerp:1,vParallel:.5}}
 ];
