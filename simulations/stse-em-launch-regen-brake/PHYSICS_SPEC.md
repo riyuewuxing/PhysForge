@@ -5,8 +5,8 @@
 - 状态演化方程：$m \frac{dv}{dt} = B I L - k_d v^2$，全程精确积分输入能量 $E_{\text{in}}$、焦耳热 $E_{\text{joule}}$、气动阻力损耗 $E_{\text{drag}}$ 与动能 $E_k$，全过程能量账本残差 $< 10^{-6}\text{ J}$。
 
 ## 2. 新能源汽车再生制动（`mode = 'regen-brake'`）
-- 再生发电回路 $I = \frac{B L v}{R_{\text{int}} + R_{\text{load}}}$，电磁制动力 $F_{\text{em}} = \frac{B^2 L^2}{R_{\text{total}}} v$，再生回收储能 $E_{\text{regen}} = \int I^2 R_{\text{load}}\,dt$ 与内阻损耗 $E_{\text{int}} = \int I^2 R_{\text{int}}\,dt$。
-- 平路纯电磁制动下解析停驻总距 $x_{\text{total}} = \frac{M v_0 R_{\text{total}}}{B^2 L^2}$ 与积分终点距离吻合误差 $< 10^{-6}$。
+- 再生发电回路 $I = \frac{B L v}{R_{\text{int}} + R_{\text{load}}}$，电磁制动力 $F_{\text{em}} = \frac{B^2 L^2}{R_{\text{total}}} v$，等效负载能量传递 $E_{\text{regen}} = \int I^2 R_{\text{load}}\,dt$ 与内阻损耗 $E_{\text{int}} = \int I^2 R_{\text{int}}\,dt$。
+- 平路纯电磁制动下渐近位移极限（非有限时间停驻） $x_{\text{total}} = \frac{M v_0 R_{\text{total}}}{B^2 L^2}$ 与积分终点距离吻合误差 $< 10^{-6}$。
 
 ## H52 F06 回归复现范围（先红灯，未验收）
 - 仅处理新能源汽车再生制动教学模式；原电磁发射模式的求解器、参数范围及性能不作扩展。

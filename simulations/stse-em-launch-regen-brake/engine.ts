@@ -69,12 +69,14 @@ export function createInitialState(params: EmLaunchRegenParams): EmLaunchRegenSt
   }
 
   const ke0 = 0.5 * M * params.v0Mps * params.v0Mps;
+  const brakingBL = Math.max(0.05, params.bFieldT * params.trackSpanM);
+  const brakingResistance = Math.max(0.02, params.circuitResOhm) + Math.max(0, params.loadResOhm);
   return {
     t: 0,
     x: 0,
     v: params.v0Mps,
     qCapC: 0,
-    currentA: 0,
+    currentA: brakingBL * params.v0Mps / brakingResistance,
     energyInitialJ: ke0,
     energyInputWorkJ: 0,
     energyKineticJ: ke0,
@@ -195,8 +197,14 @@ export function stepEmLaunchRegen(
   };
 }
 
-export function computeObservables(state: EmLaunchRegenState): Record<string, number> {
+export function computeObservables(state: EmLaunchRegenState, params?: EmLaunchRegenParams): Record<string, number> {
   return {
+    ...(params?.mode==='regen-brake' ? {
+      energyInitialKj: state.energyInitialJ / 1000,
+      energyJouleKj: state.energyJouleJ / 1000,
+      energyDragMechKj: state.energyDragMechJ / 1000,
+      ...(state.energyInitialJ>0 ? { loadTransferFraction: state.energyRegenJ/state.energyInitialJ } : {})
+    } : {}),
     t: state.t,
     x: state.x,
     v: state.v,
