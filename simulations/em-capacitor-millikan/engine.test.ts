@@ -5,6 +5,10 @@ import { capacitorMillikanPresets } from './presets.js';
 import {
   BASE_AREA_M2,
   EPSILON_0,
+  ELEMENTARY_CHARGE,
+  getDropPhysicalParams,
+  computeObservables,
+  checkInvariants,
   computeCapacitorMetrics,
   createInitialState,
   stepCapacitorMillikan,
@@ -73,5 +77,87 @@ describe('em-capacitor-millikan dynamic analysis & Millikan balance (E02)', () =
     expect(stepCapacitorMillikan(s0, p0, 0).nextState.voltageV).toBe(0);
     const s1 = stepCapacitorMillikan(s0, p0, 0.05).nextState;
     expect(Number.isFinite(s1.fieldE)).toBe(true);
+  });
+});
+
+describe('H31 E02 independent signed field, charge and exact events',()=>{
+  it('matches absolute SI values, fixed reference charge and all potential gauges',()=>{
+    const p={...getPreset(0),distanceMm:20,probeFracP:.25};
+    const a=computeCapacitorMetrics(p);
+    expect(a.capacitanceF*1e12).toBeCloseTo(17.7083756256,10);
+    expect(a.chargeC*1e9).toBeCloseTo(3.54167512512,10);
+    expect(a.fieldEy).toBe(-10000);
+    expect(a.phiPV).toBeCloseTo(50,10);
+    for(const groundMode of ['bottom','top','none'] as const){
+      const b=computeCapacitorMetrics({...p,distanceMm:40,groundMode});
+      expect(b.chargeC).toBe(a.chargeC);
+      expect(b.voltageV).toBeCloseTo(400,10);
+      expect(b.fieldEy).toBe(a.fieldEy);
+      expect(b.phiPV).toBeCloseTo(groundMode==='bottom'?100:groundMode==='top'?-300:-100,10);
+      expect(b.phiTopV-b.phiBottomV).toBeCloseTo(400,10);
+    }
+    const reverse=computeCapacitorMetrics({...p,sourceVoltageU0:-200});
+    expect(reverse.fieldEy).toBe(10000);
+    expect(reverse.fieldE).toBe(10000);
+    expect(reverse.phiPV).toBeCloseTo(-50,10);
+    const changed=computeCapacitorMetrics({...p,areaRatioS:.5,dielectricEr:4});
+    expect(changed.chargeC).toBe(a.chargeC);
+    expect(changed.fieldEy).toBe(-5000);
+  });
+  it('uses exactly integer electron charges and a declared calibrated mass',()=>{
+    expect(ELEMENTARY_CHARGE).toBe(1.602176634e-19);
+    const p=getPreset(2),q=getDropPhysicalParams(p);
+    expect(q.charge/ELEMENTARY_CHARGE).toBe(-2);
+    expect(q.mass).toBeCloseTo(2*1.602176634e-19*10000/9.8,28);
+    const o=computeObservables(createInitialState(p),p);
+    expect(o.dropElectricForceN).toBeCloseTo(o.dropWeightN!,27);
+    expect(o.dropAcceleration).toBeCloseTo(0,12);
+  });
+  it('captures free fall at the first plate, independent of frame size, and freezes',()=>{
+    const p={...getPreset(2),sourceVoltageU0:0,stokesDrag:0};
+    const hit=Math.sqrt(.02/9.8);
+    for(const dt of [.003,.037,1]){
+      const init=createInitialState(p);let s=init;
+      for(let i=0;i<100&&!s.terminal;i++)s=stepCapacitorMillikan(s,p,dt).nextState;
+      expect(s.terminal).toBe('bottom');
+      expect(s.t).toBeCloseTo(hit,10);
+      expect(s.dropYFrac).toBe(0);
+      expect(s.dropVy).toBeCloseTo(-9.8*hit,10);
+      expect(s.events).toHaveLength(1);
+      expect(checkInvariants(s,init,p).every(i=>i.passed)).toBe(true);
+      const again=stepCapacitorMillikan(s,p,1);
+      expect(again.advancedTime).toBe(0);expect(again.nextState).toBe(s);
+    }
+  });
+  it('captures a top collision even when the coarse endpoint has returned inside',()=>{
+    const p={...getPreset(2),sourceVoltageU0:0,stokesDrag:0};
+    const init={...createInitialState(p),dropVy:.5};
+    const t=(.5-Math.sqrt(.25-2*9.8*.01))/9.8;
+    const r=stepCapacitorMillikan(init,p,.09);
+    expect(r.halt).toBe(true);
+    expect(r.nextState.terminal).toBe('top');
+    expect(r.nextState.t).toBeCloseTo(t,10);
+    expect(r.nextState.dropVy).toBeGreaterThan(0);
+  });
+  it('matches the exponential Stokes solution at high drag and small drag without cancellation',()=>{
+    const p={...getPreset(2),dropChargeSteps:3,stokesDrag:250,distanceMm:40,sourceVoltageU0:400};
+    const s=createInitialState(p),t=.2,a=4.9,b=250;
+    const r=stepCapacitorMillikan(s,p,t).nextState;
+    const expectedY=.02+a/b*(t-(1-Math.exp(-b*t))/b);
+    expect(r.dropYFrac*.04).toBeCloseTo(expectedY,12);
+    expect(r.dropVy).toBeCloseTo(a/b*(1-Math.exp(-b*t)),12);
+    const tiny={...p,stokesDrag:1e-12};
+    const z=stepCapacitorMillikan(createInitialState(tiny),tiny,.01).nextState;
+    expect(z.dropVy).toBeCloseTo(.049,12);
+    expect(z.dropYFrac*.04).toBeCloseTo(.02+.5*4.9*.01**2,12);
+  });
+  it('does not simulate a hidden oil drop and separates physical field and reference charge observables',()=>{
+    const p=getPreset(0),s=createInitialState(p),r=stepCapacitorMillikan(s,p,10);
+    expect(r.nextState.dropYFrac).toBe(.5);
+    expect(r.nextState.events).toEqual([]);
+    const o=computeObservables(r.nextState,p);
+    expect(o.dropVyMmS).toBeUndefined();
+    expect(o.fieldEy).toBe(-10000);
+    expect(o.referenceChargeNC).toBeCloseTo(3.54167512512,10);
   });
 });
