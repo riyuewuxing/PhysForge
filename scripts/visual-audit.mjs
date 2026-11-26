@@ -1313,7 +1313,7 @@ async function auditF10Rolling(page,offline,select){
    await play.click();
    await page.waitForFunction(({canvasId,t})=>JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.rigidRollingRendered||'null')?.t>=t,{canvasId,t},{timeout:15000});
    await play.click();
-   await page.waitForFunction(({offline})=>{const e=document.querySelector(offline?'[data-testid="sf-play-pause"]':'[data-testid="topbar"] [data-testid="btn-play-pause"]');return e&&(/运行|播放/.test(e.textContent||'')||/运行|播放/.test(e.getAttribute('title')||'')||e.getAttribute('aria-pressed')==='false');},{offline},{timeout:5000});
+   await page.waitForFunction(({offline})=>{const e=document.querySelector(offline?'[data-testid="sf-play-pause"]':'[data-testid="topbar"] [data-testid="btn-play-pause"]');return e&&(/运行|播放/.test(e.textContent||'')||/运行|播放/.test(e.getAttribute('title')||'')||e.getAttribute('aria-label')==='运行'||e.getAttribute('aria-pressed')==='false');},{offline},{timeout:5000});
    return sync(expected);
  };
  const formulas=async ids=>{
