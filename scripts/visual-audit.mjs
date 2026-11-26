@@ -592,6 +592,17 @@ async function auditE01Electrostatic(page,origin){
   if(await page.getByTestId('param-slider-uAccelV').count())throw Error('E01 irrelevant tube control');
   const dipole=await runTo(.25);check(dipole.energyResidual,0,'dipole energy',1e-5);
   await photo('dipole');
+  const verifyLab=async(unitKey,unit,absent)=>{
+    if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+    await page.getByTestId('btn-analysis-lab-menu').click();
+    const lab=page.getByTestId('analysis-lab-drawer');await lab.waitFor({state:'visible'});
+    const options=lab.locator('select').first().locator('option');
+    const labels=await options.evaluateAll(nodes=>nodes.map(o=>({key:o.value,label:o.textContent??''})));
+    if(!labels.some(o=>o.key===unitKey&&o.label.includes(unit))||labels.some(o=>o.key===absent))throw Error('E01 analysis lab channels '+JSON.stringify(labels));
+    await page.getByTestId('btn-close-analysis-lab').click();
+    if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  };
+  await verifyLab('phi','Φ₀','tubeWork');
   await select('equal-same-sign-charges','dipole-point-charges','q2MicroC',3,'phi','eMag');
   const same=await runTo(.25);check(same.energyResidual,0,'like charge energy',1e-5);await photo('same');
   const uniform=await select('uniform-three-point-trisection','uniform-three-point','phiB',4,'phi','eMag');
@@ -608,6 +619,7 @@ async function auditE01Electrostatic(page,origin){
   if(await page.getByTestId('param-slider-q1MicroC').count()||!await page.getByTestId('param-slider-uAccelV').count())throw Error('E01 tube mode fields');
   const exit=await runTo(.55);check(exit.yExit,.25,'positive signed exit');check(exit.tubePhase,2,'out of plates');check(exit.ek-exit.tubeWork,p0.ek,'work energy');
   if('totalEnergy'in exit)throw Error('E01 fictitious conservative tube energy');await photo('exit');
+  await verifyLab('py','m','totalEnergy');
   await select('deflection-negative-charge','deflection-tube','testChargeRatio',-1,'py','vy');
   const negative=await runTo(.55);check(negative.yExit,-.25,'negative signed exit');await photo('negative');
   await select('deflection-plate-contact','deflection-tube','uDeflectV',16,'py','vy');

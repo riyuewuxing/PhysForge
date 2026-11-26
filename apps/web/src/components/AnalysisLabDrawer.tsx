@@ -52,7 +52,7 @@ export const AnalysisLabDrawer: React.FC<AnalysisLabDrawerProps> = ({
   onClose
 }) => {
   const [tab, setTab] = useState<LabTab>('phase');
-  const channels = plugin.telemetryChannels;
+  const channels = plugin.getTelemetryChannels?.(params) ?? plugin.telemetryChannels;
   const [phaseXKey, setPhaseXKey] = useState<string>(channels[0]?.key ?? 't');
   const [phaseYKey, setPhaseYKey] = useState<string>(channels[1]?.key ?? channels[0]?.key ?? 't');
   const [showLoopArea, setShowLoopArea] = useState(false);
@@ -69,8 +69,8 @@ export const AnalysisLabDrawer: React.FC<AnalysisLabDrawerProps> = ({
 
   // Parameter sweep state
   const numericParams = useMemo(
-    () => plugin.paramSchema.filter((f) => f.kind === 'number'),
-    [plugin.paramSchema]
+    () => (plugin.getParamFields?.(params) ?? plugin.paramSchema).filter((f) => f.kind === 'number'),
+    [plugin, params]
   );
   const [sweepParamKey, setSweepParamKey] = useState<string>(numericParams[0]?.key ?? '');
   const [sweepSteps, setSweepSteps] = useState<number>(8);
@@ -82,11 +82,11 @@ export const AnalysisLabDrawer: React.FC<AnalysisLabDrawerProps> = ({
 
   const phasePoints: PhaseXYPoint[] = useMemo(
     () =>
-      frames.map((f) => ({
-        t: f.t,
-        x: phaseXKey === 't' ? f.t : (f.observables[phaseXKey] ?? 0),
-        y: phaseYKey === 't' ? f.t : (f.observables[phaseYKey] ?? 0)
-      })),
+      frames.flatMap((f) => {
+        const x=phaseXKey==='t'?f.t:f.observables[phaseXKey];
+        const y=phaseYKey==='t'?f.t:f.observables[phaseYKey];
+        return typeof x==='number'&&typeof y==='number'&&Number.isFinite(x)&&Number.isFinite(y)?[{t:f.t,x,y}]:[];
+      }),
     [frames, phaseXKey, phaseYKey]
   );
 
@@ -139,7 +139,8 @@ export const AnalysisLabDrawer: React.FC<AnalysisLabDrawerProps> = ({
 
   const fftSpectrum = useMemo(() => {
     if (frames.length < 8 || !fftChannel) return null;
-    const samples = frames.map((f) => f.observables[fftChannel] ?? 0);
+    const samples = frames.map((f) => f.observables[fftChannel]);
+    if(!samples.every((v):v is number=>typeof v==='number'&&Number.isFinite(v)))return null;
     const dt =
       frames.length > 1
         ? Math.max(1e-4, (frames[frames.length - 1]!.t - frames[0]!.t) / (frames.length - 1))
@@ -298,17 +299,16 @@ export const AnalysisLabDrawer: React.FC<AnalysisLabDrawerProps> = ({
               </div>
               <PhaseXYPlotter
                 points={phasePoints}
-                xLabel={phaseXKey}
-                yLabel={phaseYKey}
+                xLabel={phaseXKey==='t'?'t (s)':`${channels.find(c=>c.key===phaseXKey)?.label??phaseXKey} (${channels.find(c=>c.key===phaseXKey)?.unit??'—'})`}
+                yLabel={phaseYKey==='t'?'t (s)':`${channels.find(c=>c.key===phaseYKey)?.label??phaseYKey} (${channels.find(c=>c.key===phaseYKey)?.unit??'—'})`}
                 title={`实时相图轨迹（共 ${phasePoints.length} 采样点，时间蓝→紫红渐变）`}
                 showLoopArea={showLoopArea}
                 darkTheme={theme === 'chalkboard'}
                 width={760}
                 height={320}
                 onHoverIndex={(idx) => {
-                  if (idx !== null && frames[idx]) {
-                    onScrubTime(frames[idx]!.t);
-                  }
+                  const point=idx===null?undefined:phasePoints[idx];
+                  if(point?.t!==undefined)onScrubTime(point.t);
                 }}
               />
             </div>
@@ -496,7 +496,7 @@ export const AnalysisLabDrawer: React.FC<AnalysisLabDrawerProps> = ({
                 </div>
               ) : (
                 <div className="text-sm text-amber-300">
-                  请先点击“运行”仿真累计至少 8 帧快照数据，再进行 FFT 频谱分析。
+                  请先点击“运行”累计至少 8 帧有效采样；所选通道若缺值，不以零补齐进行 FFT。
                 </div>
               )}
             </div>
