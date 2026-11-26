@@ -1,14 +1,12 @@
-import { wavelengthToRgb } from '@physforge/physics-core';
-import { createWorldMapper, defineSimulationPlugin, drawGlowVectorArrow, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { photoelectricComptonPresets } from './presets.js';
+import {quantumGeometry,QUANTUM_BOUNDS,IV_PLOT,graphX,graphY,graphV,COMPTON_ORIGIN,comptonMomentumVectors} from './sceneGeometry.js';
+export {comptonMomentumVectors} from './sceneGeometry.js';
 import {
   checkInvariants,
   computeObservables,
-  computePhotocurrentMa,
   createInitialState,
-  solvePhotoelectric,
   stepPhotoelectricCompton,
-  type ComptonSolution,
   type PhotoelectricComptonParams,
   type PhotoelectricComptonState
 } from './engine.js';
@@ -40,30 +38,13 @@ const paramSchema: readonly ParamFieldSpec<PhotoelectricComptonParams>[] = [
   { key: 'customWorkFunctionEv', kind: 'number', label: '自定义逸出功 W₀', unit: 'eV', defaultValue: 2.36, min: 1.0, max: 6.5, step: 0.05 },
   { key: 'wavelengthNm', kind: 'number', label: '入射光波长 λ', unit: 'nm', defaultValue: 405, min: 200, max: 750, step: 5 },
   { key: 'intensityRel', kind: 'number', label: '相对光强 P', defaultValue: 1.4, min: 0, max: 3.0, step: 0.1 },
-  { key: 'anodeVoltageV', kind: 'number', label: '光电管电压 U_AK', unit: 'V', defaultValue: 0, min: -5.0, max: 6.0, step: 0.1 },
-  { key: 'freezeRefEnabled', kind: 'boolean', label: '叠加对比参考曲线', defaultValue: true },
+  { key: 'anodeVoltageV', kind: 'number', label: '光电管电压 U_AK', unit: 'V', defaultValue: 0, min: -7.0, max: 6.0, step: 0.1 },
+  { key: 'freezeRefEnabled', kind: 'boolean', label: '同材料参考曲线', defaultValue: true },
   { key: 'refWavelengthNm', kind: 'number', label: '参考波长 λ_ref', unit: 'nm', defaultValue: 450, min: 200, max: 750, step: 5 },
-  { key: 'refIntensityRel', kind: 'number', label: '参考光强 P_ref', defaultValue: 0.8, min: 0, max: 3.0, step: 0.1 },
+  { key: 'refIntensityRel', kind: 'number', label: '同材料参考光强 P_ref', defaultValue: 0.8, min: 0, max: 3.0, step: 0.1 },
   { key: 'xrayWavelengthNm', kind: 'number', label: '入射 X 射线波长 λ', unit: 'nm', defaultValue: 0.071, min: 0.01, max: 0.2, step: 0.002 },
   { key: 'scatterAngleDeg', kind: 'number', label: '光子散射角 θ', unit: '°', defaultValue: 90, min: 0, max: 180, step: 5 }
 ];
-
-// Diagram coordinates are illustrative; physical axis values are explicit.
-const plot = { x: 0.05, y: -0.9, width: 2.05, height: 1.8, uMin: -5, uMax: 6, iMax: 7.5 };
-function graphX(u: number): number { return plot.x + (u - plot.uMin) / (plot.uMax - plot.uMin) * plot.width; }
-function graphY(i: number): number { return plot.y + i / plot.iMax * plot.height; }
-
-export function comptonMomentumVectors(solution: ComptonSolution, scatterAngleDeg: number, length = 0.95) {
-  const theta = scatterAngleDeg * Math.PI / 180;
-  const phi = solution.recoilAngleDeg * Math.PI / 180;
-  return {
-    incident: { x: length, y: 0 },
-    scattered: { x: length * solution.pScattered / solution.pIncident * Math.cos(theta),
-      y: length * solution.pScattered / solution.pIncident * Math.sin(theta) },
-    recoil: { x: length * solution.pElectron / solution.pIncident * Math.cos(phi),
-      y: length * solution.pElectron / solution.pIncident * Math.sin(phi) }
-  };
-}
 
 export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
   PhotoelectricComptonParams,
@@ -78,311 +59,86 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
     version: '2.0.0'
   },
   paramSchema,
-  presets: photoelectricComptonPresets,
-  defaultView: { offsetRatioX: -0.05 },
-  engine: {
-    createInitialState,
-    step: stepPhotoelectricCompton,
-    computeObservables,
-    checkInvariants
+  presets:photoelectricComptonPresets,
+  defaultView:{offsetRatioX:-.05},
+  getParamFields:p=>{
+    const keys=p.mode==='compton'?['mode','xrayWavelengthNm','scatterAngleDeg']:['mode','cathodeMetal','wavelengthNm','intensityRel','anodeVoltageV',...(p.cathodeMetal==='custom'?['customWorkFunctionEv']:[]),'freezeRefEnabled',...(p.freezeRefEnabled?['refWavelengthNm','refIntensityRel']:[])];
+    return keys.flatMap(key=>paramSchema.filter(f=>f.key===key));
   },
-  layers: [
-    { id: 'apparatus', label: '光电管 / 康普顿矢量示意', defaultVisible: true },
-    { id: 'characteristic', label: '伏安特性 I-U 与参考曲线', defaultVisible: true }
+  engine:{createInitialState,step:stepPhotoelectricCompton,computeObservables,checkInvariants},
+  layers:[
+    {id:'apparatus',label:'光电管电路 / 动量矢量',defaultVisible:true},
+    {id:'characteristic',label:'伏安及动能频率图 / 能量账本',defaultVisible:true}
   ],
-  telemetryChannels: [
-    { key: 'photonEnergyEv', label: '光子能量 hν', unit: 'eV', color: '#a855f7' },
-    { key: 'stoppingVoltageV', label: '遏止电压 U_c', unit: 'V', color: '#38bdf8' },
-    { key: 'currentMa', label: '光电流 I', unit: 'mA', color: '#4ade80' },
-    { key: 'deltaLambdaPm', label: '康普顿波长差 Δλ', unit: 'pm', color: '#f59e0b' },
-    { key: 'electronKineticKev', label: '反冲电子动能', unit: 'keV', color: '#4ade80' }
+  telemetryChannels:[
+    {key:'currentMa',label:'光电流 I',unit:'mA',color:'#4ade80'},
+    {key:'stoppingVoltageV',label:'遏止电压 U_c',unit:'V',color:'#38bdf8'},
+    {key:'deltaLambdaPm',label:'康普顿波长差 Δλ',unit:'pm',color:'#f59e0b'},
+    {key:'electronKineticKev',label:'反冲电子动能',unit:'keV',color:'#4ade80'}
   ],
-  sceneSerializer: {
-    exportScene: (_s, params) => ({
-      schemaVersion: '2.0',
-      modelId: 'modern-photoelectric-compton',
-      title: '光电效应与康普顿散射',
-      params
-    }),
-    importScene: (dsl) => dsl.params as Partial<PhotoelectricComptonParams>
+  getTelemetryChannels:()=>[],
+  sceneSerializer:{
+    exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'modern-photoelectric-compton',title:'光电效应与康普顿散射',params}),
+    importScene:dsl=>dsl.params as Partial<PhotoelectricComptonParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [];
-    if (params.mode === 'photoelectric') {
-      // Use the same normalized graph geometry and response as the canvas.
-      primitives.push(
-        { kind: 'arrow', x1: graphX(plot.uMin), y1: plot.y, x2: graphX(plot.uMax)+0.12, y2: plot.y, label: 'U_AK (V)' },
-        { kind: 'arrow', x1: graphX(0), y1: plot.y, x2: graphX(0), y2: graphY(plot.iMax)+0.12, label: 'I (mA)' },
-        { kind: 'text', x: graphX(0), y: plot.y-0.12, text: '0', align: 'middle' }
-      );
-      const curve = (solution: typeof state.photoelectric, intensity: number) =>
-        Array.from({length: 101}, (_, i) => {
-          const u = plot.uMin + i / 100 * (plot.uMax - plot.uMin);
-          return { x: graphX(u), y: graphY(computePhotocurrentMa(u, solution, intensity)) };
-        });
-      if (params.freezeRefEnabled) {
-        const reference = solvePhotoelectric({ ...params, wavelengthNm: params.refWavelengthNm, intensityRel: params.refIntensityRel });
-        primitives.push({ kind: 'polyline', points: curve(reference, params.refIntensityRel), dashed: true });
+  exportDiagramIR:(s,p)=>({width:1080,height:780,viewBox:QUANTUM_BOUNDS,title:p.mode==='photoelectric'?'光电管电路、伏安曲线与最大初动能频率图':'康普顿动量闭合与能量账本',primitives:quantumGeometry(s,p).marks.map(m=>m.primitive)}),
+  renderCanvas:(ctx,s,p,viewport,layers)=>{
+    const m=createWorldMapper(viewport),paper=viewport.theme==='projector';
+    const palette=paper?{ink:'#0f172a',grid:'#94a3b8',beam:p.wavelengthNm<380?'#7e22ce':s.beamHex,cathode:'#1d4ed8',anode:'#b91c1c',electron:'#0369a1',current:'#0369a1',reference:'#475569',active:'#92400e',incident:'#0369a1',scattered:'#7e22ce',recoil:'#92400e',alert:'#be123c'}:
+      {ink:'#e2e8f0',grid:'#64748b',beam:s.beamHex,cathode:'#60a5fa',anode:'#fb7185',electron:'#67e8f9',current:'#22d3ee',reference:'#94a3b8',active:'#fbbf24',incident:'#38bdf8',scattered:'#c084fc',recoil:'#fbbf24',alert:'#fb7185'};
+    const labels:CanvasLabel[]=[];ctx.save();
+    const line=(x1:number,y1:number,x2:number,y2:number,w:number)=>{
+      ctx.lineWidth=w;ctx.beginPath();ctx.moveTo(m.toX(x1),m.toY(y1));ctx.lineTo(m.toX(x2),m.toY(y2));ctx.stroke();
+    };
+    quantumGeometry(s,p).marks.forEach(({primitive:v,tone,layer},i)=>{
+      if(!layers.has(layer))return;
+      const color=palette[tone];ctx.strokeStyle=color;ctx.fillStyle=color;
+      if(v.kind==='text'){
+        const q=m.toScreen(v.x,v.y);ctx.font='12px sans-serif';const w=ctx.measureText(v.text).width;
+        labels.push({id:'quantum-'+i,x:q.x+(v.align==='start'?w/2:v.align==='end'?-w/2:0),y:q.y,text:v.text,color,font:'12px sans-serif'});
+      }else if(v.kind==='line'){
+        ctx.setLineDash(v.dashed?[4,4]:[]);line(v.x1,v.y1,v.x2,v.y2,tone==='grid'?1.1:1.8);ctx.setLineDash([]);
+      }else if(v.kind==='arrow'){
+        const a=m.toScreen(v.x1,v.y1),b=m.toScreen(v.x2,v.y2),theta=Math.atan2(b.y-a.y,b.x-a.x),l=Math.hypot(b.x-a.x,b.y-a.y);
+        if(l>0){line(v.x1,v.y1,v.x2,v.y2,2);const tip=Math.min(8,l*.32);ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-tip*Math.cos(theta-.48),b.y-tip*Math.sin(theta-.48));ctx.lineTo(b.x-tip*Math.cos(theta+.48),b.y-tip*Math.sin(theta+.48));ctx.closePath();ctx.fill();}
+      }else if(v.kind==='circle'){
+        const q=m.toScreen(v.cx,v.cy);ctx.beginPath();ctx.arc(q.x,q.y,m.len(v.r),0,Math.PI*2);ctx.lineWidth=1.7;if(v.fill)ctx.fill();else ctx.stroke();
+      }else if(v.kind==='rect'){
+        const a=m.toScreen(v.x,v.y+v.height),w=m.len(v.width),h=m.len(v.height);
+        if(p.mode==='compton'){ctx.globalAlpha=.55;ctx.fillRect(a.x,a.y,w,h);ctx.globalAlpha=1;}
+        ctx.strokeRect(a.x,a.y,w,h);
+      }else if(v.kind==='polyline'){
+        ctx.setLineDash(v.dashed?[5,4]:[]);ctx.lineWidth=tone==='current'?2.5:1.8;ctx.beginPath();
+        v.points.forEach((q,j)=>{const a=m.toScreen(q.x,q.y);if(j===0)ctx.moveTo(a.x,a.y);else ctx.lineTo(a.x,a.y);});ctx.stroke();ctx.setLineDash([]);
+      }else if(v.kind==='arc'){
+        const q=m.toScreen(v.cx,v.cy);ctx.lineWidth=1.4;ctx.beginPath();ctx.arc(q.x,q.y,m.len(v.r),-v.startAngle,-v.endAngle,true);ctx.stroke();
       }
-      primitives.push({ kind: 'polyline', points: curve(state.photoelectric, params.intensityRel) });
-      if (state.photoelectric.stoppingDefined && -state.photoelectric.stoppingVoltageV >= plot.uMin) {
-        const stopX = graphX(-state.photoelectric.stoppingVoltageV);
-        primitives.push({kind:'circle',cx:stopX,cy:plot.y,r:0.025},
-          {kind:'text',x:stopX,y:plot.y-0.27,text:'−Uc',align:'middle'});
-      }
-      primitives.push({kind:'circle',cx:graphX(params.anodeVoltageV),cy:graphY(state.photoelectric.currentMa),r:0.024,fill:true});
-      return { width: 680, height: 400, viewBox: {minX: -0.28, minY: -1.38, maxX: 2.65, maxY: 1.28},
-        title: '光电效应伏安特性配图', primitives };
-    }
-    const v = comptonMomentumVectors(state.compton, params.scatterAngleDeg, 1.3);
-    primitives.push(
-      { kind:'arrow', x1:-v.incident.x, y1:0, x2:0, y2:0, label:'pγ' },
-      { kind:'arrow', x1:0, y1:0, x2:v.scattered.x, y2:v.scattered.y, label:'p′γ' },
-      { kind:'arrow', x1:0, y1:0, x2:v.recoil.x, y2:v.recoil.y, label:'pe' },
-      { kind:'line', x1:v.scattered.x, y1:v.scattered.y, x2:v.incident.x, y2:0, dashed:true },
-      { kind:'line', x1:v.recoil.x, y1:v.recoil.y, x2:v.incident.x, y2:0, dashed:true }
-    );
-    return {width:680,height:400,viewBox:{minX:-1.65,minY:-1.6,maxX:3.05,maxY:1.6},
-      title:'康普顿散射动量闭合示意图',primitives};
+    });
+    resolveAndDrawLabels(ctx,labels,viewport.width,viewport.height);ctx.restore();
   },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const m = createWorldMapper(viewport);
-    ctx.save();
-    const labels: CanvasLabel[] = [];
-
-    if (params.mode === 'compton') {
-      const origin = m.toScreen(-0.8, 0);
-      const vectors = comptonMomentumVectors(state.compton, params.scatterAngleDeg);
-      const incoming = m.toScreen(-0.8 - vectors.incident.x, 0);
-
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = m.len(0.015);
-      drawGlowVectorArrow(ctx, incoming.x, incoming.y, origin.x, origin.y, '#38bdf8', m.len(0.015), m.len(0.06));
-
-      const scattered = m.toScreen(-0.8 + vectors.scattered.x, vectors.scattered.y);
-      drawGlowVectorArrow(ctx, origin.x, origin.y, scattered.x, scattered.y, '#a855f7', m.len(0.015), m.len(0.06));
-
-      const recoil = m.toScreen(-0.8 + vectors.recoil.x, vectors.recoil.y);
-      drawGlowVectorArrow(ctx, origin.x, origin.y, recoil.x, recoil.y, '#f59e0b', m.len(0.015), m.len(0.06));
-      const resultant = m.toScreen(-0.8 + vectors.incident.x, 0);
-      ctx.save();
-      ctx.strokeStyle = 'rgba(148,163,184,0.6)'; ctx.lineWidth = 1.4; ctx.setLineDash([5,4]);
-      ctx.beginPath(); ctx.moveTo(scattered.x,scattered.y); ctx.lineTo(resultant.x,resultant.y);
-      ctx.moveTo(recoil.x,recoil.y); ctx.lineTo(resultant.x,resultant.y); ctx.stroke(); ctx.restore();
-      labels.push(
-        { id: 'compton-incident-label', ...m.toScreen(-1.4, 0.1), text: 'pγ', color: '#38bdf8' },
-        { id: 'compton-scattered-label', ...m.toScreen(-0.8 + vectors.scattered.x * 0.65, vectors.scattered.y * 0.65 + 0.14), text: "p′γ", color: '#a855f7' },
-        { id: 'compton-recoil-label', ...m.toScreen(-0.8 + vectors.recoil.x * 0.65, vectors.recoil.y * 0.65 - 0.14), text: 'pe', color: '#f59e0b' },
-        { id: 'compton-shift-summary', ...m.toScreen(0.65, 1.38), text: `Δλ = ${(state.compton.deltaLambdaNm * 1000).toFixed(3)} pm | λ′ = ${state.compton.scatteredWavelengthNm.toFixed(5)} nm`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' },
-        { id: 'compton-recoil-summary', ...m.toScreen(0.65, 1.16), text: `反冲电子角 φ = ${state.compton.recoilAngleDeg.toFixed(2)}° | Eke = ${state.compton.electronKineticKev.toFixed(3)} keV`, color: '#e2e8f0', font: '13px ui-sans-serif, system-ui' }
-      );
-
-      ctx.fillStyle = '#e2e8f0';
-      ctx.beginPath();
-      ctx.arc(origin.x, origin.y, m.len(0.035), 0, 2 * Math.PI);
-      ctx.fill();
-
-      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
-      ctx.restore();
-      return;
+  getControlHandles:(s,p)=>{
+    if(p.mode==='compton'){
+      const v=comptonMomentumVectors(s.compton,p.scatterAngleDeg);
+      return [{id:'compton-scatter-angle',label:'θ='+p.scatterAngleDeg.toFixed(0)+'°',position:{x:COMPTON_ORIGIN.x+v.scattered.x,y:v.scattered.y},origin:COMPTON_ORIGIN,handleKind:'angle',color:'#c084fc',
+        onDrag:world=>({scatterAngleDeg:Math.max(0,Math.min(180,Math.round(Math.atan2(world.y,world.x-COMPTON_ORIGIN.x)*180/Math.PI/5)*5))})}];
     }
-
-    if (activeLayers.has('apparatus')) {
-      const tube = m.toScreen(-1.2, 0);
-      const tubeCx = tube.x;
-      const tubeCy = tube.y;
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = m.len(0.012);
-      ctx.beginPath();
-      ctx.arc(tubeCx, tubeCy, m.len(0.68), 0, 2 * Math.PI);
-      ctx.stroke();
-
-      const beamColor = wavelengthToRgb(Math.max(380, Math.min(780, params.wavelengthNm))).hex;
-      ctx.strokeStyle = params.wavelengthNm < 380 ? '#c084fc' : beamColor;
-      ctx.lineWidth = m.len(0.015);
-      for (let k = -1; k <= 1; k++) {
-        const beamStart = m.toScreen(-1.95, 0.25 + k * 0.065);
-        const beamEnd = m.toScreen(-1.48, k * 0.065);
-        ctx.beginPath();
-        ctx.moveTo(beamStart.x, beamStart.y);
-        ctx.lineTo(beamEnd.x, beamEnd.y);
-        ctx.stroke();
-      }
-
-      ctx.strokeStyle = 'rgba(148,163,184,0.4)';
-      ctx.lineWidth = 1;
-      const wavelengthRailTop = m.toScreen(-2.02, -0.2);
-      const wavelengthRailBottom = m.toScreen(-2.02, -0.72);
-      ctx.beginPath();
-      ctx.moveTo(wavelengthRailTop.x, wavelengthRailTop.y);
-      ctx.lineTo(wavelengthRailBottom.x, wavelengthRailBottom.y);
-      ctx.stroke();
-
-      ctx.strokeStyle = '#60a5fa';
-      ctx.lineWidth = m.len(0.025);
-      const cathodeTop = m.toScreen(-1.48, 0.19);
-      const cathodeBottom = m.toScreen(-1.48, -0.19);
-      ctx.beginPath();
-      ctx.moveTo(cathodeTop.x, cathodeTop.y);
-      ctx.lineTo(cathodeBottom.x, cathodeBottom.y);
-      ctx.stroke();
-      ctx.strokeStyle = '#f87171';
-      const anodeTop = m.toScreen(-0.73, 0.14);
-      const anodeBottom = m.toScreen(-0.73, -0.14);
-      ctx.beginPath();
-      ctx.moveTo(anodeTop.x, anodeTop.y);
-      ctx.lineTo(anodeBottom.x, anodeBottom.y);
-      ctx.stroke();
-
-      if (state.photoelectric.emissionActive) {
-        ctx.fillStyle = '#38bdf8';
-        const travel = state.photoelectric.currentMa > 0 ? 0.44 : 0.18;
-        for (let eIdx = 0; eIdx < 5; eIdx++) {
-          const frac = (state.phaseWave / (2 * Math.PI) + eIdx * 0.2) % 1;
-          const electron = m.toScreen(-1.47 + frac * travel, 0.12 - eIdx * 0.075);
-          ctx.beginPath();
-          ctx.arc(electron.x, electron.y, m.len(0.018), 0, 2 * Math.PI);
-          ctx.fill();
-        }
-      }
-    }
-
-    if (activeLayers.has('characteristic')) {
-      const { x: gx0, y: gy0, width: gw, height: gh, uMin, uMax } = plot;
-      const toPx = (u: number) => m.toX(graphX(u));
-      const toPy = (curr: number) => m.toY(graphY(curr));
-
-      ctx.strokeStyle = 'rgba(148,163,184,0.28)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(m.toX(gx0), m.toY(gy0));
-      ctx.lineTo(m.toX(gx0 + gw), m.toY(gy0));
-      ctx.moveTo(toPx(0), m.toY(gy0));
-      ctx.lineTo(toPx(0), m.toY(gy0 + gh));
-      ctx.stroke();
-
-      const axisColor = '#94a3b8';
-      ctx.strokeStyle = axisColor; ctx.lineWidth = 1;
-      for (const tick of [-5,-3,0,3,6]) {
-        ctx.beginPath(); ctx.moveTo(toPx(tick),toPy(0)); ctx.lineTo(toPx(tick),toPy(0)+5); ctx.stroke();
-        labels.push({id:'voltage-tick-'+tick,x:toPx(tick),y:toPy(0)+15,text:String(tick),color:axisColor});
-      }
-      for (const tick of [2,4,6]) {
-        ctx.beginPath(); ctx.moveTo(toPx(0)-5,toPy(tick)); ctx.lineTo(toPx(0),toPy(tick)); ctx.stroke();
-        labels.push({id:'current-tick-'+tick,x:toPx(0)-15,y:toPy(tick),text:String(tick),color:axisColor});
-      }
-      labels.push({id:'voltage-axis',x:toPx(uMax),y:toPy(0)+32,text:'U_AK (V)',color:axisColor},
-        {id:'current-axis',x:toPx(0),y:toPy(plot.iMax)-15,text:'I (mA)',color:axisColor});
-      if (state.photoelectric.stoppingDefined && -state.photoelectric.stoppingVoltageV >= uMin) {
-        const x = toPx(-state.photoelectric.stoppingVoltageV);
-        ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.beginPath();
-        ctx.arc(x,toPy(0),4,0,Math.PI*2); ctx.stroke();
-        labels.push({id:'stopping-point',x,y:toPy(0)+32,text:'−Uc='+(-state.photoelectric.stoppingVoltageV).toFixed(3)+' V',color:'#67e8f9'});
-      }
-      if (params.freezeRefEnabled) {
-        labels.push({id:'reference-curve-legend',...m.toScreen(1.36,-1.2),
-          text:'虚线：参考光 λ='+params.refWavelengthNm.toFixed(0)+' nm',color:axisColor});
-        const refSol = solvePhotoelectric({
-          ...params,
-          wavelengthNm: params.refWavelengthNm,
-          intensityRel: params.refIntensityRel
-        });
-        ctx.strokeStyle = 'rgba(148,163,184,0.65)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 4]);
-        ctx.beginPath();
-        for (let k = 0; k <= 80; k++) {
-          const u = uMin + (k / 80) * (uMax - uMin);
-          const px = toPx(u);
-          const py = toPy(computePhotocurrentMa(u, refSol, params.refIntensityRel));
-          if (k === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      ctx.strokeStyle = '#22d3ee';
-      ctx.lineWidth = 2.8;
-      ctx.beginPath();
-      for (let k = 0; k <= 100; k++) {
-        const u = uMin + (k / 100) * (uMax - uMin);
-        const px = toPx(u);
-        const py = toPy(computePhotocurrentMa(u, state.photoelectric, params.intensityRel));
-        if (k === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
-      ctx.stroke();
-
-      ctx.fillStyle = '#fbbf24';
-      ctx.beginPath();
-      ctx.arc(toPx(params.anodeVoltageV), toPy(state.photoelectric.currentMa), 5, 0, 2 * Math.PI);
-      ctx.fill();
-    }
-
-    if (params.mode === 'photoelectric') {
-      labels.push({ id: 'photoelectric-summary', ...m.toScreen(0.9, 1.12), text: `hν = ${state.photoelectric.photonEnergyEv.toFixed(3)} eV | W₀ = ${state.photoelectric.workFunctionEv.toFixed(2)} eV | ${state.photoelectric.thresholdPassed ? 'Uc = '+state.photoelectric.stoppingVoltageV.toFixed(3)+' V' : '未超过阈频 · 无光电流'}`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
-    }
-    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
-    ctx.restore();
+    return [{id:'anode-voltage-point',label:'U_AK='+p.anodeVoltageV.toFixed(1)+' V',position:{x:graphX(p.anodeVoltageV),y:graphY(s.photoelectric.currentMa)},handleKind:'point',color:'#fbbf24',
+      onDrag:world=>({anodeVoltageV:Math.max(IV_PLOT.uMin,Math.min(IV_PLOT.uMax,Math.round(graphV(world.x)*10)/10))})},
+      {id:'incident-wavelength',label:'λ='+p.wavelengthNm.toFixed(0)+' nm',position:{x:-2.28,y:-.15+(750-p.wavelengthNm)/550*.80},handleKind:'point',color:s.beamHex,
+        onDrag:world=>({wavelengthNm:Math.max(200,Math.min(750,Math.round((750-(world.y+.15)/.8*550)/5)*5))})}];
   },
-  getControlHandles: (state, params) => {
-    if (params.mode === 'compton') {
-      const { scattered } = comptonMomentumVectors(state.compton, params.scatterAngleDeg);
-      return [
-        {
-          id: 'compton-scatter-angle',
-          label: `θ=${params.scatterAngleDeg.toFixed(0)}°`,
-          position: { x: -0.8 + scattered.x, y: scattered.y },
-          origin: { x: -0.8, y: 0 },
-          handleKind: 'angle',
-          color: '#a855f7',
-          onDrag: (world) => {
-            const degrees = (Math.atan2(world.y, world.x + 0.8) * 180) / Math.PI;
-            return { scatterAngleDeg: Math.max(0, Math.min(180, Math.round(degrees / 5) * 5)) };
-          }
-        }
-      ];
+  formatFormulas:(s,p)=>{
+    if(p.mode==='compton'){
+      const c=s.compton;
+      return [{id:'einstein-compton',label:'静止自由电子 · 相对论散射',latex:'\\Delta\\lambda=\\frac{h}{m_ec}(1-\\cos\\theta)',substitutedLatex:'\\Delta\\lambda='+ (1000*c.deltaLambdaNm).toFixed(4)+'\\,\\mathrm{pm}'},
+        {id:'compton-energy',label:'能量与二维动量守恒',latex:'E_\\gamma=E_\\gamma\' + K_e,\\quad \\vec p_\\gamma=\\vec p_\\gamma\'+\\vec p_e',substitutedLatex:'K_e='+c.electronKineticKev.toFixed(4)+'\\,\\mathrm{keV}'+(c.recoilAngleDefined?',\\quad\\varphi='+c.recoilAngleDeg.toFixed(2)+'^\\circ':'')}];
     }
-
-    const voltageX = graphX(params.anodeVoltageV);
-    const currentY = graphY(state.photoelectric.currentMa);
-    return [
-      {
-        id: 'anode-voltage-point',
-        label: `U_AK=${params.anodeVoltageV.toFixed(1)} V`,
-        position: { x: voltageX, y: currentY },
-        handleKind: 'point',
-        color: '#fbbf24',
-        onDrag: (world) => ({
-          anodeVoltageV: Number(Math.max(-5, Math.min(6, Math.round((plot.uMin + ((world.x - plot.x) / plot.width) * (plot.uMax - plot.uMin)) * 10) / 10)).toFixed(1))
-        })
-      },
-      {
-        id: 'incident-wavelength',
-        label: `λ=${params.wavelengthNm.toFixed(0)} nm`,
-        position: { x: -2.02, y: -0.72 + ((750 - params.wavelengthNm) / 550) * 0.52 },
-        handleKind: 'point',
-        color: state.beamHex,
-        onDrag: (world) => ({
-          wavelengthNm: Math.max(200, Math.min(750, Math.round((750 - ((world.y + 0.72) / 0.52) * 550) / 5) * 5))
-        })
-      }
-    ];
-  },
-  formatFormulas: (state, params) => [
-    {
-      id: 'einstein-compton',
-      label: params.mode === 'photoelectric' ? '爱因斯坦光电效应方程' : '康普顿波长偏移与能量守恒',
-      latex: params.mode === 'photoelectric' ? (state.photoelectric.stoppingDefined ? 'h\\nu - W_0 = eU_c' : state.photoelectric.thresholdPassed?'P=0,\\quad I=0':'h\\nu \\le W_0,\\quad I=0') : '\\Delta\\lambda = \\frac{h}{m_e c}(1 - \\cos\\theta)',
-      substitutedLatex:
-        params.mode === 'photoelectric'
-          ? (state.photoelectric.thresholdPassed
-            ? `\\begin{aligned}U_c&=${state.photoelectric.stoppingVoltageV.toFixed(3)}\\text{ V}\\\\U_{AK}&=${params.anodeVoltageV.toFixed(1)}\\text{ V}\\\\ I&=${state.photoelectric.currentMa.toFixed(2)}\\text{ mA}\\end{aligned}`
-            : `\\begin{aligned}h\\nu&=${state.photoelectric.photonEnergyEv.toFixed(3)}\\text{ eV}\\\\W_0&=${state.photoelectric.workFunctionEv.toFixed(2)}\\text{ eV}\\\\I&=0\\text{ mA}\\end{aligned}`)
-          : `\\Delta\\lambda=${(state.compton.deltaLambdaNm * 1000).toFixed(3)}\\text{ pm},\\; \\varphi=${state.compton.recoilAngleDeg.toFixed(2)}^\\circ`
-    }
-  ]
+    const pe=s.photoelectric;
+    return [{id:'einstein-compton',label:pe.stoppingDefined?'爱因斯坦光电效应方程':p.intensityRel===0?'关光 · 无电流':'低于或等于阈频 · 无逸出',
+      latex:pe.stoppingDefined?'h\\nu-W_0=eU_c':p.intensityRel===0?'P=0,\\quad I=0':'h\\nu\\le W_0,\\quad I=0',
+      substitutedLatex:pe.stoppingDefined?'U_c='+pe.stoppingVoltageV.toFixed(3)+'\\,\\mathrm V,\\quad U_{AK}='+p.anodeVoltageV.toFixed(2)+'\\,\\mathrm V,\\quad I='+pe.currentMa.toFixed(3)+'\\,\\mathrm{mA}':'h\\nu='+pe.photonEnergyEv.toFixed(3)+'\\,\\mathrm{eV},\\quad I=0'},
+      {id:'frequency-energy',label:'阈上理论最大初动能；不是阈下负动能',latex:'E_{km}=h\\nu-W_0\\quad(\\nu>\\nu_0),\\quad \\nu_0=W_0/h',
+      substitutedLatex:'\\nu_0='+ (pe.cutoffFreqHz/1e14).toFixed(4)+'\\times10^{14}\\,\\mathrm{Hz}'+(pe.thresholdPassed?',\\quad E_{km}='+pe.maxKineticEv.toFixed(4)+'\\,\\mathrm{eV}':'')}];
+  }
 });
-
 export default modernPhotoelectricComptonPlugin;
