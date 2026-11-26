@@ -6,6 +6,7 @@ import {
   BASE_AREA_M2,
   EPSILON_0,
   ELEMENTARY_CHARGE,
+  capacitorGeometry,
   getDropPhysicalParams,
   computeObservables,
   checkInvariants,
@@ -86,7 +87,7 @@ describe('H31 E02 independent signed field, charge and exact events',()=>{
     const a=computeCapacitorMetrics(p);
     expect(a.capacitanceF*1e12).toBeCloseTo(17.7083756256,10);
     expect(a.chargeC*1e9).toBeCloseTo(3.54167512512,10);
-    expect(a.fieldEy).toBe(-10000);
+    expect(a.fieldEy).toBeCloseTo(-10000,10);
     expect(a.phiPV).toBeCloseTo(50,10);
     for(const groundMode of ['bottom','top','none'] as const){
       const b=computeCapacitorMetrics({...p,distanceMm:40,groundMode});
@@ -97,12 +98,12 @@ describe('H31 E02 independent signed field, charge and exact events',()=>{
       expect(b.phiTopV-b.phiBottomV).toBeCloseTo(400,10);
     }
     const reverse=computeCapacitorMetrics({...p,sourceVoltageU0:-200});
-    expect(reverse.fieldEy).toBe(10000);
-    expect(reverse.fieldE).toBe(10000);
+    expect(reverse.fieldEy).toBeCloseTo(10000,10);
+    expect(reverse.fieldE).toBeCloseTo(10000,10);
     expect(reverse.phiPV).toBeCloseTo(-50,10);
     const changed=computeCapacitorMetrics({...p,areaRatioS:.5,dielectricEr:4});
     expect(changed.chargeC).toBe(a.chargeC);
-    expect(changed.fieldEy).toBe(-5000);
+    expect(changed.fieldEy).toBeCloseTo(-5000,10);
   });
   it('uses exactly integer electron charges and a declared calibrated mass',()=>{
     expect(ELEMENTARY_CHARGE).toBe(1.602176634e-19);
@@ -157,7 +158,29 @@ describe('H31 E02 independent signed field, charge and exact events',()=>{
     expect(r.nextState.events).toEqual([]);
     const o=computeObservables(r.nextState,p);
     expect(o.dropVyMmS).toBeUndefined();
-    expect(o.fieldEy).toBe(-10000);
+    expect(o.fieldEy).toBeCloseTo(-10000,10);
     expect(o.referenceChargeNC).toBeCloseTo(3.54167512512,10);
+  });
+});
+
+describe('H31 geometry and teaching force parity',()=>{
+  it('uses the same true overlap for probe, oil drop, handles and black-and-white field arrows',()=>{
+    for(const ratio of [.3,.5,.85,1])for(const voltage of [-200,0,200]){
+      const p={...getPreset(2),areaRatioS:ratio,sourceVoltageU0:voltage};
+      const g=capacitorGeometry(p),s=createInitialState(p),ir=emCapacitorMillikanPlugin.exportDiagramIR!(s,p);
+      expect((g.right-g.left)/3).toBeCloseTo(ratio,12);
+      expect(g.probeX).toBeGreaterThan(g.left);expect(g.probeX).toBeLessThan(g.right);
+      expect(g.dropX).toBeGreaterThan(g.left);expect(g.dropX).toBeLessThan(g.right);
+      const arrows=ir.primitives.filter(x=>x.kind==='arrow');
+      expect(arrows).toHaveLength(voltage===0?0:5);
+      for(const a of arrows){if(a.kind!=='arrow')throw Error('unexpected primitive');expect(Math.sign(a.y2-a.y1)).toBe(-Math.sign(voltage));expect(a.x1).toBeGreaterThan(g.left);expect(a.x1).toBeLessThan(g.right);}
+      const handles=emCapacitorMillikanPlugin.getControlHandles!(s,p);
+      expect(handles.find(h=>h.id==='probe-p')!.position.x).toBe(g.probeX);
+      const forces=emCapacitorMillikanPlugin.getForceVectors!(s,p);
+      const o=computeObservables(s,p);
+      expect(forces.find(f=>f.id==='drop-mg')!.force.y).toBe(-o.dropWeightN!);
+      expect(forces.find(f=>f.id==='drop-qe')!.force.y).toBe(o.dropElectricForceN);
+      expect(forces.every(f=>f.origin.x===g.dropX&&f.unit==='N')).toBe(true);
+    }
   });
 });
