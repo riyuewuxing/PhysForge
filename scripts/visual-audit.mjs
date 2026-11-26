@@ -1270,6 +1270,49 @@ async function auditF04Cases(page,offline,select){
  return out;
 }
 
+async function auditF07Conceptual(page,offline,select){
+ const out={},prefix=offline?'H53_F07_offline_':'H53_F07_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
+ const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+ const frameSelect=page.getByTestId(offline?'sf-orbit-frame':'select-reference-frame');
+ const sync=async expected=>{
+   await page.waitForFunction(({canvasId,expected})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.orbitCompareRendered;return raw&&Object.entries(expected).every(([k,v])=>JSON.parse(raw)[k]===v);},{canvasId,expected},{timeout:10000});
+   const r=JSON.parse(await canvas.getAttribute('data-orbit-compare-rendered'));
+   if(!Number.isFinite(r.t)||Math.abs(r.outerTime-r.t)>1e-8)throw Error('F07 clock mismatch');
+   if(r.mode==='rendezvous'&&(Math.abs(r.bodyX-Math.cos(r.targetAngleRad))>1e-9||Math.abs(r.bodyY-Math.sin(r.targetAngleRad))>1e-9||Math.abs(r.phaseLagRad-(r.targetAngleRad-r.chaserAngleRad))>1e-9))throw Error('F07 target phase mismatch');
+   if(r.mode==='gravity-assist'&&(!Number.isFinite(r.relativeSpeed)||!Number.isFinite(r.relativeSpecificEnergy)))throw Error('F07 nonfinite local teaching readout');
+   const panel=offline?'sf-f07-readouts':'f07-readouts';
+   await page.waitForFunction(({panel,t})=>Math.abs(Number(document.querySelector('[data-testid="'+panel+'"]')?.getAttribute('data-sample-time'))-t)<1e-8,{panel,t:r.t});
+   return r;
+ };
+ const save=async(name,r)=>{out[name]=r;await page.screenshot({path:path.join(OUT_DIR,prefix+name+'.png')});};
+ const run=async target=>{
+   await play.click();await page.waitForFunction(({canvasId,target})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.orbitCompareRendered;return raw&&JSON.parse(raw).outerTime>=target;},{canvasId,target},{timeout:15000});
+   await play.click();await page.waitForFunction(offline=>{const p=offline?document.querySelector('[data-testid="sf-play-pause"]'):document.querySelector('[data-testid="topbar"] [data-testid="btn-play-pause"]');return offline?p?.textContent?.includes('运行'):p?.getAttribute('aria-label')==='运行';},offline);
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   return sync({});
+ };
+ await select('slingshot-trailing-speedup');await frameSelect.selectOption('ground');
+ const initial=await sync({mode:'gravity-assist',flybySide:'trailing',t:0});
+ await save('local_initial',initial);
+ const local=await run(.5);await save('local_paused',local);
+ await frameSelect.selectOption('planet-frame');const relative=await sync({mode:'gravity-assist',observationFrame:'planet-frame',t:local.t});
+ for(const k of ['bodyX','bodyY','posX','posY','relativeSpeed','relativeSpecificEnergy'])if(relative[k]!==local[k])throw Error('F07 frame switch changed physical state '+k);
+ if(Math.abs(relative.frameOrigin.x-relative.bodyX)>1e-10||Math.abs(relative.frameOrigin.y-relative.bodyY)>1e-10)throw Error('F07 moving frame origin');
+ await save('relative_paused',relative);
+ if(!offline){
+   await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
+   const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,file=path.join(OUT_DIR,prefix+'relative.svg');await svg.saveAs(file);
+   const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!['行星平移系','局部二体近似','历史样本逐时刻变换'].every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F07 diagram semantics');
+   await preview.screenshot({path:path.join(OUT_DIR,prefix+'relative_svg.png')});await page.getByTestId('btn-close-export-studio').click();out.export={bytes:Buffer.byteLength(bytes)};
+ }
+ await frameSelect.selectOption('ground');await select('slingshot-leading-braking');await save('other_side_initial',await sync({mode:'gravity-assist',flybySide:'leading',t:0}));
+ await select('rendezvous-prograde-paradox');const rv=await sync({mode:'rendezvous',t:0});
+ if(Math.abs(rv.phaseLagRad-.08)>1e-10)throw Error('F07 initial phase');
+ await save('phase_initial',rv);const later=await run(.75);await save('phase_paused',later);
+ if(offline){await page.waitForFunction(()=>document.querySelector('[data-testid="sf-uplot"]')?.dataset.scopeTimeType==='elapsed');if(!((await page.getByTestId('sf-summary-clock').textContent())??'').includes('约化'))throw Error('F07 normalized clock');}
+ return out;
+}
+
 async function auditF06Braking(page,offline,select){
  const out={},prefix=offline?'H52_F06_offline_':'H52_F06_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
  const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
@@ -3957,6 +4000,9 @@ async function main() {
     const f06Url=new URL(origin);f06Url.searchParams.set('model','stse-em-launch-regen-brake');await page.goto(f06Url.toString(),{waitUntil:'networkidle'});
     await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='stse-em-launch-regen-brake');
     const f06Report=await auditF06Braking(page,false,id=>selectPreset(page,id,true));
+    const f07Url=new URL(origin);f07Url.searchParams.set('model','stse-gravity-assist-rendezvous');await page.goto(f07Url.toString(),{waitUntil:'networkidle'});
+    await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='stse-gravity-assist-rendezvous');
+    const f07Report=await auditF07Conceptual(page,false,id=>selectPreset(page,id,true));
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3970,8 +4016,8 @@ async function main() {
     const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
     const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
     if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    Object.assign(combined,{f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    Object.assign(combined,{f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
     console.log('VISUAL_AUDIT_ONLINE: PASS');
     await context.close();
     }
@@ -4723,8 +4769,18 @@ async function main() {
       if(f06Errors.length||f06Network.length)throw Error('F06 offline errors '+JSON.stringify({f06Errors,f06Network}));
       Object.assign(f06OfflineReport,{errors:f06Errors,network:f06Network});
     }finally{await f06Context.close();}
-    Object.assign(combined,{f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+    const f07File=path.join(OUT_DIR,'H53_F07_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','stse-gravity-assist-rendezvous','--preset','slingshot-trailing-speedup','--out',f07File],{stdio:'inherit'});
+    const f07Context=await browser.newContext({viewport:VIEWPORT,offline:true}),f07Page=await f07Context.newPage(),f07Errors=[],f07Network=[];let f07OfflineReport;
+    f07Page.on('pageerror',e=>f07Errors.push(e.message));f07Page.on('console',m=>{if(m.type()==='error')f07Errors.push(m.text());});f07Page.on('request',r=>{if(/^https?:/.test(r.url()))f07Network.push(r.url());});
+    try{
+      await f07Page.goto(pathToFileURL(f07File).href);
+      f07OfflineReport=await auditF07Conceptual(f07Page,true,id=>f07Page.getByTestId('sf-f07-presets').selectOption(id));
+      if(f07Errors.length||f07Network.length)throw Error('F07 offline errors '+JSON.stringify({f07Errors,f07Network}));
+      Object.assign(f07OfflineReport,{errors:f07Errors,network:f07Network});
+    }finally{await f07Context.close();}
+    Object.assign(combined,{f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
     console.log('VISUAL_AUDIT_OFFLINE: PASS');
     }
     console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));
