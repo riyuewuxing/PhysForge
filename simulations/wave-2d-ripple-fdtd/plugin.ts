@@ -1,4 +1,5 @@
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import {defineSimulationPlugin,type ParamFieldSpec} from '@physforge/sim-sdk';
+import {rippleExport,renderRipple,gridX,gridY,fitRippleViewport,rippleBoundsFit,rippleDiagramBounds} from './diagram.js';
 import { waveFdtdPresets } from './presets.js';
 import {
   checkInvariants,
@@ -7,7 +8,7 @@ import {
   stepWaveFdtd,
   type WaveFdtdParams,
   type WaveFdtdState,
-  DX,WALL_I,CENTER_J,GRID_NY
+  DX,WALL_I
 } from './engine.js';
 
 const paramSchema: readonly ParamFieldSpec<WaveFdtdParams>[] = [
@@ -23,15 +24,15 @@ const paramSchema: readonly ParamFieldSpec<WaveFdtdParams>[] = [
       { value: 'refraction-prism', label: '斜界面介质折射 c(x,y)' }
     ]
   },
-  { key: 'wavelengthCells', kind: 'number', label: '入射波长 λ (网格)', unit: 'px', min: 6, max: 20, step: 1, defaultValue: 10 },
+  { key: 'wavelengthCells', kind: 'number', label: '入射波长 λ (网格)', unit: '格', min: 6, max: 20, step: 1, defaultValue: 10 },
   { key: 'waveSpeed', kind: 'number', label: '参考波速 c₀', unit: 'm/s', min: 0.5, max: 2.0, step: 0.1, defaultValue: 1.0 },
   { key: 'amplitude', kind: 'number', label: '波源振幅 A', unit: '', min: 0, max: 1.5, step: 0.1, defaultValue: 1.0 },
-  { key: 'slitSepCells', kind: 'number', label: '双缝间距 d (网格)', unit: 'px', min: 14, max: 52, step: 2, defaultValue: 30 },
-  { key: 'slitWidthCells', kind: 'number', label: '缝宽 / 障碍半宽', unit: 'px', min: 3, max: 20, step: 1, defaultValue: 5 },
+  { key: 'slitSepCells', kind: 'number', label: '双缝间距 d (网格)', unit: '格', min: 14, max: 52, step: 2, defaultValue: 30 },
+  { key: 'slitWidthCells', kind: 'number', label: '缝宽 / 障碍半宽', unit: '格', min: 3, max: 20, step: 1, defaultValue: 5 },
   { key: 'refractiveIndexN', kind: 'number', label: '右侧介质折射率 n', unit: '', min: 1, max: 2.5, step: 0.1, defaultValue: 1.6 }
 ];
 
-export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, WaveFdtdState>({
+export const wave2dRippleFdtdPlugin = Object.assign(defineSimulationPlugin<WaveFdtdParams, WaveFdtdState>({
   meta: {
     id: 'wave-2d-ripple-fdtd',
     title: '2D FDTD 波动池衍射、折射与干涉 (W02)',
@@ -41,8 +42,9 @@ export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, Wav
     version: '2.0.0'
   },
   paramSchema,
+  getParamFields:p=>{const keys=['mode','wavelengthCells','waveSpeed','amplitude',...(p.mode==='double-slit'?['slitSepCells','slitWidthCells']:p.mode==='refraction-prism'?['refractiveIndexN']:['slitWidthCells'])];return keys.flatMap(k=>paramSchema.filter(f=>f.key===k)).map(f=>f.key==='slitWidthCells'?{...f,label:p.mode==='obstacle-diffraction'?'障碍物半宽（实际宽 2w+1 格）':'实际开口宽度'}:f);},
   presets: waveFdtdPresets,
-  defaultView: { offsetRatioX: -0.04 },
+  defaultView: {scale:(p,v)=>Math.min((v.width-60)/14,(v.height-60)/9)/(.24*Math.min(v.width,v.height)),minScale:.0001},
   engine: {
     createInitialState,
     step: stepWaveFdtd,
@@ -53,21 +55,17 @@ export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, Wav
     { id: 'waveField', label: '2D 波面振幅伪彩场 u(x,y)', defaultVisible: true },
     { id: 'screenProfile', label: '右侧接收屏强度 ⟨u²(y)⟩ 曲线', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'courantNumber', label: 'CFL 稳定系数', unit: '', color: '#4ade80' },
-    { key: 'maxAmplitude', label: '场域峰值振幅', unit: '', color: '#38bdf8' },
-    { key: 'centerScreenIntensity', label: '屏中心强度 ⟨u²⟩', unit: '', color: '#fbbf24' }
+  telemetryChannels:[
+    {key:'maxAmplitude',label:'全场峰值 |u|',unit:'u',color:'#38bdf8'},
+    {key:'centerScreenDisplacement',label:'屏中心瞬时位移',unit:'u',color:'#f472b6'},
+    {key:'centerScreenIntensity',label:'屏中心平均 u²',unit:'u²',color:'#fbbf24'},
+    {key:'peakScreenIntensity',label:'屏上峰值平均 u²',unit:'u²',color:'#4ade80'},
+    {key:'courantNumber',label:'实际 CFL',unit:'',color:'#94a3b8'}
   ],
-  getControlHandles: (_s, params) => [
-    {
-      id: 'slit-sep',
-      label: `d=${params.slitSepCells}格`,
-      position: { x: -0.6, y: params.slitSepCells * 0.025 },
-      handleKind: 'point',
-      color: '#fbbf24',
-      onDrag: (wp) => ({ slitSepCells: Math.round(Math.max(14, Math.min(52, Math.abs(wp.y) / 0.025)) / 2) * 2 })
-    }
-  ],
+  getControlHandles:(s,p)=>p.mode==='double-slit'&&s.geometry.valid&&s.geometry.apertures.length===2?[{
+    id:'slit-sep',label:'d='+s.geometry.separationCells+' 格',position:{x:gridX(WALL_I),y:gridY(s.geometry.apertures[0]!.centerJ)},handleKind:'point',color:'#fbbf24',
+    onDrag:wp=>({slitSepCells:Math.round(Math.max(14,Math.min(52,Math.abs(wp.y)/DX*2))/2)*2})
+  }]:[],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -77,101 +75,23 @@ export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, Wav
     }),
     importScene: (dsl) => dsl.params as Partial<WaveFdtdParams>
   },
-  exportDiagramIR:(s,p)=>{
-    const x=(i:number)=>(i-WALL_I)*DX,y=(j:number)=>(CENTER_J-j)*DX;
-    const primitives:DiagramPrimitive[]=s.geometry.blockedRuns.map(r=>({kind:'rect',x:x(s.wallI-1)-DX/2,y:y(r.lastJ)-DX/2,width:3*DX,height:(r.lastJ-r.firstJ+1)*DX,hatch:true}));
-    primitives.push({kind:'line',x1:x(s.screenI),x2:x(s.screenI),y1:y(0),y2:y(GRID_NY-1),dashed:true});
-    return {width:960,height:640,viewBox:{minX:x(0)-.5,minY:y(GRID_NY-1)-.5,maxX:x(s.nx-1)+.5,maxY:y(0)+.5},title:'二维波动池 · 实际网格几何',primitives};
-  },
-  renderCanvas: (ctx, state, _params, viewport, activeLayers) => {
-    const nx = state.nx;
-    const ny = state.ny;
-    const m = createWorldMapper(viewport);
-    const centerJ = Math.floor(ny / 2);
-    const leftI = Math.max(0, state.wallI - 28);
-    const topJ = Math.max(0, centerJ - 24);
-    const columns = Math.min(68, nx - leftI);
-    const rows = Math.min(48, ny - topJ);
-    const gridTopLeft = m.toScreen(-2, 1.2);
-    const cell = m.len(0.05);
-
-    ctx.save();
-    if (activeLayers.has('waveField')) {
-      // Show a cropped physical window at the solver's 0.05 m cell pitch.
-      const invMax = 1 / Math.max(0.25, state.maxAmplitude * 0.7);
-
-      for (let j = 0; j < rows; j += 1) {
-        for (let i = 0; i < columns; i += 1) {
-          const solverI = leftI + i;
-          const solverJ = topJ + j;
-          const idx = solverJ * nx + solverI;
-          const spd = state.speedSnapshot[idx]!;
-          if (spd === 0) {
-            ctx.fillStyle = '#94a3b8';
-          } else {
-            const v = Math.max(-1, Math.min(1, state.fieldSnapshot[idx]! * invMax));
-            if (v >= 0) {
-              const c = Math.round(v * 230);
-              ctx.fillStyle = `rgb(${Math.round(c * 0.2)}, ${Math.round(c * 0.75)}, ${c})`;
-            } else {
-              const c = Math.round(-v * 230);
-              ctx.fillStyle = `rgb(${c}, ${Math.round(c * 0.35)}, ${Math.round(c * 0.55)})`;
-            }
-          }
-          ctx.fillRect(gridTopLeft.x + i * cell, gridTopLeft.y + j * cell, cell + 0.5, cell + 0.5);
-        }
-      }
-
-      ctx.strokeStyle = 'rgba(148,163,184,0.4)';
-      ctx.strokeRect(gridTopLeft.x, gridTopLeft.y, m.len(3.4), m.len(2.4));
-      const wallX = m.toScreen(-0.6, 0).x;
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.lineWidth = m.len(0.012);
-      ctx.beginPath();
-      ctx.moveTo(wallX, m.toScreen(0, 1.2).y);
-      ctx.lineTo(wallX, m.toScreen(0, -1.2).y);
-      ctx.stroke();
+  exportDiagramIR:rippleExport,
+  renderCanvas:renderRipple,
+  formatFormulas:(s,p)=>{
+    const o=computeObservables(s,p),f=(n:number|undefined,d=3)=>n===undefined?'\\text{—}':n.toFixed(d),c=p.waveSpeed,lambda=p.wavelengthCells*DX;
+    const common=[{id:'fdtd-cfl',label:'实际物理步长与 CFL',latex:'r=c_0\\Delta t/\\Delta x<1/\\sqrt2',substitutedLatex:'\\begin{aligned}\\Delta t&='+s.fdtdRef.dt.toFixed(5)+'\\text{ s}\\\\r&='+s.courantNumber.toFixed(3)+'\\\\t_{\\rm field}&='+s.fieldTime.toFixed(3)+'\\text{ s}\\end{aligned}'},{id:'fdtd-screen',label:'实际时间窗内均方位移（非能流）',latex:'\\langle u^2\\rangle_j=\\frac1N\\sum_{k=1}^N u^2(x_S,y_j,t_k)',substitutedLatex:'\\begin{aligned}N&='+s.screenAverageSamples+'\\\\\\langle u^2\\rangle_0&='+f(o.centerScreenIntensity,5)+'\\end{aligned}'}];
+    if(!s.geometry.valid)return [...common,{id:'invalid',label:'请求不可实现',latex:'a<d',substitutedLatex:'\\text{开口重叠，请调整参数}'}];
+    if(p.mode==='double-slit'){
+      const d=s.geometry.separationCells*DX,L=(s.screenI-s.wallI)*DX,first=d>lambda?lambda/2*Math.sqrt(1+4*L*L/(d*d-lambda*lambda)):undefined;
+      return [...common,{id:'fdtd-fringe',label:'理想等相位点源参考，非有限缝实测峰值',latex:'|r_2-r_1|=m\\lambda',substitutedLatex:'\\begin{aligned}d&='+d.toFixed(2)+'\\text{ m}\\\\a&='+(s.geometry.widthCells*DX).toFixed(2)+'\\text{ m}\\\\y_{1,\\rm ideal}&='+f(first)+'\\text{ m}\\end{aligned}'},{id:'paraxial',label:'仅在近轴远场的间距近似',latex:'\\Delta y\\approx L\\lambda/d',substitutedLatex:'\\Delta y_{\\rm parax}='+(L*lambda/d).toFixed(3)+'\\text{ m}'}];
     }
-
-    if (activeLayers.has('screenProfile')) {
-      const profileTopLeft = m.toScreen(1.55, 1.2);
-      const profileBottomRight = m.toScreen(2.15, -1.2);
-      const sx0 = profileTopLeft.x;
-      const y0 = profileTopLeft.y;
-      const sw = profileBottomRight.x - sx0;
-      const drawH = profileBottomRight.y - y0;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
-      ctx.fillRect(sx0, y0, sw, drawH);
-      let maxI = 1e-6;
-      for (let j = 16; j < ny - 16; j++) {
-        if (state.screenIntensity[j]! > maxI) maxI = state.screenIntensity[j]!;
-      }
-
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      for (let j = 16; j < ny - 16; j++) {
-        const px = profileTopLeft.x + (state.screenIntensity[j]! / maxI) * sw;
-        const py = m.toScreen(0, 1.2 - ((j - 16) / (ny - 32)) * 2.4).y;
-        if (j === 16) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
-      ctx.stroke();
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '11px sans-serif';
-      ctx.fillText('探测屏 ⟨u²⟩', sx0 + 4, y0 + 16);
+    if(p.mode==='refraction-prism'){
+      const n=Math.max(1,p.refractiveIndexN),theta=Math.atan(.35),r=Math.asin(Math.sin(theta)/n);
+      return [...common,{id:'refraction',label:'连续斜界面 Snell 理论参考（非实测角）',latex:'\\frac{\\sin\\theta_1}{\\sin\\theta_2}=\\frac{c_1}{c_2}=n',substitutedLatex:'\\begin{aligned}c_2&='+(c/n).toFixed(3)+'\\text{ m/s}\\\\\\lambda_2&='+(lambda/n).toFixed(3)+'\\text{ m}\\\\\\theta_2&='+(r*180/Math.PI).toFixed(2)+'^\\circ\\end{aligned}'}];
     }
+    return [...common,{id:'diffraction',label:'开口/障碍尺度与波长比较',latex:'a/\\lambda',substitutedLatex:'a/\\lambda='+(s.geometry.widthCells/p.wavelengthCells).toFixed(3)}];
+  }
 
-    ctx.restore();
-  },
-  formatFormulas: (state, params) => [
-    {
-      id: 'fdtd-cfl',
-      label: 'FDTD 稳定性与双缝间距定理',
-      latex: 'r=\\frac{c\\Delta t}{\\Delta x} < \\frac{1}{\\sqrt{2}},\\quad \\Delta y \\approx \\frac{L}{d}\\lambda',
-      substitutedLatex: `r=${state.courantNumber.toFixed(3)},\\; \\text{step}=${state.stepsRun},\\; \\lambda=${params.wavelengthCells}\\text{px}`
-    }
-  ]
-});
+}),{fitRippleViewport,rippleBoundsFit,rippleDiagramBounds});
 
 export default wave2dRippleFdtdPlugin;
