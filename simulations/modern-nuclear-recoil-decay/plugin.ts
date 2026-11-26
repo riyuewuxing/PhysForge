@@ -47,6 +47,20 @@ function recoilScale(state: NuclearRecoilDecayState): number {
     ...state.recoil.daughterTrackCm.map(p => Math.hypot(p.x,p.y)));
 }
 
+// One geometry source for Canvas and DiagramIR. The primary two tracks remain
+// at one scale; a separately framed daughter inset uses only a similarity transform.
+function recoilDiagramGeometry(state: NuclearRecoilDecayState) {
+  const k = recoilScale(state);
+  const project = (points: readonly {x:number;y:number}[]) => points.map(p=>({x:p.x*k,y:p.y*k}));
+  const emitted=project(state.recoil.emittedTrackCm),daughter=project(state.recoil.daughterTrackCm);
+  const extent=Math.max(0,...daughter.map(p=>Math.hypot(p.x,p.y)));
+  const inset=extent>0&&extent<0.22 ? {
+    factor:0.65/extent,origin:{x:-1.0,y:0},
+    points:daughter.map(p=>({x:-1.0+p.x*(0.65/extent),y:p.y*(0.65/extent)}))
+  }:undefined;
+  return {emitted,daughter,inset};
+}
+
 function halfLifePlot(state: NuclearRecoilDecayState) {
   const maxT = Math.max(4 * state.halfLifeS, state.t);
   const coord = (t: number, fraction: number) => ({x: 0.15 + t / maxT * 1.95, y: -0.9 + fraction * 1.8});
@@ -115,13 +129,20 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
   exportDiagramIR: (state, params) => {
     const primitives: DiagramPrimitive[] = [];
     if (params.mode === 'cloud-chamber-recoil') {
-      const k = recoilScale(state);
-      const points = (pts: readonly {x:number;y:number}[]) => pts.map(p=>({x:p.x*k,y:p.y*k}));
-      primitives.push({kind:'polyline', points:points(state.recoil.emittedTrackCm)},
-        {kind:'polyline',points:points(state.recoil.daughterTrackCm),dashed:true},
-        {kind:'circle',cx:0,cy:0,r:0.025,fill:true},
+      const g=recoilDiagramGeometry(state);
+      primitives.push({kind:'polyline', points:g.emitted},
+        {kind:'polyline',points:g.daughter,dashed:true},
+        {kind:'circle',cx:0,cy:0,r:0.009,fill:false},
         {kind:'text',x:0,y:1.45,text:params.decayKind==='alpha'?'α 二体理想化':'β⁻ 端点理想化（反中微子能量趋零）',align:'middle'},
-        {kind:'text',x:0,y:-1.45,text:params.magneticFieldT===0?'B=0：无有限曲率半径':'同一比例的轨迹截段；非同时刻',align:'middle'});
+        {kind:'text',x:0,y:-1.45,text:params.magneticFieldT===0?'B=0：无有限曲率半径；同一比例':'同一比例的轨迹截段；非同时刻',align:'middle'},
+        {kind:'text',x:0.55,y:1.12,text:'实线：出射粒子；虚线：反冲子核',align:'middle'});
+      if(g.inset)primitives.push(
+        {kind:'rect',x:-1.85,y:-0.81,width:1.60,height:1.62,dashed:true},
+        {kind:'polyline',points:g.inset.points,dashed:true},
+        {kind:'circle',cx:g.inset.origin.x,cy:g.inset.origin.y,r:0.012},
+        {kind:'text',x:-1.05,y:1.02,text:'子核局部放大',align:'middle'},
+        {kind:'text',x:-1.05,y:-1.02,text:'×'+g.inset.factor.toPrecision(4)+'（相对主图）',align:'middle'}
+      );
     } else if (params.mode === 'half-life-mc') {
       const plot=halfLifePlot(state);
       primitives.push({kind:'line',x1:.15,y1:-.9,x2:2.1,y2:-.9},
@@ -154,7 +175,11 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
     const labels: CanvasLabel[] = [];
 
     if (params.mode === 'cloud-chamber-recoil') {
-      const worldScale = recoilScale(state);
+      const g=recoilDiagramGeometry(state);
+      const projector=viewport.theme==='projector';
+      const ink=projector?'#1e293b':'#e2e8f0';
+      const emittedColor=projector?'#0369a1':'#38bdf8';
+      const daughterColor=projector?'#b45309':'#f59e0b';
 
       ctx.strokeStyle = 'rgba(56,189,248,0.35)';
       ctx.lineWidth = 1;
@@ -165,33 +190,44 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
       ctx.lineTo(magneticBottom.x, magneticBottom.y);
       ctx.stroke();
 
-      const drawTrack = (pts: readonly { x: number; y: number }[], color: string, lw: number) => {
+      const drawTrack = (pts: readonly { x: number; y: number }[], color: string, lw: number, dashed=false) => {
         if (pts.length < 2) return;
         ctx.strokeStyle = color;
         ctx.lineWidth = lw;
+        ctx.setLineDash(dashed?[5,3]:[]);
         ctx.beginPath();
         pts.forEach((p, idx) => {
-          const point = m.toScreen(p.x * worldScale, p.y * worldScale);
+          const point = m.toScreen(p.x, p.y);
           const sx = point.x;
           const sy = point.y;
           if (idx === 0) ctx.moveTo(sx, sy);
           else ctx.lineTo(sx, sy);
         });
-        ctx.stroke();
+        ctx.stroke();ctx.setLineDash([]);
       };
 
-      drawTrack(state.recoil.emittedTrackCm, '#38bdf8', m.len(0.014));
-      drawTrack(state.recoil.daughterTrackCm, '#f59e0b', m.len(0.02));
-
-      const origin = m.toScreen(0, 0);
-      ctx.fillStyle = '#f43f5e';
-      ctx.beginPath();
-      ctx.arc(origin.x, origin.y, m.len(0.025), 0, 2 * Math.PI);
-      ctx.fill();
+      drawTrack(g.emitted,emittedColor,Math.max(1.25,m.len(0.014)));
+      drawTrack(g.daughter,daughterColor,Math.max(1,m.len(0.012)),true);
+      const origin=m.toScreen(0,0);
+      ctx.strokeStyle=projector?'#be123c':'#f43f5e';ctx.lineWidth=1;
+      ctx.beginPath();ctx.arc(origin.x,origin.y,Math.max(1,m.len(0.009)),0,2*Math.PI);ctx.stroke();
+      if(g.inset){
+        const tl=m.toScreen(-1.85,.81),br=m.toScreen(-.25,-.81);
+        ctx.strokeStyle=projector?'#94a3b8':'rgba(148,163,184,.55)';ctx.lineWidth=1;ctx.setLineDash([5,4]);
+        ctx.strokeRect(tl.x,tl.y,br.x-tl.x,br.y-tl.y);ctx.setLineDash([]);
+        drawTrack(g.inset.points,daughterColor,Math.max(1.5,m.len(.015)),true);
+        const o=m.toScreen(g.inset.origin.x,g.inset.origin.y);
+        ctx.strokeStyle=projector?'#be123c':'#f43f5e';ctx.beginPath();ctx.arc(o.x,o.y,Math.max(1.5,m.len(.012)),0,2*Math.PI);ctx.stroke();
+        labels.push(
+          {id:'daughter-inset-title',...m.toScreen(-1.05,1.02),text:'子核局部放大',color:ink,font:'bold 13px ui-sans-serif, system-ui'},
+          {id:'daughter-inset-factor',...m.toScreen(-1.05,-1.02),text:'×'+g.inset.factor.toPrecision(4)+'（相对主图）',color:ink,font:'12px ui-sans-serif, system-ui'}
+        );
+      }
+      labels.push({id:'recoil-legend',...m.toScreen(.55,1.12),text:'实线：出射粒子；虚线：反冲子核',color:ink,font:'12px ui-sans-serif, system-ui'});
 
       labels.push(
-        { id: 'cloud-chamber-summary', ...m.toScreen(-0.1, 1.55), text: `${params.decayKind === 'alpha' ? 'α 二体理想化' : 'β⁻ 端点理想化'} | Q = ${state.recoil.qValueMev.toFixed(3)} MeV`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' },
-        { id: 'cloud-chamber-radius', ...m.toScreen(-0.1, 1.32), text: state.recoil.radiusRatioMeasured === undefined ? '无有限圆半径／无法拟合' : `数值拟合 R₁/R₂ = ${state.recoil.radiusRatioMeasured.toFixed(6)}（同一比例，轨迹截段）`, color: '#e2e8f0', font: '13px ui-sans-serif, system-ui' }
+        { id: 'cloud-chamber-summary', ...m.toScreen(-0.1, 1.55), text: `${params.decayKind === 'alpha' ? 'α 二体理想化' : 'β⁻ 端点理想化'} | Q = ${state.recoil.qValueMev.toFixed(3)} MeV`, color: ink, font: 'bold 14px ui-sans-serif, system-ui' },
+        { id: 'cloud-chamber-radius', ...m.toScreen(-0.1, 1.32), text: state.recoil.radiusRatioMeasured === undefined ? '无有限圆半径／无法拟合' : `数值拟合 R₁/R₂ = ${state.recoil.radiusRatioMeasured.toFixed(6)}（同一比例，轨迹截段）`, color: ink, font: '13px ui-sans-serif, system-ui' }
       );
       resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();

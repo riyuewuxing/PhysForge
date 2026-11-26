@@ -126,3 +126,22 @@ describe('H48 F05 prepared independent nuclear-decay and sample-statistics regre
     expect(ir.primitives.some(p=>p.kind==='text'&&p.text.includes('期望'))).toBe(true);
   });
 });
+
+// The local inset must not alter the main shared-scale geometry or mirror symmetry.
+it('draws a labeled, similarity-transformed daughter inset using the actual shared-scale trace',()=>{
+  for(const p of [getPreset(0),getPreset(1),{...getPreset(0),magneticFieldT:-1.2},{...getPreset(0),magneticFieldT:0}]){
+    const state=createInitialState(p),ir=modernNuclearRecoilDecayPlugin.exportDiagramIR!(state,p);
+    const traces=ir.primitives.filter(x=>x.kind==='polyline');
+    expect(traces).toHaveLength(3);
+    const main=traces[1]!.points,inset=traces[2]!.points;
+    expect(main.length).toBe(inset.length);
+    const extent=Math.max(...main.map(q=>Math.hypot(q.x,q.y)));
+    const k=.65/extent;
+    expect(k).toBeGreaterThan(1);
+    for(let i=0;i<main.length;i++){
+      expect(inset[i]!.x-inset[0]!.x).toBeCloseTo((main[i]!.x-main[0]!.x)*k,10);
+      expect(inset[i]!.y-inset[0]!.y).toBeCloseTo((main[i]!.y-main[0]!.y)*k,10);
+    }
+    expect(ir.primitives.some(x=>x.kind==='text'&&x.text.includes('子核局部放大'))).toBe(true);
+  }
+});
