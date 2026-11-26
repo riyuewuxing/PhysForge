@@ -1320,6 +1320,15 @@ async function auditF05Cases(page,offline,select){
  if(!Number.isFinite(panelT)||Math.abs(panelT-sample.t)>1e-9)throw Error('F05 paused panel/frame mismatch '+panelT+' vs '+sample.t);
  if(sample.t<1||sample.remainingCount>init.remainingCount||sample.remainingCount<0||!Number.isInteger(sample.remainingCount)||Math.abs(sample.expectedRemainingCount-1600*2**(-sample.t/2))>1e-8)throw Error('F05 sample/expectation mismatch');
  await verifyReadouts(sample);out.samplePaused=sample;await page.screenshot({path:path.join(OUT_DIR,prefix+'sample_paused.png')});
+ const initialTheme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+ const setTheme=async t=>{
+  if(await page.evaluate(()=>document.documentElement.getAttribute('data-theme'))===t)return;
+  if(offline){await page.getByRole('button',{name:t==='projector'?'黑板深蓝':'投影浅色'}).click();}
+  else{const menu=page.getByTestId('tools-menu');if(!await menu.isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();if(await menu.isVisible())await page.getByTestId('btn-tools-menu').click();}
+  await page.waitForFunction(t=>document.documentElement.getAttribute('data-theme')===t,t);
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ };
+ await setTheme('projector');await page.screenshot({path:path.join(OUT_DIR,prefix+'sample_projector.png')});await setTheme(initialTheme??'chalkboard');
  if(!offline){
   const exportSvg=async(name,labels)=>{
     await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
@@ -1330,7 +1339,13 @@ async function auditF05Cases(page,offline,select){
   out.sampleExport=await exportSvg('sample',['样本阶梯','理论期望','N/N₀','t / s','N(t) = '+sample.remainingCount+' / '+sample.nucleiCountN0,'t = '+sample.t.toFixed(3)+' s']);
   await select('cloud-chamber-alpha-external');await sync({mode:'cloud-chamber-recoil',t:0,magneticFieldT:1.2});
   out.recoilExport=await exportSvg('recoil',['α 二体理想化','同一比例','子核局部放大','相对主图']);
- }
+ }else{await select('cloud-chamber-alpha-external');await sync({mode:'cloud-chamber-recoil',t:0,magneticFieldT:1.2});}
+ await setTheme('projector');await page.screenshot({path:path.join(OUT_DIR,prefix+'recoil_projector.png')});await setTheme(initialTheme??'chalkboard');
+ // Existing abstract teaching mode only: no added physical apparatus or operating model.
+ await select('chain-fission-control-rod');
+ const abstractFrame=await sync({mode:'chain-fission',t:0});await assertStatic();
+ if('qValueMev'in abstractFrame||'remainingCount'in abstractFrame||await input('magneticFieldT').count()||await input('halfLifeS').count())throw Error('F05 abstract mode leaks unrelated controls/data');
+ out.abstractStatic={t:abstractFrame.t,mode:abstractFrame.mode};await page.screenshot({path:path.join(OUT_DIR,prefix+'abstract_static.png')});
  return out;
 }
 
