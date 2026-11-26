@@ -57,7 +57,7 @@ export function computeRollingFriction(
   kappa: number,
   inclineRad: number,
   g = CLASSROOM_GRAVITY,
-  slipEps = 1e-3
+  slipEps = 1e-9
 ): RollingFrictionResult {
   const safeRadius = Math.max(0.05, Number.isFinite(radius) ? radius : 0.05);
   const safeMass = Math.max(0, Number.isFinite(mass) ? mass : 0);
@@ -65,7 +65,7 @@ export function computeRollingFriction(
   const safeKappa = Math.max(0, Number.isFinite(kappa) ? kappa : 0);
   const safeTheta = Number.isFinite(inclineRad) ? inclineRad : 0;
   const safeG = Math.max(0, Number.isFinite(g) ? g : CLASSROOM_GRAVITY);
-  const safeSlipEps = Math.max(0, Number.isFinite(slipEps) ? slipEps : 1e-3);
+  const safeSlipEps = Math.max(0, Number.isFinite(slipEps) ? slipEps : 1e-9);
   const contactSpeed = v - omega * safeRadius;
   const normal = safeMass * safeG * Math.max(0, Math.cos(safeTheta));
 
@@ -83,8 +83,9 @@ export function computeRollingFriction(
   }
 
   const required = (safeKappa / (1 + safeKappa)) * safeMass * safeG * Math.sin(safeTheta);
-  const staticFriction = Math.sign(required) * Math.min(Math.abs(required), safeMu * normal);
-  return { frictionAlongTangent: -staticFriction, mode: 'pure-roll', label: 'f_静' };
+  // The incline-race contract assumes sufficient static friction. mu is kinetic,
+  // not an invented static coefficient or a cap on the required rolling force.
+  return { frictionAlongTangent: -required, mode: 'pure-roll', label: 'f_静' };
 }
 
 function computeTotalEnergyJ(x: number, v: number, omega: number, params: RigidRollingParams): number {
@@ -137,10 +138,10 @@ export function stepRigidRollingSlip(
 
   const R = Math.max(0.05, params.radiusM);
   const c = SHAPE_INERTIA_COEFF[params.shape];
-  const muK = Math.max(0.01, params.muK);
+  const muK = Math.max(0, params.muK);
 
   if (params.scenario === 'incline-race') {
-    const sinTh = Math.sin(degToRad(Math.max(2, params.inclineDeg)));
+    const sinTh = Math.sin(degToRad(params.inclineDeg));
     const aSel = (CLASSROOM_GRAVITY * sinTh) / (1 + c);
     const nextT = state.t + dt;
     const nextV = state.v + aSel * dt;
@@ -203,7 +204,7 @@ export function stepRigidRollingSlip(
     };
   };
 
-  const guards: HybridGuard<'slipping' | 'pure-rolling', RigidRollingState>[] = [
+  const guards: HybridGuard<'slipping' | 'pure-rolling', RigidRollingState>[] = muK===0 ? [] : [
     {
       id: 'pure-rolling-lock',
       label: '进入 v = ωR 纯滚动模态',
@@ -211,13 +212,14 @@ export function stepRigidRollingSlip(
       biasEndpoint: 'positive',
       eventFn: (s) => -initialSlipSign * (s.v - s.omega * R),
       reset: (boundaryState, evTime) => {
-        const vMatched = 0.5 * (boundaryState.v + boundaryState.omega * R);
+        const vMatched = (boundaryState.v + c * boundaryState.omega * R) / (1+c);
         return {
           nextState: {
             ...boundaryState,
             mode: 'pure-rolling',
             v: vMatched,
             omega: vMatched / R,
+            currentEnergyJ: computeTotalEnergyJ(boundaryState.x,vMatched,vMatched/R,params),
             transitionTimeS: evTime,
             transitionSpeedMps: vMatched
           },
@@ -247,30 +249,42 @@ export function stepRigidRollingSlip(
   };
 }
 
-export function computeObservables(state: RigidRollingState, params: RigidRollingParams): Record<string, number> {
-  return {
-    t: state.t,
-    x: state.x,
-    v: state.v,
-    omegaR: state.omega * params.radiusM,
-    slipSpeed: state.v - state.omega * params.radiusM,
-    currentEnergyJ: state.currentEnergyJ
-  };
+/** Signed physical quantities; display geometry must not change these values. */
+export function rollingQuantities(state:RigidRollingState,params:RigidRollingParams){
+  const m=Math.max(.2,params.massKg),R=Math.max(.05,params.radiusM),c=SHAPE_INERTIA_COEFF[params.shape];
+  const I=c*m*R*R,theta=params.scenario==='incline-race'?degToRad(params.inclineDeg):0;
+  const u=state.v-R*state.omega,u0=params.scenario==='incline-race'?0:params.v0Mps-R*params.omega0Radps;
+  const rolling=state.mode==='pure-rolling';
+  const f=rolling?-c/(1+c)*m*CLASSROOM_GRAVITY*Math.sin(theta):-Math.sign(u)*Math.max(0,params.muK)*m*CLASSROOM_GRAVITY*Math.cos(theta);
+  const vEnergy=.5*m*state.v*state.v,wEnergy=.5*I*state.omega*state.omega;
+  const pEnergy=-m*CLASSROOM_GRAVITY*state.x*Math.sin(theta);
+  // Analytic integral of |f*u|, independently of the kinetic energy subtraction.
+  const heat=params.scenario==='incline-race'?0:Math.max(0,m*c/(2*(1+c))*(u0*u0-u*u));
+  const predictedTime=Math.abs(u0)<=1e-9?0:params.muK>0?Math.abs(u0)/(Math.max(0,params.muK)*CLASSROOM_GRAVITY*(1+1/c)):null;
+  return {m,R,c,I,theta,u,u0,f,vEnergy,wEnergy,pEnergy,heat,
+    angularMomentum:m*R*state.v+I*state.omega,
+    acceleration:CLASSROOM_GRAVITY*Math.sin(theta)+f/m,angularAcceleration:-R*f/I,
+    requiredStaticMu:c/(1+c)*Math.tan(theta),predictedTime,predictedV:(params.v0Mps+c*R*params.omega0Radps)/(1+c)};
 }
 
-export function checkInvariants(state: RigidRollingState, _i: RigidRollingState, params: RigidRollingParams): InvariantReport[] {
-  const eDrift =
-    params.scenario === 'incline-race'
-      ? Math.abs(state.currentEnergyJ - state.initialEnergyJ) / Math.max(1e-6, Math.abs(state.initialEnergyJ) + 1)
-      : state.mode === 'pure-rolling'
-        ? Math.abs(state.v - state.omega * params.radiusM)
-        : 0;
-  return [
-    {
-      name: params.scenario === 'incline-race' ? '纯滚斜面机械能相对漂移' : '纯滚动后滑移残差 |v - ωR|',
-      measuredError: eDrift,
-      tolerance: 1e-6,
-      passed: eDrift < 1e-6
-    }
-  ];
+export function computeObservables(state: RigidRollingState, params: RigidRollingParams): Record<string, number> {
+  const q=rollingQuantities(state,params);
+  return {t:state.t,x:state.x,v:state.v,omegaR:state.omega*q.R,slipSpeed:q.u,
+    currentEnergyJ:state.currentEnergyJ,translationalEnergyJ:q.vEnergy,rotationalEnergyJ:q.wEnergy,
+    potentialEnergyJ:q.pEnergy,dissipatedEnergyJ:q.heat,frictionN:q.f,accelerationMps2:q.acceleration,
+    angularMomentumContact:q.angularMomentum,requiredStaticMu:q.requiredStaticMu};
+}
+
+export function checkInvariants(state: RigidRollingState, initial: RigidRollingState, params: RigidRollingParams): InvariantReport[] {
+  const q=rollingQuantities(state,params),q0=rollingQuantities(initial,params);
+  const e=Math.abs(state.currentEnergyJ+q.heat-state.initialEnergyJ)/Math.max(1,Math.abs(state.initialEnergyJ),q.vEnergy+q.wEnergy);
+  const checks:InvariantReport[]=[{name:'机械能 + 滑动耗散能闭合',measuredError:e,tolerance:1e-6,passed:e<1e-6}];
+  if(state.mode==='pure-rolling'){
+    const u=Math.abs(q.u);checks.push({name:'纯滚动后滑移残差 |v - ωR|',measuredError:u,tolerance:1e-6,passed:u<1e-6});
+  }
+  if(params.scenario==='flat-bowling-slip'){
+    const err=Math.abs(q.angularMomentum-q0.angularMomentum)/Math.max(1,Math.abs(q0.angularMomentum));
+    checks.push({name:'水平接触高度角动量守恒',measuredError:err,tolerance:1e-6,passed:err<1e-6});
+  }
+  return checks;
 }

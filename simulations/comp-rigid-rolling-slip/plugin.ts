@@ -1,14 +1,14 @@
-import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
-import { defineSimulationPlugin, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
+import { createWorldMapper, defineSimulationPlugin, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { rollingScene, rollingItems, rollingDiagram, rollingViewBounds, fitRollingViewport, SPEED_SCALE, V_LANE, W_LANE, type RollingRole } from './geometry.js';
 import { rigidRollingPresets } from './presets.js';
 import {
   SHAPE_INERTIA_COEFF,
   checkInvariants,
-  computeRollingFriction,
+  rollingQuantities,
   computeObservables,
   createInitialState,
   stepRigidRollingSlip,
-  type RigidBodyShape,
   type RigidRollingParams,
   type RigidRollingState
 } from './engine.js';
@@ -45,11 +45,11 @@ const paramSchema: readonly ParamFieldSpec<RigidRollingParams>[] = [
   { key: 'radiusM', kind: 'number', label: '半径 R', unit: 'm', defaultValue: 0.12, min: 0.06, max: 0.3, step: 0.02 },
   { key: 'v0Mps', kind: 'number', label: '初质心速度 v₀', unit: 'm/s', defaultValue: 7.0, min: -10, max: 15, step: 0.5 },
   { key: 'omega0Radps', kind: 'number', label: '初角速度 ω₀', unit: 'rad/s', defaultValue: 0, min: -150, max: 100, step: 10 },
-  { key: 'muK', kind: 'number', label: '动摩擦因数 μ_k', defaultValue: 0.25, min: 0.05, max: 0.8, step: 0.05 },
+  { key: 'muK', kind: 'number', label: '动摩擦因数 μ_k', defaultValue: 0.25, min: 0, max: 0.8, step: 0.05 },
   { key: 'inclineDeg', kind: 'number', label: '斜面倾角 θ', unit: '°', defaultValue: 20, min: 5, max: 45, step: 5 }
 ];
 
-export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingParams, RigidRollingState>({
+export const compRigidRollingSlipPlugin = Object.assign(defineSimulationPlugin<RigidRollingParams, RigidRollingState>({
   meta: {
     id: 'comp-rigid-rolling-slip',
     title: '刚体定轴转动与滑滚转换 (C01)',
@@ -73,111 +73,44 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
     { key: 'v', label: '质心速度 v', unit: 'm/s', color: '#38bdf8' },
     { key: 'omegaR', label: '边缘转动线速度 ωR', unit: 'm/s', color: '#fbbf24' },
     { key: 'slipSpeed', label: '触地相对滑速 v-ωR', unit: 'm/s', color: '#f43f5e' },
-    { key: 'currentEnergyJ', label: '机械能 E', unit: 'J', color: '#4ade80' }
+    { key: 'currentEnergyJ', label: '机械能 E', unit: 'J', color: '#4ade80' },
+    { key: 'dissipatedEnergyJ', label: '滑动耗散能 Q', unit: 'J', color: '#fb923c' }
   ],
-  getControlHandles: (state, params) => {
-    if (params.scenario !== 'flat-bowling-slip' || state.t > 1e-12) return [];
-    const radius = Math.max(0.05, params.radiusM);
-    const velocityScale = 0.15;
-    const angularScale = 0.015;
-    const originY = radius;
+  getParamFields: p=>paramSchema.filter(f=>(p.scenario==='incline-race'?['scenario','shape','massKg','radiusM','inclineDeg']:['scenario','shape','massKg','radiusM','v0Mps','omega0Radps','muK']).includes(f.key)),
+  defaultView: {
+    scale:(p,v)=>{
+      const base=Math.max(1,Math.min(v.width,v.height)*.24),usable=v.width-(v.width>=900?300:0);
+      return Math.max(.1,Math.min(1.18,(usable-28)/(4.8*base),(v.height-94)/((p.scenario==='incline-race'?4.98:3.8)*base)));
+    },
+    offsetRatioX:(_p,v)=>(v.width-(v.width>=900?300:0))/(2*Math.max(1,v.width))-.45,
+    offsetRatioY:-.01
+  },
+  getControlHandles:(state,p)=>{
+    if(p.scenario!=='flat-bowling-slip'||state.t>1e-12)return [];
+    const R=Math.max(.05,p.radiusM),vy=V_LANE-.09,wy=W_LANE-.09;
     return [
-      {
-        id: 'initial-velocity',
-        label: `v₀=${params.v0Mps.toFixed(2)}m/s`,
-        position: { x: params.v0Mps * velocityScale, y: originY + 0.4 },
-        origin: { x: 0, y: originY + 0.4 },
-        handleKind: 'vector',
-        color: '#38bdf8',
-        onDrag: (worldPos) => ({ v0Mps: Number(clamp(worldPos.x / velocityScale, -10, 15).toFixed(2)) })
-      },
-      {
-        id: 'initial-omega',
-        label: `ω₀=${params.omega0Radps.toFixed(1)}rad/s`,
-        position: { x: params.omega0Radps * radius * angularScale, y: originY },
-        origin: { x: 0, y: originY },
-        handleKind: 'vector',
-        color: '#fbbf24',
-        onDrag: (worldPos) => ({ omega0Radps: Number(clamp(worldPos.x / (radius * angularScale), -150, 100).toFixed(2)) })
-      }
+      {id:'initial-velocity',label:'v₀',position:{x:p.v0Mps*SPEED_SCALE,y:vy},origin:{x:0,y:vy},handleKind:'vector',color:'#38bdf8',
+        onDrag:pos=>({v0Mps:Number(clamp(pos.x/SPEED_SCALE,-10,15).toFixed(2))})},
+      {id:'initial-omega',label:'−ω₀R',position:{x:-p.omega0Radps*R*SPEED_SCALE,y:wy},origin:{x:0,y:wy},handleKind:'vector',color:'#fbbf24',
+        onDrag:pos=>({omega0Radps:Number(clamp(-pos.x/(R*SPEED_SCALE),-150,100).toFixed(2))})}
     ];
   },
-  getForceVectors: (state, params): ForceVectorItem[] => {
-    const incline = params.scenario === 'incline-race' ? degToRad(params.inclineDeg) : 0;
-    const tangent = { x: Math.cos(incline), y: -Math.sin(incline) };
-    const normal = { x: Math.sin(incline), y: Math.cos(incline) };
-    const radius = Math.max(0.05, params.radiusM);
-    const rowIndex: Record<RigidBodyShape, number> = {
-      'solid-sphere': 0,
-      'solid-cylinder': 1,
-      'hollow-sphere': 2,
-      'thin-ring': 3
-    };
-    let alongTrack = state.x;
-    let rowY = 0;
-    if (params.scenario === 'incline-race') {
-      const maxX = Math.max(8, ...Object.values(state.inclinePositions));
-      alongTrack = -1.4 + (state.inclinePositions[params.shape]! / maxX) * 2.8;
-      rowY = 1.5 - rowIndex[params.shape] * 1.0;
-    }
-    const center = {
-      x: alongTrack * tangent.x + radius * normal.x,
-      y: rowY + alongTrack * tangent.y + radius * normal.y
-    };
-    const contact = { x: center.x - radius * normal.x, y: center.y - radius * normal.y };
-    const friction = computeRollingFriction(
-      state.v,
-      state.omega,
-      radius,
-      params.massKg,
-      params.muK,
-      SHAPE_INERTIA_COEFF[params.shape],
-      incline,
-      CLASSROOM_GRAVITY
-    );
-    const weight = params.massKg * CLASSROOM_GRAVITY;
-    const normalForce = weight * Math.max(0, Math.cos(incline));
-    const vectors: ForceVectorItem[] = [
-      { id: 'gravity', label: 'mg', origin: center, force: { x: 0, y: -weight }, color: '#fbbf24', category: 'gravity' },
-      {
-        id: 'normal', label: 'F_N', origin: contact,
-        force: { x: normalForce * normal.x, y: normalForce * normal.y },
-        color: '#38bdf8', category: 'normal'
-      }
+  getForceVectors:(s,p):ForceVectorItem[]=>{
+    const sc=rollingScene(s,p),q=rollingQuantities(s,p),b=sc.selected;
+    const normalForce=q.m*CLASSROOM_GRAVITY*Math.cos(q.theta);
+    const vectors:ForceVectorItem[]=[
+      {id:'gravity',label:'mg',origin:b.center,force:{x:0,y:-q.m*CLASSROOM_GRAVITY},color:'#fbbf24',category:'gravity'},
+      {id:'normal',label:'F_N',origin:b.contact,force:{x:normalForce*sc.normal.x,y:normalForce*sc.normal.y},color:'#38bdf8',category:'normal'}
     ];
-    if (Math.abs(friction.frictionAlongTangent) > 1e-5) {
-      vectors.push({
-        id: 'friction', label: friction.label, origin: contact,
-        force: {
-          x: friction.frictionAlongTangent * tangent.x,
-          y: friction.frictionAlongTangent * tangent.y
-        },
-        color: '#f472b6', category: 'friction'
-      });
-    }
+    if(Math.abs(q.f)>1e-12)vectors.push({id:'friction',label:s.mode==='pure-rolling'?'f_静':'f_动',origin:b.contact,
+      force:{x:q.f*sc.tangent.x,y:q.f*sc.tangent.y},color:'#f472b6',category:'friction'});
     return vectors;
   },
-  referenceFrames: [
-    {
-      id: 'cylinder-cm',
-      label: '刚体质心随动系',
-      getOrigin: (s, p) => {
-        const incline = p.scenario === 'incline-race' ? degToRad(p.inclineDeg) : 0;
-        const tangent = { x: Math.cos(incline), y: -Math.sin(incline) };
-        const normal = { x: Math.sin(incline), y: Math.cos(incline) };
-        const rowIndex: Record<RigidBodyShape, number> = { 'solid-sphere': 0, 'solid-cylinder': 1, 'hollow-sphere': 2, 'thin-ring': 3 };
-        const radius = Math.max(0.05, p.radiusM);
-        const maxX = Math.max(8, ...Object.values(s.inclinePositions));
-        const along = p.scenario === 'incline-race' ? -1.4 + (s.inclinePositions[p.shape]! / maxX) * 2.8 : s.x;
-        const rowY = p.scenario === 'incline-race' ? 1.5 - rowIndex[p.shape]! : 0;
-        return { x: along * tangent.x + radius * normal.x, y: rowY + along * tangent.y + radius * normal.y };
-      },
-      getVelocity: (s, p) => {
-        const incline = p.scenario === 'incline-race' ? degToRad(p.inclineDeg) : 0;
-        return { x: s.v * Math.cos(incline), y: -s.v * Math.sin(incline) };
-      }
-    }
-  ],
+  referenceFrames: [{
+    id:'cylinder-cm',label:'刚体质心随动系（显示窗口）',
+    getOrigin:(s,p)=>rollingScene(s,p).selected.center,
+    getVelocity:(s,p)=>{const sc=rollingScene(s,p);return {x:s.v*sc.tangent.x,y:s.v*sc.tangent.y};}
+  }],
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -187,111 +120,67 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
     }),
     importScene: (dsl) => dsl.params as Partial<RigidRollingParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'hatchedGround', x1: -2.0, y1: -0.5, x2: 2.0, y2: -0.5 },
-      { kind: 'circle', cx: -0.4 + Math.min(1.6, state.x * 0.1), cy: -0.1, r: 0.4 },
-      { kind: 'arrow', x1: -0.4 + Math.min(1.6, state.x * 0.1), y1: -0.1, x2: 0.3 + Math.min(1.6, state.x * 0.1), y2: -0.1, label: 'v' },
-      { kind: 'mathLabel', x: 0, y: 1.0, text: `I=${SHAPE_INERTIA_COEFF[params.shape].toFixed(2)}mR^2`, align: 'middle' }
-    ];
-    return {
-      width: 680,
-      height: 360,
-      viewBox: { minX: -2.2, minY: -1.1, maxX: 2.2, maxY: 1.3 },
-      title: '刚体滑滚转换模型配图',
-      primitives
-    };
-  },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const w = viewport.width;
-    const h = viewport.height;
-    if (!activeLayers.has('main')) return;
-    ctx.save();
-
-    const ppm = Math.min(w, h) * 0.24 * viewport.scale;
-    const anchorX = w * 0.45 + viewport.offsetX;
-    const anchorY = h * 0.5 + viewport.offsetY;
-    const toScreen = (x: number, y: number) => ({ x: anchorX + x * ppm, y: anchorY - y * ppm });
-
-    if (params.scenario === 'incline-race') {
-      const shapes: { key: RigidBodyShape; label: string; col: string }[] = [
-        { key: 'solid-sphere', label: '实心球 (c=0.40)', col: '#4ade80' },
-        { key: 'solid-cylinder', label: '实心圆柱 (c=0.50)', col: '#38bdf8' },
-        { key: 'hollow-sphere', label: '空心球壳 (c=0.67)', col: '#fbbf24' },
-        { key: 'thin-ring', label: '薄圆环 (c=1.00)', col: '#f43f5e' }
-      ];
-      const maxX = Math.max(8, ...Object.values(state.inclinePositions));
-      const incline = degToRad(params.inclineDeg);
-      const tangent = { x: Math.cos(incline), y: -Math.sin(incline) };
-      const normal = { x: Math.sin(incline), y: Math.cos(incline) };
-      shapes.forEach((sh, idx) => {
-        const rowY = 1.5 - idx * 1.0;
-        const start = toScreen(-1.4 * tangent.x, rowY - 1.4 * tangent.y);
-        const end = toScreen(1.4 * tangent.x, rowY + 1.4 * tangent.y);
-        ctx.strokeStyle = '#475569';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(start.x, start.y);
-        ctx.lineTo(end.x, end.y);
-        ctx.stroke();
-
-        const along = -1.4 + (state.inclinePositions[sh.key]! / maxX) * 2.8;
-        const center = toScreen(along * tangent.x + params.radiusM * normal.x, rowY + along * tangent.y + params.radiusM * normal.y);
-        ctx.fillStyle = sh.col;
-        ctx.beginPath();
-        ctx.arc(center.x, center.y, Math.max(8, params.radiusM * ppm), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#e2e8f0';
-        ctx.font = 'bold 12px ui-sans-serif, system-ui';
-        ctx.fillText(`${sh.label}: x=${state.inclinePositions[sh.key]!.toFixed(2)}m`, start.x, start.y - 16);
-      });
-      ctx.restore();
-      return;
+  exportDiagramIR:rollingDiagram,
+  renderCanvas:(ctx,s,p,vp,layers)=>{
+    if(!layers.has('main'))return;
+    const m=createWorldMapper(vp),screen=m.toScreen,paper=vp.theme==='projector';
+    const colors:Record<RollingRole,string>=paper?{ink:'#172033',muted:'#64748b',velocity:'#0369a1',rotation:'#92400e',contact:'#9f1239',rolling:'#166534',slipping:'#be123c',energy:'#166534',heat:'#c2410c'}:{ink:'#e2e8f0',muted:'#94a3b8',velocity:'#38bdf8',rotation:'#fbbf24',contact:'#fb7185',rolling:'#4ade80',slipping:'#fb7185',energy:'#4ade80',heat:'#fb923c'};
+    const font=Math.max(9,Math.min(13,m.len(.070)));
+    function trace(points:readonly {x:number;y:number}[]){
+      if(points.length<2)return;ctx.beginPath();points.forEach((p,i)=>{const z=screen(p.x,p.y);if(i)ctx.lineTo(z.x,z.y);else ctx.moveTo(z.x,z.y);});ctx.stroke();
     }
-
-    const groundY = anchorY;
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(w * 0.08, groundY);
-    ctx.lineTo(w * 0.92, groundY);
-    ctx.stroke();
-
-    const rPx = Math.max(8, params.radiusM * ppm);
-    const ball = toScreen(state.x, params.radiusM);
-    const ballX = ball.x;
-    const ballY = ball.y;
-    ctx.fillStyle = state.mode === 'pure-rolling' ? 'rgba(74, 222, 128, 0.25)' : 'rgba(244, 63, 94, 0.25)';
-    ctx.strokeStyle = state.mode === 'pure-rolling' ? '#4ade80' : '#f43f5e';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(ballX, ballY, rPx, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Spoke to show rotation phase theta
-    ctx.beginPath();
-    ctx.moveTo(ballX, ballY);
-    ctx.lineTo(ballX + rPx * Math.cos(-state.theta), ballY - rPx * Math.sin(-state.theta));
-    ctx.stroke();
-
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 13px ui-sans-serif, system-ui';
-    ctx.fillText(
-      `状态: ${state.mode === 'pure-rolling' ? '纯滚动 (v=ωR)' : '滑动搓地中'} | v=${state.v.toFixed(3)} m/s | ωR=${(state.omega * params.radiusM).toFixed(3)} m/s${state.transitionTimeS !== null ? ` | t_c=${state.transitionTimeS.toFixed(4)}s` : ''}`,
-      20,
-      30
-    );
+    const line=(x1:number,y1:number,x2:number,y2:number)=>trace([{x:x1,y:y1},{x:x2,y:y2}]);
+    function label(x:number,y:number,t:string,align:CanvasTextAlign='center',size=font){
+      const a=screen(x,y);ctx.save();ctx.font='500 '+size+'px system-ui,sans-serif';ctx.textAlign=align;ctx.textBaseline='middle';ctx.fillText(t,a.x,a.y);ctx.restore();
+    }
+    ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+    for(const {role,primitive:d} of rollingItems(s,p)){
+      const paint=colors[role];ctx.strokeStyle=paint;ctx.fillStyle=paint;ctx.lineWidth=role==='muted'?1.05:1.9;
+      ctx.setLineDash('dashed' in d&&d.dashed?[4,4]:[]);
+      if(d.kind==='line'){line(d.x1,d.y1,d.x2,d.y2);}
+      else if(d.kind==='arrow'){
+        line(d.x1,d.y1,d.x2,d.y2);const a=screen(d.x1,d.y1),b=screen(d.x2,d.y2),angle=Math.atan2(b.y-a.y,b.x-a.x),len=Math.hypot(b.x-a.x,b.y-a.y),h=Math.min(8,len*.45);
+        if(h>.4){ctx.beginPath();ctx.moveTo(b.x-h*Math.cos(angle-.47),b.y-h*Math.sin(angle-.47));ctx.lineTo(b.x,b.y);ctx.lineTo(b.x-h*Math.cos(angle+.47),b.y-h*Math.sin(angle+.47));ctx.stroke();}
+      }else if(d.kind==='circle'){
+        const z=screen(d.cx,d.cy);ctx.beginPath();ctx.arc(z.x,z.y,Math.max(.9,m.len(d.r)),0,2*Math.PI);
+        if(d.fill)ctx.fill();else{if(role==='rolling'||role==='slipping'||role==='velocity'){ctx.globalAlpha=.13;ctx.fill();ctx.globalAlpha=1;}ctx.stroke();}
+      }else if(d.kind==='rect'){
+        const z=screen(d.x,d.y+d.height),w=m.len(d.width),h=m.len(d.height);
+        if(role!=='ink'){ctx.globalAlpha=.6;ctx.fillRect(z.x,z.y,w,h);ctx.globalAlpha=1;}ctx.strokeRect(z.x,z.y,w,h);
+      }else if(d.kind==='hatchedGround'){
+        line(d.x1,d.y1,d.x2,d.y2);
+        const dx=d.x2-d.x1,dy=d.y2-d.y1,l=Math.hypot(dx,dy);
+        if(l>0){const ux=dx/l,uy=dy/l,nx=-uy,ny=ux,depth=d.depth??.06;for(let u=.05;u<l;u+=.12){
+          const x=d.x1+u*ux,y=d.y1+u*uy;line(x,y,x-depth*nx-.04*ux,y-depth*ny-.04*uy);
+        }}
+      }else if(d.kind==='text')label(d.x,d.y,d.text,d.align==='start'?'left':d.align==='end'?'right':'center');
+    }
     ctx.restore();
+    const sc=rollingScene(s,p),q=rollingQuantities(s,p);
+    if(ctx.canvas?.dataset)ctx.canvas.dataset.rigidRollingRendered=JSON.stringify({
+      t:s.t,scenario:p.scenario,shape:p.shape,m:p.massKg,R:p.radiusM,v0:p.v0Mps,omega0:p.omega0Radps,mu:p.muK,incline:p.inclineDeg,
+      mode:s.mode,x:s.x,v:s.v,omega:s.omega,theta:s.theta,tC:s.transitionTimeS,vC:s.transitionSpeedMps,
+      energy:s.currentEnergyJ,initialEnergy:s.initialEnergyJ,q,bodies:sc.bodies,windowOrigin:sc.windowOrigin,raceExtent:sc.raceExtent,
+      selected:sc.selected,normal:sc.normal,tangent:sc.tangent,viewBounds:rollingViewBounds(p,vp),
+      handles:{v:screen(p.v0Mps*SPEED_SCALE,V_LANE-.09),omega:screen(-p.omega0Radps*p.radiusM*SPEED_SCALE,W_LANE-.09),scale:m.len(SPEED_SCALE)}
+    });
   },
-  formatFormulas: (state, params) => [
-    {
-      id: 'rigid-rolling',
-      label: '刚体滑滚转换动力学',
-      latex: 'I=cmR^2,\\quad t_c=\\frac{v_0-\\omega_0 R}{(1+1/c)\\mu_k g}',
-      substitutedLatex: `v=${state.v.toFixed(3)}\\text{ m/s},\\; \\omega R=${(state.omega * params.radiusM).toFixed(3)}\\text{ m/s}`
-    }
-  ]
-});
+  formatFormulas:(s,p)=>{
+    const q=rollingQuantities(s,p);
+    if(p.scenario==='incline-race')return [
+      {id:'rolling-inertia',label:'转动惯量',latex:'I=cmR^2',substitutedLatex:'I='+q.I.toFixed(4)+'\\ \\mathrm{kg\\,m^2}'},
+      {id:'rolling-incline',label:'静摩擦充足的纯滚加速度',latex:'a=\\frac{g\\sin\\theta}{1+c}',substitutedLatex:'a='+q.acceleration.toFixed(3)+'\\ \\mathrm{m/s^2}'},
+      {id:'rolling-static',label:'静摩擦条件（不是动摩擦因数）',latex:'\\mu_s\\ge\\frac{c\\tan\\theta}{1+c}',substitutedLatex:'\\mu_s\\ge '+q.requiredStaticMu.toFixed(4)},
+      {id:'rolling-energy',label:'平动、转动及重力势能',latex:'\\frac12mv^2+\\frac12I\\omega^2-mgs\\sin\\theta=0'}
+    ];
+    return [
+      {id:'rolling-slip',label:'有向接触点速度',latex:'u=v-\\omega R',substitutedLatex:'u='+q.u.toFixed(4)+'\\ \\mathrm{m/s}'},
+      {id:'rolling-friction',label:'动摩擦反抗滑移；纯滚水平面无摩擦',latex:s.mode==='slipping'?'f=-\\mu_kmg\\operatorname{sgn}(u)':'f=0',substitutedLatex:'f='+q.f.toFixed(3)+'\\ \\mathrm{N}'},
+      {id:'rolling-transition',label:'纯滚转换时刻（μk>0）',latex:q.predictedTime===null?'\\mu_k=0\\Rightarrow\\text{不锁定}':'t_c=\\frac{|v_0-\\omega_0R|}{\\mu_k g(1+1/c)}',...(q.predictedTime===null?{}:{substitutedLatex:'t_c='+q.predictedTime.toFixed(5)+'\\ \\mathrm{s}'})},
+      {id:'rolling-momentum',label:'水平固定接触高度角动量',latex:'L=mRv+I\\omega=\\mathrm{const.}',substitutedLatex:'L='+q.angularMomentum.toFixed(4)+'\\ \\mathrm{kg\\,m^2/s}'},
+      {id:'rolling-heat',label:'滑动耗散与机械能闭合',latex:'Q=\\frac{mc(u_0^2-u^2)}{2(1+c)}',substitutedLatex:'Q='+q.heat.toFixed(3)+'\\ \\mathrm{J}'}
+    ];
+  }
+}),{fitRollingViewport,rollingViewBounds});
 
 export default compRigidRollingSlipPlugin;

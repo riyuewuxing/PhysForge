@@ -17,6 +17,8 @@ import type { SpringSepParams,SpringSepState } from '../../../simulations/mech-s
 type SpringSlicePlugin=typeof import('../../../simulations/mech-spring-separation/plugin.js').mechSpringSeparationPlugin;
 import type { CollisionRecoilParams,CollisionRecoilState } from '../../../simulations/mech-collision-recoil/engine.js';
 type CollisionSlicePlugin=typeof import('../../../simulations/mech-collision-recoil/plugin.js').mechCollisionRecoilPlugin;
+import type { RigidRollingParams } from '../../../simulations/comp-rigid-rolling-slip/engine.js';
+type RollingSlicePlugin=typeof import('../../../simulations/comp-rigid-rolling-slip/plugin.js').compRigidRollingSlipPlugin;
 import type {CapacitorMillikanParams,CapacitorMillikanState} from '../../../simulations/em-capacitor-millikan/engine.js';
 type CapacitorSlicePlugin=typeof import('../../../simulations/em-capacitor-millikan/plugin.js').emCapacitorMillikanPlugin;
 import type {AcScopeParams,AcScopeState} from '../../../simulations/em-ac-field-oscilloscope/engine.js';
@@ -92,7 +94,8 @@ const waveSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='selec
 const rippleSlice=targetPlugin.paramSchema.some(f=>f.key==='wavelengthCells');
 const mechanicsErrorSlice=targetPlugin.paramSchema.some(f=>f.key==='rulerOffsetCm')&&targetPlugin.paramSchema.some(f=>f.key==='hangerMassKg')&&targetPlugin.paramSchema.some(f=>f.key==='readingNoiseMm');
 const electricalErrorSlice=targetPlugin.paramSchema.some(f=>f.key==='targetVernierMm')&&targetPlugin.paramSchema.some(f=>f.key==='rheostatTapFrac')&&targetPlugin.paramSchema.some(f=>f.key==='halfBiasSupplyV');
-const baseMeasuredScope=electricalErrorSlice||mechanicsErrorSlice||circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice;
+const rollingSlice=targetPlugin.paramSchema.some(f=>f.key==='omega0Radps')&&targetPlugin.paramSchema.some(f=>f.key==='shape')&&targetPlugin.paramSchema.some(f=>f.key==='muK');
+const baseMeasuredScope=rollingSlice||electricalErrorSlice||mechanicsErrorSlice||circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -311,6 +314,11 @@ export const SingleFileApp: React.FC = () => {
       const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
       if(!model.collisionBoundsFit(s,p,v,safe)){const next=model.fitCollisionViewport(s,p,v,safe);if(next)viewportRef.current=next;}
     }
+    if(rollingSlice&&drawState!==null){
+      const model=targetPlugin as unknown as RollingSlicePlugin,v=viewportRef.current,p=pm as RigidRollingParams;
+      const next=model.fitRollingViewport(p,v,{left:26,right:v.width-26,top:28,bottom:v.height-28});
+      if(next)viewportRef.current=next;
+    }
     if(capacitorSlice&&drawState!==null){
       const model=targetPlugin as unknown as CapacitorSlicePlugin,v=viewportRef.current,p=pm as CapacitorMillikanParams;
       const key=JSON.stringify([p,v.width,v.height,v.scale,v.offsetX,v.offsetY]);
@@ -490,7 +498,7 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (measuredScope && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-      if(electricalErrorSlice||mechanicsErrorSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice||(regenSlice&&latestRef.current.params.mode==='regen-brake'))uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
+      if(rollingSlice||electricalErrorSlice||mechanicsErrorSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice||(regenSlice&&latestRef.current.params.mode==='regen-brake'))uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
       const empty = snaps.length < 2;
       uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
@@ -1040,7 +1048,7 @@ export const SingleFileApp: React.FC = () => {
               style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
             >
               <div style={{ color: 'var(--pf-text-muted)' }}>{f.label}</div>
-              {(electricalErrorSlice||mechanicsErrorSlice||equilibriumSlice||projectileSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
+              {(rollingSlice||electricalErrorSlice||mechanicsErrorSlice||equilibriumSlice||projectileSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
               <div className="overflow-x-auto"
                 dangerouslySetInnerHTML={{
                   __html: katex.renderToString(f.substitutedLatex ?? f.latex, { throwOnError: false })
@@ -1076,7 +1084,7 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
-                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||orbitCompareSlice||(regenSlice&&next.mode==='regen-brake')){setIsPlaying(false);setScrubTime(null);}
+                    if(rollingSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||orbitCompareSlice||(regenSlice&&next.mode==='regen-brake')){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                     className="w-full h-9"
@@ -1111,7 +1119,7 @@ export const SingleFileApp: React.FC = () => {
               <div key={field.key} className="text-xs space-y-1">
                 <span>{field.label}</span>
                 <select
-                  data-testid={electricalErrorSlice||atomicSlice||nuclearSlice||regenSlice||orbitCompareSlice?'sf-param-'+field.key:undefined}
+                  data-testid={rollingSlice||electricalErrorSlice||atomicSlice||nuclearSlice||regenSlice||orbitCompareSlice?'sf-param-'+field.key:undefined}
                   value={typeof val === 'string' ? val : field.defaultValue}
                   onChange={(e) => {
                     setParams(
@@ -1120,7 +1128,7 @@ export const SingleFileApp: React.FC = () => {
                         [field.key]: e.target.value
                       })
                     );
-                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||orbitCompareSlice||(regenSlice&&(params.mode==='regen-brake'||(field.key==='mode'&&e.target.value==='regen-brake')))){setIsPlaying(false);setScrubTime(null);}
+                    if(rollingSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||orbitCompareSlice||(regenSlice&&(params.mode==='regen-brake'||(field.key==='mode'&&e.target.value==='regen-brake')))){setIsPlaying(false);setScrubTime(null);}
                     setResetNonce((n) => n + 1);
                   }}
                   className="w-full rounded border px-2 py-1.5"

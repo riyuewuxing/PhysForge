@@ -1270,6 +1270,125 @@ async function auditF04Cases(page,offline,select){
  return out;
 }
 
+async function auditF10Rolling(page,offline,select){
+ const out={},prefix=offline?'H60_F10_offline_':'H60_F10_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
+ const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+ const field=key=>offline?page.getByTestId('sf-param-'+key):page.locator('#param-'+key);
+ const reveal=async f=>{
+   if(!offline&&!await f.isVisible()){const details=page.locator('details').filter({has:f});await details.locator('summary').click({timeout:5000});}
+   await f.waitFor({state:'visible',timeout:5000});
+ };
+ const number=async(key,value)=>{const f=field(key);await reveal(f);await f.fill(String(value),{timeout:5000});};
+ const option=async(key,value)=>{const f=field(key);await reveal(f);await f.selectOption(value,{timeout:5000});};
+ const absent=async keys=>{for(const k of keys)if(await field(k).count())throw Error('F10 irrelevant parameter '+k);};
+ const coefficients={'solid-sphere':.4,'solid-cylinder':.5,'hollow-sphere':2/3,'thin-ring':1};
+ const near=(a,b,tol=1e-6)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<=tol*Math.max(1,Math.abs(b));
+ const read=async()=>JSON.parse(await canvas.getAttribute('data-rigid-rolling-rendered'));
+ const sync=async expected=>{
+   await page.waitForFunction(({canvasId,expected})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.rigidRollingRendered;if(!raw)return false;const r=JSON.parse(raw);return Object.entries(expected).every(([k,v])=>typeof v==='number'?Math.abs(r[k]-v)<1e-9:r[k]===v);},{canvasId,expected},{timeout:10000});
+   const r=await read(),c=coefficients[r.shape],I=c*r.m*r.R*r.R,g=9.8;
+   const box=await canvas.boundingBox();if(!box)throw Error('F10 missing canvas');
+   const b=r.viewBounds;
+   if(!b||b.left<0||b.top<0||b.right>box.width+1||b.bottom>box.height+1)throw Error('F10 scene outside canvas '+JSON.stringify(b));
+   if(!offline){
+     const dock=await page.getByTestId('floating-scope-dock').boundingBox();
+     const panel=await page.getByTestId('right-control-panel').boundingBox();
+     if(dock&&box.y+b.bottom>dock.y-2)throw Error('F10 scene occluded by scope '+JSON.stringify({b,dock,box}));
+     if(panel&&box.x+b.right>panel.x-2)throw Error('F10 scene occluded by panel '+JSON.stringify({b,panel,box}));
+   }
+   if(!near(r.q.I,I)||!near(r.q.u,r.v-r.R*r.omega)||!near(r.q.vEnergy,.5*r.m*r.v*r.v)||!near(r.q.wEnergy,.5*I*r.omega*r.omega))throw Error('F10 physical observables');
+   if(r.scenario==='flat-bowling-slip'){
+     const u0=r.v0-r.R*r.omega0,A=r.mu*g*(1+1/c),tc=Math.abs(u0)<=1e-9?0:A>0?Math.abs(u0)/A:Infinity;
+     const h=Math.min(r.t,tc),a=-Math.sign(u0)*r.mu*g,alpha=-a/(c*r.R);
+     const v=r.v0+a*h,w=r.omega0+alpha*h,x=r.v0*h+.5*a*h*h+v*(r.t-h),theta=r.omega0*h+.5*alpha*h*h+w*(r.t-h);
+     const Q=r.mu*r.m*g*(Math.abs(u0)*h-.5*A*h*h),L=r.m*r.R*r.v0+I*r.omega0;
+     if(!near(r.v,v)||!near(r.omega,w)||!near(r.x,x)||!near(r.theta,theta)||!near(r.q.heat,Q)||!near(r.energy+Q,r.initialEnergy)||!near(r.q.angularMomentum,L))throw Error('F10 independent signed analytic solution');
+     if(r.t>tc+1e-6&&(r.mode!=='pure-rolling'||!near(r.tC,tc)||!near(r.vC,v)||!near(r.q.f,0)))throw Error('F10 lock timing/force');
+     if(r.t<tc-1e-6&&(r.mode!=='slipping'||!near(r.q.f,-Math.sign(u0)*r.mu*r.m*g)))throw Error('F10 signed friction');
+     if(r.bodies.length!==1||!near(r.selected.contact.x+r.windowOrigin,r.x)||!near(r.selected.center.y,r.R)||!near(r.selected.contact.y,0))throw Error('F10 translated metric window');
+   }else{
+     const theta=r.incline*Math.PI/180,a=g*Math.sin(theta)/(1+c),f=-c*r.m*a;
+     if(r.mode!=='pure-rolling'||!near(r.v,a*r.t)||!near(r.x,.5*a*r.t*r.t)||!near(r.omega,r.v/r.R)||!near(r.q.f,f)||!near(r.q.requiredStaticMu,c/(1+c)*Math.tan(theta))||!near(r.energy,0)||r.bodies.length!==4)throw Error('F10 ideal slope solution');
+     for(const b of r.bodies){
+       const k=coefficients[b.shape],aBody=g*Math.sin(theta)/(1+k),dx=b.center.x-b.contact.x,dy=b.center.y-b.contact.y;
+       const tx=b.trackEnd.x-b.trackStart.x,ty=b.trackEnd.y-b.trackStart.y,px=b.contact.x-b.trackStart.x,py=b.contact.y-b.trackStart.y;
+       if(!near(b.distance,.5*aBody*r.t*r.t)||!near(b.velocity,aBody*r.t)||!near(Math.hypot(dx,dy),b.radius)||!near(dx*r.tangent.x+dy*r.tangent.y,0)||!near(ty/tx,-Math.tan(theta))||!near(px*r.normal.x+py*r.normal.y,0)||!near(Math.hypot(px,py)/Math.hypot(tx,ty),b.distance/r.raceExtent))throw Error('F10 physical track/contact mapping');
+     }
+   }
+   return r;
+ };
+ const save=async(name,r)=>{out[name]=r;await page.screenshot({path:path.join(OUT_DIR,prefix+name+'.png')});};
+ const runTo=async(t,expected)=>{
+   await play.click();
+   await page.waitForFunction(({canvasId,t})=>JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.rigidRollingRendered||'null')?.t>=t,{canvasId,t},{timeout:15000});
+   await play.click();
+   await page.waitForFunction(({offline})=>{const e=document.querySelector(offline?'[data-testid="sf-play-pause"]':'[data-testid="topbar"] [data-testid="btn-play-pause"]');return e&&(/运行|播放/.test(e.textContent||'')||/运行|播放/.test(e.getAttribute('title')||'')||e.getAttribute('aria-label')==='运行'||e.getAttribute('aria-pressed')==='false');},{offline},{timeout:5000});
+   if(!offline)await page.waitForFunction(()=>{
+     const c=document.querySelector('[data-testid="simulation-canvas"]'),scope=document.querySelector('[data-testid="uplot-container"]'),bar=document.querySelector('[data-testid="topbar"]');
+     const r=JSON.parse(c?.dataset.rigidRollingRendered||'null'),t=Number(bar?.textContent?.match(/t\s*=\s*([\d.]+)\s*s/)?.[1]);
+     return r&&scope?.dataset.scopeTimeType==='elapsed'&&Number(scope.dataset.sampleCount)>1&&Math.abs(Number(scope.dataset.lastSampleT)-r.t)<1e-9&&Math.abs(t-r.t)<=.00501;
+   },null,{timeout:5000});
+   return sync(expected);
+ };
+ const formulas=async ids=>{
+   if(offline)return;
+   const card=page.getByTestId('formula-card'),toggle=page.getByTestId('btn-toggle-formula-values');
+   await card.locator('[data-formula-id="'+ids[0]+'"]').waitFor({state:'visible',timeout:5000});
+   const actual=await card.locator('[data-formula-id]').evaluateAll(nodes=>nodes.map(n=>n.dataset.formulaId));
+   if(JSON.stringify(actual)!==JSON.stringify(ids))throw Error('F10 formula mode '+actual.join(','));
+   const overflow=()=>card.locator('[data-formula-id] .overflow-x-auto').evaluateAll(nodes=>nodes.map(n=>({id:n.parentElement?.dataset.formulaId,w:n.clientWidth,sw:n.scrollWidth})).filter(x=>x.sw>x.w+1));
+   const on=await toggle.getAttribute('aria-pressed')==='true';if(on)await toggle.click();
+   let bad=await overflow();if(bad.length)throw Error('F10 symbolic formula clipping '+JSON.stringify(bad));
+   await toggle.click();bad=await overflow();if(bad.length)throw Error('F10 numeric formula clipping '+JSON.stringify(bad));if(!on)await toggle.click();
+ };
+ const exported=async(name,labels)=>{
+   if(offline)return;
+   await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible',timeout:5000});
+   const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,file=path.join(OUT_DIR,prefix+name+'.svg');await svg.saveAs(file);
+   const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!labels.every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F10 incorrect mode SVG '+name);
+   await preview.screenshot({path:path.join(OUT_DIR,prefix+name+'_svg.png')});
+   const fit=await preview.evaluate(box=>{
+     const svg=box.querySelector('svg');if(!svg)return {ok:false,reason:'no svg'};
+     const r=svg.getBoundingClientRect(),vb=svg.viewBox.baseVal;
+     let left=0,top=0,right=window.innerWidth,bottom=window.innerHeight;
+     for(let a=svg.parentElement;a;a=a.parentElement){
+       const style=getComputedStyle(a),b=a.getBoundingClientRect(),x=b.left+a.clientLeft,y=b.top+a.clientTop;
+       if(/hidden|auto|scroll|clip/.test(style.overflowX)){left=Math.max(left,x);right=Math.min(right,x+a.clientWidth);}
+       if(/hidden|auto|scroll|clip/.test(style.overflowY)){top=Math.max(top,y);bottom=Math.min(bottom,y+a.clientHeight);}
+     }
+     const ratio=vb.width/vb.height,aspectError=Math.abs(r.width/r.height/ratio-1);
+     return {ok:r.width>0&&r.height>0&&r.left>=left-1&&r.top>=top-1&&r.right<=right+1&&r.bottom<=bottom+1&&aspectError<.01,
+             width:r.width,height:r.height,aspectError,rect:[r.left,r.top,r.right,r.bottom],visible:[left,top,right,bottom]};
+   });
+   if(!fit.ok)throw Error('F10 SVG preview clipped or distorted '+name+' '+JSON.stringify(fit));
+   await page.getByTestId('btn-close-export-studio').click();out[name+'Export']={bytes:Buffer.byteLength(bytes),fit};
+ };
+ const flatIds=['rolling-slip','rolling-friction','rolling-transition','rolling-momentum','rolling-heat'];
+ const raceIds=['rolling-inertia','rolling-incline','rolling-static','rolling-energy'];
+ await canvas.waitFor({state:'visible'});await select('solid-sphere-slip-to-roll');
+ const init=await sync({scenario:'flat-bowling-slip',t:0});await absent(['inclineDeg']);await formulas(flatIds);await save('flat_initial',init);
+ const early=await runTo(.20,{scenario:'flat-bowling-slip'});if(early.mode!=='slipping')throw Error('F10 skipped slip phase');await save('flat_slipping',early);
+ const locked=await runTo(1.15,{scenario:'flat-bowling-slip',mode:'pure-rolling'});await save('flat_locked',locked);
+ if(offline){await page.waitForFunction(()=>{const d=document.querySelector('[data-testid="sf-uplot"]');return d?.dataset.scopeTimeType==='elapsed'&&Number(d.dataset.sampleCount)>1&&Number(d.dataset.scopeMax)>0;},null,{timeout:5000});}
+ await select('bowling-backspin-return');const back=await sync({scenario:'flat-bowling-slip',t:0,omega0:-120});await save('backspin_initial',back);
+ const returned=await runTo(2.12,{scenario:'flat-bowling-slip',mode:'pure-rolling'});if(!(returned.v<0))throw Error('F10 return sign');await save('backspin_return',returned);await exported('backspin',['接触点合速度','滑动耗散','顺滚方向']);
+ await select('solid-sphere-slip-to-roll');await number('muK',0);
+ const frictionless=await runTo(.4,{scenario:'flat-bowling-slip',mode:'slipping',mu:0});if(frictionless.tC!==null||frictionless.q.heat!==0)throw Error('F10 frictionless boundary');await save('zero_friction',frictionless);
+ if(!offline){
+   await select('solid-sphere-slip-to-roll');const initial=await sync({scenario:'flat-bowling-slip',t:0});
+   const box=await canvas.boundingBox();if(!box)throw Error('F10 missing canvas');
+   const z=initial.handles.v,dx=(-4-initial.v0)*initial.handles.scale;
+   await page.mouse.move(box.x+z.x,box.y+z.y);await page.mouse.down();await page.mouse.move(box.x+z.x+dx,box.y+z.y,{steps:7});await page.mouse.up();
+   await page.waitForFunction(()=>{const r=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.rigidRollingRendered||'null');return r&&Math.abs(r.v0+4)<.75;},null,{timeout:5000});
+   const dragged=await sync({scenario:'flat-bowling-slip',t:0});await save('velocity_drag',dragged);
+ }
+ await select('four-rigid-bodies-incline-race');await number('inclineDeg',45);
+ const race=await sync({scenario:'incline-race',t:0,incline:45});await absent(['muK','v0Mps','omega0Radps']);await formulas(raceIds);await save('race_initial',race);
+ const running=await runTo(1.25,{scenario:'incline-race',incline:45});await save('race_running',running);await exported('race',['实心球','实心圆柱','空心薄球壳','薄圆环','静摩擦充足']);
+ await option('shape','thin-ring');const ring=await sync({scenario:'incline-race',shape:'thin-ring',t:0});await save('race_ring_selected',ring);
+ return out;
+}
+
 async function auditF09Electrical(page,offline,select){
  const out={},prefix=offline?'H59_F09_offline_':'H59_F09_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
  const field=key=>offline?page.getByTestId('sf-param-'+key):page.locator('#param-'+key);
@@ -4229,6 +4348,9 @@ async function main() {
     const f09Url=new URL(origin);f09Url.searchParams.set('model','exp-electrical-error-lab');await page.goto(f09Url.toString(),{waitUntil:'networkidle'});
     await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='exp-electrical-error-lab');
     const f09Report=await auditF09Electrical(page,false,id=>selectPreset(page,id,true));
+    const f10Url=new URL(origin);f10Url.searchParams.set('model','comp-rigid-rolling-slip');await page.goto(f10Url.toString(),{waitUntil:'networkidle'});
+    await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='comp-rigid-rolling-slip');
+    const f10Report=await auditF10Rolling(page,false,id=>selectPreset(page,id,true));
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -4242,8 +4364,8 @@ async function main() {
     const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
     const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
     if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    Object.assign(combined,{f09Report,f08Report,f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f09Report,f08Report,f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    Object.assign(combined,{f10Report,f09Report,f08Report,f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f10Report,f09Report,f08Report,f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
     console.log('VISUAL_AUDIT_ONLINE: PASS');
     await context.close();
     }
@@ -5025,8 +5147,18 @@ async function main() {
       if(f09Errors.length||f09Network.length)throw Error('F09 offline errors '+JSON.stringify({f09Errors,f09Network}));
       Object.assign(f09OfflineReport,{errors:f09Errors,network:f09Network});
     }finally{await f09Context.close();}
-    Object.assign(combined,{f09OfflineReport,f08OfflineReport,f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f09OfflineReport,f08OfflineReport,f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+    const f10File=path.join(OUT_DIR,'H60_F10_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','comp-rigid-rolling-slip','--preset','solid-sphere-slip-to-roll','--out',f10File],{stdio:'inherit'});
+    const f10Context=await browser.newContext({viewport:VIEWPORT,offline:true}),f10Page=await f10Context.newPage(),f10Errors=[],f10Network=[];let f10OfflineReport;
+    f10Page.on('pageerror',e=>f10Errors.push(e.message));f10Page.on('console',m=>{if(m.type()==='error')f10Errors.push(m.text());});f10Page.on('request',r=>{if(/^https?:/.test(r.url()))f10Network.push(r.url());});
+    try{
+      await f10Page.goto(pathToFileURL(f10File).href);
+      f10OfflineReport=await auditF10Rolling(f10Page,true,id=>f10Page.locator('[data-preset-id="'+id+'"]').click());
+      if(f10Errors.length||f10Network.length)throw Error('F10 offline errors '+JSON.stringify({f10Errors,f10Network}));
+      Object.assign(f10OfflineReport,{errors:f10Errors,network:f10Network});
+    }finally{await f10Context.close();}
+    Object.assign(combined,{f10OfflineReport,f09OfflineReport,f08OfflineReport,f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f10OfflineReport,f09OfflineReport,f08OfflineReport,f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
     console.log('VISUAL_AUDIT_OFFLINE: PASS');
     }
     console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));
