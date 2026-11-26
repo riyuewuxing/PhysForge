@@ -1,13 +1,12 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
-import { createWorldMapper, defineSimulationPlugin, drawGlowVectorArrow, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { defineSimulationPlugin, type ParamFieldSpec, type TelemetryChannelSpec } from '@physforge/sim-sdk';
+import {waveExport,renderWaveDiagram,fitWaveViewport,waveBoundsFit,waveDiagramBounds} from './diagram.js';
 import {
   checkInvariants,
   computeDopplerFrequencies,
   computeObservables,
   computeWaveSpeed,
   createInitialState,
-  enumerateMultiSolutionSpeeds,
-  evaluateInterferenceAtPoint,
   evaluateStandingWave,
   evaluateTransverseWave,
   stepWaveCoupling,
@@ -87,7 +86,7 @@ const paramSchema: readonly ParamFieldSpec<WaveCouplingParams>[] = [
   {
     key: 'probeY',
     kind: 'number',
-    label: '探测质点 Py（干涉）',
+    label: '接收点 Py',
     unit: 'm',
     min: -2.5,
     max: 2.5,
@@ -110,8 +109,8 @@ const paramSchema: readonly ParamFieldSpec<WaveCouplingParams>[] = [
     label: '两波源初相差 Δφ₀',
     unit: '°',
     min: 0,
-    max: 180,
-    step: 180,
+    max: 360,
+    step: 15,
     defaultValue: 0
   },
   {
@@ -154,6 +153,15 @@ const liveFormulas: readonly LiveFormulaSpec[] = [{
     }
   ]
 }];
+const channels:readonly TelemetryChannelSpec[]=[
+  {key:'probeY',label:'固定质点位移 yP',unit:'m',color:'#f472b6'},
+  {key:'probeVy',label:'固定质点速度 vy',unit:'m/s',color:'#4ade80'},
+  {key:'probeAy',label:'固定质点加速度 ay',unit:'m/s²',color:'#38bdf8'},
+  {key:'analyticalAmplitude',label:'局部振幅',unit:'m',color:'#fbbf24'},
+  {key:'spatialSlope',label:'有符号空间斜率',unit:'',color:'#38bdf8'},
+  {key:'localFrequencyHz',label:'单支接收局部频率',unit:'Hz',color:'#fbbf24'},
+  {key:'arrivalCount',label:'接收支数',unit:'',color:'#38bdf8'}
+];
 export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
   WaveCouplingParams,
   WaveCouplingState
@@ -168,6 +176,7 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
   },
   defaultView: { scale: 0.72 },
   paramSchema,
+  getParamFields:p=>{const keys=['mode','amplitude','frequency','wavelength',...(p.mode==='transverse'?['direction','causalFront','probeX']:p.mode==='standing'?['probeX']:p.mode==='interference'?['sourceSeparation','phaseDiffDeg','causalFront','probeX','probeY']:['sourceSpeedRatio','probeX','probeY'])];return keys.flatMap(k=>paramSchema.filter(f=>f.key===k));},
   presets: [
     {
       id: 'transverse-slope-rule',
@@ -265,7 +274,7 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
     {
       id: 'supersonic-mach-cone',
       name: '7. 超音速波源与马赫锥 (vs = 1.15 v波)',
-      description: '当波源速率超过波速时，同心球面波前叠加出清晰马赫激波锥，半顶角满足 sin(α)=v/vs。',
+      description: '当波源速率超过波速时，连续发射的波前圆族形成马赫包络，半顶角满足 sin(α)=v/vs。',
       params: {
         mode: 'doppler',
         amplitude: 0.45,
@@ -277,6 +286,12 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
       },
       visibleLayers: ['dopplerFronts', 'probeParticle']
     }
+    ,{id:'causal-wavefront-left',name:'8. 向左起振 · 左侧质点延迟',description:'比较左行波斜率与质点速度，波前抵达后才开始振动。',params:{mode:'transverse',amplitude:.6,frequency:1,wavelength:2,direction:'left',causalFront:true,probeX:-2.4},visibleLayers:['waveform','slopeGhost','probeParticle','vibrationGraph']},
+    {id:'standing-wave-node',name:'9. 驻波波节 · 始终静止',description:'x=λ/2，探针实际振幅为零。',params:{mode:'standing',amplitude:.6,frequency:1,wavelength:2,probeX:1},visibleLayers:['waveform','probeParticle','vibrationGraph']},
+    {id:'interference-causal-two-arrivals',name:'10. 因果干涉 · 两次抵达',description:'两个源从零时刻起振，先单源振动后形成干涉，比较有符号波程差。',params:{mode:'interference',amplitude:.5,frequency:1.5,wavelength:2,sourceSeparation:4,phaseDiffDeg:180,causalFront:true,probeX:.5,probeY:0},visibleLayers:['interferenceField','antinodeCurves','probeParticle']},
+    {id:'doppler-sonic-boundary',name:'11. 声速边界 · 前方周期接收无定义',description:'源速度等于波速，波前相切；不把奇点当成无限真实频率。',params:{mode:'doppler',amplitude:.45,frequency:1.5,wavelength:2,sourceSpeedRatio:1,probeX:0,probeY:0},visibleLayers:['dopplerFronts','probeParticle']},
+    {id:'doppler-offaxis',name:'12. 斜向接收 · 延迟相位',description:'离轴探针的局部频率随接收方向变化。',params:{mode:'doppler',amplitude:.5,frequency:1.5,wavelength:2,sourceSpeedRatio:.5,probeX:1.4,probeY:1.1},visibleLayers:['dopplerFronts','probeParticle']},
+    {id:'doppler-two-branches',name:'13. 超声速 · 双传播分支',description:'β=1.2 的轴上接收点，在源越过后且最早向前波尚未通过时可同时收到两支。',params:{mode:'doppler',amplitude:.5,frequency:1.5,wavelength:2,sourceSpeedRatio:1.2,probeX:0,probeY:0},visibleLayers:['dopplerFronts','probeParticle']}
   ],
   engine: {
     createInitialState,
@@ -293,17 +308,13 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
     { id: 'antinodeCurves', label: '加强区中垂与节点辅助标线', defaultVisible: true },
     { id: 'dopplerFronts', label: '多普勒同心波前族', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'probeY', label: '探测质点位移 y_P', unit: 'm', color: '#38bdf8' },
-    { key: 'probeVy', label: '探测质点振动速度 v_y', unit: 'm/s', color: '#4ade80' },
-    { key: 'probeAy', label: '质点加速度 a_y', unit: 'm/s²', color: '#f472b6' },
-    { key: 'analyticalAmplitude', label: '合振幅 A_net', unit: 'm', color: '#fbbf24' }
-  ],
+  telemetryChannels:channels,
+  getTelemetryChannels:p=>(p.mode==='doppler'?['probeY','localFrequencyHz','probeVy','probeAy','arrivalCount']:p.mode==='standing'||p.mode==='interference'?['probeY','analyticalAmplitude','probeVy','probeAy']:['probeY','probeVy','probeAy','spatialSlope','analyticalAmplitude']).flatMap(k=>channels.filter(c=>c.key===k)),
   getControlHandles: (state, params) => {
     const probeY = params.mode === 'interference'
       ? params.probeY
       : params.mode === 'doppler'
-        ? 0
+        ? params.probeY
         : (params.mode === 'standing'
           ? evaluateStandingWave(params.probeX, state.t, params).y
           : evaluateTransverseWave(params.probeX, state.t, params).y);
@@ -315,16 +326,16 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
       color: '#4ade80',
       onDrag: (wp) => ({
         probeX: Number(Math.max(-3.5, Math.min(3.5, wp.x)).toFixed(1)),
-        probeY: Number(Math.max(-2.5, Math.min(2.5, wp.y)).toFixed(1))
+        ...(params.mode==='interference'||params.mode==='doppler'?{probeY:Number(Math.max(-2.5,Math.min(2.5,wp.y)).toFixed(1))}:{})
       })
     }];
   },
   referenceFrames: [
     {
       id: 'wavefront',
-      label: '波速随动参考系（静止波形）',
+      label: '行波/运动源随动参考系',
       getOrigin: (s, params) => ({
-        x: (params.direction === 'right' ? 1 : -1) * computeWaveSpeed(params) * s.t,
+        x: params.mode==='transverse'?(params.direction==='right'?1:-1)*computeWaveSpeed(params)*s.t:params.mode==='doppler'?s.sourceX+2:0,
         y: 0
       })
     }
@@ -338,372 +349,28 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
     }),
     importScene: (dsl) => dsl.params as Partial<WaveCouplingParams>
   },
-  exportDiagramIR: (state, params) => {
-    const pts = [];
-    for (let i = 0; i <= 48; i++) {
-      const x = -3 + (i / 48) * 6;
-      const y =
-        params.mode === 'standing'
-          ? evaluateStandingWave(x, state.t, params).y
-          : evaluateTransverseWave(x, state.t, params).y;
-      pts.push({ x, y });
+  exportDiagramIR:waveExport,
+  formatFormulas:(s,p)=>{
+    const o=computeObservables(s,p),c=computeWaveSpeed(p),w=2*Math.PI*p.frequency,k=p.wavelength>0?2*Math.PI/p.wavelength:0;
+    const f=(n:number|undefined,d=3)=>n===undefined?'\\text{未定义}':n.toFixed(d);
+    if(p.mode==='doppler'){
+      const d=computeDopplerFrequencies(p);
+      return [{id:'retarded-wave',label:'因果接收时间 · 等幅标量模型',latex:'c(t-\\tau)=|\\mathbf r_P-\\mathbf r_S(\\tau)|',
+        substitutedLatex:'\\begin{aligned}\\beta&='+p.sourceSpeedRatio.toFixed(2)+'\\\\N_{\\rm branch}&='+s.arrivalCount+'\\\\f_{\\rm local}&='+f(s.localFrequencyHz,2)+'\\end{aligned}'},
+        {id:'doppler-formula',label:'轴上单支频率（须已接收）',latex:"f_{\\rm front}=\\frac f{1-\\beta}\\ (\\beta<1),\\quad f_{\\rm back}=\\frac f{1+\\beta}",
+        substitutedLatex:'\\begin{aligned}f_{\\rm front}&='+f(d.frontFreq,2)+'\\\\f_{\\rm back}&='+f(d.backFreq,2)+'\\end{aligned}'},
+        ...(p.sourceSpeedRatio>1?[{id:'mach-envelope',label:'有限历程马赫包络，非真实激波强度',latex:'\\sin\\alpha=1/\\beta',substitutedLatex:'\\alpha='+f(o.machAngleDeg,2)+'^\\circ'}]:[])];
     }
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'line', x1: -3.2, y1: 0, x2: 3.2, y2: 0 },
-      { kind: 'polyline', points: pts },
-      {
-        kind: 'mathLabel',
-        x: 3.0,
-        y: 1.1,
-        text: `\\lambda=${params.wavelength.toFixed(1)}\\text{m},\\; f=${params.frequency.toFixed(1)}\\text{Hz}`,
-        align: 'end'
-      }
-    ];
-    return {
-      width: 680,
-      height: 360,
-      viewBox: { minX: -3.4, minY: -1.4, maxX: 3.4, maxY: 1.4 },
-      title: '机械波波形配图',
-      primitives
-    };
+    if(p.mode==='interference')return [{id:'interference-delta',label:'有符号波程差与两源到齐后的相位条件',latex:'\\Delta r=r_2-r_1,\\quad\\Delta\\phi=\\phi_0-k\\Delta r',
+      substitutedLatex:'\\begin{aligned}\\Delta r&='+f(o.signedPathDifference)+'\\text{ m}\\\\\\Delta\\phi&='+f(o.phaseAtProbeDeg,1)+'^\\circ\\\\N&='+o.activeCount+'\\end{aligned}'},
+      {id:'interference-amplitude',label:'两波均到达时的合振幅',latex:'A_{\\rm net}=2A|\\cos(\\Delta\\phi/2)|',substitutedLatex:'A_P='+f(o.analyticalAmplitude)+'\\text{ m}'}];
+    if(p.mode==='standing')return [{id:'standing-wave',label:'等幅反向波叠加（无限延伸理想解）',latex:'y=2A\\sin(kx)\\cos(\\omega t)',substitutedLatex:'\\begin{aligned}k&='+k.toFixed(3)+'\\text{ rad/m}\\\\A_P&='+f(o.analyticalAmplitude)+'\\text{ m}\\\\y_P&='+f(o.probeY)+'\\text{ m}\\end{aligned}'},
+      {id:'standing-nodes',label:'固定波节与波腹',latex:'\\begin{aligned}x_{\\rm node}&=n\\lambda/2\\\\x_{\\rm antinode}&=(2n+1)\\lambda/4\\end{aligned}'}];
+    return [{id:'traveling-wave',label:'行波空间相位与质点振动',latex:'y=A\\sin(\\omega t\\mp kx)',substitutedLatex:'\\begin{aligned}v&='+c.toFixed(3)+'\\text{ m/s}\\\\\\omega&='+w.toFixed(3)+'\\text{ rad/s}\\\\k&='+k.toFixed(3)+'\\text{ rad/m}\\end{aligned}'},
+      {id:'slope-velocity',label:'坡度法 · 传播方向与振动方向区分',latex:'v_y=-\\operatorname{sgn}(v_x)c\\frac{\\partial y}{\\partial x}',substitutedLatex:'\\begin{aligned}\\partial_x y&='+f(o.spatialSlope)+'\\\\v_{y,P}&='+f(o.probeVy)+'\\text{ m/s}\\end{aligned}'},
+      ...(p.causalFront?[{id:'causal-front',label:'起振波前，仅沿所选方向',latex:'t_P=|x_P|/c',substitutedLatex:o.arrivalTime===undefined?'\\text{P 不在传播半轴}':'t_P='+f(o.arrivalTime)+'\\text{ s}'}]:[])];
   },
-  formatFormulas: (state, params) => {
-    const vWave = computeWaveSpeed(params);
-    if (params.mode === 'doppler') {
-      const { frontFreq, backFreq } = computeDopplerFrequencies(params);
-      return [
-        {
-          id: 'doppler-formula',
-          label: '多普勒表观频率',
-          latex: "f' = f \\frac{v}{v \\mp v_s}",
-          substitutedLatex: `f_{\\text{前}}' = ${Number.isFinite(frontFreq) ? frontFreq.toFixed(2) : '\\infty'}\\text{ Hz},\\quad f_{\\text{后}}' = ${backFreq.toFixed(2)}\\text{ Hz}`
-        }
-      ];
-    }
-    if (params.mode === 'interference') {
-      const res = evaluateInterferenceAtPoint(params.probeX, params.probeY, state.t, params);
-      return [
-        {
-          id: 'interference-delta',
-          label: '双波源波程差与合振幅',
-          latex: '\\Delta r = |r_2 - r_1|',
-          substitutedLatex: `\\Delta r = ${res.pathDiff.toFixed(2)}\\text{ m} = ${(res.pathDiff / Math.max(params.wavelength, 1e-6)).toFixed(2)}\\lambda,\\; A_{\\text{合}} = ${res.analyticalAmplitude.toFixed(2)}\\text{ m}`
-        }
-      ];
-    }
-    return [
-      {
-        id: 'wave-speed',
-        label: '波速与多解通式',
-        latex: 'v = \\lambda f',
-        substitutedLatex: `v = ${vWave.toFixed(2)}\\text{ m/s},\\; \\Delta x_0\\text{ 通解 } v_1=${enumerateMultiSolutionSpeeds(params.wavelength, 0.5, 1, 0)[0]?.speed.toFixed(2) ?? '0'}\\text{ m/s}`
-      }
-    ];
-  },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const m = createWorldMapper(viewport);
-    const labels: CanvasLabel[] = [];
-    const drawWorldRect = (x: number, y: number, width: number, height: number, fill: boolean) => {
-      const a = m.toScreen(x, y + height);
-      const b = m.toScreen(x + width, y);
-      if (fill) ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-      else ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-    };
-    if (params.mode === 'transverse' || params.mode === 'standing') {
-      const xMin = -4;
-      const xMax = 4;
-      const showSubGraph = activeLayers.has('vibrationGraph');
-      const toScreen = (wx: number, wy: number) => m.toScreen(wx, wy);
-
-      ctx.save();
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
-      ctx.lineWidth = 1.5;
-      const axL = toScreen(xMin, 0);
-      const axR = toScreen(xMax, 0);
-      ctx.beginPath();
-      ctx.moveTo(axL.x, axL.y);
-      ctx.lineTo(axR.x, axR.y);
-      ctx.stroke();
-
-      for (let gx = -4; gx <= 4; gx += 1) {
-        const gp = toScreen(gx, 0);
-        ctx.beginPath();
-        ctx.moveTo(gp.x, gp.y - m.len(0.025));
-        ctx.lineTo(gp.x, gp.y + m.len(0.025));
-        ctx.stroke();
-        labels.push({ id: `wave-axis-${gx}`, x: gp.x, y: gp.y + m.len(0.13), text: `${gx}m`, color: 'rgba(148, 163, 184, 0.85)', font: '11px system-ui, sans-serif' });
-      }
-      ctx.restore();
-
-      if (activeLayers.has('slopeGhost')) {
-        const dtGhost = params.frequency > 0 ? 0.08 / params.frequency : 0.05;
-        ctx.save();
-        ctx.strokeStyle = 'rgba(251, 191, 36, 0.65)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 5]);
-        ctx.beginPath();
-        const samples = 240;
-        for (let i = 0; i <= samples; i++) {
-          const wx = xMin + ((xMax - xMin) * i) / samples;
-          const { y } =
-            params.mode === 'standing'
-              ? evaluateStandingWave(wx, state.t + dtGhost, params)
-              : evaluateTransverseWave(wx, state.t + dtGhost, params);
-          const p = toScreen(wx, y);
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        }
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // 主波形
-      if (activeLayers.has('waveform')) {
-        ctx.save();
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3.2;
-        ctx.beginPath();
-        const samples = 300;
-        for (let i = 0; i <= samples; i++) {
-          const wx = xMin + ((xMax - xMin) * i) / samples;
-          const { y } =
-            params.mode === 'standing'
-              ? evaluateStandingWave(wx, state.t, params)
-              : evaluateTransverseWave(wx, state.t, params);
-          const p = toScreen(wx, y);
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        }
-        ctx.stroke();
-
-        // 介质采样点
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.65)';
-        for (let wx = -3.6; wx <= 3.6; wx += 0.4) {
-          const { y } =
-            params.mode === 'standing'
-              ? evaluateStandingWave(wx, state.t, params)
-              : evaluateTransverseWave(wx, state.t, params);
-          const p = toScreen(wx, y);
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, m.len(0.02), 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      // 探测质点 P 与振动方向箭头
-      if (activeLayers.has('probeParticle')) {
-        const { y, vy } = params.mode === 'standing'
-          ? evaluateStandingWave(params.probeX, state.t, params)
-          : evaluateTransverseWave(params.probeX, state.t, params);
-        const eqP = toScreen(params.probeX, 0);
-        const curP = toScreen(params.probeX, y);
-        ctx.save();
-        ctx.strokeStyle = 'rgba(244, 114, 182, 0.5)';
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(eqP.x, eqP.y - m.len(0.55));
-        ctx.lineTo(eqP.x, eqP.y + m.len(0.55));
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // 速度方向箭头
-        const arrowHeight = Math.max(-0.35, Math.min(0.35, vy * 0.08));
-        if (Math.abs(arrowHeight) > 0.03) {
-          const endpoint = toScreen(params.probeX, y + arrowHeight);
-          drawGlowVectorArrow(ctx, curP.x, curP.y, endpoint.x, endpoint.y, '#4ade80', 3, 10);
-        }
-
-        ctx.fillStyle = '#f472b6';
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(curP.x, curP.y, m.len(0.05), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        labels.push({ id: 'transverse-probe-label', x: curP.x, y: curP.y - m.len(0.15), text: `质点 P (x=${params.probeX.toFixed(1)}m)`, color: '#f472b6', font: 'bold 13px system-ui, sans-serif' });
-        ctx.restore();
-      }
-
-      // 下半部分：质点 P 的实时 y-t 振动曲线
-      if (showSubGraph) {
-        const boxLeft = -3.4;
-        const boxWidth = 6.8;
-        const boxBottom = -2.25;
-        const boxHeight = 0.9;
-        const boxTop = boxBottom + boxHeight;
-        const midY = boxBottom + boxHeight * 0.5;
-
-        ctx.save();
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.35)';
-        ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
-        ctx.lineWidth = 1.2;
-        drawWorldRect(boxLeft, boxBottom, boxWidth, boxHeight, true);
-        drawWorldRect(boxLeft, boxBottom, boxWidth, boxHeight, false);
-
-        const left = m.toScreen(boxLeft, midY);
-        const right = m.toScreen(boxLeft + boxWidth, midY);
-        ctx.beginPath();
-        ctx.moveTo(left.x, left.y);
-        ctx.lineTo(right.x, right.y);
-        ctx.stroke();
-
-        const graphTitle = m.toScreen(0, boxTop + 0.15);
-        labels.push({ id: 'probe-vibration-history-label', x: graphTitle.x, y: graphTitle.y, text: `质点 P 振动图像 y - t（${params.probeX.toFixed(1)}m）`, color: '#f472b6', font: 'bold 12px system-ui, sans-serif' });
-
-        if (state.probeHistory.length >= 2) {
-          const windowSec = 6;
-          const tMax = Math.max(windowSec, state.t);
-          const tMin = tMax - windowSec;
-          ctx.strokeStyle = '#f472b6';
-          ctx.lineWidth = 2.6;
-          ctx.beginPath();
-          let started = false;
-          for (const pt of state.probeHistory) {
-            if (pt.x < tMin) continue;
-            const worldX = boxLeft + ((pt.x - tMin) / windowSec) * boxWidth;
-            const worldY = midY + Math.max(-0.34, Math.min(0.34, pt.y / Math.max(params.amplitude, 0.4) * 0.34));
-            const point = m.toScreen(worldX, worldY);
-            if (!started) {
-              ctx.moveTo(point.x, point.y);
-              started = true;
-            } else {
-              ctx.lineTo(point.x, point.y);
-            }
-          }
-          ctx.stroke();
-        }
-        ctx.restore();
-      }
-      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
-      return;
-    }
-
-    const toScreen2D = m.toScreen;
-
-    if (params.mode === 'interference') {
-      if (activeLayers.has('interferenceField')) {
-        const cols = 96;
-        const rows = 58;
-        const xMin = -3.5;
-        const xMax = 3.5;
-        const yMin = -2.5;
-        const yMax = 2.5;
-        const cellWorldW = (xMax - xMin) / cols;
-        const cellWorldH = (yMax - yMin) / rows;
-        const maxAmp = Math.max(2 * params.amplitude, 0.1);
-
-        for (let r = 0; r < rows; r++) {
-          const wy = yMax - ((r + 0.5) / rows) * (yMax - yMin);
-          for (let c = 0; c < cols; c++) {
-            const wx = xMin + ((c + 0.5) / cols) * (xMax - xMin);
-            const res = evaluateInterferenceAtPoint(wx, wy, state.t, params);
-            const norm = Math.max(-1, Math.min(1, res.displacement / maxAmp));
-            const alpha = Math.abs(norm) * 0.72;
-            ctx.fillStyle =
-              norm >= 0
-                ? `rgba(56, 189, 248, ${alpha.toFixed(2)})`
-                : `rgba(244, 114, 182, ${alpha.toFixed(2)})`;
-            const topLeft = m.toScreen(wx - cellWorldW * 0.5, wy + cellWorldH * 0.5);
-            ctx.fillRect(topLeft.x, topLeft.y, m.len(cellWorldW), m.len(cellWorldH));
-          }
-        }
-      }
-
-      if (activeLayers.has('antinodeCurves')) {
-        // 中垂线辅助线
-        const pTop = toScreen2D(0, 3.5);
-        const pBot = toScreen2D(0, -3.5);
-        ctx.save();
-        ctx.strokeStyle =
-          Math.abs(params.phaseDiffDeg) < 90
-            ? 'rgba(74, 222, 128, 0.75)'
-            : 'rgba(248, 113, 113, 0.75)';
-        ctx.setLineDash([7, 6]);
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(pTop.x, pTop.y);
-        ctx.lineTo(pBot.x, pBot.y);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // 两波源标记
-      const halfD = 0.5 * params.sourceSeparation;
-      for (const [idx, sxPos] of [-halfD, halfD].entries()) {
-        const sp = toScreen2D(sxPos, 0);
-        ctx.save();
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(sp.x, sp.y, m.len(0.045), 0, Math.PI * 2);
-        ctx.fill();
-        labels.push({ id: `interference-source-${idx}`, x: sp.x, y: sp.y - m.len(0.12), text: `S${idx + 1}`, color: '#fbbf24', font: 'bold 13px system-ui, sans-serif' });
-        ctx.restore();
-      }
-
-      if (activeLayers.has('probeParticle')) {
-        const pp = toScreen2D(params.probeX, params.probeY);
-        const res = evaluateInterferenceAtPoint(params.probeX, params.probeY, state.t, params);
-        ctx.save();
-        ctx.fillStyle = '#4ade80';
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(pp.x, pp.y, m.len(0.05 + Math.abs(res.displacement) * 0.04), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        labels.push({ id: 'interference-probe-label', x: pp.x, y: pp.y - m.len(0.15), text: `P (A合=${res.analyticalAmplitude.toFixed(2)}m)`, color: '#e2e8f0', font: 'bold 13px system-ui, sans-serif' });
-        ctx.restore();
-      }
-      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
-      return;
-    }
-
-    // Doppler 模式
-    const vWave = computeWaveSpeed(params);
-    if (activeLayers.has('dopplerFronts')) {
-      ctx.save();
-      for (const wf of state.wavefronts) {
-        const age = state.t - wf.emittedAt;
-        if (age < 0) continue;
-        const r = vWave * age * m.ppm;
-        if (r > m.len(6)) continue;
-        const center = toScreen2D(wf.cx, wf.cy);
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(center.x, center.y, r, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    const src = toScreen2D(state.sourceX, 0);
-    ctx.save();
-    if (params.sourceSpeedRatio > 1.0 && state.wavefronts.length > 1) {
-      const sinAlpha = 1 / params.sourceSpeedRatio;
-      const halfConeAngle = Math.asin(sinAlpha);
-      const coneLen = m.len(4.5);
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(src.x, src.y);
-      ctx.lineTo(src.x - coneLen * Math.cos(halfConeAngle), src.y - coneLen * Math.sin(halfConeAngle));
-      ctx.moveTo(src.x, src.y);
-      ctx.lineTo(src.x - coneLen * Math.cos(halfConeAngle), src.y + coneLen * Math.sin(halfConeAngle));
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-    ctx.fillStyle = '#fbbf24';
-    ctx.beginPath();
-    ctx.arc(src.x, src.y, m.len(0.05), 0, Math.PI * 2);
-    ctx.fill();
-    labels.push({ id: 'doppler-source-label', x: src.x, y: src.y - m.len(0.16), text: `波源 vs=${(params.sourceSpeedRatio * vWave).toFixed(2)}m/s`, color: '#fbbf24', font: 'bold 13px system-ui, sans-serif' });
-    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
-    ctx.restore();
-  }
-}), { liveFormulas });
+  renderCanvas:renderWaveDiagram
+}), { liveFormulas,fitWaveViewport,waveBoundsFit,waveDiagramBounds });
 
 export default waveVibrationCouplingPlugin;

@@ -290,6 +290,13 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   <div className="text-[10px]">{params.mode==='long-distance-grid'?'固定送端功率；受端可调匝比。零输入效率未定义；无解时只列请求，不列伪造测量值。':'理想一原双副；基准为指定户数、S 断开。R₀损耗不属于理想变压器。'}</div>
 
   </section>
+        ) : plugin.meta.id==='wave-vibration-coupling' ? (
+          <section data-testid="wave-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
+  <div data-testid="wave-status" className="font-semibold">{params.mode==='doppler'?(telemetry.observables.probeSampleDefined===0?'源点/焦散 · 无定义':(telemetry.observables.arrivalCount??0)===0?'波尚未到达固定接收点':(telemetry.observables.arrivalCount??0)>1?'双分支叠加 · 无单一接收频率':'单支延迟接收'):params.mode==='interference'?'已到达波源 '+(telemetry.observables.activeCount??0)+'/2':params.mode==='standing'?'驻波 · 固定空间包络':'行波 · 固定质点'}</div>
+  {([['waveSpeed','波速 c','m/s'],['probeY','实际位移 yP','m'],['probeVy','实际振动速度 vy','m/s'],['probeAy','实际振动加速度 ay','m/s²'],['analyticalAmplitude','局部振幅','m'],['spatialSlope','有符号空间斜率',''],['arrivalTime','首次到达时间','s'],['signedPathDifference','有符号波程差 r₂−r₁','m'],['phaseAtProbeDeg','两源到齐后的相差','°'],['sourceSpeed','波源速度','m/s'],['localFrequencyHz','单支接收频率','Hz'],['machAngleDeg','马赫半顶角','°'],['emittedCount','累计发射标记数','']] as const).filter(([k])=>['waveSpeed','probeY','probeVy','probeAy'].includes(k)||k==='localFrequencyHz'&&params.mode==='doppler'||telemetry.observables[k]!==undefined).map(([k,label,unit])=>{const v=telemetry.observables[k];return <div key={k} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'wave-'+k} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(k==='emittedCount'?0:3)+(unit?' '+unit:''):'—'}</span></div>;})}
+  <div className="text-[10px]">{params.mode==='doppler'?'等幅标量信号；不含声压、扩散衰减或真实激波强度。':params.mode==='interference'?'瞬时位移颜色不等于稳定振幅。只有两波到达处有稳定条纹。':params.mode==='standing'?'包络为 ±2A|sin(kx)|，横坐标 x 与时间 t 不可混用。':'传播方向不是质点振动方向；起振前静止。'}</div>
+
+</section>
         ) : plugin.meta.id==='em-3d-magnetic-fields' ? (
           <section data-testid="magnetic-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
   <div className="font-semibold" data-testid="magnetic-status">{telemetry.observables.domainHalted===1?'理想丝线奇异域 · 已暂停':params.geometryType==='uniform-helix'?'匀强场 · 有向轨迹':'有限稳恒电流 · 试探粒子'}</div>
@@ -339,7 +346,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
             <summary className="cursor-pointer list-none py-2 text-[11px] font-medium text-slate-400 hover:text-slate-200">更多参数与图层 <span className="float-right">⌄</span></summary>
             <div className="space-y-2.5 pb-3">
               {extraFields.map(renderField)}
-              {['mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-transformer-grid','em-lc-rlc-oscillation','em-3d-magnetic-fields'].includes(plugin.meta.id)?<div className="space-y-1 text-xs">{telemetry.invariants.map(i=><div key={i.name} className={i.passed?'text-emerald-400':'text-rose-400'}>{i.name}：{i.measuredError.toExponential(2)} {i.unit??''}</div>)}</div>:<EnergyBarChart observables={telemetry.observables} invariants={telemetry.invariants} />}
+              {['mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-transformer-grid','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling'].includes(plugin.meta.id)?<div className="space-y-1 text-xs">{telemetry.invariants.map(i=><div key={i.name} className={i.passed?'text-emerald-400':'text-rose-400'}>{i.name}：{i.measuredError.toExponential(2)} {i.unit??''}</div>)}</div>:<EnergyBarChart observables={telemetry.observables} invariants={telemetry.invariants} />}
               <div className="space-y-1 pt-1">
                 {plugin.layers.map((layer) => (
                   <label key={layer.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[11px] text-slate-300 hover:bg-white/5">
