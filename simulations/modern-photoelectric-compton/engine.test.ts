@@ -2,6 +2,7 @@ import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { comptonMomentumVectors, modernPhotoelectricComptonPlugin } from './plugin.js';
 import { photoelectricComptonPresets } from './presets.js';
+import {photoelectricCurves,quantumGeometry,IV_PLOT,graphX,graphY} from './sceneGeometry.js';
 import {
   E_CHARGE,
   H_PLANCK,
@@ -154,6 +155,48 @@ describe('H46 F03 independent photon/photocurrent and recoil boundary regression
       const o=computeObservables(s);
       if(p.mode==='photoelectric')expect(o).not.toHaveProperty('deltaLambdaPm');
       else expect(o).not.toHaveProperty('photonEnergyEv');
+    }
+  });
+});
+
+describe('F03 common geometry and physically distinct reference contracts',()=>{
+  it('contains the exact I–U stopping and current points and the true h/e frequency-energy slope',()=>{
+    const p={...getPreset(0),cathodeMetal:'custom' as const,customWorkFunctionEv:1,wavelengthNm:200,intensityRel:3,anodeVoltageV:-7,freezeRefEnabled:true,refWavelengthNm:200,refIntensityRel:1};
+    const s=createInitialState(p),q=photoelectricCurves(s,p);
+    expect(s.photoelectric.stoppingVoltageV).toBeGreaterThan(5);
+    expect(-s.photoelectric.stoppingVoltageV).toBeGreaterThan(IV_PLOT.uMin);
+    expect(q.live.find(v=>v.voltageV===-s.photoelectric.stoppingVoltageV)?.currentMa).toBe(0);
+    expect(q.live.find(v=>v.voltageV===p.anodeVoltageV)?.currentMa).toBe(s.photoelectric.currentMa);
+    expect(q.referenceSolution!.stoppingVoltageV).toBe(s.photoelectric.stoppingVoltageV);
+    expect(q.referenceSolution!.saturationCurrentMa*3).toBeCloseTo(s.photoelectric.saturationCurrentMa,12);
+    const a=q.energyLine[0]!,b=q.energyLine[1]!;
+    expect(a.frequency14*1e14).toBeCloseTo(s.photoelectric.cutoffFreqHz,-1);
+    expect(a.kineticEv).toBe(0);
+    expect((b.kineticEv-a.kineticEv)/((b.frequency14-a.frequency14)*1e14)/(H_PLANCK/E_CHARGE)).toBeCloseTo(1,12);
+    const ir=modernPhotoelectricComptonPlugin.exportDiagramIR!(s,p);
+    expect(ir.primitives).toEqual(quantumGeometry(s,p).marks.map(m=>m.primitive));
+    expect(ir.primitives.some(v=>v.kind==='circle'&&v.cx===graphX(p.anodeVoltageV)&&v.cy===graphY(s.photoelectric.currentMa))).toBe(true);
+    expect(ir.primitives.some(v=>v.kind==='text'&&v.text.includes('最大初动能–频率'))).toBe(true);
+  });
+  it('omits false stop and recoil arrows in dark and exactly-forward scenes; layers and parameters remain mode scoped',()=>{
+    const dark={...getPreset(0),intensityRel:0,freezeRefEnabled:false},sd=createInitialState(dark),gd=quantumGeometry(sd,dark);
+    expect(gd.marks.some(m=>m.tone==='electron')).toBe(false);
+    expect(gd.marks.some(m=>m.primitive.kind==='text'&&m.primitive.text==='−Uc')).toBe(false);
+    const p={...getPreset(2),scatterAngleDeg:0},s=createInitialState(p),ir=modernPhotoelectricComptonPlugin.exportDiagramIR!(s,p);
+    expect(ir.primitives.filter(q=>q.kind==='arrow')).toHaveLength(2);
+    expect(ir.primitives.some(q=>q.kind==='arrow'&&q.label==='pe')).toBe(false);
+    expect(modernPhotoelectricComptonPlugin.getParamFields!(p).map(f=>f.key)).toEqual(['mode','xrayWavelengthNm','scatterAngleDeg']);
+    expect(modernPhotoelectricComptonPlugin.getParamFields!(dark).map(f=>f.key)).not.toContain('refWavelengthNm');
+  });
+  it('closes stable independent mass shell and momentum from zero through backscatter at short wavelengths',()=>{
+    for(const lam of [.01,.071,.2])for(const angle of [0,1e-6,10,45,90,135,180]){
+      const c=solveComptonScattering(lam,angle);
+      expect(c.energyResidualRel).toBeLessThan(1e-12);
+      expect(c.massShellResidualRel).toBeLessThan(1e-12);
+      expect(Math.hypot(c.pxResidualRel,c.pyResidualRel)).toBeLessThan(1e-12);
+      expect(Math.hypot(c.pElectronX,c.pElectronY)/c.pIncident).toBeCloseTo(c.pElectron/c.pIncident,12);
+      if(angle===0)expect(c.recoilAngleDefined).toBe(false);
+      else expect(c.recoilAngleDefined).toBe(true);
     }
   });
 });

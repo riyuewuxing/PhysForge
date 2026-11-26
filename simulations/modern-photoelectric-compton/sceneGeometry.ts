@@ -1,5 +1,5 @@
 import type {DiagramPrimitive} from '@physforge/sim-sdk';
-import {HC_EV_NM,H_OVER_E,computePhotocurrentMa,solvePhotoelectric,type ComptonSolution,type PhotoelectricComptonState,type PhotoelectricComptonParams} from './engine.js';
+import {H_OVER_E,computePhotocurrentMa,solvePhotoelectric,type ComptonSolution,type PhotoelectricComptonState,type PhotoelectricComptonParams} from './engine.js';
 
 type Tone='ink'|'grid'|'beam'|'cathode'|'anode'|'electron'|'current'|'reference'|'active'|'incident'|'scattered'|'recoil'|'alert';
 export interface QuantumMark {primitive:DiagramPrimitive;tone:Tone;layer:'apparatus'|'characteristic'}
