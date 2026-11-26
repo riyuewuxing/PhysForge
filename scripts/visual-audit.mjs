@@ -1050,6 +1050,105 @@ async function auditF02(page,origin){
  return auditF02Cases(page,false,id=>selectPreset(page,id,true));
 }
 
+
+const f03Cases=[
+ ['photoelectric-sodium-violet',{mode:'photoelectric',wavelengthNm:405,intensityRel:1.4,thresholdPassed:1,stoppingDefined:1}],
+ ['photoelectric-red-below-cutoff',{mode:'photoelectric',wavelengthNm:650,thresholdPassed:0,stoppingDefined:0}],
+ ['photoelectric-shutter-closed',{mode:'photoelectric',wavelengthNm:405,intensityRel:0,thresholdPassed:1,stoppingDefined:0}],
+ ['photoelectric-same-frequency-bright',{mode:'photoelectric',wavelengthNm:405,intensityRel:3,stoppingDefined:1}],
+ ['photoelectric-high-energy-stopped',{mode:'photoelectric',wavelengthNm:200,anodeVoltageV:-7,stoppingDefined:1}],
+ ['compton-molybdenum-90deg',{mode:'compton',scatterAngleDeg:90,recoilAngleDefined:1}],
+ ['compton-forward-zero',{mode:'compton',scatterAngleDeg:0,recoilAngleDefined:0}],
+ ['compton-backscatter',{mode:'compton',scatterAngleDeg:180,recoilAngleDefined:1}],
+ ['compton-short-xray',{mode:'compton',xrayWavelengthNm:.01,scatterAngleDeg:135,recoilAngleDefined:1}]
+];
+function checkF03(s){
+ const h=6.62607015e-34,e=1.602176634e-19,c=299792458,m=9.1093837015e-31,HC=h*c/e*1e9;
+ const near=(a,b,tol=1e-9)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<=tol*Math.max(1,Math.abs(b));
+ const must=(ok,msg)=>{if(!ok)throw Error('F03 '+msg+' '+JSON.stringify(s));};
+ must(s.t===0&&s.outerTime===0,'fictitious time');
+ if(s.mode==='photoelectric'){
+  const W=s.cathodeMetal==='custom'?s.customWorkFunctionEv:({Na:2.36,Cs:2.14,Zn:4.31,Pt:5.65})[s.cathodeMetal],E=HC/s.wavelengthNm,K=Math.max(0,E-W),allowed=E-W>1e-12,active=allowed&&s.intensityRel>0;
+  const sat=allowed?2.4*s.intensityRel*(1-.15*Math.exp(-K)):0;
+  const I=active&&s.anodeVoltageV>-K?sat*(1-Math.exp(-2.8*(s.anodeVoltageV+K)/Math.max(.6,.75*K+.5))):0;
+  must(near(s.photonEnergyEv,E)&&near(s.workFunctionEv,W)&&near(s.cutoffFreqHz,W*e/h)&&near(s.cutoffWavelengthNm,HC/W),'photon/threshold');
+  must(s.thresholdPassed===Number(allowed)&&s.emissionActive===Number(active)&&s.stoppingDefined===Number(active),'threshold vs illumination');
+  must(near(s.saturationCurrentMa,sat)&&near(s.currentMa,I),'actual current/saturation');
+  if(allowed)must(near(s.maxKineticEv,K),'kinematic energy');else must(!('maxKineticEv'in s),'below threshold fake initial kinetic measurement');
+  if(active)must(near(s.stoppingVoltageV,K),'stopping voltage');else must(!('stoppingVoltageV'in s),'false stopping voltage measurement');
+  must(!('deltaLambdaPm'in s),'mixed Compton readings');
+ }else{
+  const theta=s.scatterAngleDeg*Math.PI/180,lam=s.xrayWavelengthNm,d=h/(m*c)*1e9*2*Math.sin(theta/2)**2,lp=lam+d;
+  const p=h/(lam*1e-9),pp=h/(lp*1e-9),K=HC/1000*d/(lam*lp);
+  const x=p-pp*Math.cos(theta),y=-pp*Math.sin(theta),pe=Math.sqrt(K*e*1000*(K*e*1000+2*m*c*c))/c;
+  must(near(s.deltaLambdaPm,1000*d)&&near(s.scatteredWavelengthNm,lp)&&near(s.incidentWavelengthNm,lam),'Compton wavelength shift');
+  must(near(s.incidentEnergyKev,HC/(1000*lam))&&near(s.scatteredEnergyKev,HC/(1000*lp))&&near(s.electronKineticKev,K),'energy ledger');
+  must(near(s.pElectron/p,pe/p)&&near(s.pElectronX/p,x/p)&&near(s.pElectronY/p,y/p),'scaled common signed momentum');
+  must(s.momentumResidualRel<1e-10&&s.massShellResidualRel<1e-10&&s.energyResidualRel<1e-10,'independent conservation');
+  if(s.scatterAngleDeg===0)must(s.recoilAngleDefined===0&&!('recoilAngleDeg'in s)&&s.pElectron===0,'undefined forward recoil');
+  else must(s.recoilAngleDefined===1&&near(s.recoilAngleDeg,Math.atan2(y,x)*180/Math.PI),'signed recoil angle');
+  must(!('currentMa'in s),'mixed photoelectric readings');
+ }
+ return s;
+}
+async function syncF03(page,offline,expected){
+ const canvasId=offline?'sf-canvas':'simulation-canvas',prefix=offline?'sf-f03':'f03';
+ await page.waitForFunction(({canvasId,expected})=>{const s=JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.quantumRendered||'null');return s&&Object.entries(expected).every(([k,v])=>s[k]===v);},{canvasId,expected},{timeout:10000});
+ const s=checkF03(JSON.parse(await page.getByTestId(canvasId).getAttribute('data-quantum-rendered')));
+ await page.getByTestId(prefix+'-status').waitFor({state:'visible'});
+ const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+ if(!await play.isDisabled())throw Error('F03 false physical play');
+ if(offline?await page.getByTestId('sf-uplot').isVisible():(await page.getByTestId('floating-scope-dock').count()||await page.getByTestId('btn-expand-oscilloscope').count()))throw Error('F03 irrelevant scope');
+ const input=key=>page.getByTestId((offline?'sf-param-':'param-slider-')+key);
+ const read=async(key,v)=>page.waitForFunction(({id,v})=>Math.abs(parseFloat(document.querySelector('[data-testid="'+id+'"]')?.textContent||'NaN')-v)<.0000006,{id:prefix+'-'+key,v});
+ if(s.mode==='photoelectric'){
+  if(await input('scatterAngleDeg').count())throw Error('F03 irrelevant scatter angle');
+  await read('currentMa',s.currentMa);
+  if(s.stoppingDefined===1)await read('stoppingVoltageV',s.stoppingVoltageV);
+  else await page.waitForFunction(id=>document.querySelector('[data-testid="'+id+'"]')?.textContent?.includes('未测得'),prefix+'-stoppingVoltageV');
+ }else{
+  if(await input('wavelengthNm').count()||await input('intensityRel').count()||await input('anodeVoltageV').count())throw Error('F03 irrelevant photoelectric control');
+  await read('deltaLambdaPm',s.deltaLambdaPm);await read('electronKineticKev',s.electronKineticKev);
+  if(s.recoilAngleDefined===1)await read('recoilAngleDeg',s.recoilAngleDeg);
+  else await page.waitForFunction(id=>document.querySelector('[data-testid="'+id+'"]')?.textContent?.includes('未定义'),prefix+'-recoilAngleDeg');
+ }
+ return s;
+}
+async function auditF03Cases(page,offline,select){
+ const out={},prefix=offline?'H46_F03_offline_':'H46_F03_',input=key=>page.getByTestId((offline?'sf-param-':'param-slider-')+key);
+ for(const [id,expected] of f03Cases){
+  await select(id);out[id]=await syncF03(page,offline,expected);await page.screenshot({path:path.join(OUT_DIR,prefix+id+'.png')});
+ }
+ await select('photoelectric-shutter-closed');const zero=await syncF03(page,offline,{mode:'photoelectric',intensityRel:0});
+ await input('intensityRel').fill('1');const one=await syncF03(page,offline,{mode:'photoelectric',intensityRel:1});
+ await input('intensityRel').fill('3');const three=await syncF03(page,offline,{mode:'photoelectric',intensityRel:3});
+ if(zero.currentMa!==0||Math.abs(three.currentMa/one.currentMa-3)>1e-12||one.stoppingVoltageV!==three.stoppingVoltageV)throw Error('F03 same-frequency intensity scaling');
+ await input('anodeVoltageV').fill('-7');const stopped=await syncF03(page,offline,{mode:'photoelectric',anodeVoltageV:-7});
+ if(stopped.currentMa!==0||stopped.stoppingDefined!==1)throw Error('F03 full retarding boundary');
+ out.intensityInteraction={zero,one,three,stopped};
+ await select('compton-molybdenum-90deg');await input('scatterAngleDeg').fill('0');const forward=await syncF03(page,offline,{mode:'compton',scatterAngleDeg:0});
+ await input('scatterAngleDeg').fill('180');const back=await syncF03(page,offline,{mode:'compton',scatterAngleDeg:180});out.angleInteraction={forward,back};
+ await select('photoelectric-sodium-violet');await syncF03(page,offline,{mode:'photoelectric',wavelengthNm:405});
+ if(offline){
+  await page.getByRole('button',{name:'黑板深蓝'}).click();await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+  await page.screenshot({path:path.join(OUT_DIR,prefix+'photoelectric_projector.png')});
+ }else{
+  const initialTheme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme')),menu=page.getByTestId('tools-menu'),tools=page.getByTestId('btn-tools-menu');
+  const setTheme=async t=>{if(await page.evaluate(()=>document.documentElement.getAttribute('data-theme'))!==t){if(!await menu.isVisible())await tools.click();await page.getByTestId('btn-theme').click();await page.waitForFunction(t=>document.documentElement.getAttribute('data-theme')===t,t);}if(await menu.isVisible())await tools.click();};
+  await setTheme('projector');await page.screenshot({path:path.join(OUT_DIR,prefix+'photoelectric_projector.png')});await setTheme(initialTheme??'chalkboard');
+  const exportSvg=async(name,labels)=>{
+   await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
+   const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,file=path.join(OUT_DIR,prefix+name+'.svg');await svg.saveAs(file);
+   const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!labels.every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F03 wrong SVG '+name);
+   await preview.screenshot({path:path.join(OUT_DIR,prefix+name+'_svg.png')});await page.getByTestId('btn-close-export-studio').click();return {bytes:Buffer.byteLength(bytes),name:svg.suggestedFilename()};
+  };
+  out.photoelectricExport=await exportSvg('photoelectric',['最大初动能–频率','可调 U','I–U']);
+  await select('compton-backscatter');await syncF03(page,false,{mode:'compton',scatterAngleDeg:180});
+  out.comptonExport=await exportSvg('compton',['能量账本','p′γ','pe']);
+ }
+ return out;
+}
+
 async function auditW02(page,origin){
   const url=new URL(origin);url.searchParams.set('model','wave-2d-ripple-fdtd');await page.goto(url.toString(),{waitUntil:'networkidle'});
   await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='wave-2d-ripple-fdtd');
@@ -3523,7 +3622,7 @@ async function main() {
     if ((await n01Toggle.innerText()).trim() !== '显示数值') throw new Error('Formula toggle is not explicit');
     const uSlider = page.getByTestId('param-slider-anodeVoltageV');
     if (!await uSlider.isVisible()) throw new Error('Applied voltage slider not visible in photoelectric mode');
-    await page.waitForFunction(() => document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('光电流'));
+    await syncF03(page,false,{mode:'photoelectric',wavelengthNm:405,stoppingDefined:1});
     await page.screenshot({path:path.join(OUT_DIR,'N01_01_photoelectric.png')});
     const beforeVoltage = await uSlider.inputValue();
     const beforeVoltagePixels = await canvasFingerprint(page);
@@ -3540,8 +3639,7 @@ async function main() {
     await selectPreset(page,'compton-molybdenum-90deg');
     const angleSlider=page.getByTestId('param-slider-scatterAngleDeg');
     if (!await angleSlider.isVisible()) throw new Error('Compton scatter angle control not visible');
-    await page.waitForFunction(() => document.querySelector('[data-testid="scope-channel-a"]')?.textContent?.includes('康普顿波长差')
-      && document.querySelector('[data-testid="scope-channel-b"]')?.textContent?.includes('反冲电子动能'));
+    await syncF03(page,false,{mode:'compton',scatterAngleDeg:90,recoilAngleDefined:1});
     if (!(await page.getByTestId('param-value-xrayWavelengthNm').innerText()).includes('0.071')) throw new Error('Incident X-ray wavelength lost slider precision');
     await page.screenshot({path:path.join(OUT_DIR,'N01_04_compton.png')});
     const angleBefore=await angleSlider.inputValue();
@@ -3596,6 +3694,8 @@ async function main() {
     const o01Report=await auditO01(page,origin);
     const f01Report=await auditF01(page,origin);
     const f02Report=await auditF02(page,origin);
+    await page.goto(n01Url.toString(),{waitUntil:'networkidle'});
+    const f03Report=await auditF03Cases(page,false,id=>selectPreset(page,id,true));
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3609,8 +3709,8 @@ async function main() {
     const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
     const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
     if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    Object.assign(combined,{f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    Object.assign(combined,{f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
     console.log('VISUAL_AUDIT_ONLINE: PASS');
     await context.close();
     }
@@ -4318,8 +4418,20 @@ async function main() {
       Object.assign(f02OfflineReport,{errors:f02Errors,network:f02Network});
     }finally{await f02Context.close();}
 
-    Object.assign(combined,{f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+
+    const f03File=path.join(OUT_DIR,'H46_F03_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','modern-photoelectric-compton','--preset','photoelectric-sodium-violet','--out',f03File],{stdio:'inherit'});
+    const f03Context=await browser.newContext({viewport:VIEWPORT,offline:true}),f03Page=await f03Context.newPage(),f03Errors=[],f03Network=[];let f03OfflineReport;
+    f03Page.on('pageerror',e=>f03Errors.push(e.message));f03Page.on('console',m=>{if(m.type()==='error')f03Errors.push(m.text());});f03Page.on('request',r=>{if(/^https?:/.test(r.url()))f03Network.push(r.url());});
+    try{
+      await f03Page.goto(pathToFileURL(f03File).href);
+      f03OfflineReport=await auditF03Cases(f03Page,true,id=>f03Page.getByTestId('sf-f03-presets').selectOption(id));
+      if(f03Errors.length||f03Network.length)throw Error('F03 offline errors '+JSON.stringify({f03Errors,f03Network}));
+      Object.assign(f03OfflineReport,{errors:f03Errors,network:f03Network});
+    }finally{await f03Context.close();}
+
+    Object.assign(combined,{f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
     console.log('VISUAL_AUDIT_OFFLINE: PASS');
     }
     console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));
