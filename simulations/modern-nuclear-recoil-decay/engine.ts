@@ -38,14 +38,18 @@ export type NuclearRecoilDecayParams = {
 };
 
 export interface RecoilAnalysis {
+  readonly kinematicAssumption: 'alpha-two-body' | 'beta-endpoint-limit';
+  readonly neutrinoEnergyMev?: number;
+  readonly emittedKineticMev: number;
+  readonly daughterKineticMev: number;
   readonly qValueMev: number;
   readonly momentumSi: number;
-  readonly radiusEmittedM: number;
-  readonly radiusDaughterM: number;
-  readonly radiusRatioMeasured: number;
+  readonly radiusEmittedM?: number;
+  readonly radiusDaughterM?: number;
+  readonly radiusRatioMeasured?: number;
   readonly chargeRatioExpected: number;
-  readonly ratioRelError: number;
-  readonly tangentGeometry: 'external' | 'internal';
+  readonly ratioRelError?: number;
+  readonly tangentGeometry?: 'external' | 'internal';
   readonly emittedTrackCm: readonly { x: number; y: number }[];
   readonly daughterTrackCm: readonly { x: number; y: number }[];
 }
@@ -57,12 +61,14 @@ export interface ChainGenerationPoint {
 
 export interface NuclearRecoilDecayState {
   readonly t: number;
+  readonly mode: NuclearMode;
   readonly recoil: RecoilAnalysis;
   readonly initialFlags: readonly boolean[];
   readonly decayedFlags: readonly boolean[];
   readonly remainingCount: number;
   readonly halfLifeS: number;
   readonly prngCalls: number;
+  readonly decayLifetimesS: readonly number[];
   readonly decayCurve: readonly { t: number; fraction: number; theory: number }[];
   readonly kEff: number;
   readonly chainGenerations: readonly ChainGenerationPoint[];
@@ -87,7 +93,7 @@ export function solveRecoilCloudChamber(params: NuclearRecoilDecayParams): Recoi
   const Z = Math.max(4, Math.min(100, Math.round(params.parentZ)));
   const dmU = Math.max(1e-5, params.massDefectU);
   const qValueMev = dmU * AMU_MEV;
-  const bField = Math.max(0.05, Math.abs(params.magneticFieldT));
+  const bField = params.magneticFieldT;
 
   const m1U = params.decayKind === 'alpha' ? M_ALPHA_U : M_ELECTRON_U;
   const z1 = params.decayKind === 'alpha' ? 2 : -1;
@@ -98,8 +104,10 @@ export function solveRecoilCloudChamber(params: NuclearRecoilDecayParams): Recoi
   const m2Mev = m2U * AMU_MEV;
   const bigMMev = m1Mev + m2Mev + qValueMev;
 
-  const e1TotalMev = (bigMMev * bigMMev + m1Mev * m1Mev - m2Mev * m2Mev) / (2 * bigMMev);
-  const pcMev = Math.sqrt(Math.max(0, e1TotalMev * e1TotalMev - m1Mev * m1Mev));
+  // Rest-parent two-body kinematics, also the massless-neutrino endpoint idealization.
+  const pcMev = Math.sqrt(qValueMev * (2 * (m1Mev + m2Mev) + qValueMev) *
+    (2 * m1Mev + qValueMev) * (2 * m2Mev + qValueMev)) / (2 * bigMMev);
+  const e1TotalMev = Math.hypot(pcMev, m1Mev);
   const momentumSi = (pcMev * 1e6 * E_CHARGE) / C_LIGHT;
 
   const gamma1 = e1TotalMev / m1Mev;
@@ -116,11 +124,12 @@ export function solveRecoilCloudChamber(params: NuclearRecoilDecayParams): Recoi
 
   // Step both particles via stepBorisPusher at small cyclotron phase angle dPhi = 0.002 rad
   const fieldFn = () => ({ E: { x: 0, y: 0, z: 0 }, B: { x: 0, y: 0, z: bField } });
-  const omega1 = (Math.abs(q1Si) * bField) / mEff1Kg;
-  const omega2 = (Math.abs(q2Si) * bField) / mEff2Kg;
+  const omega1 = (Math.abs(q1Si * bField)) / mEff1Kg;
+  const omega2 = (Math.abs(q2Si * bField)) / mEff2Kg;
   const dPhi = 0.002;
-  const dt1 = dPhi / omega1;
-  const dt2 = dPhi / omega2;
+  // At zero field, use a shared illustrative observation interval, not a fake circle.
+  const dt1 = omega1 === 0 ? 1e-9 / 1570 : dPhi / omega1;
+  const dt2 = omega2 === 0 ? 1e-9 / 1570 : dPhi / omega2;
 
   let p1: ChargedParticleState = { position: { x: 0, y: 0, z: 0 }, velocity: { x: v1, y: 0, z: 0 }, t: 0 };
   let p2: ChargedParticleState = { position: { x: 0, y: 0, z: 0 }, velocity: { x: -v2, y: 0, z: 0 }, t: 0 };
@@ -138,23 +147,24 @@ export function solveRecoilCloudChamber(params: NuclearRecoilDecayParams): Recoi
     }
   }
 
-  const r1Fit = fitCircleRadius(p1PtsM);
-  const r2Fit = fitCircleRadius(p2PtsM);
-  const radiusEmittedM = r1Fit > 0 ? r1Fit : momentumSi / (Math.abs(q1Si) * bField);
-  const radiusDaughterM = r2Fit > 0 ? r2Fit : momentumSi / (Math.abs(q2Si) * bField);
-  const radiusRatioMeasured = radiusEmittedM / Math.max(1e-18, radiusDaughterM);
+  const r1Fit = bField === 0 ? 0 : fitCircleRadius(p1PtsM);
+  const r2Fit = bField === 0 ? 0 : fitCircleRadius(p2PtsM);
+  const radiusEmittedM = r1Fit > 0 && Number.isFinite(r1Fit) ? r1Fit : undefined;
+  const radiusDaughterM = r2Fit > 0 && Number.isFinite(r2Fit) ? r2Fit : undefined;
+  const radiusRatioMeasured = radiusEmittedM !== undefined && radiusDaughterM !== undefined
+    ? radiusEmittedM / radiusDaughterM : undefined;
   const chargeRatioExpected = Math.abs(q2Si) / Math.abs(q1Si);
-  const ratioRelError = Math.abs(radiusRatioMeasured - chargeRatioExpected) / chargeRatioExpected;
+  const ratioRelError = radiusRatioMeasured === undefined ? undefined
+    : Math.abs(radiusRatioMeasured - chargeRatioExpected) / chargeRatioExpected;
 
   return {
-    qValueMev,
-    momentumSi,
-    radiusEmittedM,
-    radiusDaughterM,
-    radiusRatioMeasured,
-    chargeRatioExpected,
-    ratioRelError,
-    tangentGeometry: z1 * z2 > 0 ? 'external' : 'internal',
+    kinematicAssumption: params.decayKind === 'alpha' ? 'alpha-two-body' : 'beta-endpoint-limit',
+    ...(params.decayKind === 'beta-minus' ? { neutrinoEnergyMev: 0 } : {}),
+    emittedKineticMev: pcMev ** 2 / (e1TotalMev + m1Mev),
+    daughterKineticMev: pcMev ** 2 / (e2TotalMev + m2Mev),
+    qValueMev, momentumSi, radiusEmittedM, radiusDaughterM,
+    radiusRatioMeasured, chargeRatioExpected, ratioRelError,
+    tangentGeometry: bField === 0 ? undefined : z1 * z2 > 0 ? 'external' : 'internal',
     emittedTrackCm: p1PtsM.map((p) => ({
       x: CLOUD_CHAMBER_SCALE.toDimless(p.x, 'length'),
       y: CLOUD_CHAMBER_SCALE.toDimless(p.y, 'length')
@@ -182,14 +192,21 @@ export function createInitialState(params: NuclearRecoilDecayParams): NuclearRec
   const n0 = Math.max(16, Math.min(4000, Math.round(params.nucleiCountN0)));
   const flags = new Array<boolean>(n0).fill(false);
   const { kEff, chainGenerations } = buildChain(params);
+  const halfLifeS = Math.max(0.2, params.halfLifeS);
+  const prng = createSeededPrng(Math.round(params.seed) >>> 0);
+  const decayLifetimesS = params.mode === 'half-life-mc'
+    ? flags.map(() => -halfLifeS * Math.log1p(-Math.min(1 - Number.EPSILON, Math.max(Number.EPSILON, prng.next()))) / Math.LN2)
+    : [];
   return {
     t: 0,
+    mode: params.mode,
     recoil: solveRecoilCloudChamber(params),
     initialFlags: flags,
     decayedFlags: flags,
     remainingCount: n0,
-    halfLifeS: Math.max(0.2, params.halfLifeS),
-    prngCalls: 0,
+    halfLifeS,
+    prngCalls: decayLifetimesS.length,
+    decayLifetimesS,
     decayCurve: [{ t: 0, fraction: 1, theory: 1 }],
     kEff,
     chainGenerations
@@ -204,66 +221,74 @@ export function stepNuclearRecoilDecay(
   if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
   if (dt === 0) return { nextState: state, events: [] };
 
-  const halfLifeS = Math.max(0.2, params.halfLifeS);
-  const probDecay = 1 - Math.pow(2, -dt / halfLifeS);
-  const prng = createSeededPrng((Math.round(params.seed) ^ (state.prngCalls * 2654435761)) >>> 0);
-
+  if (params.mode !== state.mode) throw new Error('Reset state before changing mode');
+  if (params.mode !== 'half-life-mc') {
+    return { nextState: state, events: [], advancedTime: 0, halt: true };
+  }
+  const halfLifeS = state.halfLifeS;
+  const nextT = state.t + dt;
+  if (!Number.isFinite(nextT)) throw new Error('Non-finite decay time');
   const nextFlags = [...state.decayedFlags];
-  let rem = 0;
-  let calls = state.prngCalls;
+  const newlyDecayed: number[] = [];
   for (let i = 0; i < nextFlags.length; i++) {
-    if (!nextFlags[i]) {
-      calls++;
-      if (prng.next() < probDecay) {
-        nextFlags[i] = true;
-      } else {
-        rem++;
-      }
+    const lifetime = state.decayLifetimesS[i];
+    if (!nextFlags[i] && lifetime !== undefined && lifetime <= nextT) {
+      nextFlags[i] = true;
+      newlyDecayed.push(lifetime);
     }
   }
-
-  const nextT = state.t + dt;
+  newlyDecayed.sort((a, b) => a - b);
   const n0 = nextFlags.length;
-  const frac = rem / n0;
-  const theory = Math.pow(0.5, nextT / halfLifeS);
-  const { kEff, chainGenerations } = buildChain(params);
-
+  // Preserve actual event history and one replaceable current cursor sample.
+  const decayCurve = state.t === 0 ? [...state.decayCurve] : state.decayCurve.slice(0, -1);
+  let remainingCount = state.remainingCount;
+  for (const lifetime of newlyDecayed) {
+    remainingCount--;
+    decayCurve.push({ t: lifetime, fraction: remainingCount / n0, theory: 2 ** (-lifetime / halfLifeS) });
+  }
+  decayCurve.push({ t: nextT, fraction: remainingCount / n0, theory: 2 ** (-nextT / halfLifeS) });
   return {
-    nextState: {
-      t: nextT,
-      recoil: solveRecoilCloudChamber(params),
-      initialFlags: state.initialFlags,
-      decayedFlags: nextFlags,
-      remainingCount: rem,
-      halfLifeS,
-      prngCalls: calls,
-      decayCurve: [...state.decayCurve.slice(-160), { t: nextT, fraction: frac, theory }],
-      kEff,
-      chainGenerations
-    },
+    nextState: { ...state, t: nextT, decayedFlags: nextFlags, remainingCount, decayCurve },
     events: []
   };
 }
 
 export function computeObservables(state: NuclearRecoilDecayState): Record<string, number> {
-  return {
-    t: state.t,
-    qValueMev: state.recoil.qValueMev,
-    radiusRatio: state.recoil.radiusRatioMeasured,
-    ratioRelError: state.recoil.ratioRelError,
-    remainingCount: state.remainingCount,
-    remainingFraction: state.remainingCount / Math.max(1, state.decayedFlags.length),
-    kEff: state.kEff
+  if (state.mode === 'half-life-mc') return {
+    t: state.t, remainingCount: state.remainingCount,
+    remainingFraction: state.remainingCount / state.decayedFlags.length,
+    expectedRemainingCount: state.decayedFlags.length * 2 ** (-state.t / state.halfLifeS)
+  };
+  if (state.mode === 'chain-fission') return { t: 0, kEff: state.kEff };
+  const r = state.recoil;
+  return { t: 0, qValueMev: r.qValueMev, emittedKineticMev: r.emittedKineticMev,
+    daughterKineticMev: r.daughterKineticMev,
+    ...(r.radiusRatioMeasured !== undefined ? { radiusRatio: r.radiusRatioMeasured } : {}),
+    ...(r.ratioRelError !== undefined ? { ratioRelError: r.ratioRelError } : {}),
+    ...(r.radiusEmittedM !== undefined ? { radiusEmittedM: r.radiusEmittedM } : {}),
+    ...(r.radiusDaughterM !== undefined ? { radiusDaughterM: r.radiusDaughterM } : {})
   };
 }
 
 export function checkInvariants(state: NuclearRecoilDecayState): InvariantReport[] {
-  return [
-    {
-      name: 'Boris Magnetic Recoil Radius Ratio R₁/R₂ = |q₂/q₁| Relative Error',
-      measuredError: state.recoil.ratioRelError,
-      tolerance: 1e-6,
-      passed: state.recoil.ratioRelError < 1e-6
-    }
-  ];
+  if (state.mode === 'half-life-mc') {
+    const count = state.decayedFlags.filter(f => !f).length;
+    const error = Math.abs(count - state.remainingCount);
+    return [{ name: 'Undecayed count equals flags', measuredError: error, tolerance: 0, passed: error === 0 }];
+  }
+  if (state.mode === 'chain-fission') {
+    const valid = state.chainGenerations.every(g => Number.isFinite(g.neutrons) && g.neutrons >= 0);
+    return [{ name: 'Finite nonnegative abstract expectation samples', measuredError: valid ? 0 : 1, tolerance: 0, passed: valid }];
+  }
+  const r = state.recoil;
+  const energyError = Math.abs(r.emittedKineticMev + r.daughterKineticMev - r.qValueMev) / r.qValueMev;
+  const reports: InvariantReport[] = [{ name: 'Ideal recoil kinetic-energy budget', measuredError: energyError, tolerance: 1e-10, passed: energyError < 1e-10 }];
+  if (r.tangentGeometry !== undefined) {
+    const error = r.ratioRelError ?? Number.MAX_VALUE;
+    reports.push({ name: 'Measured Boris recoil radius ratio', measuredError: error, tolerance: 1e-6, passed: error < 1e-6 });
+  } else {
+    const error = Math.max(0, ...r.emittedTrackCm.map(p => Math.abs(p.y)), ...r.daughterTrackCm.map(p => Math.abs(p.y)));
+    reports.push({ name: 'Zero-field straight tracks', measuredError: error, tolerance: 0, passed: error === 0 });
+  }
+  return reports;
 }

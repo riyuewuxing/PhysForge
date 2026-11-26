@@ -4,6 +4,7 @@ import { modernNuclearRecoilDecayPlugin } from './plugin.js';
 import { nuclearRecoilPresets } from './presets.js';
 import {
   createInitialState,
+  computeObservables,
   solveRecoilCloudChamber,
   stepNuclearRecoilDecay,
   type NuclearRecoilDecayParams
@@ -53,4 +54,109 @@ describe('modern-nuclear-recoil-decay physics invariants (N03)', () => {
     expect(stepNuclearRecoilDecay(st, p, 0).nextState.t).toBe(0);
     expect(Number.isFinite(st.kEff)).toBe(true);
   });
+});
+
+describe('H48 F05 prepared independent nuclear-decay and sample-statistics regressions',()=>{
+  it('reverses both charged track curvatures under signed B without changing physical radii',()=>{
+    const p=getPreset(0),a=solveRecoilCloudChamber({...p,magneticFieldT:1.2}),b=solveRecoilCloudChamber({...p,magneticFieldT:-1.2});
+    expect(resolvePluginParams(modernNuclearRecoilDecayPlugin.paramSchema,{...p,magneticFieldT:-1.2}).magneticFieldT).toBe(-1.2);
+    expect(a.radiusEmittedM).toBeCloseTo(b.radiusEmittedM!,10);
+    expect(a.radiusDaughterM).toBeCloseTo(b.radiusDaughterM!,10);
+    for(const [x,y] of [[a.emittedTrackCm,b.emittedTrackCm],[a.daughterTrackCm,b.daughterTrackCm]] as const){
+      expect(x.length).toBe(y.length);
+      expect(Math.abs(x.at(-1)!.y)).toBeGreaterThan(1e-6);
+      for(let i=0;i<x.length;i++){expect(x[i]!.x).toBeCloseTo(y[i]!.x,8);expect(x[i]!.y).toBeCloseTo(-y[i]!.y,8);}
+    }
+  });
+  it('has a zero-field straight-track case with no finite circle or radius-ratio measurement',()=>{
+    const p={...getPreset(0),magneticFieldT:0},s=solveRecoilCloudChamber(p);
+    expect(resolvePluginParams(modernNuclearRecoilDecayPlugin.paramSchema,p).magneticFieldT).toBe(0);
+    expect(s.emittedTrackCm.length).toBeGreaterThan(2);
+    expect(s.daughterTrackCm.length).toBeGreaterThan(2);
+    expect(s.emittedTrackCm.every(q=>q.y===0)).toBe(true);
+    expect(s.daughterTrackCm.every(q=>q.y===0)).toBe(true);
+    expect(s.emittedTrackCm.at(-1)!.x).toBeGreaterThan(0);
+    expect(s.daughterTrackCm.at(-1)!.x).toBeLessThan(0);
+    expect(s.radiusEmittedM).toBeUndefined();
+    expect(s.radiusDaughterM).toBeUndefined();
+    expect(s.radiusRatioMeasured).toBeUndefined();
+    expect(s.tangentGeometry).toBeUndefined();
+  });
+  it('labels the beta equal-opposite-momentum drawing as a limiting endpoint, not generic three-body beta decay',()=>{
+    const a=solveRecoilCloudChamber(getPreset(0)),b=solveRecoilCloudChamber(getPreset(1));
+    expect(a).toHaveProperty('kinematicAssumption','alpha-two-body');
+    expect(b).toHaveProperty('kinematicAssumption','beta-endpoint-limit');
+    expect(b).toHaveProperty('neutrinoEnergyMev',0);
+    // The independent Q budget is checked from both kinetic energies.
+    for(const s of [a,b]){
+      const q=s as unknown as Record<string,number>;
+      expect(q.emittedKineticMev!+q.daughterKineticMev!).toBeCloseTo(s.qValueMev,10);
+    }
+  });
+  it('uses one seeded lifetime realization that is invariant to partition of the same elapsed interval',()=>{
+    const p={...getPreset(2),nucleiCountN0:400,halfLifeS:2,seed:271828};
+    const initial=createInitialState(p),whole=stepNuclearRecoilDecay(initial,p,4).nextState;
+    let parts=createInitialState(p);
+    for(let i=0;i<32;i++)parts=stepNuclearRecoilDecay(parts,p,.125).nextState;
+    expect(parts.t).toBe(4);
+    expect(parts.decayedFlags).toEqual(whole.decayedFlags);
+    expect(parts.remainingCount).toBe(whole.remainingCount);
+    expect(parts.prngCalls).toBe(initial.prngCalls);
+    expect(whole.prngCalls).toBe(initial.prngCalls);
+  });
+  it('keeps the true initial count and observed/theoretical time history instead of dropping the beginning of the experiment',()=>{
+    const p={...getPreset(2),nucleiCountN0:16,halfLifeS:2,seed:12345};
+    let s=createInitialState(p);
+    for(let i=0;i<200;i++)s=stepNuclearRecoilDecay(s,p,.125).nextState;
+    expect(s.decayCurve[0]).toMatchObject({t:0,fraction:1,theory:1});
+    expect(s.decayCurve.at(-1)!.t).toBe(25);
+    expect(s.decayCurve.at(-1)!.fraction).toBe(s.remainingCount/16);
+    expect(s.decayCurve.at(-1)!.theory).toBeCloseTo(2**(-25/2),15);
+    expect(s.decayCurve.every((x,i)=>i===0||x.t>=s.decayCurve[i-1]!.t&&x.fraction<=s.decayCurve[i-1]!.fraction)).toBe(true);
+  });
+  it('separates sample-count statistics from unrelated recoil and static generation-expectation comparisons',()=>{
+    const mc=getPreset(2),s=createInitialState(mc),o=computeObservables(s);
+    expect(o).not.toHaveProperty('qValueMev');expect(o).not.toHaveProperty('radiusRatio');expect(o).not.toHaveProperty('kEff');
+    const chain=getPreset(3),c=createInitialState(chain),step=stepNuclearRecoilDecay(c,chain,1);
+    expect(step.nextState.t).toBe(0);expect(step.advancedTime).toBe(0);
+    const co=computeObservables(c);
+    expect(co).not.toHaveProperty('remainingCount');expect(co).not.toHaveProperty('qValueMev');
+    const ir=modernNuclearRecoilDecayPlugin.exportDiagramIR!(c,chain);
+    expect(ir.primitives.filter(p=>p.kind==='rect').length).toBeGreaterThanOrEqual(9);
+    expect(ir.primitives.some(p=>p.kind==='text'&&p.text.includes('期望'))).toBe(true);
+  });
+});
+
+// The local inset must not alter the main shared-scale geometry or mirror symmetry.
+it('draws a labeled, similarity-transformed daughter inset using the actual shared-scale trace',()=>{
+  for(const p of [getPreset(0),getPreset(1),{...getPreset(0),magneticFieldT:-1.2},{...getPreset(0),magneticFieldT:0}]){
+    const state=createInitialState(p),ir=modernNuclearRecoilDecayPlugin.exportDiagramIR!(state,p);
+    const traces=ir.primitives.filter(x=>x.kind==='polyline');
+    expect(traces).toHaveLength(3);
+    const main=traces[1]!.points,inset=traces[2]!.points;
+    expect(main.length).toBe(inset.length);
+    const extent=Math.max(...main.map(q=>Math.hypot(q.x,q.y)));
+    const k=.65/extent;
+    expect(k).toBeGreaterThan(1);
+    for(let i=0;i<main.length;i++){
+      expect(inset[i]!.x-inset[0]!.x).toBeCloseTo((main[i]!.x-main[0]!.x)*k,10);
+      expect(inset[i]!.y-inset[0]!.y).toBeCloseTo((main[i]!.y-main[0]!.y)*k,10);
+    }
+    expect(ir.primitives.some(x=>x.kind==='text'&&x.text.includes('子核局部放大'))).toBe(true);
+  }
+});
+
+it('exports the actual paused sample staircase, current marker and labeled axes',()=>{
+  const p=getPreset(2),s=stepNuclearRecoilDecay(createInitialState(p),p,1.25).nextState;
+  const ir=modernNuclearRecoilDecayPlugin.exportDiagramIR!(s,p);
+  const paths=ir.primitives.filter(x=>x.kind==='polyline');
+  expect(paths).toHaveLength(2);
+  const sample=paths[0]!.points,expected=paths[1]!.points;
+  expect(sample[0]).toEqual({x:.15,y:.9});
+  const wantX=.15+1.25/(4*s.halfLifeS)*1.95,wantY=-.9+s.remainingCount/s.decayedFlags.length*1.8;
+  expect(sample.at(-1)!.x).toBeCloseTo(wantX,12);expect(sample.at(-1)!.y).toBeCloseTo(wantY,12);
+  expect(expected.at(-1)!.y).toBeCloseTo(-.9+1.8/16,12);
+  expect(ir.primitives.some(x=>x.kind==='circle'&&Math.abs(x.cx-wantX)<1e-12&&Math.abs(x.cy-wantY)<1e-12)).toBe(true);
+  expect(ir.primitives.some(x=>x.kind==='text'&&x.text==='N/N₀')).toBe(true);
+  expect(ir.primitives.some(x=>x.kind==='text'&&x.text==='N(t) = '+s.remainingCount+' / '+s.decayedFlags.length)).toBe(true);
 });
