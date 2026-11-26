@@ -76,7 +76,7 @@ const acSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'
 const wireSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='wireframe-gravity-fall'));
 const eddySlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='betatron-vortex'));
 const generatorSlice=targetPlugin.paramSchema.some(f=>f.key==='waveform'&&f.kind==='select'&&f.options.some(o=>o.value==='duty-square'));
-const regenSlice=targetPlugin.meta.id==='stse-em-launch-regen-brake';
+const regenSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='regen-brake'));
 const nuclearSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='cloud-chamber-recoil')&&f.options.some(o=>o.value==='half-life-mc'));
 const atomicSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='rutherford')&&f.options.some(o=>o.value==='bohr'));
 const quantumSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='photoelectric')&&f.options.some(o=>o.value==='compton'));
