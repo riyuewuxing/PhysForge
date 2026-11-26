@@ -10,3 +10,11 @@ $$a_{\text{true}}(m) = \frac{m g + M g\sin\theta - f}{M + m}$$
 
 ## 2. 50 Hz 打点纸带 + Seeded 高斯噪声 + 逐差法与最小二乘拟合
 - 使用 `createSeededPrng(seed).gaussian(0, sigmaMm)` 注入毫米刻度随机读数噪声，六段逐差法 $a = \frac{(s_4+s_5+s_6)-(s_1+s_2+s_3)}{9 T^2}$（$T=0.1\text{ s}$）在 $\sigma=0$ 时误差 $< 10^{-10}$；支持 Phyphox/Tracker CSV 数据叠合展示。
+
+## 3. F08 independent regression contract (candidate, red evidence pending)
+- The heavy-hanger mode changes the sweep masses, not the force law. Nonzero positive compensation bias must appear in both the active tape and every analytic / measured sweep point. The nominal balanced special case retains the existing exact tolerance.
+- The unloaded, positive-acceleration theoretical intercept is the limit at exactly m=0; do not insert a hidden positive mass. The supported UI hanger interval is unchanged.
+- All four scenarios stated above must have explicit selectable presets. The ideal compensation preset has zero net bias; finite-mass curvature is not claimed to be exactly linear.
+- A measured curve drawn for any supported parameter combination must lie inside its exported DiagramIR viewBox, with its real data unchanged. No clipping or saturating numerical values to force fit.
+- Negative net force requires a clearly stated motion/friction assumption. No signed-motion or static-friction policy is changed by these red-only tests; resolve that separate ambiguity in the candidate specification before implementation.
+- User-supplied experimental data and built-in illustrative data must not be conflated. No new external empirical data are supplied with these tests.

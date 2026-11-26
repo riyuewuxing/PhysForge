@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { expMechanicsErrorLabPlugin } from './plugin.js';
 import { mechanicsErrorPresets } from './presets.js';
 import {
+  computeTrueCartAcceleration,
   createInitialState,
   solveMechanicsErrorAnalysis,
   stepMechanicsErrorLab,
@@ -52,5 +53,54 @@ describe('exp-mechanics-error-lab invariants (X01)', () => {
     expect(handle).toBeDefined();
     expect(Number(handle?.onDrag({ x: 99, y: handle.position.y })['rulerOffsetCm'])).toBe(20);
     expect(solveMechanicsErrorAnalysis(params).aDiffMeasuredMps2).toBe(state.aDiffMeasuredMps2);
+  });
+});
+
+describe('F08 independent mechanics-error regressions (pre-fix)', () => {
+  it('uses the same force law for the heavy-hanger sweep and the active paper tape even when compensation changes', () => {
+    const p = { ...getPreset(2), trackTiltDeg: 4, frictionForceN: 0.05, readingNoiseMm: 0 };
+    const s = solveMechanicsErrorAnalysis(p);
+    const bias = p.cartMassKg * 9.8 * Math.sin(4 * Math.PI / 180) - p.frictionForceN;
+    for (const pt of s.afCurve) {
+      const expected = (pt.fAppN + bias) / (p.cartMassKg + pt.fAppN / 9.8);
+      expect(pt.aAnalytic).toBeCloseTo(expected, 10);
+      expect(pt.aMeasured).toBeCloseTo(expected, 10);
+    }
+    const point = s.afCurve.find(pt => Math.abs(pt.fAppN - p.hangerMassKg * 9.8) < 1e-12);
+    expect(point).toBeDefined();
+    expect(point!.aAnalytic).toBeCloseTo(s.aTrueMps2, 10);
+  });
+
+  it('evaluates the unloaded positive-acceleration intercept without an invented hanging mass', () => {
+    const M = 0.4, theta = 4, f = 0.05;
+    const expected = 9.8 * Math.sin(theta * Math.PI / 180) - f / M;
+    expect(expected).toBeGreaterThan(0);
+    expect(computeTrueCartAcceleration(M, 0, theta, f)).toBeCloseTo(expected, 10);
+  });
+
+  it('makes all four stated a-F teaching comparisons available as balanced or deliberately biased presets', () => {
+    expect(new Set(mechanicsErrorPresets.map(p => p.params.scenario))).toEqual(new Set([
+      'ideal-compensated', 'under-compensated', 'over-compensated', 'heavy-hanger-bend'
+    ]));
+    const preset = mechanicsErrorPresets.find(p => p.params.scenario === 'ideal-compensated')!;
+    const p = resolvePluginParams(expMechanicsErrorLabPlugin.paramSchema, preset.params);
+    expect(p.cartMassKg * 9.8 * Math.sin(p.trackTiltDeg * Math.PI / 180) - p.frictionForceN).toBeCloseTo(0, 10);
+  });
+
+  it('keeps all exported measured points in the diagram viewBox at a valid high-acceleration boundary', () => {
+    const p = { ...getPreset(2), cartMassKg: 0.1, readingNoiseMm: 0 };
+    const state = createInitialState(p);
+    const plugin = expMechanicsErrorLabPlugin as SimulationPluginV2<typeof p, typeof state>;
+    const diagram = plugin.exportDiagramIR!(state, p);
+    const curve = diagram.primitives.find(q => q.kind === 'polyline');
+    expect(curve).toBeDefined();
+    if (curve?.kind !== 'polyline') throw new Error('missing measured curve');
+    expect(curve.points.length).toBe(state.afCurve.length);
+    for (const point of curve.points) {
+      expect(point.x).toBeGreaterThanOrEqual(diagram.viewBox.minX);
+      expect(point.x).toBeLessThanOrEqual(diagram.viewBox.maxX);
+      expect(point.y).toBeGreaterThanOrEqual(diagram.viewBox.minY);
+      expect(point.y).toBeLessThanOrEqual(diagram.viewBox.maxY);
+    }
   });
 });
