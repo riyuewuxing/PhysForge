@@ -125,34 +125,37 @@ export function stepGravityAssistRendezvous(
   if (dt === 0) return { nextState: state, events: [] };
 
   if (params.mode === 'rendezvous') {
-    const substeps = Math.max(10, Math.ceil(dt / 0.004));
-    const h = dt / substeps;
     let verlet: VerletState = { positions: [state.pos.x, state.pos.y], velocities: [state.vel.x, state.vel.y], t: state.t };
     const accel = (p: readonly number[]): number[] => {
-      const px = p[0]!;
-      const py = p[1]!;
+      const px = p[0]!, py = p[1]!;
       const r2 = Math.max(1e-6, px * px + py * py);
       const r3 = r2 * Math.sqrt(r2);
       return [-px / r3, -py / r3];
     };
-    for (let i = 0; i < substeps; i++) {
-      verlet = stepVelocityVerlet(verlet, h, accel);
-    }
-    const vxOut = verlet.velocities[0]!;
-    const vyOut = verlet.velocities[1]!;
-    const pxOut = verlet.positions[0]!;
-    const pyOut = verlet.positions[1]!;
-    const targ = evalPlanetAt(verlet.t, 1.0);
-    const tAng = verlet.t; // omega = 1 for r0=1
-    const cAng = Math.atan2(pyOut, pxOut);
-    let unwrappedChaser = cAng;
-    while (unwrappedChaser < tAng - Math.PI) unwrappedChaser += 2 * Math.PI;
-    while (unwrappedChaser > tAng + Math.PI) unwrappedChaser -= 2 * Math.PI;
-    const lag =
-      state.chaserPhaseLagAfterPeriod === null && verlet.t >= 2 * Math.PI - 1e-4
-        ? (targ.pos.x * pyOut - targ.pos.y * pxOut)
-        : state.chaserPhaseLagAfterPeriod;
-
+    let unwrappedChaser = state.chaserAngleRad;
+    const phase0 = state.targetAngleRad - state.t;
+    let lag = state.chaserPhaseLagAfterPeriod;
+    const advance=(duration:number)=>{
+      if(duration<=0)return;
+      const n=Math.max(10,Math.ceil(duration/.004)),h=duration/n;
+      for(let i=0;i<n;i++){
+        const a=Math.atan2(verlet.positions[1]!,verlet.positions[0]!);
+        verlet=stepVelocityVerlet(verlet,h,accel);
+        const b=Math.atan2(verlet.positions[1]!,verlet.positions[0]!);
+        unwrappedChaser+=Math.atan2(Math.sin(b-a),Math.cos(b-a));
+      }
+    };
+    const untilFirstPeriod=state.targetOrbitPeriod-state.t;
+    if(lag===null&&untilFirstPeriod>=-1e-12&&untilFirstPeriod<=dt+1e-12){
+      const first=Math.min(dt,Math.max(0,untilFirstPeriod));
+      advance(first);
+      lag=state.targetOrbitPeriod+phase0-unwrappedChaser;
+      advance(dt-first);
+    }else advance(dt);
+    const vxOut=verlet.velocities[0]!,vyOut=verlet.velocities[1]!;
+    const pxOut=verlet.positions[0]!,pyOut=verlet.positions[1]!;
+    const tAng=verlet.t+phase0;
+    const targ=evalPlanetAt(tAng,1.0);
     const eNow = 0.5 * (vxOut * vxOut + vyOut * vyOut) - 1.0 / Math.hypot(pxOut, pyOut);
     return {
       nextState: {
@@ -162,7 +165,7 @@ export function stepGravityAssistRendezvous(
         vel: { x: vxOut, y: vyOut },
         planetPos: targ.pos,
         planetVel: targ.vel,
-        targetAngleRad: tAng + 0.08,
+        targetAngleRad: tAng,
         chaserAngleRad: unwrappedChaser,
         helioEnergyCurrent: eNow,
         chaserPhaseLagAfterPeriod: lag,
@@ -231,8 +234,17 @@ export function stepGravityAssistRendezvous(
   };
 }
 
-export function computeObservables(state: GravityAssistRendezvousState): Record<string, number> {
+export function computeObservables(state: GravityAssistRendezvousState,params?:GravityAssistRendezvousParams): Record<string, number> {
+  const relativeSpeed=Math.hypot(state.vel.x-state.planetVel.x,state.vel.y-state.planetVel.y);
+  const relativeRadius=Math.hypot(state.pos.x-state.planetPos.x,state.pos.y-state.planetPos.y);
   return {
+    ...(params?.mode==='gravity-assist'?{
+      relativeSpeed,relativeRadius,
+      relativeSpecificEnergy:.5*relativeSpeed**2-Math.max(.01,params.muPlanet)/relativeRadius
+    }:params?.mode==='rendezvous'?{
+      phaseLagRad:state.targetAngleRad-state.chaserAngleRad,
+      ...(state.chaserPhaseLagAfterPeriod===null?{}:{phaseLagFirstPeriodRad:state.chaserPhaseLagAfterPeriod})
+    }:{}),
     t: state.t,
     helioSpeed: Math.hypot(state.vel.x, state.vel.y),
     deltaHelioEnergy: state.helioEnergyCurrent - state.helioEnergyInitial,
@@ -249,7 +261,7 @@ export function checkInvariants(state: GravityAssistRendezvousState, _init: Grav
       : Math.abs(state.helioEnergyCurrent - state.helioEnergyInitial) / Math.max(1e-6, Math.abs(state.helioEnergyInitial));
   return [
     {
-      name: params.mode === 'gravity-assist' ? '行星共动系辛积分速度不变量残差' : '空间站辛积分轨道机械能相对漂移',
+      name: params.mode === 'gravity-assist' ? '局部二体同初始半径等效速率残差' : '空间站辛积分轨道机械能相对漂移',
       measuredError: err,
       tolerance: 1e-5,
       passed: err < 1e-5

@@ -64,8 +64,9 @@ describe('stse-gravity-assist-rendezvous invariants (S04)', () => {
     const handle = stseGravityAssistRendezvousPlugin.getControlHandles?.(state, params)
       .find((item) => item.id === 'impact-parameter');
 
-    expect(planetFrame?.getOrigin(state, params)).toEqual({ x: state.planetPos.x * 0.5, y: state.planetPos.y * 0.5 });
-    expect(planetFrame?.getVelocity?.(state, params)).toEqual({ x: state.planetVel.x * 0.5, y: state.planetVel.y * 0.5 });
+    // Correct the old half-coordinate expectation: Canvas draws actual world coordinates.
+    expect(planetFrame?.getOrigin(state, params)).toEqual(state.planetPos);
+    expect(planetFrame?.getVelocity?.(state, params)).toEqual(state.planetVel);
     expect(heliocentric?.getOrigin(state, params)).toEqual({ x: 0, y: 0 });
     expect(handle).toBeDefined();
     expect(handle?.onDrag({ x: handle.position.x, y: 0.7 })['flybySide']).toBe('leading');

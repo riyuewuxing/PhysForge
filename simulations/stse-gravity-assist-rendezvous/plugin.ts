@@ -32,11 +32,11 @@ const paramSchema: readonly ParamFieldSpec<GravityAssistRendezvousParams>[] = [
   },
   { key: 'muPlanet', kind: 'number', label: '行星引力参数 μ_p', defaultValue: 0.16, min: 0.05, max: 0.4, step: 0.02 },
   { key: 'planetOrbitRadius', kind: 'number', label: '行星轨道半径 r_p', defaultValue: 5.0, min: 2.0, max: 8.0, step: 0.5 },
-  { key: 'impactParam', kind: 'number', label: '瞄准距离 b', defaultValue: 0.38, min: 0.15, max: 1.2, step: 0.04 },
+  { key: 'impactParam', kind: 'number', label: '初始横向偏置 b', defaultValue: 0.38, min: 0.15, max: 1.2, step: 0.04 },
   {
     key: 'rendezvousBurn',
     kind: 'select',
-    label: '交会点火策略',
+    label: '初始速度比较',
     defaultValue: 'prograde-boost',
     options: [
       { value: 'prograde-boost', label: '正向切向加速（高轨慢落后）' },
@@ -61,6 +61,8 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
   defaultView: { scale: (params) => params.mode === 'rendezvous' ? 0.5 : 1.417 },
   paramSchema,
   presets: gravityAssistPresets,
+  getParamFields:p=>paramSchema.filter(f=>(p.mode==='gravity-assist'?['mode','flybySide','muPlanet','planetOrbitRadius','impactParam']:['mode','rendezvousBurn','deltaVFraction']).includes(f.key)),
+  getTelemetryChannels:p=>p.mode==='gravity-assist'?[{key:'helioSpeed',label:'局部惯性系速率',unit:'v₀',color:'#38bdf8'},{key:'relativeSpeed',label:'行星系瞬时速率',unit:'v₀',color:'#fbbf24'},{key:'deltaHelioEnergy',label:'比动能变化',unit:'归一化',color:'#4ade80'},{key:'relativeSpecificEnergy',label:'行星系比机械能',unit:'归一化',color:'#a855f7'},{key:'planetFrameSpeedRelErr',label:'等效速率残差',unit:'',color:'#94a3b8'}]:[{key:'phaseLagRad',label:'目标领先角',unit:'rad',color:'#4ade80'},{key:'chaserAngleRad',label:'追踪舱连续相角',unit:'rad',color:'#38bdf8'},{key:'targetAngleRad',label:'目标连续相角',unit:'rad',color:'#fbbf24'}],
   engine: {
     createInitialState,
     step: stepGravityAssistRendezvous,
@@ -72,7 +74,7 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
   ],
   telemetryChannels: [
     { key: 'helioSpeed', label: '日心速率 v', unit: 'v₀', color: '#38bdf8' },
-    { key: 'deltaHelioEnergy', label: '日心比机械能变化 ΔE', unit: '', color: '#4ade80' },
+    { key: 'deltaHelioEnergy', label: '局部比动能变化 ΔE', unit: '', color: '#4ade80' },
     { key: 'planetFrameSpeedRelErr', label: '行星系速率守恒误差', unit: '', color: '#fbbf24' }
   ],
   getControlHandles: (state, params) => {
@@ -100,7 +102,7 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     {
       id: 'heliocentric',
       label: '太阳系（惯性系）',
-      description: '以日心惯性坐标描述探测器与行星轨迹。',
+      description: '掠飞为局部惯性近似；交会为中心体惯性系。',
       getOrigin: () => ({ x: 0, y: 0 }),
       getVelocity: () => ({ x: 0, y: 0 })
     },
@@ -109,10 +111,10 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
       label: '行星随动参考系',
       description: '原点随行星平移，用于比较掠飞前后的相对速率。',
       getOrigin: (state, params) => params.mode === 'gravity-assist'
-        ? { x: state.planetPos.x * 0.5, y: state.planetPos.y * 0.5 }
+        ? { x: state.planetPos.x, y: state.planetPos.y }
         : { x: 0, y: 0 },
       getVelocity: (state, params) => params.mode === 'gravity-assist'
-        ? { x: state.planetVel.x * 0.5, y: state.planetVel.y * 0.5 }
+        ? { x: state.planetVel.x, y: state.planetVel.y }
         : { x: 0, y: 0 }
     }
   ],
@@ -180,7 +182,7 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
       ctx.fillStyle = '#e2e8f0';
       ctx.font = 'bold 13px ui-sans-serif, system-ui';
       ctx.fillText(
-        `${params.rendezvousBurn === 'prograde-boost' ? '正向加速高轨：周期更长，一圈后更落后目标舱' : '逆向降轨：周期更短，加速追及目标舱'} | Δθ=${(state.chaserAngleRad - state.targetAngleRad).toFixed(3)} rad`,
+        `${params.rendezvousBurn === 'prograde-boost' ? '正向增速：轨道周期更长' : '逆向减速：轨道周期更短（不代表已对接）'} | Δθ=${(state.chaserAngleRad - state.targetAngleRad).toFixed(3)} rad`,
         20,
         30
       );
@@ -220,22 +222,18 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     ctx.font = 'bold 13px ui-sans-serif, system-ui';
     const dE = state.helioEnergyCurrent - state.helioEnergyInitial;
     ctx.fillText(
-      `日心动能变化 ΔEk = ${dE >= 0 ? '+' : ''}${dE.toFixed(4)} | 行星系进出速率守恒误差 ${state.planetFrameSpeedRelErr.toExponential(2)}`,
+      `局部惯性系比动能变化 ΔEk = ${dE >= 0 ? '+' : ''}${dE.toFixed(4)} | 同初始半径等效速率残差 ${state.planetFrameSpeedRelErr.toExponential(2)}`,
       20,
       30
     );
     ctx.restore();
   },
-  formatFormulas: (state, params) => [
-    {
-      id: 'slingshot-rendezvous',
-      label: params.mode === 'gravity-assist' ? '引力弹弓参考系矢量变换' : '开普勒第三定律与逆直觉追及',
-      latex:
-        params.mode === 'gravity-assist'
-          ? '\\mathbf{v}_{\\text{日心}} = \\mathbf{v}_{\\text{行}} + \\mathbf{v}_{\\infty}'
-          : 'T = 2\\pi\\sqrt{\\frac{a^3}{GM}}',
-      substitutedLatex: `\\Delta E_{\\text{日心}}=${(state.helioEnergyCurrent - state.helioEnergyInitial).toFixed(4)},\\; \\text{Err}=${state.planetFrameSpeedRelErr.toExponential(1)}`
-    }
+  formatFormulas: (state, params) => params.mode==='gravity-assist'?[
+    {id:'slingshot-rendezvous',label:'局部二体近似 · 参考系速度变换',latex:'\\mathbf{v}_{\\rm local}=\\mathbf{V}_{p}+\\mathbf{v}_{\\rm rel}',substitutedLatex:'\\Delta K_{\\rm local}='+ (state.helioEnergyCurrent-state.helioEnergyInitial).toFixed(4)},
+    {id:'relative-energy',label:'行星系比机械能（非瞬时速率恒定）',latex:'\\varepsilon=\\frac12 v_{\\rm rel}^2-\\frac{\\mu_p}{r}'}
+  ]:[
+    {id:'slingshot-rendezvous',label:'中心力轨道周期比较（归一化）',latex:'T=2\\pi\\sqrt{\\frac{a^3}{GM}}'},
+    {id:'target-phase',label:'目标领先角（非对接判据）',latex:'\\Delta\\theta=\\theta_{\\rm target}-\\theta_{\\rm chaser}',substitutedLatex:'\\Delta\\theta='+ (state.targetAngleRad-state.chaserAngleRad).toFixed(4)+'\\,\\mathrm{rad}'}
   ]
 });
 
