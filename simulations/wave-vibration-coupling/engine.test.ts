@@ -216,3 +216,26 @@ describe('W01 independent retarded-time, exact emission and standing-wave oracle
     expect(ss.filter(s=>s.direction==='left').map(s=>s.speed)).toEqual([4,8,12]);
   });
 });
+
+it('flags exact source and Mach caustic rather than publishing sentinel zero measurements',()=>{
+  const p={...baseParams,mode:'doppler' as const,probeX:0,probeY:0,sourceSpeedRatio:.5};
+  const crossing=(p.probeX+2)/(p.wavelength*p.frequency*p.sourceSpeedRatio);
+  const s=stepWaveCoupling(createInitialState(p),p,crossing).nextState,o=computeObservables(s,p);
+  expect(s.probeSampleDefined).toBe(false);expect(o.probeSampleDefined).toBe(0);expect(o.probeY).toBeUndefined();expect(o.probeVy).toBeUndefined();
+  const q={...p,sourceSpeedRatio:1.25,probeX:0,probeY:1};
+  const caustic=(2+Math.sqrt(q.sourceSpeedRatio**2-1))/(q.wavelength*q.frequency*q.sourceSpeedRatio);
+  const a=stepWaveCoupling(createInitialState(q),q,caustic).nextState;
+  expect(a.probeSampleDefined).toBe(false);
+});
+it('separates signed geometric path difference from phase at P and catches both arrivals',()=>{
+  const p={...baseParams,mode:'interference' as const,probeX:.5,probeY:0,phaseDiffDeg:180,causalFront:true};
+  const r=stepWaveCoupling(createInitialState(p),p,1),o=computeObservables(r.nextState,p);
+  expect(r.events.map(e=>e.time)).toEqual([.5,2.5/3]);
+  expect(o.signedPathDifference).toBeCloseTo(-1,12);expect(o.pathDifference).toBeCloseTo(1,12);
+  expect(o.phaseAtProbeDeg).toBeCloseTo(360,10);expect(o.analyticalAmplitude).toBeCloseTo(1,12);
+});
+it('catches corrupt probe acceleration and emission state, not just an internally computed SHO identity',()=>{
+  const p={...baseParams,mode:'doppler' as const,probeX:0,probeY:1,sourceSpeedRatio:.5},i=createInitialState(p),s=stepWaveCoupling(i,p,1.3).nextState;
+  expect(checkInvariants(s,i,p).every(r=>r.passed)).toBe(true);
+  expect(checkInvariants({...s,probeAccelY:s.probeAccelY+1,emittedCount:s.emittedCount+1},i,p).filter(r=>!r.passed).length).toBeGreaterThanOrEqual(2);
+});

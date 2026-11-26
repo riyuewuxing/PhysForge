@@ -376,7 +376,7 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
           id: 'doppler-formula',
           label: '多普勒表观频率',
           latex: "f' = f \\frac{v}{v \\mp v_s}",
-          substitutedLatex: `f_{\\text{前}}' = ${Number.isFinite(frontFreq) ? frontFreq.toFixed(2) : '\\infty'}\\text{ Hz},\\quad f_{\\text{后}}' = ${backFreq.toFixed(2)}\\text{ Hz}`
+          substitutedLatex: `f_{\\text{前}}' = ${frontFreq!==undefined ? frontFreq.toFixed(2) : '\\text{未定义}'}\\text{ Hz},\\quad f_{\\text{后}}' = ${backFreq.toFixed(2)}\\text{ Hz}`
         }
       ];
     }
