@@ -1270,6 +1270,54 @@ async function auditF04Cases(page,offline,select){
  return out;
 }
 
+async function auditF08Mechanics(page,offline,select){
+ const out={},prefix=offline?'H56_F08_offline_':'H56_F08_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
+ const input=key=>page.getByTestId((offline?'sf-param-':'param-slider-')+key);
+ const sync=async expected=>{
+   await page.waitForFunction(({canvasId,expected})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.mechanicsErrorRendered;return raw&&Object.entries(expected).every(([k,v])=>Math.abs(Number(v)-Number(JSON.parse(raw)[k]))<1e-10||JSON.parse(raw)[k]===v);},{canvasId,expected},{timeout:10000});
+   const r=JSON.parse(await canvas.getAttribute('data-mechanics-error-rendered'));
+   const bias=r.M*9.8*Math.sin(r.theta*Math.PI/180)-r.f;
+   if(Math.abs(r.aTrue-(r.m*9.8+bias)/(r.M+r.m))>1e-9||Math.abs(r.analyticA-bias/r.M)>1e-9||Math.abs(r.analyticF+bias)>1e-9)throw Error('F08 signed analytic law');
+   for(const q of r.curve){
+     if(Math.abs(q.aAnalytic-(q.fAppN+bias)/(r.M+q.fAppN/9.8))>1e-9)throw Error('F08 sweep law');
+     if(r.noise===0&&Math.abs(q.aMeasured-q.aAnalytic)>1e-9)throw Error('F08 noiseless sweep');
+   }
+   if(r.rawDots.length!==7||r.dots.length!==7)throw Error('F08 sample count');
+   const a=(r.rawDots[6].posCm-2*r.rawDots[3].posCm+r.rawDots[0].posCm)*.01/.09;
+   if(Math.abs(a-r.aDiff)>1e-9||(r.noise===0&&Math.abs(a-r.aTrue)>1e-9))throw Error('F08 sampled acceleration');
+   r.dots.forEach((d,i)=>{
+     if(Math.abs(d.timeS-i*.1)>1e-12||Math.abs(d.reading-r.rawDots[i].posCm+r.offset)>1e-9||Math.abs(d.x-r.zeroX-d.reading*r.scale)>1e-9)throw Error('F08 ruler/time mapping');
+   });
+   if(r.measured.some(p=>p.x<r.graphBounds.left-1e-9||p.x>r.graphBounds.right+1e-9||p.y<r.graphBounds.bottom-1e-9||p.y>r.graphBounds.top+1e-9))throw Error('F08 graph domain');
+   const expectedY=r.graphBounds.bottom+(-r.graphRange.aMin)/(r.graphRange.aMax-r.graphRange.aMin)*(r.graphBounds.top-r.graphBounds.bottom);
+   if(Math.abs(r.graphZero.y-expectedY)>1e-9)throw Error('F08 zero axis');
+   return r;
+ };
+ const save=async(name,r)=>{out[name]=r;await page.screenshot({path:path.join(OUT_DIR,prefix+name+'.png')});};
+ await canvas.waitFor({state:'visible'});
+ await select('af-under-compensated-f-intercept');
+ const under=await sync({scenario:'under-compensated',noise:0,offset:0});
+ if(!(under.analyticF>0))throw Error('F08 positive F intercept');
+ await save('under',under);
+ await input('rulerOffsetCm').fill('20');const shifted=await sync({scenario:'under-compensated',offset:20});
+ if(Math.abs(shifted.aDiff-under.aDiff)>1e-12||Math.abs(shifted.scale-under.scale)>1e-12||shifted.dots.some((d,i)=>Math.abs(d.x-under.dots[i].x)>1e-12||Math.abs(d.reading-under.dots[i].reading+20)>1e-9))throw Error('F08 ruler shift changed physical coordinates');
+ await save('zero_shift',shifted);
+ await input('cartMassKg').fill('0.1');await input('hangerMassKg').fill('0.01');await input('frictionForceN').fill('0.3');
+ const neg=await sync({M:.1,m:.01,f:.3,noise:0});if(!(neg.aTrue<0)||neg.rawDots.some((d,i)=>i&&d.posCm<=neg.rawDots[i-1].posCm))throw Error('F08 signed deceleration tape');
+ await save('negative_net',neg);
+ await select('af-over-compensated-a-intercept');const over=await sync({scenario:'over-compensated'});if(!(over.analyticA>0))throw Error('F08 positive a intercept');await save('over',over);
+ await select('af-ideal-compensated-origin');const ideal=await sync({scenario:'ideal-compensated'});if(Math.abs(ideal.analyticA)>1e-12||Math.abs(ideal.analyticF)>1e-12)throw Error('F08 balanced intercept');await save('ideal',ideal);
+ await select('af-heavy-hanger-bend');await input('cartMassKg').fill('0.1');await input('hangerMassKg').fill('0.5');
+ const heavy=await sync({scenario:'heavy-hanger-bend',M:.1,m:.5});if(!(heavy.curve.at(-1).aAnalytic>6))throw Error('F08 heavy-hanger high boundary');await save('heavy',heavy);
+ if(!offline){
+   await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
+   const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,file=path.join(OUT_DIR,prefix+'graph.svg');await svg.saveAs(file);
+   const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!['精确理论曲线','OLS 直线拟合','纸带测点'].every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F08 shared graph export');
+   await preview.screenshot({path:path.join(OUT_DIR,prefix+'graph_svg.png')});await page.getByTestId('btn-close-export-studio').click();out.export={bytes:Buffer.byteLength(bytes)};
+ }
+ return out;
+}
+
 async function auditF07Conceptual(page,offline,select){
  const out={},prefix=offline?'H53_F07_offline_':'H53_F07_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
  const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
@@ -4023,6 +4071,9 @@ async function main() {
     const f07Url=new URL(origin);f07Url.searchParams.set('model','stse-gravity-assist-rendezvous');await page.goto(f07Url.toString(),{waitUntil:'networkidle'});
     await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='stse-gravity-assist-rendezvous');
     const f07Report=await auditF07Conceptual(page,false,id=>selectPreset(page,id,true));
+    const f08Url=new URL(origin);f08Url.searchParams.set('model','exp-mechanics-error-lab');await page.goto(f08Url.toString(),{waitUntil:'networkidle'});
+    await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='exp-mechanics-error-lab');
+    const f08Report=await auditF08Mechanics(page,false,id=>selectPreset(page,id,true));
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -4036,8 +4087,8 @@ async function main() {
     const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
     const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
     if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    Object.assign(combined,{f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    Object.assign(combined,{f08Report,f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f08Report,f07Report,f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
     console.log('VISUAL_AUDIT_ONLINE: PASS');
     await context.close();
     }
@@ -4799,8 +4850,18 @@ async function main() {
       if(f07Errors.length||f07Network.length)throw Error('F07 offline errors '+JSON.stringify({f07Errors,f07Network}));
       Object.assign(f07OfflineReport,{errors:f07Errors,network:f07Network});
     }finally{await f07Context.close();}
-    Object.assign(combined,{f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+    const f08File=path.join(OUT_DIR,'H56_F08_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','exp-mechanics-error-lab','--preset','af-under-compensated-f-intercept','--out',f08File],{stdio:'inherit'});
+    const f08Context=await browser.newContext({viewport:VIEWPORT,offline:true}),f08Page=await f08Context.newPage(),f08Errors=[],f08Network=[];let f08OfflineReport;
+    f08Page.on('pageerror',e=>f08Errors.push(e.message));f08Page.on('console',m=>{if(m.type()==='error')f08Errors.push(m.text());});f08Page.on('request',r=>{if(/^https?:/.test(r.url()))f08Network.push(r.url());});
+    try{
+      await f08Page.goto(pathToFileURL(f08File).href);
+      f08OfflineReport=await auditF08Mechanics(f08Page,true,id=>f08Page.locator('[data-preset-id="'+id+'"]').click());
+      if(f08Errors.length||f08Network.length)throw Error('F08 offline errors '+JSON.stringify({f08Errors,f08Network}));
+      Object.assign(f08OfflineReport,{errors:f08Errors,network:f08Network});
+    }finally{await f08Context.close();}
+    Object.assign(combined,{f08OfflineReport,f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f08OfflineReport,f07OfflineReport,f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
     console.log('VISUAL_AUDIT_OFFLINE: PASS');
     }
     console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));

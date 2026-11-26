@@ -1,6 +1,6 @@
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { mechanicsErrorPresets } from './presets.js';
-import { graphItems, tapeGeometry, tapeY, type GraphRole } from './geometry.js';
+import { afGeometry, graphItems, tapeGeometry, tapeY, type GraphRole } from './geometry.js';
 import {
   checkInvariants,
   computeObservables,
@@ -150,6 +150,8 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
     }
     labels.push({id:'mechanics-error-summary',x:viewport.width*.45,y:26,text:'a 真='+state.aTrueMps2.toFixed(4)+' | a 逐差='+state.aDiffMeasuredMps2.toFixed(4)+' m/s² | 拟合 F 截距='+state.interceptFitF.toFixed(4)+' N',color:ink,font:'bold 13px ui-sans-serif, system-ui'});
     resolveAndDrawLabels(ctx,labels,viewport.width,viewport.height);ctx.restore();
+    const tape=tapeGeometry(state,params),graph=afGeometry(state,params);
+    ctx.canvas.dataset.mechanicsErrorRendered=JSON.stringify({t:state.t,scenario:params.scenario,M:params.cartMassKg,m:params.hangerMassKg,theta:params.trackTiltDeg,f:params.frictionForceN,noise:params.readingNoiseMm,aTrue:state.aTrueMps2,aDiff:state.aDiffMeasuredMps2,fitA:state.interceptFitA,fitF:state.interceptFitF,rSquared:state.rSquared,analyticA:state.analyticInterceptA,analyticF:state.analyticInterceptF,offset:tape.offset,zeroX:tape.zeroX,scale:tape.scale,dots:tape.dots,rawDots:state.tapeDots,curve:state.afCurve,graphZero:graph.map(0,0),graphBounds:graph.bounds,graphRange:{fMax:graph.fMax,aMin:graph.aMin,aMax:graph.aMax},measured:graph.data.measured.map(q=>graph.map(q.f,q.a)),screenBounds:[toScreen(-1.75,1.34),toScreen(1.75,-1.10)],layers:[...activeLayers]});
   },
   formatFormulas: (state) => [
     {
