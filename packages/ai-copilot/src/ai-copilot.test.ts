@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { loadSimulationById } from '@physforge/simulations/catalog';
 import {
   auditSceneHeadless,
   normalizeToSceneDsl,
@@ -91,5 +92,34 @@ describe('@physforge/ai-copilot 3-tier routing, Zod SceneDSL & 3-round refine', 
     expect(synth.route.modelId).toBe('comp-rigid-rolling-slip');
     const audit = await auditSceneHeadless(synth.scene, { steps: 30, dt: 0.02 });
     expect(audit.passed).toBe(true);
+  });
+});
+
+describe('Explicit static analytic headless contract',()=>{
+  const scene={schemaVersion:'2.0',modelId:'modern-photoelectric-compton',params:{mode:'photoelectric',wavelengthNm:405}};
+  it('certifies an explicitly static, finite, zero-time solver and keeps its real invariants',async()=>{
+    const source=(await loadSimulationById(scene.modelId))!;
+    const plugin={...source,timeSemantics:'static-analytic' as const,engine:{...source.engine,step:(state:unknown)=>({nextState:state,events:[],advancedTime:0,halt:true})}};
+    const r=await auditSceneHeadless(scene,{pluginResolver:async()=>plugin});
+    expect(r.passed).toBe(true);expect(r.finalObservables.t).toBe(0);
+    expect(r.invariants.length).toBeGreaterThan(0);expect(r.invariants.every(i=>i.passed)).toBe(true);
+  });
+  it('still rejects a stalled evolving solver even if it claims a terminal halt',async()=>{
+    const source=(await loadSimulationById(scene.modelId))!;
+    const plugin={...source,timeSemantics:undefined,engine:{...source.engine,step:(state:unknown)=>({nextState:state,events:[],advancedTime:0,halt:true})}};
+    const r=await auditSceneHeadless(scene,{pluginResolver:async()=>plugin});
+    expect(r.passed).toBe(false);expect(r.errors.join(' ')).toContain('Engine did not advance');
+  });
+  it('rejects static declarations with actual advancement, missing halt, fake time or missing invariants',async()=>{
+    const source=(await loadSimulationById(scene.modelId))!;
+    const stop=(state:unknown)=>({nextState:state,events:[],advancedTime:0,halt:true});
+    const engine={...source.engine,step:stop};
+    const plugin={...source,timeSemantics:'static-analytic' as const,engine};
+    const run=async(e:typeof engine)=>auditSceneHeadless(scene,{pluginResolver:async()=>({...plugin,engine:e})});
+    expect((await run({...engine,step:state=>({...stop(state),advancedTime:.01})})).passed).toBe(false);
+    expect((await run({...engine,step:state=>({...stop(state),halt:false})})).passed).toBe(false);
+    expect((await run({...engine,computeObservables:()=>({t:1})})).passed).toBe(false);
+    expect((await run({...engine,checkInvariants:()=>[]})).passed).toBe(false);
+    expect((await run({...engine,checkInvariants:()=>[{name:'bad',measuredError:1,tolerance:0,passed:false}]})).passed).toBe(false);
   });
 });
