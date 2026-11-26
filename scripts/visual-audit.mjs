@@ -1309,6 +1309,34 @@ async function auditF08Mechanics(page,offline,select){
  if(!(under.analyticF>0))throw Error('F08 positive F intercept');
  if(offline)await page.waitForFunction(()=>document.querySelector('[data-testid="sf-uplot"]')?.dataset.scopeTimeType==='elapsed',null,{timeout:5000});
  await save('under',under);
+ if(offline){
+   const play=page.getByTestId('sf-play-pause');
+   await play.click();
+   await page.waitForFunction(()=>{const el=document.querySelector('[data-testid="sf-uplot"]');return el&&el.dataset.scopeTimeType==='elapsed'&&Number(el.dataset.sampleCount)>1&&Number(el.dataset.scopeMax)>0;},null,{timeout:5000});
+   await play.click();
+   await page.waitForFunction(()=>document.querySelector('[data-testid="sf-play-pause"]')?.textContent?.includes('运行'),null,{timeout:5000});
+   const running=await sync({scenario:'under-compensated',offset:0});
+   if(Math.abs(running.aTrue-under.aTrue)>1e-12||Math.abs(running.aDiff-under.aDiff)>1e-12)throw Error('F08 elapsed scope changed static experiment values');
+   await save('elapsed_scope',running);
+   await select('af-under-compensated-f-intercept');await sync({scenario:'under-compensated',offset:0});
+ }else{
+   const card=page.getByTestId('formula-card'),toggle=page.getByTestId('btn-toggle-formula-values');
+   const formulaOverflow=async()=>card.locator('[data-formula-id] .overflow-x-auto').evaluateAll(nodes=>nodes.map(n=>({id:n.parentElement?.dataset.formulaId,available:n.clientWidth,required:n.scrollWidth})).filter(v=>v.required>v.available+1));
+   await card.locator('[data-formula-id="mechanics-error-tape-diff"]').waitFor({state:'visible'});
+   const before=await toggle.getAttribute('aria-pressed');
+   if(before==='true')await toggle.click();
+   let bad=await formulaOverflow();if(bad.length)throw Error('F08 symbolic formula clipping '+JSON.stringify(bad));
+   await toggle.click();bad=await formulaOverflow();if(bad.length)throw Error('F08 substituted formula clipping '+JSON.stringify(bad));
+   if(before!=='true')await toggle.click();
+   const box=await canvas.boundingBox(),bounds=under.screenBounds,ppm=(bounds[1].x-bounds[0].x)/3.5;
+   if(!box||!(ppm>0))throw Error('F08 missing rendered handle transform');
+   const x=box.x+bounds[0].x+(under.zeroX+1.75)*ppm,y=box.y+bounds[0].y+.14*ppm;
+   await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+10*under.scale*ppm,y,{steps:6});await page.mouse.up();
+   await page.waitForFunction(()=>{const d=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.mechanicsErrorRendered||'null');return d&&Math.abs(d.offset-10)<=.15;},null,{timeout:5000});
+   const drag=await sync({scenario:'under-compensated'});
+   if(Math.abs(drag.aDiff-under.aDiff)>1e-12||drag.dots.some((d,i)=>Math.abs(d.x-under.dots[i].x)>1e-12))throw Error('F08 direct drag changed physical tape');
+   await save('ruler_drag',drag);
+ }
  await setNumber('rulerOffsetCm','20');const shifted=await sync({scenario:'under-compensated',offset:20});
  if(Math.abs(shifted.aDiff-under.aDiff)>1e-12||Math.abs(shifted.scale-under.scale)>1e-12||shifted.dots.some((d,i)=>Math.abs(d.x-under.dots[i].x)>1e-12||Math.abs(d.reading-under.dots[i].reading+20)>1e-9))throw Error('F08 ruler shift changed physical coordinates');
  await save('zero_shift',shifted);

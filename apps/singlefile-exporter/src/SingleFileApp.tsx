@@ -489,7 +489,7 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (measuredScope && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice||(regenSlice&&latestRef.current.params.mode==='regen-brake'))uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
+      if(mechanicsErrorSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice||(regenSlice&&latestRef.current.params.mode==='regen-brake'))uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
       const empty = snaps.length < 2;
       uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
@@ -1039,7 +1039,7 @@ export const SingleFileApp: React.FC = () => {
               style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
             >
               <div style={{ color: 'var(--pf-text-muted)' }}>{f.label}</div>
-              {(equilibriumSlice||projectileSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
+              {(mechanicsErrorSlice||equilibriumSlice||projectileSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
               <div className="overflow-x-auto"
                 dangerouslySetInnerHTML={{
                   __html: katex.renderToString(f.substitutedLatex ?? f.latex, { throwOnError: false })

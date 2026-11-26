@@ -136,7 +136,7 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
       put('tape-note',0,1.57,'50 Hz · 每5点取一个计数点 · T=0.10 s · x 读数/cm');
     }
     if(activeLayers.has('afCurve')){
-      const colors:Record<GraphRole,string>={axis:ink,tick:ink,theory:projector?'#075985':'#38bdf8',fit:projector?'#6d28d9':'#c4b5fd',measured:projector?'#92400e':'#fbbf24',overlay:projector?'#be123c':'#f43f5e',legend:ink};
+      const colors:Record<GraphRole,string>={axis:ink,tick:ink,theory:projector?'#075985':'#38bdf8',fit:projector?'#6d28d9':'#c4b5fd',measured:projector?'#92400e':'#fbbf24',overlay:projector?'#be123c':'#f43f5e',legend:projector?'#92400e':'#fbbf24'};
       graphItems(state,params).forEach(({role,primitive:p},idx)=>{
         const color=colors[role];ctx.strokeStyle=color;ctx.fillStyle=color;
         ctx.lineWidth=role==='theory'?2.3:1.25;ctx.setLineDash('dashed' in p&&p.dashed?[5,4]:[]);
