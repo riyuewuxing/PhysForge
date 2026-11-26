@@ -46,6 +46,7 @@ import type {WaveFdtdState} from '../../../../simulations/wave-2d-ripple-fdtd/en
 type RippleStagePlugin=typeof import('../../../../simulations/wave-2d-ripple-fdtd/plugin.js').wave2dRippleFdtdPlugin;
 import type {TransformerGridParams} from '../../../../simulations/em-transformer-grid/engine.js';
 type TransformerStagePlugin=typeof import('../../../../simulations/em-transformer-grid/plugin.js').emTransformerGridPlugin;
+import type {PhotoelectricComptonState} from '../../../../simulations/modern-photoelectric-compton/engine.js';
 import type {ThermoCycleMdState} from '../../../../simulations/thermo-cycles-kinetic-md/engine.js';
 import type {ThermoGasState} from '../../../../simulations/thermo-piston-gas-laws/engine.js';
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
@@ -303,7 +304,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const waveOpticsStage=plugin.meta.id==='optics-wave-interference';
   const thermoStage=plugin.meta.id==='thermo-piston-gas-laws';
   const thermalCycleStage=plugin.meta.id==='thermo-cycles-kinetic-md';
-  const thermoStaticStage=(thermoStage&&params.mode!=='stop-pin-cylinder')||(thermalCycleStage&&params.mode!=='kinetic-md-box');
+  const quantumStaticStage=plugin.meta.id==='modern-photoelectric-compton';
+  const thermoStaticStage=(thermoStage&&params.mode!=='stop-pin-cylinder')||(thermalCycleStage&&params.mode!=='kinetic-md-box')||quantumStaticStage;
   const shmCameraKeyRef=useRef('');
   const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
@@ -1184,6 +1186,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const model=p as unknown as LcStagePlugin,b=model.lcDiagramBounds();
       canvas.dataset.lcRendered=JSON.stringify({t:frame.t,mode:pm.mode,inductanceH:pm.inductanceH,capacitanceF:pm.capacitanceF,resistanceR:pm.resistanceR,initialChargeC:pm.initialChargeC,driveVoltAmpUm:pm.driveVoltAmpUm,driveOmega:pm.driveOmega,...p.engine.computeObservables(drawState,pm)});
       canvas.dataset.lcView=JSON.stringify({bounds:b,width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:lcSafeRef.current?.safe});
+    }
+    if(p.meta.id==='modern-photoelectric-compton'&&frame&&drawState!==null){
+      const s=drawState as PhotoelectricComptonState;canvas.dataset.quantumRendered=JSON.stringify({...pm,outerTime:frame.t,...p.engine.computeObservables(s,pm)});
     }
     if(p.meta.id==='thermo-cycles-kinetic-md'&&frame&&drawState!==null){
       const s=drawState as ThermoCycleMdState;
