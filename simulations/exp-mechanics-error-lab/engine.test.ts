@@ -1,4 +1,4 @@
-import { resolvePluginParams, type SimulationPluginV2 } from '@physforge/sim-sdk';
+import { createWorldMapper, resolvePluginParams, type SimulationPluginV2, type Viewport } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { expMechanicsErrorLabPlugin } from './plugin.js';
 import { mechanicsErrorPresets } from './presets.js';
@@ -144,5 +144,29 @@ describe('H57 F08 signed sampling and shared geometry',()=>{
   it('rejects missing, malformed and out-of-domain CSV samples instead of silently mapping them to zero',()=>{
     const p={...getPreset(0),phyphoxOverlayCsv:'F,a\n0.2;0.3\n;2\n1;;2\n1;Infinity\n-1;2\n3;101'};
     expect(solveMechanicsErrorAnalysis(p).csvOverlayPoints).toEqual([{fAppN:.2,a:.3}]);
+  });
+});
+
+describe('F08 actual Canvas label anchoring',()=>{
+  it.each([
+    {cartMassKg:.1,hangerMassKg:.01,frictionForceN:.3,rulerOffsetCm:20},
+    {cartMassKg:.1,hangerMassKg:.5,frictionForceN:0,rulerOffsetCm:0}
+  ])('draws each quantitative label at its intended coordinate and retains seven readings',changes=>{
+    const p={...getPreset(0),...changes,readingNoiseMm:0},state=createInitialState(p);
+    const vp:Viewport={width:1120,height:584,dpr:1,scale:.78,offsetX:0,offsetY:0};
+    const mapper=createWorldMapper(vp);
+    const drawn:Array<{text:string;x:number;y:number;align:string;baseline:string}>=[];
+    const target={textAlign:'left',textBaseline:'alphabetic',canvas:{width:vp.width,height:vp.height},
+      measureText:(text:string)=>({width:text.length*6}),
+      fillText:(text:string,x:number,y:number)=>drawn.push({text,x,y,align:target.textAlign,baseline:target.textBaseline})};
+    const ctx=new Proxy(target,{get:(o,k)=>Reflect.has(o,k)?Reflect.get(o,k):()=>undefined}) as unknown as CanvasRenderingContext2D;
+    expMechanicsErrorLabPlugin.renderCanvas(ctx,state,p,vp,new Set(['tape','afCurve']));
+    for(const {role,primitive:q} of graphItems(state,p)){
+      if(role!=='tick'||q.kind!=='text')continue;
+      const expected=mapper.toScreen(q.x,q.y);
+      expect(drawn.some(d=>d.text===q.text&&Math.abs(d.x-expected.x)<1e-8&&Math.abs(d.y-expected.y)<1e-8&&d.baseline==='middle'&&d.align===(q.align==='end'?'right':'center')),q.text).toBe(true);
+    }
+    for(const d of tapeGeometry(state,p).dots)
+      expect(drawn.filter(q=>q.text==='x'+d.index+'='+d.reading.toFixed(2))).toHaveLength(1);
   });
 });
