@@ -96,7 +96,7 @@ export function lcScene(s:LcRlcState,p:LcRlcParams,layers:ReadonlySet<string>):M
     label(-1.02,-.17,'uL='+number(s.uIndV)+' V','magnetic');
     label(-1.92,-.45,'C='+p.capacitanceF.toFixed(2)+' F','muted');
     label(-.95,-.45,'L='+p.inductanceH.toFixed(2)+' H','magnetic');
-    label(-1.55,-1.12,driven?'正向：流入电容上板（逆时针）':'正向：流入上板 · 实际电流随符号反向','muted');
+    if(!driven)label(-1.55,-.96,'正向：流入上板 · 电流随符号反向','muted');
   }
   if(layers.has('energyBars')){
     const E=s.energyElectricJ+s.energyMagneticJ,available=s.initialEnergyJ+s.sourceWorkJ,total=E+s.jouleHeatJ,
@@ -106,8 +106,8 @@ export function lcScene(s:LcRlcState,p:LcRlcParams,layers:ReadonlySet<string>):M
       const keys=[{x:.58,v:s.energyElectricJ,t:'electric' as Tone,n:'电场能'},{x:1.48,v:s.energyMagneticJ,t:'magnetic' as Tone,n:'磁场能'},{x:2.38,v:s.jouleHeatJ,t:'heat' as Tone,n:'焦耳热'}];
       const y=-.57,h=1.58;
       line(.14,y,2.94,y,'muted');line(.14,y+h,2.94,y+h,'muted',true);label(1.52,1.18,'标尺 '+number(maxE)+' J','muted');
-      for(const k of keys){rect(k.x-.26,y,.52,h,'muted');if(k.v>0)rect(k.x-.26,y,.52,h*k.v/maxE,k.t,true);label(k.x,y-.16,k.n,k.t);label(k.x,y-.35,number(k.v)+' J',k.t);}
-      label(1.52,-1.10,s.measuredPeriod===null?'实测周期：等待两次向上过零':'实测过零间隔 '+number(s.measuredPeriod)+' s','muted');
+      for(const k of keys){rect(k.x-.26,y,.52,h,'muted');if(k.v>0)rect(k.x-.26,y,.52,h*k.v/maxE,k.t,true);label(k.x,y-.12,k.n,k.t);label(k.x,y-.26,number(k.v)+' J',k.t);}
+      label(1.52,-.99,s.measuredPeriod===null?'实测周期：等待两次向上过零':'实测过零间隔 '+number(s.measuredPeriod)+' s','muted');
     }
     // Shared power/energy ledger. Keep the reference and stack on one scale.
     const bx=-2.8,by=-1.35,bw=5.6,bh=.12;
@@ -117,7 +117,7 @@ export function lcScene(s:LcRlcState,p:LcRlcParams,layers:ReadonlySet<string>):M
     rect(bx,by,bw,bh,'muted');
     const refX=bx+bw*Math.max(0,available)/maxE;
     line(refX,by-.035,refX,by+bh+.035,'ink');
-    label(0,by+.23,'E_C '+number(s.energyElectricJ)+' + E_L '+number(s.energyMagneticJ)+' + Q热 '+number(s.jouleHeatJ)+' = '+number(total)+' J','ink');
+    label(0,by+.20,'储能 '+number(E)+' + 热 '+number(s.jouleHeatJ)+' = '+number(total)+' J · 初始+源功 '+number(available)+' J','ink');
     if(!driven)label(0,by-.13,'初始 '+number(s.initialEnergyJ)+' J · 账本残差 '+s.energyResidualJ.toExponential(1)+' J','muted');
   }
   if(driven&&layers.has('phasorPlot')){
