@@ -76,6 +76,7 @@ const acSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'
 const wireSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='wireframe-gravity-fall'));
 const eddySlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='betatron-vortex'));
 const generatorSlice=targetPlugin.paramSchema.some(f=>f.key==='waveform'&&f.kind==='select'&&f.options.some(o=>o.value==='duty-square'));
+const nuclearSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='cloud-chamber-recoil')&&f.options.some(o=>o.value==='half-life-mc'));
 const atomicSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='rutherford')&&f.options.some(o=>o.value==='bohr'));
 const quantumSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='photoelectric')&&f.options.some(o=>o.value==='compton'));
 const thermalCycleSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='kinetic-md-box'));
@@ -86,7 +87,7 @@ const lcSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'
 const magneticSlice=targetPlugin.paramSchema.some(f=>f.key==='geometryType'&&f.kind==='select'&&f.options.some(o=>o.value==='uniform-helix'));
 const waveSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='doppler'));
 const rippleSlice=targetPlugin.paramSchema.some(f=>f.key==='wavelengthCells');
-const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice;
+const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -170,7 +171,7 @@ export const SingleFileApp: React.FC = () => {
       __INITIAL_PRESET_DATA__?.params ?? initialPreset?.params
     )
   );
-  const thermoStaticSlice=(thermoSlice&&params.mode!=='stop-pin-cylinder')||(thermalCycleSlice&&params.mode!=='kinetic-md-box')||quantumSlice||(atomicSlice&&params.mode==='bohr');
+  const thermoStaticSlice=(thermoSlice&&params.mode!=='stop-pin-cylinder')||(thermalCycleSlice&&params.mode!=='kinetic-md-box')||quantumSlice||(atomicSlice&&params.mode==='bohr')||(nuclearSlice&&params.mode!=='half-life-mc');
   const [activeLayers, setActiveLayers] = useState<string[]>(() =>
     __INITIAL_PRESET_DATA__?.visibleLayers?.length
       ? [...__INITIAL_PRESET_DATA__.visibleLayers]
@@ -195,7 +196,7 @@ export const SingleFileApp: React.FC = () => {
     formulas: FormulaDisplayItem[];
   }>({ t: 0, observables: {}, events: [], invariants: [], formulas: [] });
 
-  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario,params.template,(turntableSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||waveSlice||thermalCycleSlice||atomicSlice)?params.mode:undefined,capacitorSlice?params.oilDropEnabled:undefined,magneticSlice?params.geometryType:undefined,atomicSlice?params.excitedLevelN:undefined,atomicSlice?params.populationMode:undefined,atomicSlice?params.probeKind:undefined,atomicSlice?params.probeEnergyEv:undefined]);
+  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario,params.template,(turntableSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||waveSlice||thermalCycleSlice||atomicSlice||nuclearSlice)?params.mode:undefined,capacitorSlice?params.oilDropEnabled:undefined,magneticSlice?params.geometryType:undefined,atomicSlice?params.excitedLevelN:undefined,atomicSlice?params.populationMode:undefined,atomicSlice?params.probeKind:undefined,atomicSlice?params.probeEnergyEv:undefined,nuclearSlice?params.magneticFieldT:undefined]);
   const [channelA, setChannelA] = useState(channels[0]?.key ?? '');
   const [channelB, setChannelB] = useState(channels[1]?.key ?? channels[0]?.key ?? '');
   useEffect(()=>{if(measuredScope){setChannelA(channels[0]?.key??'');setChannelB(channels[1]?.key??channels[0]?.key??'');}},[channels]);
@@ -365,6 +366,7 @@ export const SingleFileApp: React.FC = () => {
         layerSet.delete('eventPins');
       }
       targetPlugin.renderCanvas(ctx, drawState, pm, measuredScope||opticalSlice||transformerSlice||waveOpticsSlice||thermoSlice||quantumSlice||atomicSlice?{...vp,theme:th}:vp, layerSet);
+      if(nuclearSlice&&frame)canvas.dataset.nuclearRendered=JSON.stringify({...pm,outerTime:frame.t,...targetPlugin.engine.computeObservables(drawState,pm)});
       if(atomicSlice&&frame)canvas.dataset.atomicRendered=JSON.stringify({...pm,outerTime:frame.t,...targetPlugin.engine.computeObservables(drawState,pm)});
       if(quantumSlice&&frame)canvas.dataset.quantumRendered=JSON.stringify({...pm,outerTime:frame.t,...targetPlugin.engine.computeObservables(drawState,pm)});
       if(thermalCycleSlice&&frame){
@@ -470,7 +472,7 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (measuredScope && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
+      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
       const empty = snaps.length < 2;
       uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
@@ -737,7 +739,7 @@ export const SingleFileApp: React.FC = () => {
         <div>
           <div className="font-bold text-base">{targetPlugin.meta.title}</div>
           <div className="text-xs" data-testid="sf-summary-clock" data-sample-time={summary.t} style={{ color: 'var(--pf-text-muted)' }}>
-            离线课堂单文件切片 · {targetPlugin.meta.textbookRef} · {thermoStaticSlice?(atomicSlice?'静态能级与谱线比较':quantumSlice?'静态量子实验 · 调参比较':thermalCycleSlice?'静态解析循环 · 调参比较':'独立等温状态 · 调参比较'):atomicSlice?`演示时间 ${summary.t.toFixed(3)} s`:thermalCycleSlice?`t* = ${summary.t.toFixed(3)}（约化）`:waveOpticsSlice?'静态归一化光强 · 调参比较':transformerSlice?'稳态有效值 · 调参比较':`t = ${summary.t.toFixed(3)} s`}
+            离线课堂单文件切片 · {targetPlugin.meta.textbookRef} · {thermoStaticSlice?(nuclearSlice?'静态理想化 · 调参比较':atomicSlice?'静态能级与谱线比较':quantumSlice?'静态量子实验 · 调参比较':thermalCycleSlice?'静态解析循环 · 调参比较':'独立等温状态 · 调参比较'):atomicSlice?`演示时间 ${summary.t.toFixed(3)} s`:thermalCycleSlice?`t* = ${summary.t.toFixed(3)}（约化）`:waveOpticsSlice?'静态归一化光强 · 调参比较':transformerSlice?'稳态有效值 · 调参比较':`t = ${summary.t.toFixed(3)} s`}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -900,9 +902,9 @@ export const SingleFileApp: React.FC = () => {
           className="w-80 shrink-0 border-l p-3 overflow-y-auto space-y-3"
           style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
         >
-          {(equilibriumSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice)&&<section className="space-y-1 text-xs" data-testid={atomicSlice?'sf-f04-layers':quantumSlice?'sf-f03-layers':thermalCycleSlice?'sf-f02-layers':thermoSlice?'sf-f01-layers':waveOpticsSlice?'sf-o01-layers':rippleSlice?'sf-ripple-layers':waveSlice?'sf-wave-layers':magneticSlice?'sf-magnetic-layers':lcSlice?'sf-lc-layers':transformerSlice?'sf-transformer-layers':generatorSlice?'sf-generator-layers':eddySlice?'sf-eddy-layers':wireSlice?'sf-wire-layers':acSlice?'sf-ac-layers':capacitorSlice?'sf-capacitor-layers':electroSlice?'sf-electro-layers':shmSlice?'sf-shm-layers':collisionSlice?'sf-collision-layers':springSlice?'sf-spring-layers':turntableSlice?'sf-turntable-layers':verticalSlice?'sf-vertical-layers':contactSlice?'sf-contact-layers':equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
+          {(equilibriumSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice)&&<section className="space-y-1 text-xs" data-testid={atomicSlice?'sf-f04-layers':quantumSlice?'sf-f03-layers':thermalCycleSlice?'sf-f02-layers':thermoSlice?'sf-f01-layers':waveOpticsSlice?'sf-o01-layers':rippleSlice?'sf-ripple-layers':waveSlice?'sf-wave-layers':magneticSlice?'sf-magnetic-layers':lcSlice?'sf-lc-layers':transformerSlice?'sf-transformer-layers':generatorSlice?'sf-generator-layers':eddySlice?'sf-eddy-layers':wireSlice?'sf-wire-layers':acSlice?'sf-ac-layers':capacitorSlice?'sf-capacitor-layers':electroSlice?'sf-electro-layers':shmSlice?'sf-shm-layers':collisionSlice?'sf-collision-layers':springSlice?'sf-spring-layers':turntableSlice?'sf-turntable-layers':verticalSlice?'sf-vertical-layers':contactSlice?'sf-contact-layers':equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
           <div className="text-xs font-bold" style={{color:"var(--pf-accent)"}}>课堂预设速切</div>
-          {(waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice)?<select data-testid={atomicSlice?'sf-f04-presets':quantumSlice?'sf-f03-presets':thermalCycleSlice?'sf-f02-presets':thermoSlice?'sf-f01-presets':'sf-o01-presets'} aria-label="课堂预设" value={activePresetId??''} onChange={e=>{
+          {(waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice)?<select data-testid={nuclearSlice?'sf-f05-presets':atomicSlice?'sf-f04-presets':quantumSlice?'sf-f03-presets':thermalCycleSlice?'sf-f02-presets':thermoSlice?'sf-f01-presets':'sf-o01-presets'} aria-label="课堂预设" value={activePresetId??''} onChange={e=>{
               const preset=targetPlugin.presets.find(p=>p.id===e.target.value);if(!preset)return;
               setActivePresetId(preset.id);setParams(resolvePluginParams(targetPlugin.paramSchema,preset.params));
               if(preset.visibleLayers?.length)setActiveLayers([...preset.visibleLayers]);
@@ -1013,7 +1015,7 @@ export const SingleFileApp: React.FC = () => {
               style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
             >
               <div style={{ color: 'var(--pf-text-muted)' }}>{f.label}</div>
-              {(equilibriumSlice||projectileSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
+              {(equilibriumSlice||projectileSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
               <div className="overflow-x-auto"
                 dangerouslySetInnerHTML={{
                   __html: katex.renderToString(f.substitutedLatex ?? f.latex, { throwOnError: false })
@@ -1049,7 +1051,7 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
-                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice){setIsPlaying(false);setScrubTime(null);}
+                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                     className="w-full h-9"
@@ -1071,8 +1073,8 @@ export const SingleFileApp: React.FC = () => {
                           [field.key]: e.target.checked
                         })
                       );
-                      if(equilibriumSlice||waveOpticsSlice||thermalCycleSlice||quantumSlice||atomicSlice){setIsPlaying(false);setScrubTime(null);}
-                      if(waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice)setActivePresetId(null);
+                      if(equilibriumSlice||waveOpticsSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice){setIsPlaying(false);setScrubTime(null);}
+                      if(waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice)setActivePresetId(null);
                       setResetNonce((n) => n + 1);
                     }}
                   />
@@ -1084,7 +1086,7 @@ export const SingleFileApp: React.FC = () => {
               <div key={field.key} className="text-xs space-y-1">
                 <span>{field.label}</span>
                 <select
-                  data-testid={atomicSlice?'sf-param-'+field.key:undefined}
+                  data-testid={atomicSlice||nuclearSlice?'sf-param-'+field.key:undefined}
                   value={typeof val === 'string' ? val : field.defaultValue}
                   onChange={(e) => {
                     setParams(
@@ -1093,7 +1095,7 @@ export const SingleFileApp: React.FC = () => {
                         [field.key]: e.target.value
                       })
                     );
-                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice){setIsPlaying(false);setScrubTime(null);}
+                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice){setIsPlaying(false);setScrubTime(null);}
                     setResetNonce((n) => n + 1);
                   }}
                   className="w-full rounded border px-2 py-1.5"

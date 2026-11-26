@@ -306,7 +306,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const thermalCycleStage=plugin.meta.id==='thermo-cycles-kinetic-md';
   const quantumStaticStage=plugin.meta.id==='modern-photoelectric-compton';
   const atomicStage=plugin.meta.id==='modern-rutherford-bohr',atomicStaticStage=atomicStage&&params.mode==='bohr';
-  const thermoStaticStage=(thermoStage&&params.mode!=='stop-pin-cylinder')||(thermalCycleStage&&params.mode!=='kinetic-md-box')||quantumStaticStage||atomicStaticStage;
+  const nuclearStage=plugin.meta.id==='modern-nuclear-recoil-decay',nuclearStaticStage=nuclearStage&&params.mode!=='half-life-mc';
+  const thermoStaticStage=(thermoStage&&params.mode!=='stop-pin-cylinder')||(thermalCycleStage&&params.mode!=='kinetic-md-box')||quantumStaticStage||atomicStaticStage||nuclearStaticStage;
   const shmCameraKeyRef=useRef('');
   const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
@@ -344,7 +345,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       return plugin.telemetryChannels.filter(c=>keys.includes(c.key));
     }
     return plugin.telemetryChannels;
-  },[plugin,params.mode,params.topology,params.scenario,params.template,capacitorStage?params.oilDropEnabled:undefined,magneticStage?params.geometryType:undefined]);
+  },[plugin,params.mode,params.topology,params.scenario,params.template,capacitorStage?params.oilDropEnabled:undefined,magneticStage?params.geometryType:undefined,nuclearStage?params.magneticFieldT:undefined]);
   const [channelA, setChannelA] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[0]);
   const [channelB, setChannelB] = useState<string>(() => getDefaultScopeChannels(plugin.meta.id, params, channels)[1]);
 
@@ -353,7 +354,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.getTelemetryChannels?channels:plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics','mech-conical-turntable','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','wave-vibration-coupling'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined,plugin.getTelemetryChannels?params.template:undefined,capacitorStage?params.oilDropEnabled:undefined,magneticStage?params.geometryType:undefined,thermalCycleStage||atomicStage?params.mode:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics','mech-conical-turntable','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','wave-vibration-coupling'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined,plugin.getTelemetryChannels?params.template:undefined,capacitorStage?params.oilDropEnabled:undefined,magneticStage?params.geometryType:undefined,thermalCycleStage||atomicStage||nuclearStage?params.mode:undefined,nuclearStage?params.magneticFieldT:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -1188,6 +1189,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       canvas.dataset.lcRendered=JSON.stringify({t:frame.t,mode:pm.mode,inductanceH:pm.inductanceH,capacitanceF:pm.capacitanceF,resistanceR:pm.resistanceR,initialChargeC:pm.initialChargeC,driveVoltAmpUm:pm.driveVoltAmpUm,driveOmega:pm.driveOmega,...p.engine.computeObservables(drawState,pm)});
       canvas.dataset.lcView=JSON.stringify({bounds:b,width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:lcSafeRef.current?.safe});
     }
+    if(p.meta.id==='modern-nuclear-recoil-decay'&&frame&&drawState!==null){canvas.dataset.nuclearRendered=JSON.stringify({...pm,outerTime:frame.t,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='modern-rutherford-bohr'&&frame&&drawState!==null){canvas.dataset.atomicRendered=JSON.stringify({...pm,outerTime:frame.t,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='modern-photoelectric-compton'&&frame&&drawState!==null){
       const s=drawState as PhotoelectricComptonState;canvas.dataset.quantumRendered=JSON.stringify({...pm,outerTime:frame.t,...p.engine.computeObservables(s,pm)});
@@ -1256,7 +1258,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
-    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr'].includes(latestRef.current.plugin.meta.id)||latestRef.current.plugin.meta.id==='builder-custom-ode-lab';
+    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(latestRef.current.plugin.meta.id)||latestRef.current.plugin.meta.id==='builder-custom-ode-lab';
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
@@ -1750,7 +1752,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const equilibriumScope=plugin.meta.id==='mech-dynamic-equilibrium';
   const constrainedScope=plugin.meta.id==='mech-constrained-velocity';
   const projectileScope=plugin.meta.id==='mech-projectile-coupling';
-  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||electroStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||magneticStage||waveStage||rippleStage||thermoStage||thermalCycleStage||atomicStage;
+  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||electroStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||magneticStage||waveStage||rippleStage||thermoStage||thermalCycleStage||atomicStage||nuclearStage;
   const contactPair=contactStage&&((channelA==='vBlock'&&channelB==='vCarrier')||(channelA==='vCarrier'&&channelB==='vBlock'));
   const semanticScope=heroScope||measuredScope;
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
