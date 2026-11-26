@@ -337,7 +337,7 @@ const ClassroomApp: React.FC = () => {
             data-testid="btn-play-pause"
             disabled={plugin.meta.id==='em-transformer-grid'||plugin.meta.id==='optics-wave-interference'} onClick={store.togglePlaying}
             aria-label={store.isPlaying ? '暂停' : '运行'}
-            className="grid h-7 w-7 place-items-center rounded-full bg-sky-400 text-slate-950 shadow-[0_0_20px_rgba(56,189,248,0.7)] transition hover:bg-sky-300 cursor-pointer"
+            className={plugin.meta.id==='optics-wave-interference'?"grid h-7 w-7 place-items-center rounded-full text-slate-400 opacity-40 cursor-not-allowed":"grid h-7 w-7 place-items-center rounded-full bg-sky-400 text-slate-950 shadow-[0_0_20px_rgba(56,189,248,0.7)] transition hover:bg-sky-300 cursor-pointer"}
           >
             {store.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
           </button>
@@ -368,7 +368,7 @@ const ClassroomApp: React.FC = () => {
             type="button"
             data-testid="menu-btn-play-pause"
             disabled={plugin.meta.id==='em-transformer-grid'||plugin.meta.id==='optics-wave-interference'} onClick={store.togglePlaying}
-            className="pf-touch-target inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-500 text-slate-950 font-bold hover:bg-sky-400 transition cursor-pointer"
+            className={plugin.meta.id==='optics-wave-interference'?"pf-touch-target inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border opacity-40 cursor-not-allowed":"pf-touch-target inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-500 text-slate-950 font-bold hover:bg-sky-400 transition cursor-pointer"}
           >
             {store.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             <span>{store.isPlaying ? '暂停' : '运行'}</span>

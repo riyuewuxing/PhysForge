@@ -1018,7 +1018,6 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
-                      if(waveOpticsSlice)setActivePresetId(null);
                     if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}

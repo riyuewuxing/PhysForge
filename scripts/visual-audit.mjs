@@ -787,8 +787,37 @@ async function auditO01(page,origin){
   if(!await page.getByTestId('param-slider-gratingPitchMicron').count())throw Error('O01 pitch did not return');
   await selectPreset(page,'newton-dense-outer-rings',true);
   await syncO01(page,false,{mode:'newtons-rings',wavelengthNm:400});
-  const theme=page.getByTestId('btn-theme');
-  if(await theme.isVisible()){await theme.click();await page.waitForTimeout(200);await page.screenshot({path:path.join(OUT_DIR,'H43_O01_dense_projector.png')});await theme.click();}
+  const initialTheme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+  const tools=page.getByTestId('btn-tools-menu'),menu=page.getByTestId('tools-menu');
+  const setTheme=async target=>{
+    if(await page.evaluate(()=>document.documentElement.getAttribute('data-theme'))!==target){
+      if(!await menu.isVisible())await tools.click();
+      await page.getByTestId('btn-theme').click();
+      await page.waitForFunction(target=>document.documentElement.getAttribute('data-theme')===target,target);
+    }
+    if(await menu.isVisible())await tools.click();
+  };
+  await setTheme('projector');
+  await syncO01(page,false,{mode:'newtons-rings',wavelengthNm:400});
+  await page.screenshot({path:path.join(OUT_DIR,'H43_O01_dense_projector.png')});
+  await setTheme(initialTheme??'chalkboard');
+  // Export a normal-resolution ring so the real SVG can be inspected.
+  await selectPreset(page,'newtons-rings-standard',true);
+  await syncO01(page,false,{mode:'newtons-rings',halfWaveLoss:true});
+  await page.getByTestId('btn-export-studio').click();
+  const preview=page.getByTestId('svg-preview-box');
+  await preview.waitFor({state:'visible'});
+  const previewText=await preview.innerText();
+  if(!previewText.includes('平凸透镜')||!previewText.includes('第一正暗环'))throw Error('O01 SVG omitted apparatus or true ring readout');
+  const download=page.waitForEvent('download');
+  await page.getByTestId('btn-download-svg').click();
+  const svg=await download,svgPath=path.join(OUT_DIR,'H43_O01_newton_diagram.svg');
+  await svg.saveAs(svgPath);
+  const bytes=fs.readFileSync(svgPath,'utf8');
+  if(!bytes.includes('<svg')||!bytes.includes('平凸透镜')||!bytes.includes('第一正暗环')||/NaN|Infinity/.test(bytes))throw Error('O01 exported SVG invalid');
+  await preview.screenshot({path:path.join(OUT_DIR,'H43_O01_svg_preview.png')});
+  report.export={name:svg.suggestedFilename(),bytes:Buffer.byteLength(bytes),apparatus:true};
+  await page.getByTestId('btn-close-export-studio').click();
   return report;
 }
 
@@ -4028,7 +4057,7 @@ async function main() {
       await o01Page.getByTestId('sf-param-slitCountN').fill('6');await syncO01(o01Page,true,{mode:'single-slit-grating',slitCountN:6});
       if(!await o01Page.getByTestId('sf-param-gratingPitchMicron').count())throw Error('O01 offline pitch did not return');
       await o01Page.getByTestId('sf-o01-presets').selectOption('newton-dense-outer-rings');await syncO01(o01Page,true,{mode:'newtons-rings',wavelengthNm:400});
-      await o01Page.getByRole('button',{name:'黑板深蓝'}).click();await o01Page.waitForTimeout(200);
+      await o01Page.getByRole('button',{name:'黑板深蓝'}).click();await o01Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
       await o01Page.screenshot({path:path.join(OUT_DIR,'H43_O01_offline_dense_projector.png')});
       if(o01Errors.length||o01Network.length)throw Error('O01 offline errors '+JSON.stringify({o01Errors,o01Network}));
       Object.assign(o01OfflineReport,{errors:o01Errors,network:o01Network});
