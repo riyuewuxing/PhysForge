@@ -17,114 +17,96 @@ export type WaveOpticsParams = {
   halfWaveLoss: boolean;
 };
 
+export interface OpticsMetrics {
+  wedgeSpacingMm: number | undefined;
+  newtonR1Mm: number | undefined;
+  missingOrder: number | undefined;
+  gratingValid: boolean;
+  gratingMaxOrder: number | undefined;
+  missingOrders: number[];
+}
 export interface WaveOpticsState {
   readonly t: number;
   readonly rgbHex: string;
-  readonly wedgeFringeSpacingMm: number;
-  readonly newtonFirstDarkMm: number;
-  readonly missingOrderRatio: number;
+  readonly mode: WaveOpticsMode;
+  readonly metrics: OpticsMetrics;
+  readonly centerIntensity: number | undefined;
 }
-
-export function evalWedgeThicknessMeters(xMm: number, params: WaveOpticsParams): number {
-  const xM = Math.max(0, xMm) * 1e-3;
-  const tanAlpha = Math.tan(degToRad(Math.max(0.005, params.wedgeAngleDeg)));
-  let d = xM * tanAlpha;
-  if (params.defectMode !== 'flat') {
-    const dx = xMm - 10;
-    const gaussianBump = 0.4e-6 * Math.exp(-(dx * dx) / 4.0);
-    d = Math.max(0, d + (params.defectMode === 'bump' ? -gaussianBump : gaussianBump));
+const lambdaM = (p: WaveOpticsParams) => p.wavelengthNm * 1e-9;
+const validFilm = (p: WaveOpticsParams) => Number.isFinite(lambdaM(p)) && lambdaM(p)>0 && Number.isFinite(p.refractiveIndexN2) && p.refractiveIndexN2>0;
+const validWedge = (p: WaveOpticsParams) => validFilm(p) && Number.isFinite(p.wedgeAngleDeg) && p.wedgeAngleDeg>=0 && p.wedgeAngleDeg<90;
+const validGrating = (p: WaveOpticsParams) => Number.isFinite(lambdaM(p)) && lambdaM(p)>0 &&
+  Number.isFinite(p.slitWidthMicron) && p.slitWidthMicron>0 && Number.isInteger(p.slitCountN) && p.slitCountN>=1 &&
+  (p.slitCountN===1 || (Number.isFinite(p.gratingPitchMicron) && p.gratingPitchMicron>=p.slitWidthMicron));
+export function evalWedgeThicknessMeters(xMm: number, p: WaveOpticsParams, yMm=0): number | undefined {
+  if(!validWedge(p)||!Number.isFinite(xMm)||xMm<0||!Number.isFinite(yMm))return undefined;
+  const h=xMm*1e-3*Math.tan(degToRad(p.wedgeAngleDeg));
+  const defect=0.4e-6*Math.exp(-((xMm-10)**2+yMm*yMm)/4);
+  return Math.max(0,h+(p.defectMode==='bump'?-defect:p.defectMode==='pit'?defect:0));
+}
+function reflectedIntensity(h: number,p: WaveOpticsParams): number {
+  const z=2*Math.PI*p.refractiveIndexN2*h/lambdaM(p);
+  return (p.halfWaveLoss?Math.sin(z):Math.cos(z))**2;
+}
+export function evalThinFilmIntensity(xMm: number,p: WaveOpticsParams,yMm=0): number | undefined {
+  const h=evalWedgeThicknessMeters(xMm,p,yMm);
+  return h===undefined?undefined:reflectedIntensity(h,p);
+}
+export function evalNewtonRingIntensity(rMm: number,p: WaveOpticsParams): number | undefined {
+  const r=Math.abs(rMm)*1e-3,R=p.lensRadiusR;
+  if(!validFilm(p)||!Number.isFinite(r)||!Number.isFinite(R)||R<=0||r>=R)return undefined;
+  return reflectedIntensity(r*r/(R+Math.sqrt((R-r)*(R+r))),p);
+}
+function sinc(z:number):number { return z===0?1:Math.sin(z)/z; }
+export function evalFraunhoferGratingIntensity(q:number,p:WaveOpticsParams):number|undefined {
+  if(!Number.isFinite(q)||Math.abs(q)>1||!validGrating(p))return undefined;
+  const lambdaUm=p.wavelengthNm*1e-3;
+  const beta=Math.PI*p.slitWidthMicron*q/lambdaUm;
+  const envelope=sinc(beta)**2;
+  if(p.slitCountN===1)return envelope;
+  const gamma=Math.PI*p.gratingPitchMicron*q/lambdaUm;
+  const reduced=gamma-Math.round(gamma/Math.PI)*Math.PI;
+  return envelope*(sinc(p.slitCountN*reduced)/sinc(reduced))**2;
+}
+export function computeKeyOpticsMetrics(p:WaveOpticsParams):OpticsMetrics {
+  const n=p.refractiveIndexN2,R=p.lensRadiusR;
+  const h=lambdaM(p)/(p.halfWaveLoss?2*n:4*n);
+  const wedgeSpacingMm=validWedge(p)&&p.wedgeAngleDeg>0?1000*lambdaM(p)/(2*n*Math.tan(degToRad(p.wedgeAngleDeg))):undefined;
+  const newtonR1Mm=validFilm(p)&&Number.isFinite(R)&&R>h?1000*Math.sqrt(h*(2*R-h)):undefined;
+  const gratingValid=validGrating(p), multi=gratingValid&&p.slitCountN>1;
+  const ratio=multi?p.gratingPitchMicron/p.slitWidthMicron:undefined;
+  const kMax=multi?Math.floor(p.gratingPitchMicron/(p.wavelengthNm*1e-3)+1e-12):undefined;
+  const missingOrders:number[]=[];
+  if(kMax!==undefined&&ratio!==undefined){
+    for(let k=1;k<=kMax;k++){
+      const m=k/ratio;
+      if(Math.round(m)>0&&Math.abs(m-Math.round(m))<=1e-10)missingOrders.push(k);
+    }
   }
-  return d;
+  return {wedgeSpacingMm,newtonR1Mm,missingOrder:ratio,gratingValid,gratingMaxOrder:kMax,missingOrders};
 }
-
-export function evalThinFilmIntensity(xMm: number, params: WaveOpticsParams): number {
-  const lambdaM = Math.max(380, Math.min(760, params.wavelengthNm)) * 1e-9;
-  const d = evalWedgeThicknessMeters(xMm, params);
-  const opd = 2 * Math.max(1, params.refractiveIndexN2) * d + (params.halfWaveLoss ? 0.5 * lambdaM : 0);
-  const phase = (2 * Math.PI * opd) / lambdaM;
-  return 0.5 * (1 + Math.cos(phase));
+export function createInitialState(p:WaveOpticsParams):WaveOpticsState {
+  return {t:0,rgbHex:wavelengthToRgb(p.wavelengthNm).hex,mode:p.mode,metrics:computeKeyOpticsMetrics(p),
+    centerIntensity:p.mode==='thin-film-wedge'?evalThinFilmIntensity(10,p):p.mode==='newtons-rings'?evalNewtonRingIntensity(0,p):evalFraunhoferGratingIntensity(0,p)};
 }
-
-export function evalNewtonRingIntensity(rMm: number, params: WaveOpticsParams): number {
-  const lambdaM = Math.max(380, Math.min(760, params.wavelengthNm)) * 1e-9;
-  const R = Math.max(0.2, params.lensRadiusR);
-  const rM = Math.abs(rMm) * 1e-3;
-  const d = rM < R ? R - Math.sqrt(R * R - rM * rM) : (rM * rM) / (2 * R);
-  const opd = 2 * Math.max(1, params.refractiveIndexN2) * d + (params.halfWaveLoss ? 0.5 * lambdaM : 0);
-  const phase = (2 * Math.PI * opd) / lambdaM;
-  return 0.5 * (1 + Math.cos(phase));
+export function stepWaveOptics(_state:WaveOpticsState,p:WaveOpticsParams,dt:number):StepResult<WaveOpticsState>{
+  if(!Number.isFinite(dt)||dt<0)throw new Error('Invalid dt: '+dt);
+  return {nextState:createInitialState(p),events:[]};
 }
-
-export function evalFraunhoferGratingIntensity(sinTheta: number, params: WaveOpticsParams): number {
-  const lambdaUm = Math.max(0.38, Math.min(0.76, params.wavelengthNm * 1e-3));
-  const a = Math.max(0.5, params.slitWidthMicron);
-  const d = Math.max(a, params.gratingPitchMicron);
-  const N = Math.max(1, Math.round(params.slitCountN));
-
-  const beta = (Math.PI * a * sinTheta) / lambdaUm;
-  const singleEnv = Math.abs(beta) < 1e-9 ? 1 : Math.sin(beta) / beta;
-  if (N === 1) return singleEnv * singleEnv;
-
-  const gamma = (Math.PI * d * sinTheta) / lambdaUm;
-  const sinG = Math.sin(gamma);
-  const multiTerm = Math.abs(sinG) < 1e-9 ? 1 : Math.sin(N * gamma) / (N * sinG);
-  return singleEnv * singleEnv * multiTerm * multiTerm;
+export function computeObservables(s:WaveOpticsState):Record<string,number>{
+  const m=s.metrics,o:Record<string,number>={t:0};
+  if(s.centerIntensity!==undefined)o.centerIntensity=s.centerIntensity;
+  if(s.mode==='thin-film-wedge'&&m.wedgeSpacingMm!==undefined)o.wedgeFringeSpacingMm=m.wedgeSpacingMm;
+  if(s.mode==='newtons-rings'&&m.newtonR1Mm!==undefined)o.newtonFirstDarkMm=m.newtonR1Mm;
+  if(s.mode==='single-slit-grating'){
+    o.gratingValid=m.gratingValid?1:0;
+    if(m.missingOrder!==undefined)o.missingOrderRatio=m.missingOrder;
+    if(m.gratingMaxOrder!==undefined){o.gratingMaxOrder=m.gratingMaxOrder;o.missingOrderCount=m.missingOrders.length;}
+    if(m.missingOrders[0]!==undefined)o.firstMissingOrder=m.missingOrders[0];
+  }
+  return o;
 }
-
-export function computeKeyOpticsMetrics(params: WaveOpticsParams): {
-  wedgeSpacingMm: number;
-  newtonR1Mm: number;
-  missingOrder: number;
-} {
-  const lambdaM = Math.max(380, Math.min(760, params.wavelengthNm)) * 1e-9;
-  const tanAlpha = Math.tan(degToRad(Math.max(0.005, params.wedgeAngleDeg)));
-  const n2 = Math.max(1, params.refractiveIndexN2);
-  const wedgeSpacingMm = (lambdaM / (2 * n2 * tanAlpha)) * 1e3;
-  const newtonR1Mm = Math.sqrt((1 * Math.max(0.2, params.lensRadiusR) * lambdaM) / n2) * 1e3;
-  const missingOrder = params.gratingPitchMicron / Math.max(0.5, params.slitWidthMicron);
-  return { wedgeSpacingMm, newtonR1Mm, missingOrder };
-}
-
-export function createInitialState(params: WaveOpticsParams): WaveOpticsState {
-  const m = computeKeyOpticsMetrics(params);
-  return {
-    t: 0,
-    rgbHex: wavelengthToRgb(params.wavelengthNm).hex,
-    wedgeFringeSpacingMm: m.wedgeSpacingMm,
-    newtonFirstDarkMm: m.newtonR1Mm,
-    missingOrderRatio: m.missingOrder
-  };
-}
-
-export function stepWaveOptics(
-  state: WaveOpticsState,
-  params: WaveOpticsParams,
-  dt: number
-): StepResult<WaveOpticsState> {
-  if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
-  const m = computeKeyOpticsMetrics(params);
-  return {
-    nextState: {
-      t: state.t + dt,
-      rgbHex: wavelengthToRgb(params.wavelengthNm).hex,
-      wedgeFringeSpacingMm: m.wedgeSpacingMm,
-      newtonFirstDarkMm: m.newtonR1Mm,
-      missingOrderRatio: m.missingOrder
-    },
-    events: []
-  };
-}
-
-export function computeObservables(state: WaveOpticsState): Record<string, number> {
-  return {
-    t: state.t,
-    wedgeFringeSpacingMm: state.wedgeFringeSpacingMm,
-    newtonFirstDarkMm: state.newtonFirstDarkMm,
-    missingOrderRatio: state.missingOrderRatio
-  };
-}
-
-export function checkInvariants(state: WaveOpticsState): InvariantReport[] {
-  const ok = Number.isFinite(state.wedgeFringeSpacingMm) && Number.isFinite(state.newtonFirstDarkMm);
-  return [{ name: '波动光学条纹尺度有限性检定', measuredError: 0, tolerance: 1e-6, passed: ok }];
+export function checkInvariants(s:WaveOpticsState):InvariantReport[]{
+  const ok=Object.values(computeObservables(s)).every(Number.isFinite)&&(s.centerIntensity===undefined||(s.centerIntensity>=0&&s.centerIntensity<=1+1e-12))&&s.t===0;
+  return [{name:'静态归一化光强与有限观测量',measuredError:ok?0:1,tolerance:1e-12,passed:ok}];
 }
