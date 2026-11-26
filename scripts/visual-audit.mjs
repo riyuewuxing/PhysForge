@@ -672,6 +672,81 @@ async function syncE09(page,offline){
 }
 
 
+
+function checkW02(s){
+  const check=(name,got,want,tol=1e-8)=>{if(!Number.isFinite(got)||Math.abs(got-want)>tol*Math.max(1,Math.abs(want)))throw Error('W02 '+name+' '+JSON.stringify({got,want,t:s.t,mode:s.mode}));};
+  check('outer vs model clock',s.t,s.outerTime,1e-9);
+  check('grid time',s.fieldTime,s.stepsRun*s.solverDt,1e-9);
+  check('live field clock',s.fieldTime,s.outerTime,1e-8);
+  check('actual CFL',s.courantNumber,s.waveSpeed*s.solverDt/.05);
+  if(s.courantNumber>=.5)throw Error('W02 CFL bound');
+  if(s.nx!==200||s.ny!==150||s.wallI!==68||s.screenI!==178)throw Error('W02 physical grid');
+  check('wall-to-screen distance',s.screenDistance,(s.screenI-s.wallI)*.05);
+  if(s.geometryValid===0){
+    if(s.geometry.valid||s.stepsRun!==0||'maxAmplitude'in s||'centerScreenIntensity'in s)throw Error('W02 invalid request simulated');
+    return s;
+  }
+  if(!s.geometry.valid)throw Error('W02 unexpected invalid geometry');
+  const g=s.geometry;
+  if(s.mode==='double-slit'||s.mode==='single-slit'){
+    if(g.apertures.length!==(s.mode==='double-slit'?2:1))throw Error('W02 aperture number');
+    for(const a of g.apertures){check('actual aperture width',a.lastJ-a.firstJ+1,s.slitWidthCells,0);check('aperture midpoint',a.centerJ,(a.firstJ+a.lastJ)/2);}
+    if(g.apertures.length===2)check('actual aperture separation',g.apertures[1].centerJ-g.apertures[0].centerJ,s.slitSepCells,0);
+  }else if(s.mode==='refraction-prism'){
+    if(g.blockedRuns.length||g.apertures.length)throw Error('W02 refracting medium should not contain an opaque wall');
+    for(let j=0;j<150;j++)check('actual interface step',g.boundaryI[j],68+Math.round((j-75)*.35),0);
+    check('theoretical low speed',s.transmittedSpeed,s.waveSpeed/s.refractiveIndexN);check('theoretical low wavelength',s.transmittedWavelength,s.wavelengthCells*.05/s.refractiveIndexN);
+  }
+  check('screen center instantaneous value',s.centerScreenDisplacement,s.screenField[75],1e-9);
+  if(s.screenField.length!==150||s.screenIntensity.length!==150||!s.screenField.every(Number.isFinite)||!s.screenIntensity.every(x=>Number.isFinite(x)&&x>=0))throw Error('W02 invalid screen arrays');
+  const count=Math.max(0,s.stepsRun-Math.ceil(s.averageStartTime/s.solverDt)+1);
+  check('average count',s.screenAverageSamples,count,0);
+  if(count===0){if('centerScreenIntensity'in s||s.screenIntensity.some(x=>x!==0))throw Error('W02 preflight average fabricated');}
+  else{
+    check('average duration',s.screenAverageDuration,count*s.solverDt);
+    check('center average',s.centerScreenIntensity,s.screenIntensity[75],1e-9);
+    check('actual screen peak',s.peakScreenIntensity,Math.max(...s.screenIntensity.slice(16,134)),1e-9);
+  }
+  return s;
+}
+async function syncW02(page,offline){
+  const pre=offline?'sf-':'',id=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(id);
+  await page.waitForFunction(({pre,id,offline})=>{const s=JSON.parse(document.querySelector('[data-testid="'+id+'"]')?.dataset.rippleRendered||'null'),t=Number(document.querySelector('[data-testid="'+pre+'ripple-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="'+(offline?'sf-uplot':'uplot-container')+'"]')?.dataset.lastSampleT);return s&&Math.abs(s.outerTime-t)<1e-9&&Math.abs(s.outerTime-p)<1e-9;},{pre,id,offline},{timeout:10000});
+  const s=checkW02(JSON.parse(await canvas.getAttribute('data-ripple-rendered'))),v=JSON.parse(await canvas.getAttribute('data-ripple-view')),q=v.safe,b=v.bounds,ppm=.24*Math.min(v.width,v.height)*v.scale;
+  if(q){const x1=v.width*.45+v.offsetX+b.minX*ppm,x2=v.width*.45+v.offsetX+b.maxX*ppm,y1=v.height*.5+v.offsetY-b.maxY*ppm,y2=v.height*.5+v.offsetY-b.minY*ppm;if(x1<q.left-2||x2>q.right+2||y1<q.top-2||y2>q.bottom+2)throw Error('W02 bounds '+JSON.stringify({q,x1,x2,y1,y2}));}
+  const mean=(await page.getByTestId(pre+'ripple-centerScreenIntensity').innerText()).trim();
+  if(s.screenAverageSamples===0){if(mean!=='—')throw Error('W02 premature screen readout');}
+  else if(Math.abs(parseFloat(mean)-s.centerScreenIntensity)>.000006)throw Error('W02 stale screen readout');
+  return s;
+}
+async function auditW02(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','wave-2d-ripple-fdtd');await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='wave-2d-ripple-fdtd');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),report={};
+  const run=async t=>{await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.rippleRendered||'null')?.outerTime>t,t,{timeout:35000});await play.click();return syncW02(page,false);};
+  for(const [id,mode,stop] of [['fdtd-double-slit-fast','double-slit',7.3],['fdtd-single-slit-diffraction','single-slit',4.2],['fdtd-obstacle-shadow-bend','obstacle-diffraction',4.2],['fdtd-refraction-snell','refraction-prism',4.6],['fdtd-overlap-invalid','double-slit',0]]){
+    await selectPreset(page,id,true);await page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.rippleRendered||'null');return s?.mode===mode&&s.outerTime===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.getByTestId('ripple-scope-empty').waitFor({state:'visible'});
+    const initial=checkW02(JSON.parse(await canvas.getAttribute('data-ripple-rendered')));
+    const photo=name=>page.screenshot({path:path.join(OUT_DIR,'H41_W02_'+name+'.png')});
+    if(id==='fdtd-overlap-invalid'){
+      if(initial.geometryValid!==0)throw Error('W02 invalid preset not rejected');await page.getByTestId('btn-step').click();await page.evaluate(()=>new Promise(requestAnimationFrame));const final=await syncW02(page,false);report[id]={initial,final};await photo(id);continue;
+    }
+    if(mode!=='double-slit'&&await page.getByTestId('param-slider-slitSepCells').count())throw Error('W02 irrelevant slit separation');
+    if(mode==='refraction-prism'&&await page.getByTestId('param-slider-slitWidthCells').count())throw Error('W02 irrelevant slit width');
+    await page.getByLabel('播放倍速',{exact:true}).selectOption('2');
+    if(id==='fdtd-double-slit-fast'){
+      await photo('initial');const before=await run(.6);if(before.screenAverageSamples!==0)throw Error('W02 preflight average');await photo('before_average');
+    }
+    const final=await run(stop);
+    if(id==='fdtd-double-slit-fast'&&(!(final.screenAverageSamples>0)||!(final.peakScreenIntensity>1e-5)))throw Error('W02 measured screen not demonstrated');
+    report[id]={initial,final};await photo(id);
+  }
+  await page.getByLabel('播放倍速',{exact:true}).selectOption('1');
+  console.log('H41 W02 online '+JSON.stringify(report));return report;
+}
+
 function checkW01(s){
   const c=s.frequency*s.wavelength,w=2*Math.PI*s.frequency,k=2*Math.PI/s.wavelength,A=s.amplitude,t=s.t;
   const check=(name,got,want,tol=3e-7)=>{if(!Number.isFinite(got)||Math.abs(got-want)>tol*Math.max(1,Math.abs(want)))throw Error('W01 '+name+' '+JSON.stringify({got,want,s}));};
@@ -2528,9 +2603,13 @@ async function main() {
   const failedResponses = [];
   const externalRequests = [];
   const report = [];
+  const phase=process.env.PHYSFORGE_VISUAL_PHASE??'all';
+  if(!['all','online','offline'].includes(phase))throw Error('Invalid PHYSFORGE_VISUAL_PHASE '+phase);
+  const combined={phase};
 
   try {
     browser = await launchBrowser();
+    if(phase!=='offline'){
     // The audit serves a built bundle from a minimal local HTTP server; offline-cache lifecycle is outside this visual interaction pass.
     const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1, serviceWorkers: 'block' });
     const page = await context.newPage();
@@ -3182,6 +3261,7 @@ async function main() {
     const e09LcReport=await auditE09Lc(page,origin);
     const e10MagneticReport=await auditE10Magnetic(page,origin);
     const w01Report=await auditW01(page,origin);
+    const w02Report=await auditW02(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3190,6 +3270,17 @@ async function main() {
     const b1PhysicsReport=await auditB1Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
     const s01PhysicsReport=await auditS01Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
     const m10PhysicsReport=await auditM10Physics(page,origin,name=>page.screenshot({path:path.join(OUT_DIR,'V3_'+name+'.png')}));
+    const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
+    const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
+    const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
+    const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
+    if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
+    Object.assign(combined,{w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    console.log('VISUAL_AUDIT_ONLINE: PASS');
+    await context.close();
+    }
+    if(phase!=='online'){
     // Build and actually open one isolated B2 slice with network disabled.
     const b2File=path.join(OUT_DIR,'H8_B2_offline.html');
     execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','builder-circuit-mna','--preset','rc-charging-curve','--out',b2File],{stdio:'inherit'});
@@ -3826,14 +3917,30 @@ async function main() {
       if(w01Errors.length||w01Network.length)throw Error('W01 offline errors '+JSON.stringify({w01Errors,w01Network}));
       Object.assign(w01OfflineReport,{errors:w01Errors,network:w01Network});
     }finally{await w01Context.close();}
-    const summary = { w01Report,w01OfflineReport,e10MagneticReport,e10OfflineReport,e09LcReport,e09OfflineReport,e08TransformerReport,e08OfflineReport,e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
-    console.log(JSON.stringify(summary, null, 2));
-    const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
-    const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
-    const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
-    const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
-    if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    console.log('VISUAL_AUDIT: PASS');
+    const w02File=path.join(OUT_DIR,'H41_W02_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','wave-2d-ripple-fdtd','--preset','fdtd-double-slit-fast','--out',w02File],{stdio:'inherit'});
+    const w02Context=await browser.newContext({viewport:VIEWPORT,offline:true}),w02Page=await w02Context.newPage(),w02Errors=[],w02Network=[],w02OfflineReport={};
+    w02Page.on('pageerror',e=>w02Errors.push(e.message));w02Page.on('console',m=>{if(m.type()==='error')w02Errors.push(m.text());});w02Page.on('request',r=>{if(/^https?:/.test(r.url()))w02Network.push(r.url());});
+    try{
+      await w02Page.goto(pathToFileURL(w02File).href);
+      for(const [id,mode,stop] of [['fdtd-double-slit-fast','double-slit',7.1],['fdtd-refraction-snell','refraction-prism',4.5]]){
+        if(id!=='fdtd-double-slit-fast')await w02Page.locator('[data-preset-id="'+id+'"]').click();
+        await w02Page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.rippleRendered||'null');return s?.mode===mode&&s.outerTime===0;},mode);
+        checkW02(JSON.parse(await w02Page.getByTestId('sf-canvas').getAttribute('data-ripple-rendered')));
+        await w02Page.getByLabel('播放倍速',{exact:true}).selectOption('2');
+        await w02Page.getByTestId('sf-play-pause').click();await w02Page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.rippleRendered||'null')?.outerTime>t,stop,{timeout:35000});await w02Page.getByTestId('sf-play-pause').click();
+        const s=await syncW02(w02Page,true);if(id==='fdtd-double-slit-fast'&&(!(s.screenAverageSamples>0)||!(s.peakScreenIntensity>1e-5)))throw Error('W02 offline screen not demonstrated');w02OfflineReport[id]=s;
+        await w02Page.screenshot({path:path.join(OUT_DIR,'H41_W02_offline_'+id+'.png')});
+      }
+      if(w02Errors.length||w02Network.length)throw Error('W02 offline errors '+JSON.stringify({w02Errors,w02Network}));
+      Object.assign(w02OfflineReport,{errors:w02Errors,network:w02Network});
+    }finally{await w02Context.close();}
+    Object.assign(combined,{w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+    console.log('VISUAL_AUDIT_OFFLINE: PASS');
+    }
+    console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));
+    console.log('VISUAL_AUDIT: PASS ('+phase+')');
   } finally {
     if (browser) await browser.close();
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

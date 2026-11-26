@@ -6,6 +6,8 @@ export interface WaveFDTD2DConfig {
   readonly maxWaveSpeed: number;
   readonly spongeWidth?: number;
   readonly spongeStrength?: number;
+  /** Optional physical velocity damping rate γ (s⁻¹) at the outer edge. */
+  readonly spongeRatePerSecond?:number;
 }
 
 /**
@@ -24,6 +26,7 @@ export class WaveFDTD2D {
   uNext: Float32Array;
   readonly speedGrid: Float32Array;
   readonly dampingGrid: Float32Array;
+  readonly velocityDampingGrid?:Float32Array;
 
   constructor(config: WaveFDTD2DConfig) {
     const { nx, ny, dx, dt, maxWaveSpeed } = config;
@@ -56,6 +59,10 @@ export class WaveFDTD2D {
     this.speedGrid.fill(maxWaveSpeed);
 
     this.dampingGrid = new Float32Array(total);
+    if(config.spongeRatePerSecond!==undefined){
+      if(!Number.isFinite(config.spongeRatePerSecond)||config.spongeRatePerSecond<0)throw new Error('Invalid sponge velocity damping rate');
+      this.velocityDampingGrid=new Float32Array(total);
+    }
     const spongeWidth = config.spongeWidth ?? 12;
     const spongeStrength = config.spongeStrength ?? 0.08;
 
@@ -66,6 +73,7 @@ export class WaveFDTD2D {
         if (distEdge < spongeWidth) {
           const ratio = (spongeWidth - distEdge) / spongeWidth;
           damp = Math.exp(-spongeStrength * ratio * ratio);
+          if(this.velocityDampingGrid)this.velocityDampingGrid[j*nx+i]=.5*dt*config.spongeRatePerSecond!*ratio*ratio;
         }
         this.dampingGrid[j * nx + i] = damp;
       }
@@ -94,6 +102,7 @@ export class WaveFDTD2D {
     const { nx, ny, dx, dt, uPrev, uCurr, uNext, speedGrid, dampingGrid } = this;
     const invDxSq = 1 / (dx * dx);
     const dtSq = dt * dt;
+    const velocityDamping=this.velocityDampingGrid;
 
     for (let j = 1; j < ny - 1; j++) {
       const row = j * nx;
@@ -113,7 +122,10 @@ export class WaveFDTD2D {
           invDxSq;
 
         const rawNext = 2 * uCurr[idx]! - uPrev[idx]! + c * c * dtSq * laplacian;
-        uNext[idx] = rawNext * dampingGrid[idx]!;
+        // Centered discretization of u_tt + γ u_t = c²∇²u.
+        // Legacy callers retain their historical displacement sponge.
+        const g=velocityDamping?.[idx]??0;
+        uNext[idx] = velocityDamping?(rawNext+g*uPrev[idx]!)/(1+g):rawNext*dampingGrid[idx]!;
       }
     }
 

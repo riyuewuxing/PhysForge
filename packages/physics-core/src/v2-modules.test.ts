@@ -346,3 +346,26 @@ describe('physics-core V2 modules', () => {
     expect(Math.abs(EFinal - E0) / E0).toBeLessThan(1e-6);
   });
 });
+
+describe('W02 independent discrete wave recurrence',()=>{
+  it('propagates a manufactured discrete standing eigenmode with exact phase and amplitude',()=>{
+    const nx=40,ny=36,dx=.05,dt=.004,c=1.7,r=c*dt/dx,m=3,n=2,solver=new WaveFDTD2D({nx,ny,dx,dt,maxWaveSpeed:c,spongeWidth:0,spongeRatePerSecond:0});
+    const omega=2*Math.asin(r*Math.sqrt(Math.sin(m*Math.PI/(2*(nx-1)))**2+Math.sin(n*Math.PI/(2*(ny-1)))**2));
+    const spatial=(i:number,j:number)=>Math.sin(m*Math.PI*i/(nx-1))*Math.sin(n*Math.PI*j/(ny-1));
+    for(let j=1;j<ny-1;j++)for(let i=1;i<nx-1;i++){
+      const k=j*nx+i;solver.uCurr[k]=spatial(i,j);solver.uPrev[k]=spatial(i,j)*Math.cos(omega);
+    }
+    for(let k=0;k<300;k++)solver.step();
+    let err=0;for(let j=1;j<ny-1;j++)for(let i=1;i<nx-1;i++)err=Math.max(err,Math.abs(solver.uCurr[j*nx+i]!-spatial(i,j)*Math.cos(300*omega)));
+    expect(err).toBeLessThan(3e-5);
+  });
+  it('velocity sponge follows the centered damped-wave recurrence, not displacement attenuation',()=>{
+    const dt=.01,dx=.1,solver=new WaveFDTD2D({nx:20,ny:20,dx,dt,maxWaveSpeed:1,spongeWidth:8,spongeRatePerSecond:20});
+    const i=2,j=10,k=j*20+i;
+    solver.uCurr[k]=.8;solver.uPrev[k]=.7;
+    for(const l of [k-1,k+1,k-20,k+20])solver.uCurr[l]=.8;
+    const gamma=20*((8-2)/8)**2,g=gamma*dt/2;
+    const expected=Math.fround((2*solver.uCurr[k]!-(1-Math.fround(g))*solver.uPrev[k]!)/(1+Math.fround(g)));
+    solver.step();expect(solver.uCurr[k]).toBe(expected);
+  });
+});

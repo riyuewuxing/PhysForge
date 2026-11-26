@@ -61,5 +61,7 @@ export const waveFdtdPresets: readonly PresetSpec<WaveFdtdParams>[] = [
       slitWidthCells: 6,
       refractiveIndexN: 1.75
     }
-  }
+  },
+  {id:'fdtd-double-slit-fast',name:'高速双缝 · 实测屏面',description:'c₀=2 m/s，完整求解到达后的接收屏均方位移；可用较短课堂时间比较有限缝峰谷。',curriculumNotes:'物理时间与屏幕实测',params:{mode:'double-slit',wavelengthCells:10,waveSpeed:2,amplitude:1,slitSepCells:30,slitWidthCells:5,refractiveIndexN:1.6}},
+  {id:'fdtd-overlap-invalid',name:'反例 · 重叠双缝请求',description:'请求缝宽20格、中心间距14格，不能形成独立双缝；拒绝启动，不伪造有效几何。',curriculumNotes:'独立开口定义域',params:{mode:'double-slit',wavelengthCells:10,waveSpeed:1,amplitude:1,slitSepCells:14,slitWidthCells:20,refractiveIndexN:1.6}}
 ];
