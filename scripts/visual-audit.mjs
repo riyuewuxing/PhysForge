@@ -821,6 +821,118 @@ async function auditO01(page,origin){
   return report;
 }
 
+
+const f01Cases=[
+  ['cylinder-pin-detach',{mode:'stop-pin-cylinder',initialTempK:260,targetTempK:420},true],
+  ['cylinder-cooling-hit-pin',{mode:'stop-pin-cylinder',initialTempK:420,targetTempK:220},true],
+  ['mercury-spill-conserved',{mode:'mercury-tube-tilt',tubeTiltDeg:-90,tubeLengthCm:45,mercuryCm:30},false],
+  ['mercury-horizontal-reference',{mode:'mercury-tube-tilt',tubeTiltDeg:0,tubeLengthCm:45,mercuryCm:30},false],
+  ['vacuum-pump-boyle-strokes',{mode:'multi-stroke-pump',pumpDirection:'extract',pumpStrokesK:5},false],
+  ['pump-injection-stages',{mode:'multi-stroke-pump',pumpDirection:'inject',pumpStrokesK:5},false],
+  ['pump-zero-stroke',{mode:'multi-stroke-pump',pumpDirection:'extract',pumpStrokesK:0},false]
+];
+function checkF01(s){
+  const R=8.31446261815324,P0=101325,A=s.pistonAreaCm2*1e-4;
+  const near=(a,b,tol=1e-8)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<=tol*Math.max(1,Math.abs(b));
+  const must=(ok,label)=>{if(!ok)throw Error('F01 '+label+' '+JSON.stringify(s));};
+  must(near(s.pressureKPa*1000*s.volumeL*.001,s.molesN*R*s.temperatureK),'PV=nRT');
+  must(near(s.t,s.outerTime,1e-10),'outer/physical time mismatch');
+  if(s.mode==='stop-pin-cylinder'){
+    const pe=P0+s.pistonMassKg*9.8/A,V0=s.pinVolumeL*.001,n=s.molesN,tc=pe*V0/(n*R);
+    const T=s.initialTempK+Math.sign(s.targetTempK-s.initialTempK)*Math.min(Math.abs(s.targetTempK-s.initialTempK),s.heatingRateKPerS*s.t);
+    const V=Math.max(V0,n*R*T/pe),Vi=Math.max(V0,n*R*s.initialTempK/pe),P=n*R*T/V;
+    must(near(s.temperatureK,T)&&near(s.volumeL,V*1000)&&near(s.pressureKPa,P/1000),'actual thermal branch');
+    must(near(s.workByGasJ,pe*(V-Vi))&&near(s.criticalTempK,tc)&&near(s.pinReactionN,Math.max(0,(pe-P)*A)),'signed work/reaction');
+    if(s.events.length){
+      must(s.events.length===1,'duplicate pin transitions');
+      const e=s.events[0],cross=Math.abs(tc-s.initialTempK)/s.heatingRateKPerS;
+      must(near(e.time,cross,1e-8)&&e.metrics.bracketWidth<=1e-7&&s.pvHistory.some(q=>near(q.vL,s.pinVolumeL,1e-10)&&near(q.pKPa,pe/1000,1e-10)),'missing exact corner/event');
+    }
+  }else{
+    must(s.t===0&&s.outerTime===0,'static fictitious time');
+    if(s.mode==='mercury-tube-tilt'){
+      const L0=Math.min(30,s.tubeLengthCm-s.mercuryCm-2),ratio=1+s.mercuryColumnCm*Math.sin(s.tubeTiltDeg*Math.PI/180)/76;
+      must(near(s.referenceAirCm,L0)&&near(s.molesN,P0*L0*.01*A/(R*s.targetTempK))&&near(s.pressureKPa,P0*ratio/1000)&&near(s.airColumnCm*ratio,L0),'trapped gas or hydrostatics');
+      must(s.airColumnCm+s.mercuryColumnCm<=s.tubeLengthCm+1e-9&&near(s.spilledMercuryCm,s.mercuryCm-s.mercuryColumnCm),'tube boundary');
+      if(s.overflowed===1)must(near(s.airColumnCm+s.mercuryColumnCm,s.tubeLengthCm),'spill boundary');
+      else must(near(s.mercuryColumnCm,s.mercuryCm),'unexpected mercury loss');
+      must(!('workByGasJ'in s),'invalid work in static scan');
+    }else{
+      const k=Math.round(s.pumpStrokesK),ratio=s.tankVolumeL/(s.tankVolumeL+s.pumpDeltaVL);
+      must(s.pumpStages.length===k+1&&s.completedStrokes===k,'missing discrete stages');
+      for(const j of s.pumpStages){
+        const P=P0*(s.pumpDirection==='extract'?ratio**j.k:1+j.k*s.pumpDeltaVL/s.tankVolumeL);
+        must(near(j.pressurePa,P)&&near(j.volumeM3,s.tankVolumeL*.001)&&near(j.molesN,P*j.volumeM3/(R*s.targetTempK)),'incorrect pump stage');
+      }
+      must(near(s.pressureKPa,s.pumpStages.at(-1).pressurePa/1000)&&!('workByGasJ'in s),'pump final/invalid work');
+    }
+  }
+  return s;
+}
+async function syncF01(page,offline,expected){
+  const canvasId=offline?'sf-canvas':'simulation-canvas',prefix=offline?'sf-f01':'f01';
+  await page.waitForFunction(({canvasId,expected})=>{const s=JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.thermoRendered||'null');return s&&Object.entries(expected).every(([k,v])=>s[k]===v);},{canvasId,expected},{timeout:10000});
+  const s=checkF01(JSON.parse(await page.getByTestId(canvasId).getAttribute('data-thermo-rendered')));
+  const readout=page.getByTestId(prefix+'-pressureKPa');
+  await readout.waitFor({state:'visible'});
+  await page.waitForFunction(({id,p})=>{const v=parseFloat(document.querySelector('[data-testid="'+id+'"]')?.textContent||'NaN');return Number.isFinite(v)&&Math.abs(v-p)<.000006;},{id:prefix+'-pressureKPa',p:s.pressureKPa},{timeout:5000});
+  const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  if(s.mode!=='stop-pin-cylinder'){
+    if(!await play.isDisabled())throw Error('F01 static play enabled');
+    if(offline?await page.getByTestId('sf-uplot').isVisible():(await page.getByTestId('floating-scope-dock').count()||await page.getByTestId('btn-expand-oscilloscope').count()))throw Error('F01 static scope visible');
+  }else if(await play.isDisabled())throw Error('F01 cylinder play disabled');
+  return s;
+}
+async function auditF01Cases(page,offline,select){
+  const canvasId=offline?'sf-canvas':'simulation-canvas',play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),out={};
+  const prefix=offline?'H44_F01_offline_':'H44_F01_';
+  for(const [id,expected,dynamic] of f01Cases){
+    await select(id);const initial=await syncF01(page,offline,{...expected,outerTime:0});
+    if(dynamic){
+      await page.screenshot({path:path.join(OUT_DIR,prefix+id+'_initial.png')});
+      await play.click();
+      await page.waitForFunction(({canvasId,T})=>{const s=JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.thermoRendered||'null');return s&&s.outerTime>0&&s.temperatureK===T&&s.events.length===1;},{canvasId,T:expected.targetTempK},{timeout:25000});
+      await play.click();
+      const final=await syncF01(page,offline,{...expected,temperatureK:expected.targetTempK});
+      if(final.events.length!==1||Math.sign(final.workByGasJ)!==Math.sign(expected.targetTempK-expected.initialTempK))throw Error('F01 wrong terminal event/work');
+      out[id]={initial,final};
+    }else{
+      out[id]=initial;
+      if(await page.getByTestId(offline?'sf-param-initialTempK':'param-slider-initialTempK').count())throw Error('F01 irrelevant cylinder control');
+    }
+    await page.screenshot({path:path.join(OUT_DIR,prefix+id+'.png')});
+  }
+  await select('mercury-spill-conserved');
+  const start=await syncF01(page,offline,{mode:'mercury-tube-tilt',tubeTiltDeg:-90});
+  await page.getByTestId(offline?'sf-param-tubeTiltDeg':'param-slider-tubeTiltDeg').fill('0');
+  const horizontal=await syncF01(page,offline,{mode:'mercury-tube-tilt',tubeTiltDeg:0});
+  if(Math.abs(start.molesN-horizontal.molesN)>1e-12)throw Error('F01 tilt slider changed trapped gas amount');
+  out.tiltInteraction={start,horizontal};
+  await select('pump-injection-stages');
+  await page.getByTestId(offline?'sf-param-pumpStrokesK':'param-slider-pumpStrokesK').fill('0');
+  out.pumpInteraction=await syncF01(page,offline,{mode:'multi-stroke-pump',pumpStrokesK:0,pumpDirection:'inject'});
+  await select('mercury-spill-conserved');await syncF01(page,offline,{mode:'mercury-tube-tilt',tubeTiltDeg:-90});
+  if(offline){
+    await page.getByRole('button',{name:'黑板深蓝'}).click();await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+    await page.screenshot({path:path.join(OUT_DIR,prefix+'spill_projector.png')});
+  }else{
+    const initialTheme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme')),menu=page.getByTestId('tools-menu'),tools=page.getByTestId('btn-tools-menu');
+    const setTheme=async t=>{if(await page.evaluate(()=>document.documentElement.getAttribute('data-theme'))!==t){if(!await menu.isVisible())await tools.click();await page.getByTestId('btn-theme').click();await page.waitForFunction(t=>document.documentElement.getAttribute('data-theme')===t,t);}if(await menu.isVisible())await tools.click();};
+    await setTheme('projector');await page.screenshot({path:path.join(OUT_DIR,prefix+'spill_projector.png')});await setTheme(initialTheme??'chalkboard');
+    await select('pump-injection-stages');await syncF01(page,false,{mode:'multi-stroke-pump',pumpDirection:'inject',pumpStrokesK:5});
+    await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
+    const download=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await download,svgPath=path.join(OUT_DIR,'H44_F01_pump.svg');await svg.saveAs(svgPath);
+    const bytes=fs.readFileSync(svgPath,'utf8');if(!bytes.includes('<svg')||!bytes.includes('储气罐')||!bytes.includes('操作级次')||/NaN|Infinity/.test(bytes))throw Error('F01 wrong-mode SVG');
+    await preview.screenshot({path:path.join(OUT_DIR,prefix+'pump_svg.png')});out.export={name:svg.suggestedFilename(),bytes:Buffer.byteLength(bytes)};await page.getByTestId('btn-close-export-studio').click();
+  }
+  return out;
+}
+async function auditF01(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','thermo-piston-gas-laws');await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='thermo-piston-gas-laws');
+  return auditF01Cases(page,false,id=>selectPreset(page,id,true));
+}
+
 async function auditW02(page,origin){
   const url=new URL(origin);url.searchParams.set('model','wave-2d-ripple-fdtd');await page.goto(url.toString(),{waitUntil:'networkidle'});
   await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='wave-2d-ripple-fdtd');
@@ -3365,6 +3477,7 @@ async function main() {
     const w01Report=await auditW01(page,origin);
     const w02Report=await auditW02(page,origin);
     const o01Report=await auditO01(page,origin);
+    const f01Report=await auditF01(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3378,8 +3491,8 @@ async function main() {
     const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
     const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
     if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    Object.assign(combined,{o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    Object.assign(combined,{f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
     console.log('VISUAL_AUDIT_ONLINE: PASS');
     await context.close();
     }
@@ -4063,8 +4176,20 @@ async function main() {
       Object.assign(o01OfflineReport,{errors:o01Errors,network:o01Network});
     }finally{await o01Context.close();}
 
-    Object.assign(combined,{o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+
+    const f01File=path.join(OUT_DIR,'H44_F01_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','thermo-piston-gas-laws','--preset','cylinder-pin-detach','--out',f01File],{stdio:'inherit'});
+    const f01Context=await browser.newContext({viewport:VIEWPORT,offline:true}),f01Page=await f01Context.newPage(),f01Errors=[],f01Network=[];let f01OfflineReport;
+    f01Page.on('pageerror',e=>f01Errors.push(e.message));f01Page.on('console',m=>{if(m.type()==='error')f01Errors.push(m.text());});f01Page.on('request',r=>{if(/^https?:/.test(r.url()))f01Network.push(r.url());});
+    try{
+      await f01Page.goto(pathToFileURL(f01File).href);
+      f01OfflineReport=await auditF01Cases(f01Page,true,id=>f01Page.getByTestId('sf-f01-presets').selectOption(id));
+      if(f01Errors.length||f01Network.length)throw Error('F01 offline errors '+JSON.stringify({f01Errors,f01Network}));
+      Object.assign(f01OfflineReport,{errors:f01Errors,network:f01Network});
+    }finally{await f01Context.close();}
+
+    Object.assign(combined,{f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
     console.log('VISUAL_AUDIT_OFFLINE: PASS');
     }
     console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));
