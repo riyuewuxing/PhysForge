@@ -5,7 +5,7 @@ export const mechanicsErrorPresets: readonly PresetSpec<MechanicsErrorParams>[] 
   {
     id: 'af-under-compensated-f-intercept',
     name: '未平衡摩擦力（横轴正截距 F₀ = f - Mgsinθ）',
-    description: '水平轨道（θ=0）存在阻力 f=0.06N，外力须先克服静阻力才产生加速度，a-F 图线右移交正 F 轴',
+    description: '水平轨道（θ=0）存在阻力 f=0.06N，纸带已沿正方向运动，合力不足时减速；a-F 图线在正 F 轴过零',
     curriculumNotes: '必修第一册 第四章第 2 节 · 探究 a 与 F、m 关系的高考误差诊断',
     params: {
       scenario: 'under-compensated',
@@ -47,6 +47,17 @@ export const mechanicsErrorPresets: readonly PresetSpec<MechanicsErrorParams>[] 
       frictionForceN: 0,
       readingNoiseMm: 0,
       seed: 20261122,
+      phyphoxOverlayCsv: ''
+    }
+  },
+  {
+    id: 'af-ideal-compensated-origin',
+    name: '恰当平衡阻力（小钩码近似过原点）',
+    description: '无残余阻力的理想对照，有限钩码质量仍产生精确的分母修正。',
+    curriculumNotes: '区分过原点与严格线性：m≪M 才可近似 a=F/M。',
+    params: {
+      scenario: 'ideal-compensated', cartMassKg: 0.4, hangerMassKg: 0.04,
+      trackTiltDeg: 0, frictionForceN: 0, readingNoiseMm: 0, seed: 20261122,
       phyphoxOverlayCsv: ''
     }
   }
