@@ -1,8 +1,11 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
-import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec, type TelemetryChannelSpec } from '@physforge/sim-sdk';
+import {capacitorLayout,capacitorInitialView,fitCapacitorViewport,capacitorBoundsFit,capacitorContentBounds} from './layout.js';
 import { capacitorMillikanPresets } from './presets.js';
 import {
   checkInvariants,
+  capacitorGeometry,
+  DISPLAY_LENGTH_PER_M,
   computeCapacitorMetrics,
   computeObservables,
   createInitialState,
@@ -15,10 +18,10 @@ const paramSchema: readonly ParamFieldSpec<CapacitorMillikanParams>[] = [
   {
     key: 'switchMode',
     kind: 'select',
-    label: '电源开关 S',
+    label: '比较实验模式',
     defaultValue: 'open-const-q',
     options: [
-      { value: 'open-const-q', label: '断开开关（Q 恒定）' },
+      { value: 'open-const-q', label: '断开后（参考 Q 恒定）' },
       { value: 'closed-const-u', label: '闭合开关（U 恒定）' }
     ]
   },
@@ -33,7 +36,7 @@ const paramSchema: readonly ParamFieldSpec<CapacitorMillikanParams>[] = [
       { value: 'none', label: '中心对称电势参考' }
     ]
   },
-  { key: 'sourceVoltageU0', kind: 'number', label: '电源电压 U₀', unit: 'V', min: 50, max: 400, step: 10, defaultValue: 200 },
+  { key: 'sourceVoltageU0', kind: 'number', label: '电压 U₀', unit: 'V', min: -400, max: 400, step: 10, defaultValue: 200 },
   { key: 'distanceMm', kind: 'number', label: '极板间距 d', unit: 'mm', min: 8, max: 40, step: 1, defaultValue: 20 },
   { key: 'refDistanceMm', kind: 'number', label: '断开前参考间距 d₀', unit: 'mm', min: 8, max: 40, step: 1, defaultValue: 20 },
   { key: 'areaRatioS', kind: 'number', label: '正对面积比 S/S₀', unit: '', min: 0.3, max: 1, step: 0.05, defaultValue: 1 },
@@ -42,9 +45,9 @@ const paramSchema: readonly ParamFieldSpec<CapacitorMillikanParams>[] = [
   { key: 'refDielectricEr', kind: 'number', label: '断开前参考 εr0', unit: '', min: 1, max: 6, step: 0.5, defaultValue: 1 },
   { key: 'probeFracP', kind: 'number', label: '探针点 P 高度比', unit: '', min: 0.1, max: 0.9, step: 0.05, defaultValue: 0.4 },
   { key: 'oilDropEnabled', kind: 'boolean', label: '开启密立根油滴', defaultValue: false },
-  { key: 'dropChargeSteps', kind: 'number', label: '油滴电荷阶数 n·e', unit: 'step', min: 0, max: 5, step: 1, defaultValue: 2 },
-  { key: 'dropMassScale', kind: 'number', label: '油滴相对质量 m', unit: '', min: 0.5, max: 2.5, step: 0.1, defaultValue: 1 },
-  { key: 'stokesDrag', kind: 'number', label: '斯托克斯空气阻尼', unit: 's⁻¹', min: 0, max: 12, step: 1, defaultValue: 6 }
+  { key: 'dropChargeSteps', kind: 'number', label: '油滴多余电子数 n（q=−ne）', unit: '', min: 0, max: 5, step: 1, defaultValue: 2 },
+  { key: 'dropMassScale', kind: 'number', label: '油滴质量比 m/m₀', unit: '', min: 0.5, max: 2.5, step: 0.1, defaultValue: 1 },
+  { key: 'stokesDrag', kind: 'number', label: '线性阻尼率 β', unit: 's⁻¹', min: 0, max: 12, step: 1, defaultValue: 6 }
 ];
 
 
@@ -85,6 +88,17 @@ const liveFormulas: readonly LiveFormulaSpec[] = [{
     }
   ]
 }];
+const channels:readonly TelemetryChannelSpec[]=[
+  {key:'capacitancePF',label:'电容 C',unit:'pF',color:'#38bdf8'},
+  {key:'voltageV',label:'上板相对下板电压 U',unit:'V',color:'#fbbf24'},
+  {key:'chargeNC',label:'上板电荷 Q',unit:'nC',color:'#fb7185'},
+  {key:'fieldEy',label:'有向场强 Eᵧ',unit:'V/m',color:'#4ade80'},
+  {key:'phiPV',label:'探针 P 电势 φP',unit:'V',color:'#f472b6'},
+  {key:'storedEnergyUJ',label:'电容储能',unit:'μJ',color:'#a78bfa'},
+  {key:'dropHeightMm',label:'油滴实际高度',unit:'mm',color:'#38bdf8'},
+  {key:'dropVyMmS',label:'油滴有向速度',unit:'mm/s',color:'#fbbf24'},
+  {key:'dropAcceleration',label:'油滴有向加速度',unit:'m/s²',color:'#4ade80'}
+];
 export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<CapacitorMillikanParams, CapacitorMillikanState>({
   meta: {
     id: 'em-capacitor-millikan',
@@ -94,8 +108,18 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
     difficulty: '高三一轮',
     version: '2.0.0'
   },
-  defaultView: { scale: 0.917, offsetRatioX: -0.02, offsetRatioY: 0.02 },
+  defaultView:{
+    scale:(p,v)=>capacitorInitialView(p,v).scale,
+    offsetRatioX:(p,v)=>capacitorInitialView(p,v).offsetRatioX,
+    offsetRatioY:(p,v)=>capacitorInitialView(p,v).offsetRatioY
+  },
   paramSchema,
+  getParamFields:p=>{
+    const keys=['switchMode','sourceVoltageU0','distanceMm','areaRatioS','dielectricEr','groundMode','probeFracP','oilDropEnabled',
+      ...(p.switchMode==='open-const-q'?['refDistanceMm','refAreaRatioS','refDielectricEr']:[]),
+      ...(p.oilDropEnabled?['dropChargeSteps','dropMassScale','stokesDrag']:[])];
+    return keys.flatMap(key=>paramSchema.filter(f=>f.key===key).map(f=>f.key==='sourceVoltageU0'?{...f,label:p.switchMode==='open-const-q'?'断开前参考电压 Uref':'恒压电源 U₀'}:f));
+  },
   presets: capacitorMillikanPresets,
   engine: {
     createInitialState,
@@ -105,61 +129,36 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
   },
   layers: [
     { id: 'plates', label: '可拖动平行极板与电介质', defaultVisible: true },
-    { id: 'electrometer', label: '静电计指针偏角监测', defaultVisible: true },
+    { id: 'electrometer', label: '电压读数与示意静电计', defaultVisible: true },
     { id: 'oilDrop', label: '密立根油滴与 P 点电势探针', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'capacitancePF', label: '电容 C', unit: 'pF', color: '#38bdf8' },
-    { key: 'voltageV', label: '两板电压 U', unit: 'V', color: '#fbbf24' },
-    { key: 'fieldE', label: '板间场强 E', unit: 'V/m', color: '#4ade80' },
-    { key: 'phiPV', label: '探针点 P 电势 φP', unit: 'V', color: '#f472b6' }
-  ],
-  getForceVectors: (state, params) => {
-    if (!params.oilDropEnabled) return [];
-    const m = computeCapacitorMetrics(params);
-    const halfSpan = (params.distanceMm / 20) * 0.7;
-    const dropY = -halfSpan + state.dropYFrac * (2 * halfSpan);
-    const fRatio = (params.dropChargeSteps * m.fieldE) / (2 * 10000 * params.dropMassScale);
+  telemetryChannels:channels,
+  getTelemetryChannels:p=>p.oilDropEnabled?
+    [...channels.filter(c=>c.key==='dropHeightMm'||c.key==='dropVyMmS'),...channels.filter(c=>c.key!=='dropHeightMm'&&c.key!=='dropVyMmS')]:
+    channels.filter(c=>!c.key.startsWith('drop')),
+  getForceVectors:(state,p)=>{
+    if(!p.oilDropEnabled)return [];
+    const o=computeObservables(state,p),g=capacitorGeometry(p),origin={x:g.dropX,y:-g.halfD+2*g.halfD*state.dropYFrac};
     return [
-      { id: 'drop-mg', label: 'mg', origin: { x: 0, y: dropY }, force: { x: 0, y: -1.5 }, category: 'gravity', color: '#f59e0b' },
-      { id: 'drop-qe', label: 'qE', origin: { x: 0, y: dropY }, force: { x: 0, y: 1.5 * fRatio }, category: 'electric', color: '#38bdf8' }
+      {id:'drop-mg',label:'mg',origin,force:{x:0,y:-o.dropWeightN!},category:'gravity',color:'#f59e0b',unit:'N'},
+      {id:'drop-qe',label:'qE',origin,force:{x:0,y:o.dropElectricForceN!},category:'electric',color:'#38bdf8',unit:'N'},
+      {id:'drop-drag',label:'F阻',origin,force:{x:0,y:o.dropDragForceN!},category:'friction',color:'#4ade80',unit:'N'}
     ];
   },
-  referenceFrames: [
-    {
-      id: 'oil-droplet',
-      label: '油滴随动参考系',
-      getOrigin: (s, p) => {
-        const halfSpan = (p.distanceMm / 20) * 0.7;
-        return { x: 0, y: -halfSpan + s.dropYFrac * 2 * halfSpan };
-      },
-      getVelocity: (s, p) => ({ x: 0, y: s.dropVy * ((p.distanceMm / 20) * 1.4) })
-    }
-  ],
-  getControlHandles: (_s, params) => {
-    const halfSpan = (params.distanceMm / 20) * 0.7;
+  referenceFrames:[{
+    id:'oil-droplet',label:'油滴随动参考系（绘图尺度）',
+    getOrigin:(s,p)=>{const g=capacitorGeometry(p);return {x:g.dropX,y:-g.halfD+2*g.halfD*s.dropYFrac};},
+    getVelocity:s=>({x:0,y:s.dropVy*DISPLAY_LENGTH_PER_M})
+  }],
+  getControlHandles:(_s,p)=>{
+    const g=capacitorGeometry(p);
     return [
-      {
-        id: 'top-plate-dist',
-        label: `d=${params.distanceMm}mm`,
-        position: { x: 0, y: halfSpan },
-        handleKind: 'point',
-        color: '#38bdf8',
-        onDrag: (wp) => ({
-          distanceMm: Math.round(Math.max(8, Math.min(40, (Math.abs(wp.y) / 0.7) * 20)))
-        })
-      },
-      {
-        id: 'probe-p',
-        label: `P (${(params.probeFracP * 100).toFixed(0)}%)`,
-        position: { x: -0.9, y: -halfSpan + params.probeFracP * 2 * halfSpan },
-        handleKind: 'point',
-        color: '#f472b6',
-        onDrag: (wp) => {
-          const frac = (wp.y + halfSpan) / (2 * halfSpan);
-          return { probeFracP: Number(Math.max(0.1, Math.min(0.9, frac)).toFixed(2)) };
-        }
-      }
+      {id:'top-plate-dist',label:'d='+p.distanceMm+'mm',position:{x:g.topRight-.2,y:g.halfD},handleKind:'point',color:'#38bdf8',
+        showWhenIdle:false,onDrag:wp=>({distanceMm:Math.round(Math.max(8,Math.min(40,Math.abs(wp.y)*2000/DISPLAY_LENGTH_PER_M)))})},
+      {id:'top-plate-area',label:'S/S₀='+p.areaRatioS.toFixed(2),position:{x:g.topLeft,y:g.halfD},handleKind:'point',color:'#38bdf8',
+        showWhenIdle:false,onDrag:wp=>({areaRatioS:Number(Math.max(.3,Math.min(1,(1.5-wp.x)/3)).toFixed(2))})},
+      {id:'probe-p',label:'P ('+(p.probeFracP*100).toFixed(0)+'%)',position:{x:g.probeX,y:-g.halfD+p.probeFracP*2*g.halfD},
+        handleKind:'point',showWhenIdle:false,color:'#f472b6',onDrag:wp=>({probeFracP:Number(Math.max(.1,Math.min(.9,(wp.y+g.halfD)/(2*g.halfD))).toFixed(2))})}
     ];
   },
   sceneSerializer: {
@@ -171,157 +170,116 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
     }),
     importScene: (dsl) => dsl.params as Partial<CapacitorMillikanParams>
   },
-  exportDiagramIR: (_s, params) => {
-    const m = computeCapacitorMetrics(params);
-    const halfD = (params.distanceMm / 20) * 0.7;
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'line', x1: -1.5, y1: halfD, x2: 1.5 * (2 * params.areaRatioS - 1), y2: halfD, strokeWidth: 3 },
-      { kind: 'line', x1: -1.5, y1: -halfD, x2: 1.5, y2: -halfD, strokeWidth: 3 },
-      { kind: 'circle', cx: 0, cy: -halfD + params.probeFracP * 2 * halfD, r: 0.05, fill: true },
-      {
-        kind: 'mathLabel',
-        x: 2.2,
-        y: 1.2,
-        text: `C=${(m.capacitanceF * 1e12).toFixed(1)}\\text{pF},\\; U=${m.voltageV.toFixed(0)}\\text{V}`,
-        align: 'end'
-      }
+  exportDiagramIR:(state,p)=>{
+    const m=computeCapacitorMetrics(p),g=capacitorGeometry(p),d=g.halfD;
+    const primitives:DiagramPrimitive[]=[
+      {kind:'line',x1:g.topLeft,y1:d,x2:g.topRight,y2:d,strokeWidth:3},
+      {kind:'line',x1:-1.5,y1:-d,x2:1.5,y2:-d,strokeWidth:3},
+      {kind:'text',x:g.topRight,y:d+.17,text:'上板 '+m.phiTopV.toFixed(1)+' V',align:'end'},
+      {kind:'text',x:-1.5,y:-d-.22,text:'下板 '+m.phiBottomV.toFixed(1)+' V'},
+      {kind:'circle',cx:g.probeX,cy:-d+p.probeFracP*2*d,r:.035,fill:true},
+      {kind:'text',x:g.probeX-.1,y:-d+p.probeFracP*2*d+.15,text:'P '+m.phiPV.toFixed(1)+' V',align:'end'},
+      {kind:'text',x:0,y:d+.45,text:'d='+p.distanceMm+' mm · S/S₀='+p.areaRatioS.toFixed(2),align:'middle'}
     ];
-    return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.4, minY: -1.6, maxX: 2.4, maxY: 1.6 },
-      title: '平行板电容器动态分析配图',
-      primitives
-    };
+    if(p.dielectricEr>1)primitives.push({kind:'rect',x:g.left,y:-d,width:g.right-g.left,height:2*d,hatch:true});
+    if(m.fieldEy!==0)for(let k=0;k<5;k++){
+      const x=g.left+(k+1)*(g.right-g.left)/6,sign=Math.sign(m.fieldEy);
+      primitives.push({kind:'arrow',x1:x,y1:-.68*d*sign,x2:x,y2:.68*d*sign});
+    }
+    if(p.oilDropEnabled)primitives.push({kind:'circle',cx:g.dropX,cy:-d+2*d*state.dropYFrac,r:.055,fill:true},
+      {kind:'text',x:g.dropX+.1,y:-d+2*d*state.dropYFrac+.14,text:'q=−'+p.dropChargeSteps+'e'});
+    return {width:820,height:500,viewBox:{minX:-2.2,maxX:Math.max(2.5,g.topRight+.3),minY:-Math.max(1.6,d+.4),maxY:Math.max(1.6,d+.65)},title:'平行板电容器：有向电场与正对面积',primitives};
   },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const mapper = createWorldMapper(viewport);
-    const labels: CanvasLabel[] = [];
-    const fillWorldRect = (x: number, y: number, width: number, height: number) => {
-      const a = mapper.toScreen(x, y + height);
-      const b = mapper.toScreen(x + width, y);
-      ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+  renderCanvas:(ctx,state,p,viewport,activeLayers)=>{
+    const m=computeCapacitorMetrics(p),g=capacitorGeometry(p),d=g.halfD,mapper=createWorldMapper(viewport);
+    const paper=viewport.theme==='projector';
+    const ink=paper?'#0f172a':'#e2e8f0',muted=paper?'#475569':'#94a3b8';
+    const blue=paper?'#0369a1':'#38bdf8',gold=paper?'#92400e':'#fbbf24',rose=paper?'#be123c':'#fb7185',green=paper?'#166534':'#4ade80';
+    const layout=capacitorLayout(state,p,viewport,activeLayers,(text,font)=>{ctx.font=font;return ctx.measureText(text).width;});
+    const palette={ink,muted,rose,gold,green};
+    const line=(x1:number,y1:number,x2:number,y2:number,color:string,width=1.5)=>{
+      const a=mapper.toScreen(x1,y1),b=mapper.toScreen(x2,y2);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
     };
-
-    const halfD = (params.distanceMm / 20) * 0.7;
-    const metrics = computeCapacitorMetrics(params);
-
+    const arrow=(x1:number,y1:number,x2:number,y2:number,color:string)=>{
+      const a=mapper.toScreen(x1,y1),b=mapper.toScreen(x2,y2),dx=b.x-a.x,dy=b.y-a.y,n=Math.hypot(dx,dy);if(n<1e-8)return;
+      line(x1,y1,x2,y2,color,1.5);const u=dx/n,v=dy/n,h=Math.min(8,n*.25);ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-h*u+h*.44*v,b.y-h*v-h*.44*u);ctx.lineTo(b.x-h*u-h*.44*v,b.y-h*v+h*.44*u);ctx.closePath();ctx.fill();
+    };
+    const plate=(left:number,right:number,y:number,polarity:number,top:boolean)=>{
+      const a=mapper.toScreen(left,y),b=mapper.toScreen(right,y),h=layout.plateHeight;
+      const c=polarity>0?rose:polarity<0?blue:muted;
+      const yy=a.y+(top?-h:0);
+      const grad=ctx.createLinearGradient(0,yy,0,yy+h);
+      grad.addColorStop(0,paper?'#e2e8f0':'#dbeafe');grad.addColorStop(.45,paper?'#64748b':'#64748b');grad.addColorStop(1,paper?'#94a3b8':'#334155');
+      ctx.save();ctx.fillStyle=grad;ctx.strokeStyle=c;ctx.lineWidth=1.5;
+      if(!paper&&polarity){ctx.shadowColor=c;ctx.shadowBlur=11;}
+      ctx.beginPath();ctx.roundRect(a.x,yy,b.x-a.x,h,Math.min(3,h/2));ctx.fill();ctx.stroke();ctx.restore();
+      const count=Math.max(2,Math.min(6,Math.floor(mapper.len(g.right-g.left)/21)));
+      if(polarity)for(let i=0;i<count;i++){
+        const x=g.left+(i+1)*(g.right-g.left)/(count+1),pt=mapper.toScreen(x,y);
+        pt.y+=top?8:-8;
+        ctx.fillStyle=c;ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(polarity>0?'+':'−',pt.x,pt.y);
+      }
+    };
     ctx.save();
-
-    if (activeLayers.has('plates')) {
-      if (params.dielectricEr > 1.05) {
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
-        fillWorldRect(-1.4, -halfD, 2.8, 2 * halfD);
+    if(activeLayers.has('plates')){
+      const a=mapper.toScreen(g.left,d),b=mapper.toScreen(g.right,-d);
+      const fieldGrad=ctx.createLinearGradient(a.x,a.y,b.x,b.y);
+      fieldGrad.addColorStop(0,paper?'rgba(3,105,161,.04)':'rgba(56,189,248,.05)');
+      fieldGrad.addColorStop(.55,p.dielectricEr>1?(paper?'rgba(3,105,161,.15)':'rgba(56,189,248,.23)'):(paper?'rgba(3,105,161,.06)':'rgba(56,189,248,.10)'));
+      fieldGrad.addColorStop(1,paper?'rgba(3,105,161,.04)':'rgba(56,189,248,.05)');
+      ctx.fillStyle=fieldGrad;ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);
+      if(p.dielectricEr>1){ctx.strokeStyle=blue;ctx.setLineDash([4,4]);ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.setLineDash([]);}
+      const count=Math.max(2,Math.min(6,Math.floor(mapper.len(g.right-g.left)/21)));
+      if(m.fieldEy!==0)for(let k=0;k<count;k++){
+        const x=g.left+(k+1)*(g.right-g.left)/(count+1),sign=Math.sign(m.fieldEy);
+        arrow(x,-.62*d*sign,x,.62*d*sign,green);
       }
-
-      // Top movable plate (reflects areaRatioS horizontal shift)
-      const shiftX = (1 - params.areaRatioS) * 2.4;
-      ctx.fillStyle = '#e2e8f0';
-      fillWorldRect(-1.5 + shiftX, halfD - 0.04, 3, 0.04);
-      // Bottom fixed plate
-      fillWorldRect(-1.5, -halfD - 0.04, 3, 0.04);
-
-      // Electric field arrows between overlapping region
-      ctx.strokeStyle = 'rgba(74, 222, 128, 0.45)';
-      ctx.lineWidth = 1.4;
-      for (let i = -2; i <= 2; i++) {
-        const fx = -1.5 + shiftX + 0.5 + ((i + 2) / 4) * (2.2 - shiftX);
-        if (fx > 1.4) continue;
-        const top = mapper.toScreen(fx, halfD - 0.05);
-        const bottom = mapper.toScreen(fx, -halfD + 0.05);
-        ctx.beginPath();
-        ctx.moveTo(top.x, top.y);
-        ctx.lineTo(bottom.x, bottom.y);
-        ctx.stroke();
-      }
-
-      // Ground symbol
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 2;
-      if (params.groundMode !== 'none') {
-        const plateY = params.groundMode === 'bottom' ? -halfD - 0.04 : halfD + 0.04;
-        const stemEnd = params.groundMode === 'bottom' ? plateY - 0.16 : plateY + 0.16;
-        const gx = -1.7;
-        const plate = mapper.toScreen(-1.5, plateY);
-        const elbow = mapper.toScreen(gx, plateY);
-        const ground = mapper.toScreen(gx, stemEnd);
-        ctx.beginPath();
-        ctx.moveTo(plate.x, plate.y);
-        ctx.lineTo(elbow.x, elbow.y);
-        ctx.lineTo(ground.x, ground.y);
-        for (const width of [0.12, 0.075, 0.04]) {
-          const left = mapper.toScreen(gx - width, stemEnd);
-          const right = mapper.toScreen(gx + width, stemEnd);
-          ctx.moveTo(left.x, left.y);
-          ctx.lineTo(right.x, right.y);
-        }
-        ctx.stroke();
+      plate(g.topLeft,g.topRight,d,Math.sign(m.chargeC),true);
+      plate(-1.5,1.5,-d,-Math.sign(m.chargeC),false);
+      // Actual plate gap dimension, outside the left edge of overlap.
+      const x=-1.74;line(x,-d,x,d,muted,1);line(x-.06,-d,x+.06,-d,muted);line(x-.06,d,x+.06,d,muted);
+      if(p.groundMode!=='none'){
+        const top=p.groundMode==='top',x=top?g.topRight:1.5,y=top?d:-d,sign=top?1:-1;
+        line(x,y,x+.2,y,gold);line(x+.2,y,x+.2,y+sign*.17,gold);
+        for(let i=0;i<3;i++){const w=.10-i*.027,gy=y+sign*(.17+i*.055);line(x+.2-w,gy,x+.2+w,gy,gold);}
       }
     }
+    if(activeLayers.has('oilDrop')){
+      const py=-d+p.probeFracP*2*d,probe=mapper.toScreen(g.probeX,py);
+      ctx.fillStyle=rose;ctx.beginPath();ctx.arc(probe.x,probe.y,4.5,0,Math.PI*2);ctx.fill();
 
-    if (activeLayers.has('oilDrop')) {
-      const py = -halfD + params.probeFracP * 2 * halfD;
-      const probe = mapper.toScreen(-0.9, py);
-      ctx.fillStyle = '#f472b6';
-      ctx.beginPath();
-      ctx.arc(probe.x, probe.y, mapper.len(0.025), 0, Math.PI * 2);
-      ctx.fill();
-      labels.push({ id: 'capacitor-probe-label', x: probe.x, y: probe.y, text: `P (φ=${metrics.phiPV.toFixed(1)}V)`, color: '#f472b6', font: '12px sans-serif' });
+      if(p.oilDropEnabled){
+        const y=-d+2*d*state.dropYFrac,pt=mapper.toScreen(g.dropX,y),r=Math.max(5,mapper.len(.045));
+        ctx.save();if(!paper){ctx.shadowColor=gold;ctx.shadowBlur=13;}
+        ctx.fillStyle=gold;ctx.beginPath();ctx.arc(pt.x,pt.y,r,0,Math.PI*2);ctx.fill();ctx.restore();
 
-      if (params.oilDropEnabled) {
-        const dropY = -halfD + state.dropYFrac * 2 * halfD;
-        const drop = mapper.toScreen(0, dropY);
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(drop.x, drop.y, mapper.len(0.035), 0, Math.PI * 2);
-        ctx.fill();
       }
     }
+    if(activeLayers.has('electrometer')){
+      const meter=layout.meter,r=meter.r;
+      ctx.save();ctx.fillStyle=paper?'#f8fafc':'#0b172b';ctx.strokeStyle=muted;ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(meter.x,meter.y,r,0,Math.PI*2);ctx.fill();ctx.stroke();
+      for(let k=0;k<=8;k++){const angle=(-90+k*10)*Math.PI/180;ctx.strokeStyle=muted;ctx.beginPath();ctx.moveTo(meter.x+r*.76*Math.cos(angle),meter.y+r*.76*Math.sin(angle));ctx.lineTo(meter.x+r*.89*Math.cos(angle),meter.y+r*.89*Math.sin(angle));ctx.stroke();}
+      const angle=(state.electrometerAngleDeg-90)*Math.PI/180;ctx.strokeStyle=rose;ctx.lineWidth=2.4;ctx.beginPath();ctx.moveTo(meter.x,meter.y);ctx.lineTo(meter.x+r*.72*Math.cos(angle),meter.y+r*.72*Math.sin(angle));ctx.stroke();
+      ctx.fillStyle=ink;ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(m.voltageV.toFixed(0)+' V',meter.x,meter.y+r*.46);ctx.restore();
 
-    if (activeLayers.has('electrometer')) {
-      const meter = mapper.toScreen(2.05, 0);
-      const ex = meter.x;
-      const ey = meter.y;
-      const radius = mapper.len(0.3);
-      ctx.strokeStyle = '#94a3b8';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(ex, ey, radius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      const rad = ((state.electrometerAngleDeg - 90) * Math.PI) / 180;
-      ctx.strokeStyle = '#f43f5e';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(ex, ey);
-      ctx.lineTo(ex + radius * 0.82 * Math.cos(rad), ey + radius * 0.82 * Math.sin(rad));
-      ctx.stroke();
-      labels.push(
-        { id: 'electrometer-value', x: ex, y: ey + radius + mapper.len(0.12), text: `静电计 ${metrics.voltageV.toFixed(0)}V`, color: '#cbd5e1', font: '12px sans-serif' },
-        { id: 'electrometer-mode', x: ex, y: ey + radius + mapper.len(0.3), text: params.switchMode === 'open-const-q' ? 'S断开 (Q恒定)' : 'S闭合 (U恒定)', color: '#cbd5e1', font: '11px sans-serif' }
-      );
     }
-
-    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    for(const l of layout.labels){ctx.font=l.font;ctx.fillStyle=palette[l.role];ctx.fillText(l.text,l.x,l.y);}
     ctx.restore();
   },
-  formatFormulas: (_s, params) => {
-    const m = computeCapacitorMetrics(params);
-    return [
-      {
-        id: 'cap-main',
-        label: '电容与场强定义',
-        latex: 'C = \\frac{\\varepsilon_r S}{4\\pi k d},\\quad E = \\frac{U}{d}',
-        substitutedLatex: `C=${(m.capacitanceF * 1e12).toFixed(2)}\\text{ pF},\\; Q=${(m.chargeC * 1e9).toFixed(3)}\\text{ nC},\\; E=${m.fieldE.toFixed(1)}\\text{ V/m}`
-      },
-      {
-        id: 'cap-probe',
-        label: '静电计与 P 点电势',
-        latex: '\\varphi_P',
-        substitutedLatex: `U=${m.voltageV.toFixed(1)}\\text{ V},\\; \\varphi_P=${m.phiPV.toFixed(2)}\\text{ V}`
-      }
+  formatFormulas:(state,p)=>{
+    const m=computeCapacitorMetrics(p),o=computeObservables(state,p);
+    const items=[
+      {id:'cap-main',label:'平行板电容（忽略边缘）',latex:'C=\\frac{\\varepsilon_0\\varepsilon_r S}{d}',substitutedLatex:'C='+o.capacitancePF!.toFixed(3)+'\\,\\mathrm{pF}'},
+      {id:'cap-mode',label:p.switchMode==='open-const-q'?'固定断开前参考电荷':'恒压电源',latex:p.switchMode==='open-const-q'?'Q=Q_{\\rm ref}=C_{\\rm ref}U_{\\rm ref},\\quad U=Q/C':'U=U_0,\\quad Q=CU_0',substitutedLatex:'Q='+o.chargeNC!.toFixed(3)+'\\,\\mathrm{nC},\\quad U='+m.voltageV.toFixed(2)+'\\,\\mathrm V'},
+      {id:'cap-field',label:'向上为正；U=φ上−φ下',latex:'E_y=-\\frac{U}{d},\\quad\\varphi_P=\\varphi_{\\rm bot}+Uf_P',substitutedLatex:'E_y='+m.fieldEy.toFixed(1)+'\\,\\mathrm{V/m},\\quad\\varphi_P='+m.phiPV.toFixed(2)+'\\,\\mathrm V'}
     ];
+    if(p.oilDropEnabled)items.push(
+      {id:'drop-quantum',label:'真实元电荷 · 示教质量与线性阻尼',latex:'q=-ne,\\quad e=1.602176634\\times10^{-19}\\,\\mathrm C',substitutedLatex:'q=-'+o.dropChargeSteps+'e'},
+      {id:'drop-dynamics',label:state.terminal?'首次触板，碰撞前终止':'有向油滴运动方程',latex:'\\dot v=qE_y/m-g-\\beta v',substitutedLatex:'v='+o.dropVyMmS!.toFixed(3)+'\\,\\mathrm{mm/s},\\quad a='+o.dropAcceleration!.toFixed(3)+'\\,\\mathrm{m/s^2}'});
+    return items;
   }
-}), { liveFormulas });
+}), { liveFormulas,capacitorLayout,capacitorContentBounds,fitCapacitorViewport,capacitorBoundsFit,displayLengthPerM:DISPLAY_LENGTH_PER_M });
 
 export default emCapacitorMillikanPlugin;

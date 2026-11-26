@@ -562,6 +562,133 @@ async function auditM03Constraints(page,origin){
 
 
 // M11 uses the actual rendered frame, not independently synthesized telemetry.
+async function assertCapacitorLayout(page,offline=false){
+  const selector=offline?'[data-testid="sf-canvas"]':'[data-testid="simulation-canvas"]';
+  await page.waitForFunction(sel=>{const c=document.querySelector(sel);if(!c?.dataset.capacitorView)return false;
+    const v=JSON.parse(c.dataset.capacitorView);return Math.abs(v.width-c.getBoundingClientRect().width)<3&&v.boxes.length>0;
+  },selector);
+  const result=await page.evaluate(({selector,offline})=>{
+    const c=document.querySelector(selector),r=c.getBoundingClientRect(),v=JSON.parse(c.dataset.capacitorView);
+    const visible=sel=>{const el=document.querySelector(sel);if(!el||!el.getClientRects().length)return null;const a=el.getBoundingClientRect();return {left:a.left-r.left,right:a.right-r.left,top:a.top-r.top,bottom:a.bottom-r.top};};
+    const chrome=offline?[]:['[data-testid="right-control-panel"]','[data-testid="floating-scope-dock"]','[data-testid="fullscreen-formula"]','[data-testid="fullscreen-controls"]','[data-testid="fullscreen-title"]'].map(visible).filter(Boolean);
+    const intersects=(a,b)=>a.left<b.right-1&&a.right>b.left+1&&a.top<b.bottom-1&&a.bottom>b.top+1;
+    const errors=[];
+    for(const b of v.boxes){
+      if(b.left<0||b.right>r.width+1||b.top<0||b.bottom>r.height+1)errors.push('outside:'+b.id);
+      for(const d of chrome)if(intersects(b,d))errors.push('chrome:'+b.id);
+    }
+    const ids=['top-potential','overlap','bottom-potential','field-label','gap','probe','drop','meter-title','mode'];
+    const labels=v.boxes.filter(b=>ids.includes(b.id));
+    for(let i=0;i<labels.length;i++){
+      for(let j=i+1;j<labels.length;j++)if(intersects(labels[i],labels[j]))errors.push('labels:'+labels[i].id+'/'+labels[j].id);
+      for(const b of v.boxes.filter(b=>['top-plate','bottom-plate','meter'].includes(b.id)))if(intersects(labels[i],b))errors.push('geometry:'+labels[i].id+'/'+b.id);
+    }
+    return {errors,view:v,chrome};
+  },{selector,offline});
+  if(result.errors.length)throw Error('E02 layout '+JSON.stringify(result));
+  return result.view;
+}
+async function auditE02Capacitor(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-capacitor-millikan');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-capacitor-millikan');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-capacitor-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('E02 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode,voltage,oil)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(([m,v,o])=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorRendered||'null');return s?.switchMode===m&&s.sourceVoltageU0===v&&s.oilDropEnabled===o&&s.t===0;},[mode,voltage,oil]);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(o=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===(o?'dropHeightMm':'capacitancePF')&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===(o?'dropVyMmS':'voltageV'),oil);
+    return read();
+  };
+  const sync=async()=>{
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorRendered||'null'),t=Number(document.querySelector('[data-testid="capacitor-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+    return read();
+  };
+  const runTo=async(t,terminal=false)=>{
+    await play.click();
+    await page.waitForFunction(([t,terminal])=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorRendered||'null');return terminal?s?.terminal===1:s?.t>t;},[t,terminal],{timeout:15000});
+    if(!terminal)await play.click();
+    return sync();
+  };
+  const photo=async(name)=>{await assertCapacitorLayout(page);return page.screenshot({path:path.join(OUT_DIR,'H31_E02_'+name+'.png')});};
+  const open=await select('capacitor-reference-double-gap','open-const-q',200,false);
+  check(open.capacitancePF,8.8541878128,'C at double gap');
+  check(open.chargeNC,3.54167512512,'reference Q');check(open.voltageV,400,'U at double gap');
+  check(open.fieldEy,-10000,'signed field');check(open.phiPV,100,'bottom gauge');
+  if('dropVyMmS'in open)throw Error('E02 invisible oil drop observable');
+  await page.getByTestId('capacitor-scope-empty').waitFor({state:'visible'});
+  await photo('open_double_gap');
+  const openRun=await runTo(.2);check(openRun.chargeNC,open.chargeNC,'constant Q while running');
+  const top=await select('top-plate-grounded-potential','open-const-q',200,false);
+  check(top.phiTopV,0,'top grounded');check(top.phiPV,-168,'top gauge');await photo('top_grounded');
+  const closed=await select('closed-switch-const-u','closed-const-u',200,false);
+  check(closed.capacitancePF,8.8541878128e-12*2.5*.85*.04/.016*1e12,'closed C');
+  check(closed.voltageV,200,'closed U');check(closed.fieldEy,-12500,'closed E');
+  if(await page.getByTestId('param-slider-refDistanceMm').count())throw Error('E02 irrelevant reference controls');
+  await photo('closed');
+  const reversed=await select('capacitor-reversed-polarity','closed-const-u',-200,false);
+  check(reversed.fieldEy,10000,'reversed E');check(reversed.phiPV,-80,'reversed probe');
+  if(reversed.chargeNC>=0)throw Error('E02 reversed plate charge');
+  await photo('reverse');
+  const balance=await select('millikan-oil-drop-balance','closed-const-u',200,true);
+  check(balance.dropChargeC,-2*1.602176634e-19,'elementary charge',1e-30);
+  check(balance.dropMassKg,2*1.602176634e-19*10000/9.8,'mass',1e-28);
+  const balanced=await runTo(.4);check(balanced.dropHeightMm,10,'suspended height');check(balanced.dropVyMmS,0,'suspended speed');check(balanced.dropAcceleration,0,'suspended a');
+  await photo('balance');
+  await select('millikan-free-fall','closed-const-u',0,true);
+  const fall=await runTo(0,true),tc=Math.sqrt(.02/9.8);
+  check(fall.t,tc,'free fall time');check(fall.dropHeightMm,0,'bottom touch');check(fall.dropVyMmS,-9.8*tc*1000,'pre-impact velocity');check(fall.dropContact,-1,'bottom contact');
+  await page.getByTestId('btn-step').click();check((await read()).t,fall.t,'terminal freeze');
+  await photo('fall');
+  await select('millikan-rise-contact','closed-const-u',400,true);
+  const rise=await runTo(0,true);
+  check(rise.t,tc,'rise time');check(rise.dropHeightMm,20,'top touch');check(rise.dropVyMmS,9.8*tc*1000,'upward pre-impact speed');check(rise.dropContact,1,'top contact');
+  await photo('rise');
+  await select('capacitor-reversed-polarity','closed-const-u',-200,false);
+  await page.setViewportSize({width:1024,height:768});
+  await page.waitForTimeout(250);
+  await photo('compact_reverse');
+  await page.getByTestId('param-slider-distanceMm').fill('40');
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorRendered||'null')?.distanceMm===40);
+  await photo('compact_max_gap_min_overlap');
+  await page.getByTestId('btn-toggle-oscilloscope').click();
+  await page.waitForTimeout(180);await photo('compact_scope_closed');
+  const before=await assertCapacitorLayout(page),bb=await canvas.boundingBox();
+  await page.mouse.move(bb.x+bb.width*.36,bb.y+bb.height*.42);await page.mouse.wheel(0,-100);
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorView||'null')?.automatic===false);
+  const manual=JSON.parse(await canvas.getAttribute('data-capacitor-view'));
+  if(!(manual.scale>before.scale))throw Error('E02 manual zoom not retained');
+  await page.getByTestId('param-slider-distanceMm').fill('8');
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorRendered||'null')?.distanceMm===8);
+  const after=JSON.parse(await canvas.getAttribute('data-capacitor-view'));
+  if(after.automatic||after.scale!==manual.scale||after.offsetX!==manual.offsetX||after.offsetY!==manual.offsetY)throw Error('E02 manual camera overwritten');
+  await page.getByTestId('btn-reset-view').click();
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorView||'null')?.automatic===true);
+  await photo('compact_min_gap');
+  const was=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+  if(was!=='projector'){
+    if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+    await page.getByTestId('btn-theme').click();
+    await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+    if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  }
+  await photo('compact_projector');
+  await page.getByTestId('btn-fullscreen-speech').click();await page.waitForSelector('[data-testid="fullscreen-controls"]');
+  await page.waitForTimeout(250);await photo('compact_fullscreen_projector');
+  await page.getByTestId('btn-exit-fullscreen-speech').click();
+  if(was!=='projector'){
+    if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+    await page.getByTestId('btn-theme').click();
+    if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  }
+  await page.setViewportSize(VIEWPORT);await page.waitForTimeout(200);
+  const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+  const report={open,openRun,top,closed,reversed,balance,balanced,fall,rise};
+  console.log('H31 E02 online '+JSON.stringify(report));return report;
+}
+
 async function auditE01Electrostatic(page,origin){
   const url=new URL(origin);url.searchParams.set('model','em-electrostatic-field');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2496,6 +2623,7 @@ async function main() {
     const m09CollisionReport=await auditM09Collision(page,origin);
     const m11ShmReport=await auditM11Shm(page,origin);
     const e01ElectrostaticReport=await auditE01Electrostatic(page,origin);
+    const e02CapacitorReport=await auditE02Capacitor(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2956,7 +3084,32 @@ async function main() {
       Object.assign(e01OfflineReport,{uniform,contact,errors:e01Errors,network:e01Network});
     }finally{await e01Context.close();}
 
-    const summary = { e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e02File=path.join(OUT_DIR,'H31_E02_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-capacitor-millikan','--preset','capacitor-reference-double-gap','--out',e02File],{stdio:'inherit'});
+    const e02Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e02Page=await e02Context.newPage(),e02Errors=[],e02Network=[],e02OfflineReport={};
+    e02Page.on('pageerror',e=>e02Errors.push(e.message));e02Page.on('console',m=>{if(m.type()==='error')e02Errors.push(m.text());});e02Page.on('request',r=>{if(/^https?:/.test(r.url()))e02Network.push(r.url());});
+    try{
+      await e02Page.goto(pathToFileURL(e02File).href);
+      const canvas=e02Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-capacitor-rendered'));
+      await e02Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.capacitorRendered||'null')?.distanceMm===40);
+      const open=await read();
+      if(Math.abs(open.chargeNC-3.54167512512)>1e-10||Math.abs(open.voltageV-400)>1e-8||Math.abs(open.fieldEy+10000)>1e-8)throw Error('E02 offline open '+JSON.stringify(open));
+      await assertCapacitorLayout(e02Page,true);
+      await e02Page.screenshot({path:path.join(OUT_DIR,'H31_E02_offline_open.png')});
+      await e02Page.locator('[data-preset-id="millikan-free-fall"]').click();
+      await e02Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.capacitorRendered||'null');return s?.oilDropEnabled===true&&s.sourceVoltageU0===0&&s.t===0&&document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='dropHeightMm';});
+      await e02Page.getByTestId('sf-play-pause').click();
+      await e02Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.capacitorRendered||'null')?.terminal===1);
+      await e02Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.capacitorRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+      const fall=await read(),tc=Math.sqrt(.02/9.8);
+      if(Math.abs(fall.t-tc)>1e-7||fall.dropContact!==-1||fall.dropHeightMm!==0||Math.abs(fall.dropVyMmS+9.8*tc*1000)>1e-6)throw Error('E02 offline fall '+JSON.stringify(fall));
+      await e02Page.getByRole('button',{name:'黑板深蓝'}).click();await e02Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await assertCapacitorLayout(e02Page,true);
+      await e02Page.screenshot({path:path.join(OUT_DIR,'H31_E02_offline_fall_paper.png')});
+      if(e02Errors.length||e02Network.length)throw Error('E02 offline errors '+JSON.stringify({e02Errors,e02Network}));
+      Object.assign(e02OfflineReport,{open,fall,errors:e02Errors,network:e02Network});
+    }finally{await e02Context.close();}
+    const summary = { e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
