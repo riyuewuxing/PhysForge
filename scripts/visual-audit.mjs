@@ -1286,6 +1286,20 @@ async function auditF07Conceptual(page,offline,select){
    if(!Number.isFinite(r.t)||Math.abs(r.outerTime-r.t)>1e-8)throw Error('F07 clock mismatch');
    if(r.mode==='rendezvous'&&(Math.abs(r.bodyX-Math.cos(r.targetAngleRad))>1e-9||Math.abs(r.bodyY-Math.sin(r.targetAngleRad))>1e-9||Math.abs(r.phaseLagRad-(r.targetAngleRad-r.chaserAngleRad))>1e-9))throw Error('F07 target phase mismatch');
    if(r.mode==='gravity-assist'&&(!Number.isFinite(r.relativeSpeed)||!Number.isFinite(r.relativeSpecificEnergy)))throw Error('F07 nonfinite local teaching readout');
+   // Independent screen-space check against the actual DOM panel/dock.
+   if(!offline){
+     const geometry=await canvas.evaluate(c=>{
+       const r=JSON.parse(c.dataset.orbitCompareRendered),v=JSON.parse(c.dataset.orbitCompareViewport),b=c.getBoundingClientRect();
+       const ppm=.24*Math.min(v.width,v.height)*v.scale;
+       const map=(x,y)=>({x:b.left+.45*v.width+v.offsetX+x*ppm,y:b.top+.5*v.height+v.offsetY-y*ppm});
+       const panel=document.querySelector('[data-testid="right-control-panel"]')?.getBoundingClientRect(),dock=document.querySelector('[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+       const right=panel&&panel.width>0?panel.left-25:b.right-25,bottom=dock&&dock.height>0?dock.top-25:b.bottom-25;
+       const points=[map(r.bodyX,r.bodyY),map(r.posX,r.posY)];
+       if(r.mode==='rendezvous')points.push(map(-1,1),map(1,-1));
+       return {points,left:b.left+25,top:b.top+80,right,bottom};
+     });
+     if(geometry.points.some(p=>!Number.isFinite(p.x)||!Number.isFinite(p.y)||p.x<geometry.left||p.x>geometry.right||p.y<geometry.top||p.y>geometry.bottom))throw Error('F07 teaching geometry hidden by UI '+JSON.stringify(geometry));
+   }
    const panel=offline?'sf-f07-readouts':'f07-readouts';
    await page.waitForFunction(({panel,t})=>Math.abs(Number(document.querySelector('[data-testid="'+panel+'"]')?.getAttribute('data-sample-time'))-t)<1e-8,{panel,t:r.t});
    return r;
