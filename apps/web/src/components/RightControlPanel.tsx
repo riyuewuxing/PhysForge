@@ -83,7 +83,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       coreFields: core,
       extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!valid||valid.includes(field.key)))
     };
-  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template,params.radiusM,params.anchorHeightM,params.systemMode,params.trackMode]);
+  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template,params.radiusM,params.anchorHeightM,params.systemMode,params.trackMode,params.switchMode,params.oilDropEnabled]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
