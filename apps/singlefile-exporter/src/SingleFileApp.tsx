@@ -374,7 +374,7 @@ export const SingleFileApp: React.FC = () => {
       }
       if(waveSlice&&frame){
         const st=drawState as WaveCouplingState,model=targetPlugin as unknown as WaveSlicePlugin;
-        canvas.dataset.waveRendered=JSON.stringify({t:frame.t,mode:pm.mode,amplitude:pm.amplitude,frequency:pm.frequency,wavelength:pm.wavelength,direction:pm.direction,causalFront:pm.causalFront,probeX:pm.probeX,probeY:pm.probeY,sourceSeparation:pm.sourceSeparation,phaseDiffDeg:pm.phaseDiffDeg,sourceSpeedRatio:pm.sourceSpeedRatio,retardedTimes:st.retardedTimes,wavefronts:st.wavefronts,historyLast:st.probeHistory.at(-1),...frame.observables});
+        canvas.dataset.waveRendered=JSON.stringify({t:frame.t,mode:pm.mode,amplitude:pm.amplitude,frequency:pm.frequency,wavelength:pm.wavelength,direction:pm.direction,causalFront:pm.causalFront,probeX:pm.probeX,receiverY:pm.probeY,sourceSeparation:pm.sourceSeparation,phaseDiffDeg:pm.phaseDiffDeg,sourceSpeedRatio:pm.sourceSpeedRatio,retardedTimes:st.retardedTimes,wavefronts:st.wavefronts,historyLast:st.probeHistory.at(-1),...frame.observables});
         canvas.dataset.waveView=JSON.stringify({bounds:model.waveDiagramBounds(pm as WaveCouplingParams),width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:{left:26,right:vp.width-26,top:28,bottom:vp.height-28}});
       }
       if(magneticSlice&&frame)canvas.dataset.magneticRendered=JSON.stringify({t:frame.t,geometryType:pm.geometryType,uniformBz:pm.uniformBz,qOverM:pm.qOverM,currentI:pm.currentI,vPerp:pm.vPerp,vParallel:pm.vParallel,radiusR:pm.radiusR,...frame.observables});

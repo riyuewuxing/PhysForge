@@ -676,6 +676,7 @@ function checkW01(s){
   const c=s.frequency*s.wavelength,w=2*Math.PI*s.frequency,k=2*Math.PI/s.wavelength,A=s.amplitude,t=s.t;
   const check=(name,got,want,tol=3e-7)=>{if(!Number.isFinite(got)||Math.abs(got-want)>tol*Math.max(1,Math.abs(want)))throw Error('W01 '+name+' '+JSON.stringify({got,want,s}));};
   check('wave speed',s.waveSpeed,c);
+  if(!Number.isFinite(s.receiverY))throw Error('W01 receiver coordinate missing or collided with displacement');
   let y=0,vy=0,ay=0,amp;
   if(s.mode==='transverse'){
     const sign=s.direction==='right'?1:-1,d=sign*s.probeX,active=!s.causalFront||d>=0&&d<=c*t,phase=w*t-k*d;
@@ -684,13 +685,13 @@ function checkW01(s){
   }else if(s.mode==='standing'){
     const a=2*A*Math.sin(k*s.probeX);y=a*Math.cos(w*t);vy=-a*w*Math.sin(w*t);ay=-w*w*y;amp=Math.abs(a);
   }else if(s.mode==='interference'){
-    const r1=Math.hypot(s.probeX+s.sourceSeparation/2,s.probeY),r2=Math.hypot(s.probeX-s.sourceSeparation/2,s.probeY),phi=s.phaseDiffDeg*Math.PI/180;
+    const r1=Math.hypot(s.probeX+s.sourceSeparation/2,s.receiverY),r2=Math.hypot(s.probeX-s.sourceSeparation/2,s.receiverY),phi=s.phaseDiffDeg*Math.PI/180;
     const a1=!s.causalFront||r1<=c*t,a2=!s.causalFront||r2<=c*t;
     y=A*((a1?Math.sin(w*t-k*r1):0)+(a2?Math.sin(w*t-k*r2+phi):0));vy=A*w*((a1?Math.cos(w*t-k*r1):0)+(a2?Math.cos(w*t-k*r2+phi):0));ay=-w*w*y;
     amp=A*Math.hypot((a1?Math.cos(-k*r1):0)+(a2?Math.cos(-k*r2+phi):0),(a1?Math.sin(-k*r1):0)+(a2?Math.sin(-k*r2+phi):0));
     check('signed path',s.signedPathDifference,r2-r1);check('absolute path',s.pathDifference,Math.abs(r2-r1));check('active count',s.activeCount,Number(a1)+Number(a2));
   }else{
-    const u=c*s.sourceSpeedRatio,X=s.probeX+2,Y=s.probeY;
+    const u=c*s.sourceSpeedRatio,X=s.probeX+2,Y=s.receiverY;
     if(Math.hypot(X-u*t,Y)<1e-11){
       if(s.probeSampleDefined!==0||'probeY'in s||'probeVy'in s||'probeAy'in s||'localFrequencyHz'in s)throw Error('W01 singular source sample leaked');
       return s;

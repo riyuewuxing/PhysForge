@@ -1140,7 +1140,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     }
     if(p.meta.id==='wave-vibration-coupling'&&frame&&drawState!==null){
       const st=drawState as WaveCouplingState,model=p as unknown as WaveStagePlugin;
-      canvas.dataset.waveRendered=JSON.stringify({t:frame.t,mode:pm.mode,amplitude:pm.amplitude,frequency:pm.frequency,wavelength:pm.wavelength,direction:pm.direction,causalFront:pm.causalFront,probeX:pm.probeX,probeY:pm.probeY,sourceSeparation:pm.sourceSeparation,phaseDiffDeg:pm.phaseDiffDeg,sourceSpeedRatio:pm.sourceSpeedRatio,retardedTimes:st.retardedTimes,wavefronts:st.wavefronts,historyLast:st.probeHistory.at(-1),...p.engine.computeObservables(drawState,pm)});
+      canvas.dataset.waveRendered=JSON.stringify({t:frame.t,mode:pm.mode,amplitude:pm.amplitude,frequency:pm.frequency,wavelength:pm.wavelength,direction:pm.direction,causalFront:pm.causalFront,probeX:pm.probeX,receiverY:pm.probeY,sourceSeparation:pm.sourceSeparation,phaseDiffDeg:pm.phaseDiffDeg,sourceSpeedRatio:pm.sourceSpeedRatio,retardedTimes:st.retardedTimes,wavefronts:st.wavefronts,historyLast:st.probeHistory.at(-1),...p.engine.computeObservables(drawState,pm)});
       canvas.dataset.waveView=JSON.stringify({bounds:model.waveDiagramBounds(pm as WaveCouplingParams),width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:waveSafeRef.current?.safe,automatic:waveAutomatic});
     }
     if(p.meta.id==='em-lc-rlc-oscillation'&&frame&&drawState!==null){
