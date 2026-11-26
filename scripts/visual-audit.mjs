@@ -1274,6 +1274,12 @@ async function auditF07Conceptual(page,offline,select){
  const out={},prefix=offline?'H53_F07_offline_':'H53_F07_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
  const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
  const frameSelect=page.getByTestId(offline?'sf-orbit-frame':'select-reference-frame');
+ const selectFrame=async id=>{
+   if(!offline&&!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+   await frameSelect.waitFor({state:'visible',timeout:5000});
+   await frameSelect.selectOption(id);
+   if(!offline&&await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+ };
  const sync=async expected=>{
    await page.waitForFunction(({canvasId,expected})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.orbitCompareRendered;return raw&&Object.entries(expected).every(([k,v])=>JSON.parse(raw)[k]===v);},{canvasId,expected},{timeout:10000});
    const r=JSON.parse(await canvas.getAttribute('data-orbit-compare-rendered'));
@@ -1291,11 +1297,11 @@ async function auditF07Conceptual(page,offline,select){
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    return sync({});
  };
- await select('slingshot-trailing-speedup');await frameSelect.selectOption('ground');
+ await select('slingshot-trailing-speedup');await selectFrame('ground');
  const initial=await sync({mode:'gravity-assist',flybySide:'trailing',t:0});
  await save('local_initial',initial);
  const local=await run(.5);await save('local_paused',local);
- await frameSelect.selectOption('planet-frame');const relative=await sync({mode:'gravity-assist',observationFrame:'planet-frame',t:local.t});
+ await selectFrame('planet-frame');const relative=await sync({mode:'gravity-assist',observationFrame:'planet-frame',t:local.t});
  for(const k of ['bodyX','bodyY','posX','posY','relativeSpeed','relativeSpecificEnergy'])if(relative[k]!==local[k])throw Error('F07 frame switch changed physical state '+k);
  if(Math.abs(relative.frameOrigin.x-relative.bodyX)>1e-10||Math.abs(relative.frameOrigin.y-relative.bodyY)>1e-10)throw Error('F07 moving frame origin');
  await save('relative_paused',relative);
@@ -1305,7 +1311,7 @@ async function auditF07Conceptual(page,offline,select){
    const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!['行星平移系','局部二体近似','历史样本逐时刻变换'].every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F07 diagram semantics');
    await preview.screenshot({path:path.join(OUT_DIR,prefix+'relative_svg.png')});await page.getByTestId('btn-close-export-studio').click();out.export={bytes:Buffer.byteLength(bytes)};
  }
- await frameSelect.selectOption('ground');await select('slingshot-leading-braking');await save('other_side_initial',await sync({mode:'gravity-assist',flybySide:'leading',t:0}));
+ await selectFrame('ground');await select('slingshot-leading-braking');await save('other_side_initial',await sync({mode:'gravity-assist',flybySide:'leading',t:0}));
  await select('rendezvous-prograde-paradox');const rv=await sync({mode:'rendezvous',t:0});
  if(Math.abs(rv.phaseLagRad-.08)>1e-10)throw Error('F07 initial phase');
  await save('phase_initial',rv);const later=await run(.75);await save('phase_paused',later);
