@@ -93,15 +93,18 @@ describe('F08 independent mechanics-error regressions (pre-fix)', () => {
     const state = createInitialState(p);
     const plugin = expMechanicsErrorLabPlugin as SimulationPluginV2<typeof p, typeof state>;
     const diagram = plugin.exportDiagramIR!(state, p);
-    const curve = diagram.primitives.find(q => q.kind === 'polyline');
-    expect(curve).toBeDefined();
-    if (curve?.kind !== 'polyline') throw new Error('missing measured curve');
-    expect(curve.points.length).toBe(state.afCurve.length);
-    for (const point of curve.points) {
-      expect(point.x).toBeGreaterThanOrEqual(diagram.viewBox.minX);
-      expect(point.x).toBeLessThanOrEqual(diagram.viewBox.maxX);
-      expect(point.y).toBeGreaterThanOrEqual(diagram.viewBox.minY);
-      expect(point.y).toBeLessThanOrEqual(diagram.viewBox.maxY);
+    const g = afGeometry(state,p);
+    const points=graphItems(state,p).filter(q=>q.role==='measured').map(q=>q.primitive).filter(q=>q.kind==='circle');
+    expect(points.length).toBe(state.afCurve.length);
+    for (const [i,point] of points.entries()) {
+      const expected=g.map(state.afCurve[i]!.fAppN,state.afCurve[i]!.aMeasured);
+      expect(point.cx).toBeCloseTo(expected.x,12);
+      expect(point.cy).toBeCloseTo(expected.y,12);
+      expect(diagram.primitives).toContainEqual(point);
+      expect(point.cx-point.r).toBeGreaterThanOrEqual(diagram.viewBox.minX);
+      expect(point.cx+point.r).toBeLessThanOrEqual(diagram.viewBox.maxX);
+      expect(point.cy-point.r).toBeGreaterThanOrEqual(diagram.viewBox.minY);
+      expect(point.cy+point.r).toBeLessThanOrEqual(diagram.viewBox.maxY);
     }
   });
 });
@@ -168,5 +171,19 @@ describe('F08 actual Canvas label anchoring',()=>{
     }
     for(const d of tapeGeometry(state,p).dots)
       expect(drawn.filter(q=>q.text==='x'+d.index+'='+d.reading.toFixed(2))).toHaveLength(1);
+  });
+});
+
+describe('F08 black-and-white export discrimination',()=>{
+  it('uses distinct solid theory, dashed fit and unconnected measured circles with matching legend samples',()=>{
+    const p=getPreset(2),s=createInitialState(p);
+    const g=graphItems(s,p);
+    const curves=g.filter(q=>q.primitive.kind==='polyline');
+    expect(curves.map(q=>q.role)).toEqual(['theory','fit']);
+    expect(curves.map(q=>q.primitive.kind==='polyline'&&!!q.primitive.dashed)).toEqual([false,true]);
+    expect(g.filter(q=>q.role==='measured'&&q.primitive.kind==='circle')).toHaveLength(s.afCurve.length);
+    expect(g.some(q=>q.role==='theory'&&q.primitive.kind==='line'&&!q.primitive.dashed)).toBe(true);
+    expect(g.some(q=>q.role==='fit'&&q.primitive.kind==='line'&&q.primitive.dashed)).toBe(true);
+    expect(g.some(q=>q.role==='legend'&&q.primitive.kind==='circle'&&q.primitive.fill)).toBe(true);
   });
 });

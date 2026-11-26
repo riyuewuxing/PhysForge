@@ -58,8 +58,6 @@ export function graphItems(state:MechanicsErrorState,params:MechanicsErrorParams
   const line=(role:GraphRole,x1:number,y1:number,x2:number,y2:number,dashed=false)=>push(role,{kind:'line',x1,y1,x2,y2,dashed});
   const text=(role:GraphRole,x:number,y:number,value:string,align:'start'|'middle'|'end'='middle')=>push(role,{kind:'text',x,y,text:value,align});
   const zero=g.map(0,0);
-  // Keep the measured guide first for the pre-existing DiagramIR contract.
-  push('measured',{kind:'polyline',points:g.data.measured.map(p=>g.map(p.f,p.a)),dashed:true});
   push('axis',{kind:'arrow',x1:B.left,y1:zero.y,x2:B.right+.12,y2:zero.y,label:'F=mg / N'});
   push('axis',{kind:'arrow',x1:B.left,y1:B.bottom,x2:B.left,y2:B.top+.12,label:'a / (m/s²)'});
   for(const f of g.ft){
@@ -74,9 +72,13 @@ export function graphItems(state:MechanicsErrorState,params:MechanicsErrorParams
   push('fit',{kind:'polyline',points:g.data.fit.map(p=>g.map(p.f,p.a)),dashed:true});
   for(const p of g.data.measured){const q=g.map(p.f,p.a);push('measured',{kind:'circle',cx:q.x,cy:q.y,r:.025,fill:true});}
   for(const p of g.data.overlay){const q=g.map(p.f,p.a);push('overlay',{kind:'rect',x:q.x-.025,y:q.y-.025,width:.05,height:.05});}
-  text('theory',-.95,.72,'精确理论曲线');
-  text('fit',.22,.72,'OLS 直线拟合');
-  text('measured',1.23,.72,'纸带测点');
-  if(g.data.overlay.length)text('overlay',0,-1.36,'方点：CSV 对照样例（非已核实实测）');
+  // The exported black-and-white graph must identify line styles without color.
+  line('theory',-1.69,-1.36,-1.41,-1.36);
+  text('theory',-1.34,-1.36,'精确理论曲线','start');
+  line('fit',-.36,-1.36,-.08,-1.36,true);
+  text('fit',-.01,-1.36,'OLS 直线拟合','start');
+  push('legend',{kind:'circle',cx:1.02,cy:-1.36,r:.025,fill:true});
+  text('measured',1.10,-1.36,'纸带测点','start');
+  if(g.data.overlay.length)text('overlay',0,-1.55,'方点：CSV 对照样例（非已核实实测）');
   return items;
 }

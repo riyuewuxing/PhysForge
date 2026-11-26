@@ -93,7 +93,7 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
   },
   exportDiagramIR: (state,params) => ({
     width: 760, height: 460,
-    viewBox: {minX:-2.3,minY:-1.55,maxX:2.2,maxY:.92},
+    viewBox: {minX:-2.3,minY:-1.75,maxX:2.2,maxY:.92},
     title:'a-F 实验：精确理论、拟合与测点',
     primitives:graphItems(state,params).map(i=>i.primitive)
   }),
@@ -106,9 +106,9 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
       const q=toScreen(x,y);labels.push({id,x:q.x,y:q.y,text,color,font});
     };
     // Quantitative labels must never be moved by collision avoidance.
-    const anchored=(x:number,y:number,text:string,align:CanvasTextAlign='center',size=10)=>{
+    const anchored=(x:number,y:number,text:string,align:CanvasTextAlign='center',size=10,color=ink)=>{
       const q=toScreen(x,y);
-      ctx.save();ctx.fillStyle=ink;ctx.textAlign=align;ctx.textBaseline='middle';
+      ctx.save();ctx.fillStyle=color;ctx.textAlign=align;ctx.textBaseline='middle';
       ctx.font=size+'px ui-sans-serif, system-ui';ctx.fillText(text,q.x,q.y);ctx.restore();
     };
     const line=(x1:number,y1:number,x2:number,y2:number)=>{
@@ -154,8 +154,7 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
         }else if(p.kind==='rect'){
           const a=toScreen(p.x,p.y+p.height);ctx.strokeRect(a.x,a.y,m.len(p.width),m.len(p.height));
          }else if(p.kind==='text'){
-          if(role==='tick')anchored(p.x,p.y,p.text,p.align==='end'?'right':p.align==='start'?'left':'center');
-          else put('graph-'+idx,p.x,p.y,p.text,color);
+          anchored(p.x,p.y,p.text,p.align==='end'?'right':p.align==='start'?'left':'center',10,color);
         }
       });
       ctx.setLineDash([]);
