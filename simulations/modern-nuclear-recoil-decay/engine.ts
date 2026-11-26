@@ -63,6 +63,7 @@ export interface NuclearRecoilDecayState {
   readonly remainingCount: number;
   readonly halfLifeS: number;
   readonly prngCalls: number;
+  readonly decayLifetimesS: readonly number[];
   readonly decayCurve: readonly { t: number; fraction: number; theory: number }[];
   readonly kEff: number;
   readonly chainGenerations: readonly ChainGenerationPoint[];
@@ -182,14 +183,20 @@ export function createInitialState(params: NuclearRecoilDecayParams): NuclearRec
   const n0 = Math.max(16, Math.min(4000, Math.round(params.nucleiCountN0)));
   const flags = new Array<boolean>(n0).fill(false);
   const { kEff, chainGenerations } = buildChain(params);
+  const halfLifeS = Math.max(0.2, params.halfLifeS);
+  const prng = createSeededPrng(Math.round(params.seed) >>> 0);
+  const decayLifetimesS = params.mode === 'half-life-mc'
+    ? flags.map(() => -halfLifeS * Math.log1p(-Math.min(1 - Number.EPSILON, Math.max(Number.EPSILON, prng.next()))) / Math.LN2)
+    : [];
   return {
     t: 0,
     recoil: solveRecoilCloudChamber(params),
     initialFlags: flags,
     decayedFlags: flags,
     remainingCount: n0,
-    halfLifeS: Math.max(0.2, params.halfLifeS),
-    prngCalls: 0,
+    halfLifeS,
+    prngCalls: decayLifetimesS.length,
+    decayLifetimesS,
     decayCurve: [{ t: 0, fraction: 1, theory: 1 }],
     kEff,
     chainGenerations
@@ -204,43 +211,33 @@ export function stepNuclearRecoilDecay(
   if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
   if (dt === 0) return { nextState: state, events: [] };
 
-  const halfLifeS = Math.max(0.2, params.halfLifeS);
-  const probDecay = 1 - Math.pow(2, -dt / halfLifeS);
-  const prng = createSeededPrng((Math.round(params.seed) ^ (state.prngCalls * 2654435761)) >>> 0);
-
+  if (params.mode !== 'half-life-mc') {
+    return { nextState: state, events: [], advancedTime: 0, halt: true };
+  }
+  const halfLifeS = state.halfLifeS;
+  const nextT = state.t + dt;
+  if (!Number.isFinite(nextT)) throw new Error('Non-finite decay time');
   const nextFlags = [...state.decayedFlags];
-  let rem = 0;
-  let calls = state.prngCalls;
+  const newlyDecayed: number[] = [];
   for (let i = 0; i < nextFlags.length; i++) {
-    if (!nextFlags[i]) {
-      calls++;
-      if (prng.next() < probDecay) {
-        nextFlags[i] = true;
-      } else {
-        rem++;
-      }
+    const lifetime = state.decayLifetimesS[i];
+    if (!nextFlags[i] && lifetime !== undefined && lifetime <= nextT) {
+      nextFlags[i] = true;
+      newlyDecayed.push(lifetime);
     }
   }
-
-  const nextT = state.t + dt;
+  newlyDecayed.sort((a, b) => a - b);
   const n0 = nextFlags.length;
-  const frac = rem / n0;
-  const theory = Math.pow(0.5, nextT / halfLifeS);
-  const { kEff, chainGenerations } = buildChain(params);
-
+  // Preserve actual event history and one replaceable current cursor sample.
+  const decayCurve = state.t === 0 ? [...state.decayCurve] : state.decayCurve.slice(0, -1);
+  let remainingCount = state.remainingCount;
+  for (const lifetime of newlyDecayed) {
+    remainingCount--;
+    decayCurve.push({ t: lifetime, fraction: remainingCount / n0, theory: 2 ** (-lifetime / halfLifeS) });
+  }
+  decayCurve.push({ t: nextT, fraction: remainingCount / n0, theory: 2 ** (-nextT / halfLifeS) });
   return {
-    nextState: {
-      t: nextT,
-      recoil: solveRecoilCloudChamber(params),
-      initialFlags: state.initialFlags,
-      decayedFlags: nextFlags,
-      remainingCount: rem,
-      halfLifeS,
-      prngCalls: calls,
-      decayCurve: [...state.decayCurve.slice(-160), { t: nextT, fraction: frac, theory }],
-      kEff,
-      chainGenerations
-    },
+    nextState: { ...state, t: nextT, decayedFlags: nextFlags, remainingCount, decayCurve },
     events: []
   };
 }
