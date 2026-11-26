@@ -4,8 +4,8 @@ import type { ThermoCycleMdParams } from './engine.js';
 export const thermoCycleMdPresets: readonly PresetSpec<ThermoCycleMdParams>[] = [
   {
     id: 'kinetic-md-300-maxwell',
-    name: '300 分子二维硬球 MD（麦克斯韦速率分布与器壁压强）',
-    description: '基于 SpatialHash2D 精确弹性碰撞与确定性随机种子，实时演化气体统计压强并拟合麦克斯韦速率分布',
+    name: '300 分子二维硬盘 MD（麦克斯韦速率分布与器壁压强）',
+    description: '约化二维硬盘、确定性随机种子与有界子步弹性碰撞，实时累计壁冲量，比较样本拟合速率分布',
     curriculumNotes: '选择性必修三 第一章 · 分子动理论与统计规律',
     params: {
       mode: 'kinetic-md-box',
@@ -55,5 +55,9 @@ export const thermoCycleMdPresets: readonly PresetSpec<ThermoCycleMdParams>[] = 
       brownianPollen: false,
       mdSpeedScale: 1.0
     }
-  }
+  },
+  {id:'md-400-pollen',name:'400 气体圆盘 + 重花粉',description:'高密度约化模型，真实粒子数与总动能；观察长时壁压和花粉轨迹',params:{mode:'kinetic-md-box',particleCountN:400,brownianPollen:true,seed:20261122,mdSpeedScale:1}},
+  {id:'md-fast-sample',name:'200 圆盘 · 初速 2 倍',description:'相同种子下初始温度代理为原速率的四倍，无热浴',params:{mode:'kinetic-md-box',particleCountN:200,brownianPollen:false,seed:20261122,mdSpeedScale:2}},
+  {id:'carnot-crossed-reservoirs',name:'卡诺非法边界 · T_H≤T_C',description:'保留请求温度，不输出虚假热效率',params:{mode:'cycle-carnot',tHotK:400,tColdK:450,molesN:1,compressionRatioV2OverV1:2.5}},
+  {id:'rect-pv-wide',name:'矩形循环 · 实际高温由 PV 决定',description:'压强比 3、体积比 4，最高温为最低温的 12 倍',params:{mode:'cycle-rect-pv',tColdK:300,compressionRatioV2OverV1:4,rectPressureRatio:3,molesN:1}}
 ];
