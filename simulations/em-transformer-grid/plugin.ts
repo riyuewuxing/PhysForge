@@ -6,7 +6,8 @@ import {
   type DiagramPrimitive,
   type ParamFieldSpec,
   type Viewport,
-  type TelemetryChannelSpec
+  type TelemetryChannelSpec,
+  type ParamValue
 } from '@physforge/sim-sdk';
 import { transformerGridPresets } from './presets.js';
 import {
@@ -199,7 +200,7 @@ export const emTransformerGridPlugin=Object.assign(defineSimulationPlugin<Transf
   telemetryChannels:channels,
   getControlHandles:(_s,p)=>[{id:'transformer-adjust',label:p.mode==='long-distance-grid'?'k='+p.stepUpRatioK1:'R₀='+p.primaryR0+' Ω',
     position:{x:pos(p),y:rail.y},handleKind:'point',showWhenIdle:false,color:'#fbbf24',
-    onDrag:wp=>{const f=Math.max(0,Math.min(1,(wp.x-rail.left)/(rail.right-rail.left)));return p.mode==='long-distance-grid'?{stepUpRatioK1:5+5*Math.round(7*f)}:{primaryR0:2*Math.round(15*f)};}}],
+    onDrag:(wp):Record<string,ParamValue>=>{const f=Math.max(0,Math.min(1,(wp.x-rail.left)/(rail.right-rail.left)));return p.mode==='long-distance-grid'?{stepUpRatioK1:5+5*Math.round(7*f)}:{primaryR0:2*Math.round(15*f)};}}],
   sceneSerializer:{exportScene:(_s,p)=>({schemaVersion:'2.0',modelId:'em-transformer-grid',title:'理想变压器与高压输电',params:p}),importScene:dsl=>dsl.params as Partial<TransformerGridParams>},
   exportDiagramIR:(s,p)=>({width:940,height:510,viewBox:bounds,title:p.mode==='long-distance-grid'?'高压输电稳态功率流':'一原双副线圈稳态电路',
     primitives:transformerScene(s,p,new Set(['topology','powerWaterfall'])).map(m=>m.primitive)}),

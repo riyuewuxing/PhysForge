@@ -38,6 +38,8 @@ import type {EddyVortexParams,EddyVortexState} from '../../../../simulations/em-
 type EddyStagePlugin=typeof import('../../../../simulations/em-eddy-vortex-field/plugin.js').emEddyVortexFieldPlugin;
 import type {AcGeneratorParams} from '../../../../simulations/em-ac-generator-rms/engine.js';
 type GeneratorStagePlugin=typeof import('../../../../simulations/em-ac-generator-rms/plugin.js').emAcGeneratorRmsPlugin;
+import type {TransformerGridParams} from '../../../../simulations/em-transformer-grid/engine.js';
+type TransformerStagePlugin=typeof import('../../../../simulations/em-transformer-grid/plugin.js').emTransformerGridPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -283,6 +285,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const wireStage=plugin.meta.id==='em-wireframe-rotation';
   const eddyStage=plugin.meta.id==='em-eddy-vortex-field';
   const generatorStage=plugin.meta.id==='em-ac-generator-rms';
+  const transformerStage=plugin.meta.id==='em-transformer-grid';
   const shmCameraKeyRef=useRef('');
   const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
@@ -384,6 +387,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const wireSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const eddySafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const generatorSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
+  const transformerSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const b1FitAtRef=useRef(-Infinity);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
@@ -392,7 +396,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
-    chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;
+    chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -887,6 +891,26 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));}
       }
     }
+    const transformerAutomatic=p.meta.id==='em-transformer-grid'&&!userTransformedViewRef.current&&
+      !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
+    if(transformerAutomatic&&drawState!==null){
+      const model=p as unknown as TransformerStagePlugin,cur=latestRef.current,v=viewportRef.current,pp=pm as TransformerGridParams;
+      const key=JSON.stringify([cur.resetNonce,pp.mode,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      const fresh=transformerSafeRef.current?.key!==key;
+      if(fresh){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const right=cur.presentationMode||cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-300):v.width-26;
+        const bottom=cur.presentationMode||!cur.oscilloscopeCollapsed?(dock&&dock.height>0?dock.top-box.top-14:v.height-180):v.height-76;
+        transformerSafeRef.current={key,safe:{left:30,right,top:cur.presentationMode?90:28,bottom}};
+      }
+      const safe=transformerSafeRef.current!.safe;
+      if(fresh||!model.transformerBoundsFit(v,safe)){
+        const next=model.fitTransformerViewport(v,safe);
+        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));}
+      }
+    }
     const baseVp = viewportRef.current;
     ctx.save();
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
@@ -1064,6 +1088,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const model=p as unknown as GeneratorStagePlugin,b=model.generatorDiagramBounds(pm as AcGeneratorParams);
       canvas.dataset.generatorRendered=JSON.stringify({t:frame.t,waveform:pm.waveform,freqHz:pm.freqHz,dutyCycleD:pm.dutyCycleD,loadR:pm.loadR,...p.engine.computeObservables(drawState,pm)});
       canvas.dataset.generatorView=JSON.stringify({bounds:b,width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:generatorSafeRef.current?.safe});
+    }
+    if(p.meta.id==='em-transformer-grid'&&frame&&drawState!==null){
+      const model=p as unknown as TransformerStagePlugin,b=model.transformerDiagramBounds();
+      canvas.dataset.transformerRendered=JSON.stringify({t:frame.t,mode:pm.mode,sourceU0:pm.sourceU0,primaryR0:pm.primaryR0,n1Ratio:pm.n1Ratio,n2Ratio:pm.n2Ratio,n3Ratio:pm.n3Ratio,loadR2:pm.loadR2,loadR3:pm.loadR3,parallelUsersCount:pm.parallelUsersCount,branch3Closed:pm.branch3Closed,genPowerKw:pm.genPowerKw,stepUpRatioK1:pm.stepUpRatioK1,lineResistanceR:pm.lineResistanceR,...p.engine.computeObservables(drawState,pm)});
+      canvas.dataset.transformerView=JSON.stringify({bounds:b,width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:transformerSafeRef.current?.safe});
     }
     if(p.meta.id==='em-ac-field-oscilloscope'&&frame&&drawState!==null){
       const model=p as unknown as AcStagePlugin,st=drawState as AcScopeState,b=model.acDiagramBounds(st,pm as AcScopeParams);
@@ -1403,7 +1432,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     emitTelemetrySummary(true);
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
 
-  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}else if(acStage){acSafeRef.current=null;renderFrameToCanvas();}else if(wireStage){wireSafeRef.current=null;renderFrameToCanvas();}else if(eddyStage){eddySafeRef.current=null;renderFrameToCanvas();}else if(generatorStage){generatorSafeRef.current=null;renderFrameToCanvas();}},[chaseStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,capacitorStage,acStage,wireStage,eddyStage,generatorStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
+  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}else if(acStage){acSafeRef.current=null;renderFrameToCanvas();}else if(wireStage){wireSafeRef.current=null;renderFrameToCanvas();}else if(eddyStage){eddySafeRef.current=null;renderFrameToCanvas();}else if(generatorStage){generatorSafeRef.current=null;renderFrameToCanvas();}else if(transformerStage){transformerSafeRef.current=null;renderFrameToCanvas();}},[chaseStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,capacitorStage,acStage,wireStage,eddyStage,generatorStage,transformerStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
@@ -1802,7 +1831,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
-                  if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+                  if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||transformerStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -1828,7 +1857,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               // Like OrbitControls' start, pointer-down establishes camera
               // ownership before the first movement; a resize/fit cannot race
               // the teacher between gesture start and its first delta.
-              if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+              if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||transformerStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {
@@ -1922,7 +1951,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (e.pointerType === 'touch') hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = hoveredHandleIdRef.current ? 'pointer' : 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||transformerStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerCancel={(e) => {
               activePointersRef.current.clear();
@@ -1931,7 +1960,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||transformerStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerLeave={(e) => {
               if (e.pointerType === 'touch' || dragModeRef.current) return;
@@ -2053,7 +2082,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         )}
       </div>
 
-      {!presentationMode && !oscilloscopeCollapsed && (
+      {!presentationMode && !oscilloscopeCollapsed && !transformerStage && (
         <div data-testid="floating-scope-dock" data-scope-units={splitScopeUnits ? 'separate' : 'shared'} className={`pf-floating-glass pf-compact-scope absolute bottom-3 left-1/2 z-10 w-[min(410px,calc(100%-24px))] -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 px-3 pt-2 shadow-2xl ${heroScope ? 'pf-hero-scope' : ''}`}>
           <div className="mb-1 flex h-7 items-center justify-between gap-2 text-xs">
             <span className="shrink-0 font-semibold" style={{color:equilibriumScope?'var(--pf-text-muted)':undefined}} title={equilibriumScope?'准静态参数扫描时间，不是物体运动时间':undefined}>{equilibriumScope?'示波器 · 演示':'示波器'}</span>
@@ -2115,7 +2144,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           </div>
         </div>
       )}
-      {!presentationMode && oscilloscopeCollapsed && (
+      {!presentationMode && oscilloscopeCollapsed && !transformerStage && (
         <button
           type="button"
           data-testid="btn-expand-oscilloscope"
