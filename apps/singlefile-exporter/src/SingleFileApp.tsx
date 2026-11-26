@@ -26,6 +26,8 @@ type EddySlicePlugin=typeof import('../../../simulations/em-eddy-vortex-field/pl
 import type {AcGeneratorParams} from '../../../simulations/em-ac-generator-rms/engine.js';
 type GeneratorSlicePlugin=typeof import('../../../simulations/em-ac-generator-rms/plugin.js').emAcGeneratorRmsPlugin;
 type LcSlicePlugin=typeof import('../../../simulations/em-lc-rlc-oscillation/plugin.js').emLcRlcOscillationPlugin;
+import type {WaveCouplingParams,WaveCouplingState} from '../../../simulations/wave-vibration-coupling/engine.js';
+type WaveSlicePlugin=typeof import('../../../simulations/wave-vibration-coupling/plugin.js').waveVibrationCouplingPlugin;
 type TransformerSlicePlugin=typeof import('../../../simulations/em-transformer-grid/plugin.js').emTransformerGridPlugin;
 import {
   resolvePluginParams,
@@ -73,7 +75,8 @@ const generatorSlice=targetPlugin.paramSchema.some(f=>f.key==='waveform'&&f.kind
 const transformerSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='multi-tap-transformer'));
 const lcSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='lc-undamped'));
 const magneticSlice=targetPlugin.paramSchema.some(f=>f.key==='geometryType'&&f.kind==='select'&&f.options.some(o=>o.value==='uniform-helix'));
-const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice;
+const waveSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='doppler'));
+const measuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
@@ -181,7 +184,7 @@ export const SingleFileApp: React.FC = () => {
     formulas: FormulaDisplayItem[];
   }>({ t: 0, observables: {}, events: [], invariants: [], formulas: [] });
 
-  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario,params.template,(turntableSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice)?params.mode:undefined,capacitorSlice?params.oilDropEnabled:undefined,magneticSlice?params.geometryType:undefined]);
+  const channels = useMemo(()=>channelsFor(params),[params.topology,params.scenario,params.template,(turntableSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||waveSlice)?params.mode:undefined,capacitorSlice?params.oilDropEnabled:undefined,magneticSlice?params.geometryType:undefined]);
   const [channelA, setChannelA] = useState(channels[0]?.key ?? '');
   const [channelB, setChannelB] = useState(channels[1]?.key ?? channels[0]?.key ?? '');
   useEffect(()=>{if(measuredScope){setChannelA(channels[0]?.key??'');setChannelB(channels[1]?.key??channels[0]?.key??'');}},[channels]);
@@ -317,6 +320,10 @@ export const SingleFileApp: React.FC = () => {
       const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
       if(!model.generatorBoundsFit(pp,v,safe)){const next=model.fitGeneratorViewport(pp,v,safe);if(next)viewportRef.current=next;}
     }
+    if(waveSlice&&drawState!==null){
+      const model=targetPlugin as unknown as WaveSlicePlugin,v=viewportRef.current,pp=pm as WaveCouplingParams,safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
+      if(!model.waveBoundsFit(pp,v,safe)){const next=model.fitWaveViewport(pp,v,safe);if(next)viewportRef.current=next;}
+    }
     if(lcSlice&&drawState!==null){
       const model=targetPlugin as unknown as LcSlicePlugin,v=viewportRef.current;
       const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
@@ -364,6 +371,11 @@ export const SingleFileApp: React.FC = () => {
         const model=targetPlugin as unknown as GeneratorSlicePlugin;
         canvas.dataset.generatorRendered=JSON.stringify({t:frame.t,waveform:pm.waveform,freqHz:pm.freqHz,dutyCycleD:pm.dutyCycleD,loadR:pm.loadR,...frame.observables});
         canvas.dataset.generatorView=JSON.stringify({bounds:model.generatorDiagramBounds(pm as AcGeneratorParams),width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});
+      }
+      if(waveSlice&&frame){
+        const st=drawState as WaveCouplingState,model=targetPlugin as unknown as WaveSlicePlugin;
+        canvas.dataset.waveRendered=JSON.stringify({t:frame.t,mode:pm.mode,amplitude:pm.amplitude,frequency:pm.frequency,wavelength:pm.wavelength,direction:pm.direction,causalFront:pm.causalFront,probeX:pm.probeX,probeY:pm.probeY,sourceSeparation:pm.sourceSeparation,phaseDiffDeg:pm.phaseDiffDeg,sourceSpeedRatio:pm.sourceSpeedRatio,retardedTimes:st.retardedTimes,wavefronts:st.wavefronts,historyLast:st.probeHistory.at(-1),...frame.observables});
+        canvas.dataset.waveView=JSON.stringify({bounds:model.waveDiagramBounds(pm as WaveCouplingParams),width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:{left:26,right:vp.width-26,top:28,bottom:vp.height-28}});
       }
       if(magneticSlice&&frame)canvas.dataset.magneticRendered=JSON.stringify({t:frame.t,geometryType:pm.geometryType,uniformBz:pm.uniformBz,qOverM:pm.qOverM,currentI:pm.currentI,vPerp:pm.vPerp,vParallel:pm.vParallel,radiusR:pm.radiusR,...frame.observables});
       if(lcSlice&&frame){
@@ -430,7 +442,7 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (measuredScope && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
+      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
       const empty = snaps.length < 2;
       uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
@@ -858,7 +870,7 @@ export const SingleFileApp: React.FC = () => {
           className="w-80 shrink-0 border-l p-3 overflow-y-auto space-y-3"
           style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
         >
-          {(equilibriumSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||transformerSlice)&&<section className="space-y-1 text-xs" data-testid={magneticSlice?'sf-magnetic-layers':lcSlice?'sf-lc-layers':transformerSlice?'sf-transformer-layers':generatorSlice?'sf-generator-layers':eddySlice?'sf-eddy-layers':wireSlice?'sf-wire-layers':acSlice?'sf-ac-layers':capacitorSlice?'sf-capacitor-layers':electroSlice?'sf-electro-layers':shmSlice?'sf-shm-layers':collisionSlice?'sf-collision-layers':springSlice?'sf-spring-layers':turntableSlice?'sf-turntable-layers':verticalSlice?'sf-vertical-layers':contactSlice?'sf-contact-layers':equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
+          {(equilibriumSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||transformerSlice)&&<section className="space-y-1 text-xs" data-testid={waveSlice?'sf-wave-layers':magneticSlice?'sf-magnetic-layers':lcSlice?'sf-lc-layers':transformerSlice?'sf-transformer-layers':generatorSlice?'sf-generator-layers':eddySlice?'sf-eddy-layers':wireSlice?'sf-wire-layers':acSlice?'sf-ac-layers':capacitorSlice?'sf-capacitor-layers':electroSlice?'sf-electro-layers':shmSlice?'sf-shm-layers':collisionSlice?'sf-collision-layers':springSlice?'sf-spring-layers':turntableSlice?'sf-turntable-layers':verticalSlice?'sf-vertical-layers':contactSlice?'sf-contact-layers':equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
           <div className="text-xs font-bold" style={{color:"var(--pf-accent)"}}>课堂预设速切</div>
           <div className={equilibriumSlice?"grid grid-cols-2 gap-1.5":"space-y-1.5"}>
             {targetPlugin.presets.map((preset) => (
@@ -904,6 +916,12 @@ export const SingleFileApp: React.FC = () => {
   <div className="text-[10px]">{params.mode==='long-distance-grid'?'固定送端功率；受端可调匝比。零输入效率未定义；无解时只列请求，不列伪造测量值。':'理想一原双副；基准为指定户数、S 断开。R₀损耗不属于理想变压器。'}</div>
   <div className="space-y-1">{summary.invariants.map(i=><div key={i.name} className={i.passed?'text-emerald-400':'text-rose-400'}>{i.name}：{i.measuredError.toExponential(2)}</div>)}</div>
   </section>}
+          {waveSlice&&<section data-testid="sf-wave-readouts" data-sample-time={summary.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
+  <div data-testid="sf-wave-status" className="font-semibold">{params.mode==='doppler'?(summary.observables.probeSampleDefined===0?'源点/焦散 · 无定义':(summary.observables.arrivalCount??0)===0?'波尚未到达固定接收点':(summary.observables.arrivalCount??0)>1?'双分支叠加 · 无单一接收频率':'单支延迟接收'):params.mode==='interference'?'已到达波源 '+(summary.observables.activeCount??0)+'/2':params.mode==='standing'?'驻波 · 固定空间包络':'行波 · 固定质点'}</div>
+  {([['waveSpeed','波速 c','m/s'],['probeY','实际位移 yP','m'],['probeVy','实际振动速度 vy','m/s'],['probeAy','实际振动加速度 ay','m/s²'],['analyticalAmplitude','局部振幅','m'],['spatialSlope','有符号空间斜率',''],['arrivalTime','首次到达时间','s'],['signedPathDifference','有符号波程差 r₂−r₁','m'],['phaseAtProbeDeg','相位差（未折叠）','°'],['sourceSpeed','波源速度','m/s'],['localFrequencyHz','单支接收频率','Hz'],['machAngleDeg','马赫半顶角','°'],['emittedCount','累计发射标记数','']] as const).filter(([k])=>['waveSpeed','probeY','probeVy','probeAy'].includes(k)||k==='localFrequencyHz'&&params.mode==='doppler'||summary.observables[k]!==undefined).map(([k,label,unit])=>{const v=summary.observables[k];return <div key={k} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-wave-'+k} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(k==='emittedCount'?0:3)+(unit?' '+unit:''):'—'}</span></div>;})}
+  <div className="text-[10px]">{params.mode==='doppler'?'等幅标量信号；不含声压、扩散衰减或真实激波强度。':params.mode==='interference'?'瞬时位移颜色不等于稳定振幅。只有两波到达处有稳定条纹。':params.mode==='standing'?'包络为 ±2A|sin(kx)|，横坐标 x 与时间 t 不可混用。':'传播方向不是质点振动方向；起振前静止。'}</div>
+  <div className="space-y-1">{summary.invariants.map(i=><div key={i.name} className={i.passed?'text-emerald-400':'text-rose-400'}>{i.name}：{i.measuredError.toExponential(2)}</div>)}</div>
+</section>}
           {magneticSlice&&<section data-testid="sf-magnetic-readouts" data-sample-time={summary.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
   <div className="font-semibold" data-testid="sf-magnetic-status">{summary.observables.domainHalted===1?'理想丝线奇异域 · 已暂停':params.geometryType==='uniform-helix'?'匀强场 · 有向轨迹':'有限稳恒电流 · 试探粒子'}</div>
   <div className="flex justify-between gap-2"><span>实际荷质比 q/m</span><span data-testid="sf-magnetic-qm" style={{color:'var(--pf-text)'}}>{(Number(params.qOverM)*(params.geometryType==='uniform-helix'?1:1e6)).toExponential(2)} C/kg</span></div>
@@ -930,7 +948,7 @@ export const SingleFileApp: React.FC = () => {
               style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface-elevated)' }}
             >
               <div style={{ color: 'var(--pf-text-muted)' }}>{f.label}</div>
-              {(equilibriumSlice||projectileSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||transformerSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
+              {(equilibriumSlice||projectileSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||transformerSlice)&&f.substitutedLatex&&<div className="overflow-x-auto" dangerouslySetInnerHTML={{__html:katex.renderToString(f.latex,{throwOnError:false})}}/>}
               <div className="overflow-x-auto"
                 dangerouslySetInnerHTML={{
                   __html: katex.renderToString(f.substitutedLatex ?? f.latex, { throwOnError: false })
@@ -966,7 +984,7 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
-                      if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||transformerSlice){setIsPlaying(false);setScrubTime(null);}
+                      if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||transformerSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                     className="w-full h-9"
@@ -1008,7 +1026,7 @@ export const SingleFileApp: React.FC = () => {
                         [field.key]: e.target.value
                       })
                     );
-                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||transformerSlice){setIsPlaying(false);setScrubTime(null);}
+                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||transformerSlice){setIsPlaying(false);setScrubTime(null);}
                     setResetNonce((n) => n + 1);
                   }}
                   className="w-full rounded border px-2 py-1.5"

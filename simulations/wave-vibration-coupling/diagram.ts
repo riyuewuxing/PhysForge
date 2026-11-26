@@ -108,7 +108,9 @@ export function waveDiagramScene(s:WaveCouplingState,p:WaveCouplingParams,layers
         tEnd=Math.max(4,s.t),tStart=tEnd-4,pt=(t:number,y:number)=>point(left+(t-tStart)/4*(right-left),mid+y/(a)*span*.42);
       add({kind:'rect',x:left,y:bottom,width:right-left,height:span},'axis');
       line(point(left,mid),point(right,mid),'axis');text(0,top+.22,'固定质点 P：实际采样 yP(t)','probe');
-      text(left-.25,top-.12,'+'+a.toFixed(2),'muted');text(left-.25,bottom+.12,'−'+a.toFixed(2),'muted');
+      for(const sign of [-1,1]){
+        const y=pt(tStart,sign*a).y;line(point(left-.05,y),point(left+.05,y),'axis');text(left-.32,y,(sign>0?'+':'−')+a.toFixed(2),'muted');
+      }text(left-.32,top+.18,'y/m','muted');
       for(let j=0;j<=4;j++){const x=left+j/4*(right-left);line(point(x,bottom),point(x,bottom-.045),'axis');text(x,bottom-.17,(tStart+j).toFixed(1),'muted');}text(right+.25,bottom-.17,'t/s','muted');
       const samples=s.probeHistory.filter(q=>q.x>=tStart-1e-10&&q.x<=tEnd+1e-10).map(q=>pt(q.x,q.y));
       poly(samples,'probe');if(samples.length)circle(samples.at(-1)!,.04,'probe',true);
@@ -129,7 +131,7 @@ export function waveDiagramScene(s:WaveCouplingState,p:WaveCouplingParams,layers
       if(c>0&&p.amplitude>0){
         for(const [i,x] of [-h,h].entries()){
           const phase=i===0?0:p.phaseDiffDeg/360;
-          for(let n=-Math.ceil(8/p.wavelength)-1;n<=Math.ceil(s.t*p.frequency+phase);n++){
+          for(let n=Math.ceil(s.t*p.frequency+phase-8/p.wavelength);n<=Math.floor(s.t*p.frequency+phase);n++){
             const r=(s.t*p.frequency+phase-n)*p.wavelength;
             if(r<=0||r>8||(p.causalFront&&r>c*s.t+1e-10))continue;
             for(const q of wavefrontPrimitives(x,0,r,b))add(q,'wave');
@@ -143,7 +145,8 @@ export function waveDiagramScene(s:WaveCouplingState,p:WaveCouplingParams,layers
       const P=point(p.probeX,p.probeY);line(point(-h,0),P,'muted',true);line(point(h,0),P,'muted',true);circle(P,.074,'probe',true);text(P.x,P.y+.2,'P · y='+s.probeDisplacement.toFixed(2)+' m','probe');
       const o=obs; text(0,-2.72,'r₂−r₁='+((o.signedPathDifference??0).toFixed(2))+' m · 合振幅 '+(o.analyticalAmplitude??0).toFixed(2)+' m','ink');
     }
-    text(0,2.68,'青/玫红：正/负位移　实线：加强　虚线：减弱','muted');
+    text(0,2.68,'实线：加强　虚线：减弱　细线：源等相位线','muted');
+    if(layers.has('interferenceField'))text(-2.15,-2.95,'屏幕热色：青为正、玫红为负','muted');
     return marks;
   }
   const b=dopplerBox,beta=p.sourceSpeedRatio;
@@ -167,7 +170,7 @@ export function waveDiagramScene(s:WaveCouplingState,p:WaveCouplingParams,layers
   return marks;
 }
 export function waveExport(s:WaveCouplingState,p:WaveCouplingParams):DiagramIR{
-  return {width:1000,height:640,viewBox:waveDiagramBounds(p),title:p.mode==='doppler'?'运动波源因果波前与马赫包络':p.mode==='interference'?'双波源等相位波前及干涉条纹':p.mode==='standing'?'驻波波节、包络与质点振动':'行波空间波形与实际质点采样',primitives:waveDiagramScene(s,p).map(m=>m.primitive),metadata:{model:'wave-vibration-coupling',mode:p.mode,t:String(s.t),notes:'二维等幅标量波示意；空间图 y(x,t) 与时间图 yP(t) 各有坐标。导出保留等相位线和条纹，不含瞬时位移热图。'}};
+  return {width:1000,height:640,viewBox:waveDiagramBounds(p),title:p.mode==='doppler'?'运动波源因果波前与马赫包络':p.mode==='interference'?'双波源等相位波前及干涉条纹':p.mode==='standing'?'驻波波节、包络与质点振动':'行波空间波形与实际质点采样',primitives:waveDiagramScene(s,p).filter(m=>m.primitive.kind!=='text'||!m.primitive.text.startsWith('屏幕热色')).map(m=>m.primitive),metadata:{model:'wave-vibration-coupling',mode:p.mode,t:String(s.t),notes:'二维等幅标量波示意；空间图 y(x,t) 与时间图 yP(t) 各有坐标。导出保留等相位线和条纹，不含瞬时位移热图。'}};
 }
 type Safe={left:number;right:number;top:number;bottom:number};
 export function fitWaveViewport(p:WaveCouplingParams,v:Viewport,safe:Safe):Viewport|null{

@@ -210,7 +210,7 @@ export function evaluateDopplerProbe(t:number,p:WaveCouplingParams):DopplerProbe
   }else{
     const D=dx*dx+a*dy*dy,dTol=64*Number.EPSILON*(dx*dx+Math.abs(a)*dy*dy);
     if(D< -dTol)return quiet;
-    const root=Math.sqrt(Math.max(0,D)),q=b+(b>=0?root:-root);
+    const root=Math.sqrt(Math.abs(D)<=dTol?0:Math.max(0,D)),q=b+(b>=0?root:-root);
     if(root===0)lengths=[b/a];
     else if(q!==0)lengths=[q/a,-r2/q];
   }

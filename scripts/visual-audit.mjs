@@ -671,6 +671,93 @@ async function syncE09(page,offline){
   return s;
 }
 
+
+function checkW01(s){
+  const c=s.frequency*s.wavelength,w=2*Math.PI*s.frequency,k=2*Math.PI/s.wavelength,A=s.amplitude,t=s.t;
+  const check=(name,got,want,tol=3e-7)=>{if(!Number.isFinite(got)||Math.abs(got-want)>tol*Math.max(1,Math.abs(want)))throw Error('W01 '+name+' '+JSON.stringify({got,want,s}));};
+  check('wave speed',s.waveSpeed,c);
+  let y=0,vy=0,ay=0,amp;
+  if(s.mode==='transverse'){
+    const sign=s.direction==='right'?1:-1,d=sign*s.probeX,active=!s.causalFront||d>=0&&d<=c*t,phase=w*t-k*d;
+    if(active){y=A*Math.sin(phase);vy=A*w*Math.cos(phase);ay=-w*w*y;}
+    amp=active?A:0;check('signed spatial slope',s.spatialSlope,active?-sign*A*k*Math.cos(phase):0);
+  }else if(s.mode==='standing'){
+    const a=2*A*Math.sin(k*s.probeX);y=a*Math.cos(w*t);vy=-a*w*Math.sin(w*t);ay=-w*w*y;amp=Math.abs(a);
+  }else if(s.mode==='interference'){
+    const r1=Math.hypot(s.probeX+s.sourceSeparation/2,s.probeY),r2=Math.hypot(s.probeX-s.sourceSeparation/2,s.probeY),phi=s.phaseDiffDeg*Math.PI/180;
+    const a1=!s.causalFront||r1<=c*t,a2=!s.causalFront||r2<=c*t;
+    y=A*((a1?Math.sin(w*t-k*r1):0)+(a2?Math.sin(w*t-k*r2+phi):0));vy=A*w*((a1?Math.cos(w*t-k*r1):0)+(a2?Math.cos(w*t-k*r2+phi):0));ay=-w*w*y;
+    amp=A*Math.hypot((a1?Math.cos(-k*r1):0)+(a2?Math.cos(-k*r2+phi):0),(a1?Math.sin(-k*r1):0)+(a2?Math.sin(-k*r2+phi):0));
+    check('signed path',s.signedPathDifference,r2-r1);check('absolute path',s.pathDifference,Math.abs(r2-r1));check('active count',s.activeCount,Number(a1)+Number(a2));
+  }else{
+    const u=c*s.sourceSpeedRatio,X=s.probeX+2,Y=s.probeY;
+    // Independent root isolation in emission time: the arrival-time function
+    // is convex. Split at its minimum for the supersonic case, then bisect.
+    const arrival=tau=>tau+Math.hypot(X-u*tau,Y)/c;
+    const cuts=[0,t];
+    if(u>c){const turn=(X-c*Math.abs(Y)/Math.sqrt(s.sourceSpeedRatio**2-1))/u;if(turn>0&&turn<t)cuts.splice(1,0,turn);}
+    const roots=[];
+    for(let j=1;j<cuts.length;j++){
+      let lo=cuts[j-1],hi=cuts[j],a=arrival(lo)-t,b=arrival(hi)-t;
+      if(Math.abs(a)<1e-10)roots.push(lo);if(Math.abs(b)<1e-10)roots.push(hi);
+      if(a*b<0){for(let i=0;i<70;i++){const mid=(lo+hi)/2,z=arrival(mid)-t;if(a*z<=0){hi=mid;b=z;}else{lo=mid;a=z;}}roots.push((lo+hi)/2);}
+    }
+    roots.sort((a,b)=>a-b);const taus=roots.filter((x,i)=>i===0||Math.abs(x-roots[i-1])>1e-9);
+    check('source x',s.sourceX,-2+u*t);check('arrival count',s.arrivalCount,taus.length,0);
+    if(s.retardedTimes.length!==taus.length)throw Error('W01 retarded branch count');
+    const fs=[];
+    for(const [i,tau] of taus.entries()){
+      check('retarded root',s.retardedTimes[i],tau,1e-8);
+      const r=Math.hypot(X-u*tau,Y),J=1-u*(X-u*tau)/(c*r),Jprime=u*u*Y*Y/(c*r*r*r);
+      if(r<1e-9||Math.abs(J)<1e-8){if(s.probeSampleDefined!==0||'probeY'in s)throw Error('W01 singular measurement');return s;}
+      y+=A*Math.sin(w*tau);vy+=A*w*Math.cos(w*tau)/J;ay+=A*(-w*w*Math.sin(w*tau)/(J*J)-w*Math.cos(w*tau)*Jprime/(J*J*J));fs.push(Math.abs(s.frequency/J));
+    }
+    if(taus.length===1)check('local frequency',s.localFrequencyHz,fs[0]);
+    else if('localFrequencyHz'in s)throw Error('W01 single frequency fabricated');
+    const n=Math.floor(t*s.frequency+1e-10);check('emission count',s.emittedCount,n+1,0);
+    if(s.wavefronts.length!==Math.min(40,n+1))throw Error('W01 emission history length');
+    for(const [i,f] of s.wavefronts.entries()){const tau=(Math.max(0,n-39)+i)/s.frequency;check('front time',f.emittedAt,tau,1e-10);check('front center',f.cx,-2+u*tau,1e-10);}
+    if(s.sourceSpeedRatio<1)check('front frequency',s.frontFreq,s.frequency/(1-s.sourceSpeedRatio));
+    else if('frontFreq'in s)throw Error('W01 sonic/supersonic forward frequency');
+  }
+  check('actual displacement',s.probeY,y);check('actual velocity',s.probeVy,vy);check('actual acceleration',s.probeAy,ay,2e-6);
+  if(amp!==undefined)check('actual local amplitude',s.analyticalAmplitude,amp);
+  if(s.historyLast){check('actual history time',s.historyLast.x,t,1e-9);check('actual history displacement',s.historyLast.y,y);}
+  return s;
+}
+async function syncW01(page,offline){
+  const pre=offline?'sf-':'',canvas=page.getByTestId(offline?'sf-canvas':'simulation-canvas');
+  await page.waitForFunction(({pre,offline})=>{const s=JSON.parse(document.querySelector('[data-testid="'+(offline?'sf-canvas':'simulation-canvas')+'"]')?.dataset.waveRendered||'null'),p=Number(document.querySelector('[data-testid="'+(offline?'sf-uplot':'uplot-container')+'"]')?.dataset.lastSampleT),t=Number(document.querySelector('[data-testid="'+pre+'wave-readouts"]')?.dataset.sampleTime);return s&&Math.abs(s.t-p)<1e-9&&Math.abs(s.t-t)<1e-9;},{pre,offline},{timeout:8000});
+  const s=checkW01(JSON.parse(await canvas.getAttribute('data-wave-rendered'))),v=JSON.parse(await canvas.getAttribute('data-wave-view'));
+  const ppm=.24*Math.min(v.width,v.height)*v.scale,b=v.bounds,q=v.safe,x1=v.width*.45+v.offsetX+b.minX*ppm,x2=v.width*.45+v.offsetX+b.maxX*ppm,y1=v.height*.5+v.offsetY-b.maxY*ppm,y2=v.height*.5+v.offsetY-b.minY*ppm;
+  if(q&&(x1<q.left-2||x2>q.right+2||y1<q.top-2||y2>q.bottom+2))throw Error('W01 scene bounds '+JSON.stringify({x1,x2,y1,y2,q}));
+  if(s.probeSampleDefined===1){const y=parseFloat(await page.getByTestId(pre+'wave-probeY').innerText());if(Math.abs(y-s.probeY)>.0006)throw Error('W01 stale readout');}
+  return s;
+}
+async function auditW01(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','wave-vibration-coupling');await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='wave-vibration-coupling');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),report={};
+  const photo=name=>page.screenshot({path:path.join(OUT_DIR,'H40_W01_'+name+'.png')});
+  const run=async t=>{await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.waveRendered||'null')?.t>t,t,{timeout:15000});await play.click();return syncW01(page,false);};
+  for(const [id,mode,duration] of [['transverse-slope-rule','transverse',.5],['causal-wavefront-startup','transverse',1.43],['causal-wavefront-left','transverse',1.35],['standing-wave-nodes','standing',.4],['standing-wave-node','standing',.4],['interference-in-phase','interference',.42],['interference-anti-phase-misconception','interference',.42],['interference-causal-two-arrivals','interference',.9],['doppler-moving-source','doppler',2.35],['doppler-offaxis','doppler',1.45],['doppler-sonic-boundary','doppler',.45],['doppler-two-branches','doppler',.58],['supersonic-mach-cone','doppler',1.25]]){
+    await selectPreset(page,id,true);await page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.waveRendered||'null');return s?.mode===mode&&s.t===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    const pair=mode==='doppler'?['probeY','localFrequencyHz','separate']:mode==='transverse'?['probeY','probeVy','separate']:['probeY','analyticalAmplitude','shared'];
+    await page.waitForFunction(([a,b,u])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b&&document.querySelector('[data-testid="floating-scope-dock"]')?.dataset.scopeUnits===u,pair);
+    await page.getByTestId('wave-scope-empty').waitFor({state:'visible'});
+    const initial=checkW01(JSON.parse(await canvas.getAttribute('data-wave-rendered')));
+    if(await page.getByTestId('viewport-zoom-badge').innerText()!=='100%')throw Error('W01 default zoom');
+    if(mode==='standing'&&await page.locator('#param-direction').count())throw Error('W01 irrelevant direction control');
+    if(mode!=='doppler'&&await page.getByTestId('param-slider-sourceSpeedRatio').count())throw Error('W01 irrelevant source speed control');
+    if(id==='causal-wavefront-startup'){await photo('causal_initial');const pre=await run(.7);if(pre.probeY!==0)throw Error('W01 precocious receiver');await photo('causal_before_arrival');}
+    if(id==='interference-causal-two-arrivals'){const one=await run(.51);if(one.activeCount!==1)throw Error('W01 single-source stage');await photo('interference_single_source');}
+    const final=await run(duration);
+    report[id]={initial,final};await photo(id);
+  }
+  console.log('H40 W01 online '+JSON.stringify(report));return report;
+}
+
 function checkE10(raw){
   const s=raw.position?raw:{...raw,position:{x:raw.x,y:raw.y,z:raw.z},velocity:{x:raw.vx,y:raw.vy,z:raw.vz},B:{x:raw.bxT,y:raw.byT,z:raw.bzT},a:{x:raw.ax,y:raw.ay,z:raw.az}};
   const t=s.t,p=s.position,v=s.velocity,B=s.B,a=s.a,qm=s.qOverM*(s.geometryType==='uniform-helix'?1:1e6);
@@ -3080,6 +3167,7 @@ async function main() {
     const e08TransformerReport=await auditE08Transformer(page,origin);
     const e09LcReport=await auditE09Lc(page,origin);
     const e10MagneticReport=await auditE10Magnetic(page,origin);
+    const w01Report=await auditW01(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3707,7 +3795,24 @@ async function main() {
       if(e10Errors.length||e10Network.length)throw Error('E10 offline errors '+JSON.stringify({e10Errors,e10Network}));
       Object.assign(e10OfflineReport,{errors:e10Errors,network:e10Network});
     }finally{await e10Context.close();}
-    const summary = { e10MagneticReport,e10OfflineReport,e09LcReport,e09OfflineReport,e08TransformerReport,e08OfflineReport,e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const w01File=path.join(OUT_DIR,'H40_W01_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','wave-vibration-coupling','--preset','causal-wavefront-startup','--out',w01File],{stdio:'inherit'});
+    const w01Context=await browser.newContext({viewport:VIEWPORT,offline:true}),w01Page=await w01Context.newPage(),w01Errors=[],w01Network=[],w01OfflineReport={};
+    w01Page.on('pageerror',e=>w01Errors.push(e.message));w01Page.on('console',m=>{if(m.type()==='error')w01Errors.push(m.text());});w01Page.on('request',r=>{if(/^https?:/.test(r.url()))w01Network.push(r.url());});
+    try{
+      await w01Page.goto(pathToFileURL(w01File).href);
+      for(const [id,mode,stop] of [['causal-wavefront-startup','transverse',1.43],['standing-wave-node','standing',.38],['interference-causal-two-arrivals','interference',.85],['doppler-offaxis','doppler',1.45]]){
+        if(id!=='causal-wavefront-startup')await w01Page.locator('[data-preset-id="'+id+'"]').click();
+        await w01Page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.waveRendered||'null');return s?.mode===mode&&s.t===0;},mode);
+        checkW01(JSON.parse(await w01Page.getByTestId('sf-canvas').getAttribute('data-wave-rendered')));
+        await w01Page.getByTestId('sf-play-pause').click();await w01Page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.waveRendered||'null')?.t>t,stop,{timeout:15000});await w01Page.getByTestId('sf-play-pause').click();
+        w01OfflineReport[id]=await syncW01(w01Page,true);
+        await w01Page.screenshot({path:path.join(OUT_DIR,'H40_W01_offline_'+id+'.png')});
+      }
+      if(w01Errors.length||w01Network.length)throw Error('W01 offline errors '+JSON.stringify({w01Errors,w01Network}));
+      Object.assign(w01OfflineReport,{errors:w01Errors,network:w01Network});
+    }finally{await w01Context.close();}
+    const summary = { w01Report,w01OfflineReport,e10MagneticReport,e10OfflineReport,e09LcReport,e09OfflineReport,e08TransformerReport,e08OfflineReport,e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
