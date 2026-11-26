@@ -365,6 +365,7 @@ describe('W02 independent discrete wave recurrence',()=>{
     solver.uCurr[k]=.8;solver.uPrev[k]=.7;
     for(const l of [k-1,k+1,k-20,k+20])solver.uCurr[l]=.8;
     const gamma=20*((8-2)/8)**2,g=gamma*dt/2;
-    solver.step();expect(solver.uCurr[k]).toBeCloseTo((2*.8-(1-g)*.7)/(1+g),7);
+    const expected=Math.fround((2*solver.uCurr[k]!-(1-Math.fround(g))*solver.uPrev[k]!)/(1+Math.fround(g)));
+    solver.step();expect(solver.uCurr[k]).toBe(expected);
   });
 });

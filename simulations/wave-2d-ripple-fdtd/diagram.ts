@@ -44,7 +44,7 @@ export function rippleScene(s:WaveFdtdState,p:WaveFdtdParams,layers:ReadonlySet<
       text(x-.55,(ya+yb)/2,'d='+ (g.separationCells*DX).toFixed(2)+' m','source');
     }
   }
-  line(gridX(SCREEN_I),tank.minY,tank.maxX===gridX(SCREEN_I)?tank.maxX:gridX(SCREEN_I),tank.maxY,'screen',true);
+  line(gridX(SCREEN_I),tank.minY,gridX(SCREEN_I),tank.maxY,'screen',true);
   text(gridX(SCREEN_I),tank.maxY-.27,'接收屏','screen');
   line(gridX(WALL_I),tank.minY-.15,gridX(SCREEN_I),tank.minY-.15,'axis');
   line(gridX(WALL_I),tank.minY-.24,gridX(WALL_I),tank.minY-.07,'axis');line(gridX(SCREEN_I),tank.minY-.24,gridX(SCREEN_I),tank.minY-.07,'axis');
