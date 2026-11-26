@@ -6,7 +6,8 @@ import {
   createInitialState,
   stepWaveFdtd,
   type WaveFdtdParams,
-  type WaveFdtdState
+  type WaveFdtdState,
+  DX,WALL_I,CENTER_J,GRID_NY
 } from './engine.js';
 
 const paramSchema: readonly ParamFieldSpec<WaveFdtdParams>[] = [
@@ -76,25 +77,11 @@ export const wave2dRippleFdtdPlugin = defineSimulationPlugin<WaveFdtdParams, Wav
     }),
     importScene: (dsl) => dsl.params as Partial<WaveFdtdParams>
   },
-  exportDiagramIR: (_s, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'line', x1: -0.6, y1: -1.4, x2: -0.6, y2: 1.4, strokeWidth: 3 },
-      { kind: 'line', x1: 1.8, y1: -1.4, x2: 1.8, y2: 1.4, dashed: true },
-      {
-        kind: 'mathLabel',
-        x: 1.7,
-        y: 1.25,
-        text: `\\lambda=${params.wavelengthCells}\\text{px},\\; d=${params.slitSepCells}\\text{px}`,
-        align: 'end'
-      }
-    ];
-    return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.2, minY: -1.6, maxX: 2.2, maxY: 1.6 },
-      title: '2D 波动池双缝干涉配图',
-      primitives
-    };
+  exportDiagramIR:(s,p)=>{
+    const x=(i:number)=>(i-WALL_I)*DX,y=(j:number)=>(CENTER_J-j)*DX;
+    const primitives:DiagramPrimitive[]=s.geometry.blockedRuns.map(r=>({kind:'rect',x:x(s.wallI-1)-DX/2,y:y(r.lastJ)-DX/2,width:3*DX,height:(r.lastJ-r.firstJ+1)*DX,hatch:true}));
+    primitives.push({kind:'line',x1:x(s.screenI),x2:x(s.screenI),y1:y(0),y2:y(GRID_NY-1),dashed:true});
+    return {width:960,height:640,viewBox:{minX:x(0)-.5,minY:y(GRID_NY-1)-.5,maxX:x(s.nx-1)+.5,maxY:y(0)+.5},title:'二维波动池 · 实际网格几何',primitives};
   },
   renderCanvas: (ctx, state, _params, viewport, activeLayers) => {
     const nx = state.nx;
