@@ -5,7 +5,7 @@ export const electrostaticPresets: readonly PresetSpec<ElectrostaticParams>[] = 
   {
     id: 'dipole-opposite-charges',
     name: '等量异种点电荷电场线与等势面',
-    description: '直观展现两极等势面与双向 RK4 电场线严格正交（<1°），试探粒子沿 RK45 轨迹偏转',
+    description: '观察电势与电场线方向；软化场模型，等势线数值近似，试探粒子沿 RK45 轨迹偏转',
     curriculumNotes: '必修三 第九、十章 · 点电荷叠加场',
     params: {
       mode: 'dipole-point-charges',
@@ -71,7 +71,7 @@ export const electrostaticPresets: readonly PresetSpec<ElectrostaticParams>[] = 
   {
     id: 'deflection-capacitor-tube',
     name: '带电粒子先经 U₁ 加速后在 U₂ 偏转极板偏转',
-    description: '验证偏转位移 y = U₂ L²/(4 d U₁) 与类平抛运动末速度反向延长线交点定理',
+    description: '未触板时验证有向偏转公式；加速区已完成，忽略边缘场，出入板与触板精确定位',
     curriculumNotes: '必修三 · 带电粒子在匀强电场中的偏转',
     params: {
       mode: 'deflection-tube',
@@ -89,5 +89,15 @@ export const electrostaticPresets: readonly PresetSpec<ElectrostaticParams>[] = 
       phiB: 4,
       phiC: 12
     }
-  }
+  },
+  {id:'uniform-reordered-potential',name:'三点电势换序 · 中值点不再是 B',description:'A=4V, B=12V, C=0V；按电势顺序构造真实等势线。',curriculumNotes:'必修三 · 等势线',
+   params:{mode:'uniform-three-point',phiA:4,phiB:12,phiC:0,testChargeRatio:.3,v0x:1,v0y:0,startY:.5}},
+  {id:'uniform-equal-potential',name:'三点等势 · E=0',description:'全平面等势，不构造唯一等势线。',curriculumNotes:'必修三 · 电势与电场',
+   params:{mode:'uniform-three-point',phiA:4,phiB:4,phiC:4,testChargeRatio:.3,v0x:1,v0y:0,startY:.5}},
+  {id:'deflection-plate-contact',name:'偏转过大 · 首次触板停止',description:'低加速电压、大偏转电压；精确触板，不再给出不存在的出射位移。',curriculumNotes:'必修三 · 临界运动',
+   params:{mode:'deflection-tube',testChargeRatio:2,uAccelV:4,uDeflectV:16}},
+  {id:'deflection-negative-charge',name:'负电荷 · 反向偏转',description:'在相同极板电压下负电荷向反方向运动。',curriculumNotes:'必修三 · 电场力方向',
+   params:{mode:'deflection-tube',testChargeRatio:-1,uAccelV:16,uDeflectV:8}},
+  {id:'deflection-neutral',name:'零荷质比 · 不产生加速初速',description:'中性粒子在加速区从静止出发时仍静止。',curriculumNotes:'必修三 · 模型边界',
+   params:{mode:'deflection-tube',testChargeRatio:0,uAccelV:16,uDeflectV:8}}
 ];

@@ -562,6 +562,63 @@ async function auditM03Constraints(page,origin){
 
 
 // M11 uses the actual rendered frame, not independently synthesized telemetry.
+async function auditE01Electrostatic(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-electrostatic-field');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-electrostatic-field');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-electro-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('E01 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode,key,value,a,b)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(([m,k,v])=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.electroRendered||'null');return s?.mode===m&&s[k]===v&&s.t===0;},[mode,key,value]);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(([a,b])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b,[a,b]);
+    return read();
+  };
+  const sync=async()=>{
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.electroRendered||'null'),t=Number(document.querySelector('[data-testid="electro-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+    return read();
+  };
+  const runTo=async(t,terminal=false)=>{
+    await play.click();
+    await page.waitForFunction(([t,terminal])=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.electroRendered||'null');return terminal?s?.terminal===1:s?.t>t;},[t,terminal],{timeout:15000});
+    if(!terminal)await play.click();
+    return sync();
+  };
+  const photo=async(name)=>page.screenshot({path:path.join(OUT_DIR,'H30_E01_'+name+'.png')});
+  await select('dipole-opposite-charges','dipole-point-charges','q2MicroC',-3,'phi','eMag');
+  await page.getByTestId('electro-scope-empty').waitFor({state:'visible'});
+  if(await page.getByTestId('param-slider-uAccelV').count())throw Error('E01 irrelevant tube control');
+  const dipole=await runTo(.25);check(dipole.energyResidual,0,'dipole energy',1e-5);
+  await photo('dipole');
+  await select('equal-same-sign-charges','dipole-point-charges','q2MicroC',3,'phi','eMag');
+  const same=await runTo(.25);check(same.energyResidual,0,'like charge energy',1e-5);await photo('same');
+  const uniform=await select('uniform-three-point-trisection','uniform-three-point','phiB',4,'phi','eMag');
+  check(uniform.constructionDefined,1,'three points construction');check(uniform.constructionFraction,1/3,'original trisection');
+  await photo('uniform');
+  const reordered=await select('uniform-reordered-potential','uniform-three-point','phiA',4,'phi','eMag');
+  check(reordered.constructionStartX,-1.4,'middle vertex A');check(reordered.constructionStartY,-.9,'middle vertex A y');
+  check(reordered.constructionEndX,1.5+(0.2-1.5)/3,'C-B interpolation');check(reordered.constructionEndY,-.7+(1.1+.7)/3,'C-B interpolation y');
+  check(reordered.Ex*(reordered.constructionEndX-reordered.constructionStartX)+reordered.Ey*(reordered.constructionEndY-reordered.constructionStartY),0,'orthogonal');
+  await photo('reordered');
+  const zero=await select('uniform-equal-potential','uniform-three-point','phiC',4,'phi','eMag');
+  check(zero.eMag,0,'zero field');check(zero.constructionDefined,0,'no arbitrary line');await photo('zero_field');
+  const p0=await select('deflection-capacitor-tube','deflection-tube','testChargeRatio',1,'py','vy');
+  if(await page.getByTestId('param-slider-q1MicroC').count()||!await page.getByTestId('param-slider-uAccelV').count())throw Error('E01 tube mode fields');
+  const exit=await runTo(.55);check(exit.yExit,.25,'positive signed exit');check(exit.tubePhase,2,'out of plates');check(exit.ek-exit.tubeWork,p0.ek,'work energy');
+  if('totalEnergy'in exit)throw Error('E01 fictitious conservative tube energy');await photo('exit');
+  await select('deflection-negative-charge','deflection-tube','testChargeRatio',-1,'py','vy');
+  const negative=await runTo(.55);check(negative.yExit,-.25,'negative signed exit');await photo('negative');
+  await select('deflection-plate-contact','deflection-tube','uDeflectV',16,'py','vy');
+  const contact=await runTo(0,true),thit=.4/4+Math.sqrt(2/16);
+  check(contact.t,thit,'first contact time');check(contact.py,1,'first contact point');check(contact.px,-1+4*Math.sqrt(2/16),'first contact x');check(contact.energyResidual,0,'contact work');
+  if('yExit'in contact)throw Error('E01 contact invented exit');await photo('contact');
+  await select('deflection-neutral','deflection-tube','testChargeRatio',0,'py','vy');
+  const neutral=await runTo(.3);check(neutral.vx,0,'zero charge speed');check(neutral.px,-1.4,'neutral stationary');check(neutral.py,0,'neutral y');await photo('neutral');
+  const report={dipole,same,uniform,reordered,zero,exit,negative,contact,neutral};console.log('H30 E01 online '+JSON.stringify(report));return report;
+}
+
 async function auditM11Shm(page,origin){
   const url=new URL(origin);url.searchParams.set('model','mech-shm-resonance');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2426,6 +2483,7 @@ async function main() {
     const m08SpringReport=await auditM08Spring(page,origin);
     const m09CollisionReport=await auditM09Collision(page,origin);
     const m11ShmReport=await auditM11Shm(page,origin);
+    const e01ElectrostaticReport=await auditE01Electrostatic(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2862,7 +2920,31 @@ async function main() {
       Object.assign(m11OfflineReport,{large,forced,errors:m11Errors,network:m11Network});
     }finally{await m11Context.close();}
 
-    const summary = { m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e01File=path.join(OUT_DIR,'H30_E01_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-electrostatic-field','--preset','uniform-reordered-potential','--out',e01File],{stdio:'inherit'});
+    const e01Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e01Page=await e01Context.newPage(),e01Errors=[],e01Network=[],e01OfflineReport={};
+    e01Page.on('pageerror',e=>e01Errors.push(e.message));e01Page.on('console',m=>{if(m.type()==='error')e01Errors.push(m.text());});e01Page.on('request',r=>{if(/^https?:/.test(r.url()))e01Network.push(r.url());});
+    try{
+      await e01Page.goto(pathToFileURL(e01File).href);
+      const canvas=e01Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-electro-rendered'));
+      await e01Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.electroRendered||'null')?.constructionDefined===1);
+      const uniform=await read();
+      if(Math.abs(uniform.constructionFraction-1/3)>1e-10||Math.abs(uniform.Ex*(uniform.constructionEndX-uniform.constructionStartX)+uniform.Ey*(uniform.constructionEndY-uniform.constructionStartY))>1e-9)throw Error('E01 offline construction '+JSON.stringify(uniform));
+      await e01Page.screenshot({path:path.join(OUT_DIR,'H30_E01_offline_uniform.png')});
+      await e01Page.locator('[data-preset-id="deflection-plate-contact"]').click();
+      await e01Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.electroRendered||'null');return s?.mode==='deflection-tube'&&s.t===0&&document.querySelector('[data-testid="sf-scope-channel-b"]')?.value==='vy';});
+      await e01Page.getByTestId('sf-play-pause').click();
+      await e01Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.electroRendered||'null')?.terminal===1);
+      await e01Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.electroRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+      const contact=await read();
+      if(Math.abs(contact.t-(.1+Math.sqrt(2/16)))>1e-7||Math.abs(contact.py-1)>1e-10||contact.energyResidual>1e-7||'yExit'in contact)throw Error('E01 offline contact '+JSON.stringify(contact));
+      await e01Page.getByRole('button',{name:'黑板深蓝'}).click();await e01Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await e01Page.screenshot({path:path.join(OUT_DIR,'H30_E01_offline_contact_paper.png')});
+      if(e01Errors.length||e01Network.length)throw Error('E01 offline errors '+JSON.stringify({e01Errors,e01Network}));
+      Object.assign(e01OfflineReport,{uniform,contact,errors:e01Errors,network:e01Network});
+    }finally{await e01Context.close();}
+
+    const summary = { e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

@@ -4,6 +4,9 @@ import { emElectrostaticFieldPlugin } from './plugin.js';
 import { electrostaticPresets } from './presets.js';
 import {
   createInitialState,
+  computeObservables,
+  checkInvariants,
+  traceFieldLines,
   evalPointChargePotentialAndField,
   extractElectrostaticIsolines,
   solveThreePointUniformField,
@@ -58,8 +61,8 @@ describe('em-electrostatic-field physics & numerical verification (E01)', () => 
   it('solves three-point trisection uniform field & parallel-plate deflection formula accurately (< 1e-6)', () => {
     const threePt = getPreset(2);
     const sol = solveThreePointUniformField(threePt);
-    const eqVecX = sol.equalPointOnAC.x - sol.B.x;
-    const eqVecY = sol.equalPointOnAC.y - sol.B.y;
+    const eqVecX = sol.equalPointOnAC!.x - sol.B.x;
+    const eqVecY = sol.equalPointOnAC!.y - sol.B.y;
     // Uniform field E must be strictly perpendicular to equipotential segment B -> equalPointOnAC
     expect(Math.abs(eqVecX * sol.Ex + eqVecY * sol.Ey)).toBeLessThan(1e-10);
 
@@ -136,5 +139,62 @@ describe('H30 E01 boundary and independent electrostatic contracts',()=>{
     expect(r.nextState.px).toBe(s.px);
     expect(r.nextState.py).toBe(0);
     expect(r.nextState.events).toHaveLength(0);
+  });
+});
+
+describe('H30 E01 additional analytical and geometry verification',()=>{
+  it('matches the negative gradient of the softened potential and the zero-field midpoint',()=>{
+    const p=getPreset(1),h=1e-5;
+    for(const [x,y] of [[-0.6,0.4],[0,0.6],[1.9,-0.8]]){
+      const f=evalPointChargePotentialAndField(x!,y!,p);
+      expect(f.Ex).toBeCloseTo(-(evalPointChargePotentialAndField(x!+h,y!,p).phi-evalPointChargePotentialAndField(x!-h,y!,p).phi)/(2*h),7);
+      expect(f.Ey).toBeCloseTo(-(evalPointChargePotentialAndField(x!,y!+h,p).phi-evalPointChargePotentialAndField(x!,y!-h,p).phi)/(2*h),7);
+    }
+    const f=evalPointChargePotentialAndField(0,0,p);expect(f.Ex).toBe(0);expect(f.Ey).toBe(0);expect(f.phi).toBeGreaterThan(0);
+  });
+  it('does not invent zero-field contours and orients negative-source lines with E',()=>{
+    expect(extractElectrostaticIsolines({...getPreset(2),phiA:4,phiB:4,phiC:4})).toEqual([]);
+    const p={...getPreset(0),q1MicroC:0,q2MicroC:-3};
+    const lines=traceFieldLines(p);expect(lines.length).toBeGreaterThan(0);
+    for(const pts of lines){
+      expect(Math.hypot(pts.at(-1)!.x-p.x2,pts.at(-1)!.y)).toBeCloseTo(.18,8);
+      for(let i=1;i<pts.length;i++){
+        const a=pts[i-1]!,b=pts[i]!,f=evalPointChargePotentialAndField((a.x+b.x)/2,(a.y+b.y)/2,p);
+        expect((b.x-a.x)*f.Ex+(b.y-a.y)*f.Ey).toBeGreaterThan(0);
+      }
+    }
+  });
+  it('uses work-energy balance in the tube instead of fictitious global potential conservation',()=>{
+    for(const eta of [-2,-1,0,1,2])for(const U2 of [-16,0,8,16]){
+      const p={...getPreset(3),testChargeRatio:eta,uDeflectV:U2,uAccelV:4};
+      const init=createInitialState(p);let state=init;
+      for(let i=0;i<100;i++){
+        state=stepElectrostatic(state,p,.037).nextState;
+        const o=computeObservables(state,p);
+        expect(o.totalEnergy).toBeUndefined();
+        expect(o.energyResidual).toBeLessThan(1e-8);
+        expect(checkInvariants(state,init,p).every(x=>x.passed)).toBe(true);
+      }
+    }
+  });
+  it('prioritizes first contact at the simultaneous exit and wall boundary',()=>{
+    const p={...getPreset(3),testChargeRatio:1,uAccelV:4,uDeflectV:8};
+    const r=stepElectrostatic(createInitialState(p),p,2);
+    expect(r.halt).toBe(true);
+    expect(r.nextState.px).toBeCloseTo(1,10);
+    expect(r.nextState.py).toBe(1);
+    expect(r.nextState.events.map(e=>e.id.split('-plate')[0])).toEqual(['entry','hit']);
+  });
+});
+
+describe('H30 E01 mode-aware teaching contracts',()=>{
+  it('does not export charge circles or pretend a tube field is conservative in the other modes',()=>{
+    const p=getPreset(3),s=createInitialState(p);
+    const ir=emElectrostaticFieldPlugin.exportDiagramIR!(s,p);
+    expect(ir.primitives.filter(x=>x.kind==='line'&&x.x1===-1&&x.x2===1&&x.y1===x.y2)).toHaveLength(2);
+    expect(ir.primitives.filter(x=>x.kind==='circle')).toHaveLength(1);
+    expect(emElectrostaticFieldPlugin.getTelemetryChannels!(p).map(c=>c.key)).not.toContain('totalEnergy');
+    expect(emElectrostaticFieldPlugin.getTelemetryChannels!(getPreset(0))[0]!.unit).toBe('Φ₀');
+    expect(emElectrostaticFieldPlugin.getTelemetryChannels!(getPreset(2))[0]!.unit).toBe('V');
   });
 });
