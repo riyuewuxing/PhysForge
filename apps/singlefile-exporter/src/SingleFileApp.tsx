@@ -1077,7 +1077,7 @@ export const SingleFileApp: React.FC = () => {
                           [field.key]: e.target.checked
                         })
                       );
-                      if(equilibriumSlice||waveOpticsSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||(regenSlice&&next.mode==='regen-brake')){setIsPlaying(false);setScrubTime(null);}
+                      if(equilibriumSlice||waveOpticsSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||(regenSlice&&params.mode==='regen-brake')){setIsPlaying(false);setScrubTime(null);}
                       if(waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||regenSlice)setActivePresetId(null);
                       setResetNonce((n) => n + 1);
                     }}
@@ -1099,7 +1099,7 @@ export const SingleFileApp: React.FC = () => {
                         [field.key]: e.target.value
                       })
                     );
-                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||(regenSlice&&next.mode==='regen-brake')){setIsPlaying(false);setScrubTime(null);}
+                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice||thermoSlice||thermalCycleSlice||quantumSlice||atomicSlice||nuclearSlice||(regenSlice&&(params.mode==='regen-brake'||(field.key==='mode'&&e.target.value==='regen-brake')))){setIsPlaying(false);setScrubTime(null);}
                     setResetNonce((n) => n + 1);
                   }}
                   className="w-full rounded border px-2 py-1.5"
