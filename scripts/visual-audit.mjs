@@ -1273,6 +1273,15 @@ async function auditF04Cases(page,offline,select){
 async function auditF08Mechanics(page,offline,select){
  const out={},prefix=offline?'H56_F08_offline_':'H56_F08_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
  const input=key=>page.getByTestId((offline?'sf-param-':'param-slider-')+key);
+ const setNumber=async(key,value)=>{
+   const field=input(key);
+   if(!offline&&!await field.isVisible()){
+     const details=page.locator('details').filter({has:field});
+     await details.locator('summary').click({timeout:5000});
+   }
+   await field.waitFor({state:'visible',timeout:5000});
+   await field.fill(String(value),{timeout:5000});
+ };
  const sync=async expected=>{
    await page.waitForFunction(({canvasId,expected})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.mechanicsErrorRendered;return raw&&Object.entries(expected).every(([k,v])=>Math.abs(Number(v)-Number(JSON.parse(raw)[k]))<1e-10||JSON.parse(raw)[k]===v);},{canvasId,expected},{timeout:10000});
    const r=JSON.parse(await canvas.getAttribute('data-mechanics-error-rendered'));
@@ -1299,15 +1308,15 @@ async function auditF08Mechanics(page,offline,select){
  const under=await sync({scenario:'under-compensated',noise:0,offset:0});
  if(!(under.analyticF>0))throw Error('F08 positive F intercept');
  await save('under',under);
- await input('rulerOffsetCm').fill('20');const shifted=await sync({scenario:'under-compensated',offset:20});
+ await setNumber('rulerOffsetCm','20');const shifted=await sync({scenario:'under-compensated',offset:20});
  if(Math.abs(shifted.aDiff-under.aDiff)>1e-12||Math.abs(shifted.scale-under.scale)>1e-12||shifted.dots.some((d,i)=>Math.abs(d.x-under.dots[i].x)>1e-12||Math.abs(d.reading-under.dots[i].reading+20)>1e-9))throw Error('F08 ruler shift changed physical coordinates');
  await save('zero_shift',shifted);
- await input('cartMassKg').fill('0.1');await input('hangerMassKg').fill('0.01');await input('frictionForceN').fill('0.3');
+ await setNumber('cartMassKg','0.1');await setNumber('hangerMassKg','0.01');await setNumber('frictionForceN','0.3');
  const neg=await sync({M:.1,m:.01,f:.3,noise:0});if(!(neg.aTrue<0)||neg.rawDots.some((d,i)=>i&&d.posCm<=neg.rawDots[i-1].posCm))throw Error('F08 signed deceleration tape');
  await save('negative_net',neg);
  await select('af-over-compensated-a-intercept');const over=await sync({scenario:'over-compensated'});if(!(over.analyticA>0))throw Error('F08 positive a intercept');await save('over',over);
  await select('af-ideal-compensated-origin');const ideal=await sync({scenario:'ideal-compensated'});if(Math.abs(ideal.analyticA)>1e-12||Math.abs(ideal.analyticF)>1e-12)throw Error('F08 balanced intercept');await save('ideal',ideal);
- await select('af-heavy-hanger-bend');await input('cartMassKg').fill('0.1');await input('hangerMassKg').fill('0.5');
+ await select('af-heavy-hanger-bend');await setNumber('cartMassKg','0.1');await setNumber('hangerMassKg','0.5');
  const heavy=await sync({scenario:'heavy-hanger-bend',M:.1,m:.5});if(!(heavy.curve.at(-1).aAnalytic>6))throw Error('F08 heavy-hanger high boundary');await save('heavy',heavy);
  if(!offline){
    await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
