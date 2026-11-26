@@ -93,3 +93,42 @@ describe('H52 F06 independent regenerative-braking regressions',()=>{
     expect(keys).not.toContain('driveCurrentA');
   });
 });
+
+describe('F06 regenerative braking boundary evidence (additional coverage)',()=>{
+  it('matches the finite-time exponential solution for the pure linear damping model',()=>{
+    const p=getPreset(1),initial=createInitialState(p),dt=.75;
+    const rate=(p.bFieldT*p.trackSpanM)**2/((p.circuitResOhm+p.loadResOhm)*p.massKg);
+    const s=stepEmLaunchRegen(initial,p,dt).nextState;
+    const v=p.v0Mps*Math.exp(-rate*dt),x=p.v0Mps*(-Math.expm1(-rate*dt))/rate;
+    expect(s.v).toBeCloseTo(v,8);expect(s.x).toBeCloseTo(x,8);
+    expect(s.v).toBeGreaterThan(0);
+    const lost=initial.energyKineticJ-s.energyKineticJ;
+    expect(s.energyRegenJ/lost).toBeCloseTo(p.loadResOhm/(p.circuitResOhm+p.loadResOhm),9);
+    expect(s.ledgerResidualJ).toBeLessThan(1e-6);
+  });
+  it('has no transfer to a zero-load branch and no energy from an initially stationary vehicle',()=>{
+    const p={...getPreset(1),loadResOhm:0};
+    const s=stepEmLaunchRegen(createInitialState(p),p,.3).nextState;
+    expect(s.energyRegenJ).toBe(0);expect(s.energyJouleJ).toBeGreaterThan(0);
+    const rest={...p,v0Mps:0},r=stepEmLaunchRegen(createInitialState(rest),rest,.3).nextState;
+    expect(r.x).toBe(0);expect(r.v).toBe(0);expect(r.currentA).toBe(0);
+    expect(r.energyInitialJ).toBe(0);expect(r.ledgerResidualJ).toBe(0);
+    expect(stseEmLaunchRegenBrakePlugin.engine.computeObservables(r,rest)).not.toHaveProperty('loadTransferFraction');
+  });
+  it('mixed braking stops without reversal or renewed energy after rest',()=>{
+    const p=getPreset(2);
+    let s=createInitialState(p);
+    for(let i=0;i<800;i++){
+      const prev=s;s=stepEmLaunchRegen(s,p,.02).nextState;
+      expect(s.v).toBeGreaterThanOrEqual(0);expect(s.x).toBeGreaterThanOrEqual(prev.x-1e-10);
+      expect(s.energyKineticJ).toBeLessThanOrEqual(prev.energyKineticJ+1e-8);
+      expect(s.ledgerResidualJ).toBeLessThan(1e-6);
+    }
+    expect(s.v).toBeLessThan(1e-8);expect(s.currentA).toBeLessThan(1e-8);
+    const later=stepEmLaunchRegen(s,p,1).nextState;
+    expect(later.x).toBeCloseTo(s.x,8);
+    expect(later.energyRegenJ).toBeCloseTo(s.energyRegenJ,8);
+    expect(later.energyJouleJ).toBeCloseTo(s.energyJouleJ,8);
+    expect(later.energyDragMechJ).toBeCloseTo(s.energyDragMechJ,8);
+  });
+});
