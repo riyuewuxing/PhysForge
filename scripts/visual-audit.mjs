@@ -562,6 +562,48 @@ async function auditM03Constraints(page,origin){
 
 
 // M11 uses the actual rendered frame, not independently synthesized telemetry.
+async function auditE05Wireframe(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-wireframe-rotation');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-wireframe-rotation');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-wire-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('E05 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode,a,b)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.wireRendered||'null');return s?.mode===mode&&s.t===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(([a,b])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b,[a,b]);
+    return read();
+  };
+  const runTo=async(t)=>{
+    await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.wireRendered||'null')?.t>t,t,{timeout:18000});await play.click();
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.wireRendered||'null'),t=Number(document.querySelector('[data-testid="wire-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});return read();
+  };
+  const photo=async name=>page.screenshot({path:path.join(OUT_DIR,'H34_E05_'+name+'.png')});
+  const initial=await select('wireframe-offgrid-flux','wireframe-gravity-fall','fluxWb','emfV');
+  check(initial.centerY,.75,'initial y');check(initial.fluxWb,0,'outside flux');
+  await page.getByTestId('wire-scope-empty').waitFor({state:'visible'});
+  const offgrid=await runTo(.62),v=-Math.exp(-2*(offgrid.t-.25)),y=.5-(1+v)/2;
+  check(offgrid.centerY,y,'analytic y');check(offgrid.vy,v,'analytic velocity');check(offgrid.fluxWb,2*(.5-y),'exact overlap flux');
+  check(offgrid.emfV,2*v,'signed emf');check(offgrid.ampereForceN,-2*v,'magnetic drag');check(offgrid.jouleHeatJ,.5*(1-v*v),'independent Q');
+  check(offgrid.eventCount,1,'entry event');await photo('offgrid');
+  await select('dual-opposite-field-2x-emf','wireframe-gravity-fall','fluxWb','emfV');
+  const dual=await runTo(1.4);
+  if(dual.eventCount<2||dual.jouleHeatJ<=0||Math.abs(dual.energyResidualJ)>1e-5)throw Error('E05 dual crossing '+JSON.stringify(dual));await photo('dual');
+  await select('triangle-loop-linear-emf','wireframe-gravity-fall','fluxWb','emfV');
+  const triangle=await runTo(.45);if(triangle.loopShape!=='triangle'||Math.abs(triangle.energyResidualJ)>1e-5)throw Error('E05 triangle '+JSON.stringify(triangle));await photo('triangle');
+  await select('circle-gradient-flux','wireframe-gravity-fall','fluxWb','emfV');
+  const circle=await runTo(.45);if(circle.loopShape!=='circle'||circle.fieldProfile!=='linear-gradient'||Math.abs(circle.energyResidualJ)>1e-5)throw Error('E05 circle gradient '+JSON.stringify(circle));await photo('circle_gradient');
+  const disk0=await select('disk-driven-power','faraday-disk','emfV','emTorqueNm');
+  check(disk0.fluxWb,2*Math.PI,'actual disk flux');check(disk0.emfV,3,'disk emf');check(disk0.emTorqueNm,-1.5,'disk torque');check(disk0.drivePowerW,4.5,'drive power');
+  if('ampereForceN'in disk0||await page.getByTestId('param-slider-massM').count())throw Error('E05 irrelevant rotating quantities');
+  const disk=await runTo(.5);check(disk.fluxWb,2*Math.PI,'unchanged disk flux');check(disk.driveWorkJ,4.5*disk.t,'drive work');check(disk.jouleHeatJ,disk.driveWorkJ,'Joule heat');await photo('disk');
+  const rev=await select('disk-reverse-drive','faraday-disk','emfV','emTorqueNm');check(rev.emfV,-3,'reverse emf');check(rev.emTorqueNm,1.5,'reverse torque');check(rev.drivePowerW,4.5,'reverse power');await photo('reverse');
+  const rod=await select('rotating-rod-cutting','rotating-rod','emfV','emTorqueNm');if('fluxWb'in rod)throw Error('E05 invented rod flux');check(rod.emfV,3,'rod emf');await photo('rod');
+  const report={initial,offgrid,dual,triangle,circle,disk0,disk,rev,rod};console.log('H34 E05 online '+JSON.stringify(report));return report;
+}
+
 async function auditE03AcScope(page,origin){
   const url=new URL(origin);url.searchParams.set('model','em-ac-field-oscilloscope');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2712,6 +2754,7 @@ async function main() {
     const e01ElectrostaticReport=await auditE01Electrostatic(page,origin);
     const e02CapacitorReport=await auditE02Capacitor(page,origin);
     const e03AcScopeReport=await auditE03AcScope(page,origin);
+    const e05WireframeReport=await auditE05Wireframe(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3220,7 +3263,32 @@ async function main() {
       if(e03Errors.length||e03Network.length)throw Error('E03 offline errors '+JSON.stringify({e03Errors,e03Network}));
       Object.assign(e03OfflineReport,{blocked,motion,errors:e03Errors,network:e03Network});
     }finally{await e03Context.close();}
-    const summary = { e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e05File=path.join(OUT_DIR,'H34_E05_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-wireframe-rotation','--preset','disk-driven-power','--out',e05File],{stdio:'inherit'});
+    const e05Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e05Page=await e05Context.newPage(),e05Errors=[],e05Network=[],e05OfflineReport={};
+    e05Page.on('pageerror',e=>e05Errors.push(e.message));e05Page.on('console',m=>{if(m.type()==='error')e05Errors.push(m.text());});e05Page.on('request',r=>{if(/^https?:/.test(r.url()))e05Network.push(r.url());});
+    try{
+      await e05Page.goto(pathToFileURL(e05File).href);
+      const canvas=e05Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-wire-rendered'));
+      await e05Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.wireRendered||'null')?.mode==='faraday-disk');
+      const disk0=await read();if(Math.abs(disk0.fluxWb-2*Math.PI)>1e-10||Math.abs(disk0.emTorqueNm+1.5)>1e-10)throw Error('E05 offline disk '+JSON.stringify(disk0));
+      await e05Page.getByTestId('sf-play-pause').click();await e05Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.wireRendered||'null')?.t>.5);
+      await e05Page.getByTestId('sf-play-pause').click();
+      await e05Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.wireRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+      const disk=await read();if(Math.abs(disk.driveWorkJ-4.5*disk.t)>1e-8||Math.abs(disk.jouleHeatJ-disk.driveWorkJ)>1e-8)throw Error('E05 offline drive '+JSON.stringify(disk));
+      await e05Page.screenshot({path:path.join(OUT_DIR,'H34_E05_offline_disk.png')});
+      await e05Page.locator('[data-preset-id="wireframe-offgrid-flux"]').click();
+      await e05Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.wireRendered||'null');return s?.mode==='wireframe-gravity-fall'&&s.t===0&&document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='fluxWb';});
+      await e05Page.getByTestId('sf-play-pause').click();await e05Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.wireRendered||'null')?.t>.62);await e05Page.getByTestId('sf-play-pause').click();
+      await e05Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.wireRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+      const fall=await read(),v=-Math.exp(-2*(fall.t-.25)),y=.5-(1+v)/2;
+      if(Math.abs(fall.centerY-y)>1e-7||Math.abs(fall.fluxWb-2*(.5-y))>1e-7||fall.eventCount!==1)throw Error('E05 offline analytic fall '+JSON.stringify(fall));
+      await e05Page.getByRole('button',{name:'黑板深蓝'}).click();await e05Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await e05Page.screenshot({path:path.join(OUT_DIR,'H34_E05_offline_fall_paper.png')});
+      if(e05Errors.length||e05Network.length)throw Error('E05 offline errors '+JSON.stringify({e05Errors,e05Network}));
+      Object.assign(e05OfflineReport,{disk0,disk,fall,errors:e05Errors,network:e05Network});
+    }finally{await e05Context.close();}
+    const summary = { e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

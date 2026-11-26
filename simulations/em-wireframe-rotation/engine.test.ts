@@ -103,3 +103,31 @@ describe('E05 independent flux, derivative and driven rotation references',()=>{
     expect(r.driveWorkJ).toBeCloseTo(9,12);
   });
 });
+
+describe('E05 exact discontinuity and monotonic motion',()=>{
+  it('captures all entry and exit edges with true contact positions and no artificial force reversal',()=>{
+    const p:WireframeParams={...getPreset(0),loopShape:'square',fieldProfile:'dual-opposite',loopSizeL:.8,zoneHeightH:1,magneticB:.8,gravityEnabled:true};
+    const init=createInitialState(p),coarse=stepWireframeRotation(init,p,2).nextState;
+    let fine=init;for(let i=0;i<200;i++)fine=stepWireframeRotation(fine,p,.01).nextState;
+    expect(coarse.centerY).toBeCloseTo(fine.centerY,8);
+    expect(coarse.vy).toBeCloseTo(fine.vy,8);
+    expect(coarse.jouleHeatJ).toBeCloseTo(fine.jouleHeatJ,7);
+    const ys=[.4,-.4,-.6,-1.4,-1.6,-2.4];
+    expect(coarse.events).toHaveLength(ys.length);
+    for(let i=0;i<ys.length;i++){
+      expect(coarse.events[i]!.position!.y).toBeCloseTo(ys[i]!,12);
+      expect(coarse.events[i]!.metrics!.velocityMps).toBeLessThan(0);
+      expect(coarse.events[i]!.time).toBeCloseTo(fine.events[i]!.time,8);
+    }
+    expect(checkInvariants(coarse,init,p).every(r=>r.passed)).toBe(true);
+  });
+  it('with no gravity, induction can slow but cannot reverse a downward loop',()=>{
+    const p:WireframeParams={...getPreset(0),loopShape:'square',fieldProfile:'single-zone',loopSizeL:1,zoneHeightH:2,magneticB:3,resistanceR:.2,massM:.1,gravityEnabled:false,initialVy:1};
+    const init=createInitialState(p),s=stepWireframeRotation(init,p,10).nextState;
+    expect(s.vy).toBeLessThanOrEqual(0);
+    expect(s.centerY).toBeLessThanOrEqual(.5);
+    expect(s.centerY).toBeGreaterThan(.49);
+    expect(s.jouleHeatJ).toBeCloseTo(.05,9);
+    expect(checkInvariants(s,init,p).every(r=>r.passed)).toBe(true);
+  });
+});
