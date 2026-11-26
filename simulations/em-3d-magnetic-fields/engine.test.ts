@@ -228,3 +228,54 @@ describe('em-3d-magnetic-fields Biot-Savart & 3D Boris invariants (E10)', () => 
     }
   });
 });
+
+describe('E10 independent signed gyro and finite-wire physics',()=>{
+  it('resolves transverse phase and radius even at maximum uniform cyclotron frequency',()=>{
+    for(const sign of [-1,1]){
+      const p={...getPreset(3),qOverM:4*sign,uniformBz:4,vPerp:2.4,vParallel:-.7},initial=createInitialState(p),w=p.qOverM*p.uniformBz,t=1.173;
+      let s=initial;
+      for(let j=0;j<73;j++)s=stepMagnetic3d(s,p,t/73).nextState;
+      expect(s.velocity.x).toBeCloseTo(p.vPerp*Math.cos(w*t),4);
+      expect(s.velocity.y).toBeCloseTo(-p.vPerp*Math.sin(w*t),4);
+      expect(s.position.x).toBeCloseTo(initial.position.x+p.vPerp/w*Math.sin(w*t),5);
+      expect(s.position.y).toBeCloseTo(initial.position.y+p.vPerp/w*(Math.cos(w*t)-1),5);
+      expect(s.position.z).toBeCloseTo(initial.position.z+p.vParallel*t,9);
+      const radius=Math.hypot(s.position.x-initial.position.x,s.position.y-initial.position.y+p.vPerp/w);
+      expect(radius).toBeCloseTo(Math.abs(p.vPerp/w),9);
+    }
+  });
+  it('supports both signs and true zero of Bz, current and charge at the public parameter boundary',()=>{
+    const base=getPreset(3),schema=em3dMagneticFieldsPlugin.paramSchema;
+    const signed=resolvePluginParams(schema,{...base,uniformBz:-4,qOverM:-3,currentI:-2});
+    expect(signed.uniformBz).toBe(-4);expect(signed.qOverM).toBe(-3);expect(signed.currentI).toBe(-2);
+    const zero=resolvePluginParams(schema,{...base,uniformBz:0,qOverM:0,currentI:0});
+    expect(zero.uniformBz).toBe(0);
+  });
+  it('matches the analytic finite straight segment away from the filament including near field',()=>{
+    for(const rho of [.02,.12,.6,1.8])for(const z of [0,1.5,4.5]){
+      const p={...getPreset(2),geometryType:'straight-wire' as const,currentI:-2.5};
+      const B=evalBiotSavartB({x:rho,y:0,z},p);
+      const expected=MU_0*p.currentI/(4*Math.PI*rho)*((4-z)/Math.hypot(rho,4-z)+(4+z)/Math.hypot(rho,4+z));
+      expect(Math.abs((B.y-expected)/expected)).toBeLessThan(1e-8);
+      expect(B.x).toBe(0);expect(B.z).toBe(0);
+    }
+  });
+  it('rejects corrupted Lorentz acceleration that does spurious magnetic work',()=>{
+    const p=getPreset(3),s=createInitialState(p);
+    const bad={...s,lorentzForce:{x:10,y:0,z:2}};
+    expect(checkInvariants(bad).some(r=>!r.passed)).toBe(true);
+  });
+  it('zero field and parallel-only motion are not described as real helical orbits',()=>{
+    for(const p of [{...getPreset(3),uniformBz:0},{...getPreset(3),vPerp:0}]){
+      const s=createInitialState(p);
+      const f=em3dMagneticFieldsPlugin.formatFormulas!(s,p)[0]!;
+      expect(f.substitutedLatex).not.toContain('R&=');
+      expect(f.substitutedLatex).toContain('直线');
+    }
+  });
+  it('uniform export never labels irrelevant source current or conductor radius',()=>{
+    const p=getPreset(3),s=createInitialState(p),ir=em3dMagneticFieldsPlugin.exportDiagramIR!(s,p);
+    expect(ir.primitives.some(q=>(q.kind==='text'||q.kind==='mathLabel')&&q.text.includes('I='))).toBe(false);
+    expect(ir.primitives.some(q=>(q.kind==='text'||q.kind==='mathLabel')&&q.text.includes('B'))).toBe(true);
+  });
+});
