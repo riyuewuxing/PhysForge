@@ -88,7 +88,7 @@ export function makeThermoPlot(s:ThermoGasState,p:ThermoGasParams):ThermoPlot{
     const peq=computeCylinderEquilibriumPressure(p),maxT=Math.max(p.initialTempK,p.targetTempK);
     xLimit=Math.max(p.pinVolumeL,s.molesN*R_GAS*maxT/peq*1000);yLimit=peq/1000;
   }
-  const xMax=niceMax(Math.max(xLimit,current.x,...raw.map(q=>q.x))*1.02),yMax=niceMax(Math.max(yLimit,current.y,...raw.map(q=>q.y))*1.02);
+  const xMax=kind==='discrete-strokes'?Math.max(1,current.x+1):niceMax(Math.max(xLimit,current.x,...raw.map(q=>q.x))*1.02),yMax=niceMax(Math.max(yLimit,current.y,...raw.map(q=>q.y))*1.02);
   const x0=.37,x1=2.13,y0=-.80,y1=.88;
   const map=(q:Point):Point=>({x:x0+(x1-x0)*q.x/xMax,y:y0+(y1-y0)*q.y/yMax});
   const points=raw.map(map),now=map(current),primitives:DiagramPrimitive[]=[];
@@ -97,10 +97,14 @@ export function makeThermoPlot(s:ThermoGasState,p:ThermoGasParams):ThermoPlot{
   line({x:x0,y:y0},{x:x1,y:y0});line({x:x0,y:y0},{x:x0,y:y1});
   for(let i=0;i<=4;i++){
     const x=x0+(x1-x0)*i/4,y=y0+(y1-y0)*i/4;
-    line({x,y:y0},{x,y:y0-.04});line({x:x0-.035,y},{x:x0,y});
-    label(x,y0-.13,(xMax*i/4).toFixed(xMax<2?2:1));
+    if(kind!=='discrete-strokes'){line({x,y:y0},{x,y:y0-.04});label(x,y0-.13,(xMax*i/4).toFixed(xMax<2?2:1));}
+    line({x:x0-.035,y},{x:x0,y});
     label(x0-.07,y,(yMax*i/4).toFixed(yMax<10?1:0),'end');
     if(i>0)line({x:x0,y},{x:x1,y},true);
+  }
+  if(kind==='discrete-strokes'){
+    const step=xMax>6?2:1;
+    for(let k=0;k<=xMax;k+=step){const x=map({x:k,y:0}).x;line({x,y:y0},{x,y:y0-.04});label(x,y0-.13,String(k));}
   }
   label((x0+x1)/2,-1.10,xLabel);label(x0-.01,1.03,'P / kPa','start');label((x0+x1)/2,1.35,title);
   if(points.length>1&&kind!=='discrete-strokes')primitives.push({kind:'polyline',points,dashed:kind==='equilibrium-scan'});
