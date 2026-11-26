@@ -2,7 +2,7 @@ import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { opticsWaveInterferencePlugin } from './plugin.js';
 import { waveOpticsPresets } from './presets.js';
-import { makeOpticsProfile, averageNewtonPixel } from './sceneGeometry.js';
+import { makeOpticsProfile, averageNewtonPixel, makeOpticsApparatus, binOpticsProfile } from './sceneGeometry.js';
 import {
   computeKeyOpticsMetrics,
   createInitialState,
@@ -157,5 +157,38 @@ describe('O01 display sampling and export consistency',()=>{
         }
       }else throw Error('missing mode profile');
     }
+  });
+});
+
+describe('H43 shared teaching geometry and display conservation',()=>{
+  it('uses actual wedge gap at every section sample including contact and defects',()=>{
+    for(const defectMode of ['flat','bump','pit'] as const)for(const wedgeAngleDeg of [0,.012,.03]){
+      const p={...getPreset(0),defectMode,wedgeAngleDeg},a=makeOpticsApparatus(p);
+      expect(a.valid).toBe(true);
+      for(const s of a.gapSamples!){
+        const h=Math.max(0,s.xMm*1e-3*Math.tan(wedgeAngleDeg*Math.PI/180)+(defectMode==='flat'?0:(defectMode==='bump'?-1:1)*.4e-6*Math.exp(-((s.xMm-10)**2)/4)));
+        expect(s.gapM).toBeCloseTo(h,14);
+        expect(s.upperY-s.lowerY).toBeCloseTo(45000*h,12);
+      }
+    }
+  });
+  it('keeps the spherical interface in contact at the center and uses exact sag elsewhere',()=>{
+    const p={...getPreset(2),lensRadiusR:.5},a=makeOpticsApparatus(p);
+    expect(a.gapSamples![50]!.gapM).toBe(0);
+    for(const s of a.gapSamples!){const r=s.xMm*1e-3,R=p.lensRadiusR;expect(s.gapM).toBeCloseTo(R-Math.sqrt(R*R-r*r),13);expect(s.upperY-s.lowerY).toBeCloseTo(22000*s.gapM,12);}
+  });
+  it('preserves slit count and width/pitch ratio without inventing overlapping openings',()=>{
+    const p={...getPreset(3),slitWidthMicron:2,gratingPitchMicron:5,slitCountN:6};
+    const a=makeOpticsApparatus(p),slits=a.slits!;
+    expect(slits).toHaveLength(6);
+    const width=slits[0]!.right-slits[0]!.left,pitch=slits[1]!.left-slits[0]!.left;
+    expect(width/pitch).toBeCloseTo(.4,12);
+    expect(makeOpticsApparatus({...p,slitCountN:1,gratingPitchMicron:1}).slits).toHaveLength(1);
+    expect(makeOpticsApparatus({...p,slitWidthMicron:8}).slits).toEqual([]);
+  });
+  it('conserves piecewise-linear profile integral and reports bounded separate extrema',()=>{
+    const points=[{u:0,intensity:0},{u:.25,intensity:1},{u:.5,intensity:0},{u:.75,intensity:1},{u:1,intensity:0}];
+    for(const count of [1,3,7,40]){const b=binOpticsProfile(points,count);expect(b).toHaveLength(count);expect(b.reduce((sum,v)=>sum+v.mean,0)/count).toBeCloseTo(.5,12);for(const v of b){expect(v.mean).toBeGreaterThanOrEqual(v.min-1e-12);expect(v.mean).toBeLessThanOrEqual(v.max+1e-12);}}
+    expect(binOpticsProfile([{u:0,intensity:.3},{u:1,intensity:.3}],7).every(b=>Math.abs(b.mean-.3)<1e-12)).toBe(true);
   });
 });

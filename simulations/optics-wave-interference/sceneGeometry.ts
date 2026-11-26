@@ -1,4 +1,5 @@
-import {computeKeyOpticsMetrics,evalThinFilmIntensity,evalNewtonRingIntensity,evalFraunhoferGratingIntensity,type WaveOpticsParams,type WaveOpticsState} from './engine.js';
+import type {DiagramPrimitive} from '@physforge/sim-sdk';
+import {computeKeyOpticsMetrics,evalWedgeThicknessMeters,evalThinFilmIntensity,evalNewtonRingIntensity,evalFraunhoferGratingIntensity,type WaveOpticsParams,type WaveOpticsState} from './engine.js';
 type Sample={u:number;intensity:number};
 type Profile={min:number;max:number;axis:string;points:Sample[];ticks:{u:number;label:string}[];marks:{u:number}[]};
 let profileCache:{key:string;value:Profile}|undefined;
@@ -80,4 +81,100 @@ export function makePattern(p:WaveOpticsParams,hex:string,widthPx:number,heightP
     data.data[idx+3]=255;
   }
   ctx.putImageData(data,0,0);patternCache={key,canvas:c};return c;
+}
+
+// Shared physical apparatus cross-sections. Coordinates are display-world
+// units; horizontal scales are explicit, vertical film gaps exaggerated.
+export type OpticsApparatus={primitives:DiagramPrimitive[];kind:WaveOpticsParams['mode'];gapSamples?:{xMm:number;gapM:number;upperY:number;lowerY:number}[];slits?:{left:number;right:number}[];valid:boolean};
+export function makeOpticsApparatus(p:WaveOpticsParams):OpticsApparatus{
+  const primitives:DiagramPrimitive[]=[];
+  const text=(x:number,y:number,label:string)=>primitives.push({kind:'text',x,y,text:label,align:'middle'});
+  const line=(x1:number,y1:number,x2:number,y2:number,dashed=false)=>primitives.push({kind:'line',x1,y1,x2,y2,dashed});
+  const left=-2.18,right=-.12,cx=(left+right)/2,base=.78;
+  if(p.mode==='thin-film-wedge'){
+    const samples=[];
+    for(let i=0;i<=100;i++){
+      const xMm=i/5,h=evalWedgeThicknessMeters(xMm,p);
+      if(h===undefined){text(cx,1.8,'无有效薄膜几何');return {kind:p.mode,primitives,valid:false};}
+      const upperY=base+45000*xMm*1e-3*Math.tan(p.wedgeAngleDeg*Math.PI/180);
+      samples.push({xMm,gapM:h,upperY,lowerY:upperY-45000*h});
+    }
+    const x=(v:number)=>left+(right-left)*v/20;
+    const upper=samples.map(s=>({x:x(s.xMm),y:s.upperY})),lower=samples.map(s=>({x:x(s.xMm),y:s.lowerY}));
+    primitives.push({kind:'polyline',points:upper},{kind:'polyline',points:lower});
+    primitives.push({kind:'polyline',points:upper.map(v=>({...v,y:v.y+.10}))},{kind:'polyline',points:lower.map(v=>({...v,y:v.y-.10}))});
+    const mid=samples[50]!;
+    line(cx,mid.lowerY,cx,mid.upperY,true);
+    text(cx,1.83,'劈尖剖面 · 厚度夸大');
+    text(cx,1.52,'α='+p.wedgeAngleDeg.toFixed(3)+'°  n='+p.refractiveIndexN2.toFixed(2));
+    text(cx,.46,'h(10 mm) = '+(mid.gapM*1e6).toFixed(2)+' μm');
+    text(left+.18,.25,'薄端');text(right-.18,.25,'厚端');
+    return {kind:p.mode,primitives,gapSamples:samples,valid:true};
+  }
+  if(p.mode==='newtons-rings'){
+    const max=makeOpticsProfile(p).max,R=p.lensRadiusR,samples=[];
+    for(let i=0;i<=100;i++){
+      const xMm=max*(2*i/100-1),r=Math.abs(xMm)*1e-3;
+      if(!Number.isFinite(R)||R<=r){text(cx,1.8,'无有效球面几何');return {kind:p.mode,primitives,valid:false};}
+      const h=r*r/(R+Math.sqrt((R-r)*(R+r)));
+      samples.push({xMm,gapM:h,lowerY:base,upperY:base+22000*h});
+    }
+    const x=(v:number)=>cx+(right-left)*v/(2*max);
+    const upper=samples.map(s=>({x:x(s.xMm),y:s.upperY}));
+    primitives.push({kind:'polyline',points:upper});
+    line(left,base,right,base);line(left,base-.12,right,base-.12);
+    const top=base+.67;line(left,top,right,top);line(left,upper[0]!.y,left,top);line(right,upper.at(-1)!.y,right,top);
+    const probe=samples[80]!;line(x(probe.xMm),probe.lowerY,x(probe.xMm),probe.upperY,true);
+    text(cx,1.83,'平凸透镜 / 平板 · 厚度夸大');
+    text(cx,1.61,'R='+p.lensRadiusR.toFixed(2)+' m');
+    text(cx,.46,'h('+Math.abs(probe.xMm).toFixed(1)+' mm) = '+(probe.gapM*1e6).toFixed(2)+' μm');
+    text(cx,.25,'接触点 r=0 · '+(p.halfWaveLoss?'反射相移 π':'反射相移 0'));
+    return {kind:p.mode,primitives,gapSamples:samples,valid:true};
+  }
+  const m=computeKeyOpticsMetrics(p);
+  text(cx,1.83,'狭缝开口平面 · 比例示意');
+  if(!m.gratingValid){
+    text(cx,1.27,'请求重叠：d < a');text(cx,.78,'不生成有效开口');
+    return {kind:p.mode,primitives,valid:false,slits:[]};
+  }
+  const N=p.slitCountN,a=p.slitWidthMicron,d=N===1?0:p.gratingPitchMicron;
+  const scale=1.76/((N-1)*d+a),slits=Array.from({length:N},(_,i)=>{
+    const center=cx+(i-(N-1)/2)*d*scale;return {left:center-a*scale/2,right:center+a*scale/2};
+  });
+  const y=.98;
+  let previous=left;
+  for(const slit of slits){
+    if(slit.left>previous+1e-10)primitives.push({kind:'rect',x:previous,y:y-.065,width:slit.left-previous,height:.13,hatch:true});
+    line(slit.left,y-.12,slit.left,y+.12);line(slit.right,y-.12,slit.right,y+.12);
+    previous=slit.right;
+  }
+  if(right>previous+1e-10)primitives.push({kind:'rect',x:previous,y:y-.065,width:right-previous,height:.13,hatch:true});
+  text(cx,1.47,'N = '+N+'，a = '+a.toFixed(1)+' μm');
+  text(cx,.55,N===1?'单缝 · 无节距': 'd = '+d.toFixed(1)+' μm · d/a = '+(d/a).toFixed(2));
+  text(cx,.25,'正入射 · 远场角分布');
+  return {kind:p.mode,primitives,slits,valid:true};
+}
+// Conservative display reduction: integrate the piecewise-linear physical
+// profile over equal bins. Keep the sampled min/max separately from mean.
+export type ProfileBin={u:number;mean:number;min:number;max:number};
+export function binOpticsProfile(points:readonly Sample[],count:number):ProfileBin[]{
+  if(points.length<2||!Number.isFinite(count)||count<1)return [];
+  const n=Math.max(1,Math.min(4096,Math.floor(count))),out:ProfileBin[]=[];
+  let j=0;
+  for(let i=0;i<n;i++){
+    const lo=i/n,hi=(i+1)/n;let area=0,mn=Infinity,mx=-Infinity,covered=0;
+    while(j+1<points.length&&points[j+1]!.u<=lo)j++;
+    let k=j;
+    while(k+1<points.length&&points[k]!.u<hi){
+      const a=points[k]!,b=points[k+1]!,l=Math.max(lo,a.u),r=Math.min(hi,b.u),span=b.u-a.u;
+      if(r>l&&span>0){
+        const v=a.intensity+(b.intensity-a.intensity)*(l-a.u)/span,w=a.intensity+(b.intensity-a.intensity)*(r-a.u)/span;
+        area+=(r-l)*(v+w)/2;covered+=r-l;mn=Math.min(mn,v,w);mx=Math.max(mx,v,w);
+      }
+      if(b.u>=hi)break;k++;
+    }
+    if(covered>0)out.push({u:(lo+hi)/2,mean:area/covered,min:mn,max:mx});
+    j=k;
+  }
+  return out;
 }

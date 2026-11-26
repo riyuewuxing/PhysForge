@@ -779,6 +779,16 @@ async function auditO01(page,origin){
     if(expected.slitCountN===1&&await page.getByTestId('param-slider-gratingPitchMicron').count())throw Error('O01 irrelevant grating pitch');
     await page.screenshot({path:path.join(OUT_DIR,'H42_O01_'+id+'.png')});
   }
+  await selectPreset(page,'grating-missing-order-3',true);
+  const n=page.getByTestId('param-slider-slitCountN');
+  await n.fill('1');await syncO01(page,false,{mode:'single-slit-grating',slitCountN:1});
+  if(await page.getByTestId('param-slider-gratingPitchMicron').count())throw Error('O01 same-mode slider retained pitch');
+  await n.fill('6');await syncO01(page,false,{mode:'single-slit-grating',slitCountN:6});
+  if(!await page.getByTestId('param-slider-gratingPitchMicron').count())throw Error('O01 pitch did not return');
+  await selectPreset(page,'newton-dense-outer-rings',true);
+  await syncO01(page,false,{mode:'newtons-rings',wavelengthNm:400});
+  const theme=page.getByTestId('btn-theme');
+  if(await theme.isVisible()){await theme.click();await page.waitForTimeout(200);await page.screenshot({path:path.join(OUT_DIR,'H43_O01_dense_projector.png')});await theme.click();}
   return report;
 }
 
@@ -4007,10 +4017,19 @@ async function main() {
     try{
       await o01Page.goto(pathToFileURL(o01File).href);
       for(const [id,expected] of o01Cases){
-        if(id!=='air-wedge-flat-fringes')await o01Page.locator('[data-preset-id="'+id+'"]').click();
+        if(id!=='air-wedge-flat-fringes')await o01Page.getByTestId('sf-o01-presets').selectOption(id);
         o01OfflineReport[id]=await syncO01(o01Page,true,expected);
         await o01Page.screenshot({path:path.join(OUT_DIR,'H42_O01_offline_'+id+'.png')});
       }
+      await o01Page.getByTestId('sf-o01-presets').selectOption('grating-missing-order-3');
+      await syncO01(o01Page,true,{mode:'single-slit-grating',slitCountN:6});
+      await o01Page.getByTestId('sf-param-slitCountN').fill('1');await syncO01(o01Page,true,{mode:'single-slit-grating',slitCountN:1});
+      if(await o01Page.getByTestId('sf-param-gratingPitchMicron').count())throw Error('O01 offline stale pitch');
+      await o01Page.getByTestId('sf-param-slitCountN').fill('6');await syncO01(o01Page,true,{mode:'single-slit-grating',slitCountN:6});
+      if(!await o01Page.getByTestId('sf-param-gratingPitchMicron').count())throw Error('O01 offline pitch did not return');
+      await o01Page.getByTestId('sf-o01-presets').selectOption('newton-dense-outer-rings');await syncO01(o01Page,true,{mode:'newtons-rings',wavelengthNm:400});
+      await o01Page.getByRole('button',{name:'黑板深蓝'}).click();await o01Page.waitForTimeout(200);
+      await o01Page.screenshot({path:path.join(OUT_DIR,'H43_O01_offline_dense_projector.png')});
       if(o01Errors.length||o01Network.length)throw Error('O01 offline errors '+JSON.stringify({o01Errors,o01Network}));
       Object.assign(o01OfflineReport,{errors:o01Errors,network:o01Network});
     }finally{await o01Context.close();}
