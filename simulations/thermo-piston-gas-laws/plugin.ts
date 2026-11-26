@@ -25,7 +25,8 @@ const paramSchema: readonly ParamFieldSpec<ThermoGasParams>[] = [
     ]
   },
   { key: 'molesN', kind: 'number', label: '气体物质的量 n', unit: 'mol', min: 0.1, max: 0.6, step: 0.05, defaultValue: 0.25 },
-  { key: 'targetTempK', kind: 'number', label: '目标环境温度 T', unit: 'K', min: 200, max: 600, step: 10, defaultValue: 420 },
+  { key: 'initialTempK', kind: 'number', label: '汽缸初始温度 T₀', unit: 'K', min: 200, max: 600, step: 10, defaultValue: 260 },
+  { key: 'targetTempK', kind: 'number', label: '目标 / 等温参考温度 T', unit: 'K', min: 200, max: 600, step: 10, defaultValue: 420 },
   { key: 'heatingRateKPerS', kind: 'number', label: '升降温速率 |dT/dt|', unit: 'K/s', min: 10, max: 150, step: 10, defaultValue: 60 },
   { key: 'pistonAreaCm2', kind: 'number', label: '活塞截面积 S', unit: 'cm²', min: 20, max: 100, step: 10, defaultValue: 50 },
   { key: 'pistonMassKg', kind: 'number', label: '活塞质量 m', unit: 'kg', min: 0, max: 30, step: 2, defaultValue: 10 },
