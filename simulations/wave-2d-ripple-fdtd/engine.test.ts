@@ -4,6 +4,7 @@ import { wave2dRippleFdtdPlugin } from './plugin.js';
 import { waveFdtdPresets } from './presets.js';
 import {
   checkInvariants,
+  computeObservables,
   createInitialState,
   stepWaveFdtd,
   type WaveFdtdParams
@@ -67,5 +68,51 @@ describe('wave-2d-ripple-fdtd stability & double-slit fringes (W02)', () => {
     expect(stepWaveFdtd(s0, p0, 0).nextState).toEqual(s0);
     const s1 = stepWaveFdtd(s0, p0, 0.1).nextState;
     expect(s1.maxAmplitude).toBe(0);
+  });
+});
+
+describe('W02 independent physical clock and realized geometry',()=>{
+  it('advances exactly the requested outer time at 240 Hz rather than forcing one larger solver step',()=>{
+    for(const c of [.5,1,2]){
+      const p={...getPreset(0),waveSpeed:c},initial=createInitialState(p);
+      let s=initial;
+      for(let j=0;j<60;j++)s=stepWaveFdtd(s,p,1/240).nextState;
+      expect(s.t).toBeCloseTo(.25,12);
+    }
+  });
+  it('does not truncate long elapsed physical intervals',()=>{
+    const p=getPreset(0),s=stepWaveFdtd(createInitialState(p),p,1.17).nextState;
+    expect(s.t).toBeCloseTo(1.17,12);
+  });
+  it('is partition independent for equal elapsed times and does not mutate prior solver state',()=>{
+    const p=getPreset(0),i=createInitialState(p);
+    const a=stepWaveFdtd(i,p,.125).nextState;
+    let b=i;for(let j=0;j<30;j++)b=stepWaveFdtd(b,p,1/240).nextState;
+    expect(a.t).toBeCloseTo(b.t,12);
+    let err=0;for(let j=0;j<a.fieldSnapshot.length;j++)err=Math.max(err,Math.abs(a.fieldSnapshot[j]!-b.fieldSnapshot[j]!));
+    expect(err).toBeLessThan(1e-7);
+    expect(i.fdtdRef.uCurr.every(v=>v===0)).toBe(true);
+  });
+  it('realizes exact requested slit widths in nonoverlap geometry',()=>{
+    for(const width of [3,4,5,8]){
+      const p={...getPreset(0),slitWidthCells:width,slitSepCells:30},s=createInitialState(p);
+      const runs:number[]=[];let n=0;
+      for(let j=0;j<s.ny;j++){
+        if(s.speedSnapshot[j*s.nx+s.wallI]!>0)n++;
+        else if(n){runs.push(n);n=0;}
+      }
+      if(n)runs.push(n);
+      expect(runs).toEqual([width,width]);
+    }
+  });
+  it('does not include preflight zero samples in a measured screen average',()=>{
+    const p=getPreset(0),s=stepWaveFdtd(createInitialState(p),p,3).nextState;
+    expect(computeObservables(s).screenAverageSamples).toBe(0);
+    expect(computeObservables(s).centerScreenIntensity).toBeUndefined();
+  });
+  it('exports two genuine aperture gaps, not a solid wall covering them',()=>{
+    const p=getPreset(0),s=createInitialState(p),ir=wave2dRippleFdtdPlugin.exportDiagramIR!(s,p);
+    const walls=ir.primitives.filter(q=>q.kind==='rect'&&q.hatch);
+    expect(walls.length).toBe(3);
   });
 });
