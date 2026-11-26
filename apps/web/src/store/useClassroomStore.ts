@@ -171,6 +171,7 @@ export function isNonTimeSeriesModel(modelId: string, params: ParamRecord): bool
   if (NON_TIME_SERIES_MODEL_IDS.has(modelId)) return true;
   if(modelId==='thermo-piston-gas-laws')return params.mode!=='stop-pin-cylinder';
   if(modelId==='thermo-cycles-kinetic-md')return params.mode!=='kinetic-md-box';
+  if(modelId==='modern-photoelectric-compton')return true;
   if (modelId === 'circuit-dc-capacitor-mna' || modelId === 'builder-circuit-mna') {
     const dynamicTopologies = new Set(['rc-transient', 'rc-bridge-charge', 'series-parallel-dynamic']);
     return !dynamicTopologies.has(String(params.topology ?? ''));
@@ -420,11 +421,11 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
         : [...s.activeLayers, layerId]
     })),
 
-  setPlaying: (playing) => set((s) => ({ isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box'))?false:playing, scrubTime: playing ? null : s.scrubTime,
+  setPlaying: (playing) => set((s) => ({ isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton')?false:playing, scrubTime: playing ? null : s.scrubTime,
     autoFreezeBadge: playing ? null : s.autoFreezeBadge })),
   togglePlaying: () =>
     set((s) => ({
-      isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box'))?false:!s.isPlaying,
+      isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton')?false:!s.isPlaying,
       scrubTime: !s.isPlaying ? null : s.scrubTime,
       autoFreezeBadge: !s.isPlaying ? null : s.autoFreezeBadge
     })),
@@ -529,7 +530,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       isPlaying: false,
       scrubTime: null,
-      stepOnceNonce: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box'))?s.stepOnceNonce:s.stepOnceNonce + 1
+      stepOnceNonce: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton')?s.stepOnceNonce:s.stepOnceNonce + 1
     })),
   setScrubTime: (t) => set({ scrubTime: t }),
   setTelemetry: (telemetry) => set({ telemetry })
