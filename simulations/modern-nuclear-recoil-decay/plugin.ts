@@ -298,10 +298,10 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
       for(const tick of plot.ticksX){const a=m.toScreen(tick.x,-.9),b=m.toScreen(tick.x,-.95),p=m.toScreen(tick.x,-1.1);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.textAlign='center';ctx.fillText(tick.text,p.x,p.y);}
       for(const tick of plot.ticksY){const a=m.toScreen(.1,tick.y),b=m.toScreen(.15,tick.y),p=m.toScreen(.06,tick.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.textAlign='right';ctx.fillText(tick.text,p.x,p.y+4);}
       const yl=m.toScreen(.15,1.04),xl=m.toScreen(2.1,-1.3);ctx.textAlign='center';ctx.fillText('N/N₀',yl.x,yl.y);ctx.textAlign='right';ctx.fillText('t / s',xl.x,xl.y);
-      labels.push({id:'half-life-grid-legend',...m.toScreen(-1.05,-.92),text:'绿色：未衰变；灰色：已衰变',font:'12px ui-sans-serif, system-ui',color:muted});
-      labels.push({id:'half-life-legend',...m.toScreen(1.05,-1.47),text:'样本阶梯 / 理论期望（虚线）',font:'12px ui-sans-serif, system-ui',color:muted});
+      labels.push({id:'half-life-grid-legend',...m.toScreen(-1.05,1.15),text:'绿色：未衰变；灰色：已衰变',font:'12px ui-sans-serif, system-ui',color:muted});
+      labels.push({id:'half-life-legend',...m.toScreen(1.05,1.53),text:'样本阶梯 / 理论期望（虚线）',font:'12px ui-sans-serif, system-ui',color:muted});
 
-      labels.push({ id: 'half-life-summary', ...m.toScreen(1.05, 1.05), text: `N(t) = ${state.remainingCount} / ${n} (${((100 * state.remainingCount) / n).toFixed(1)}%) | t / T₁/₂ = ${(state.t / state.halfLifeS).toFixed(2)}`, color: ink, font: 'bold 14px ui-sans-serif, system-ui' });
+      labels.push({ id: 'half-life-summary', ...m.toScreen(1.05, 1.28), text: `N(t) = ${state.remainingCount} / ${n} (${((100 * state.remainingCount) / n).toFixed(1)}%) | t / T₁/₂ = ${(state.t / state.halfLifeS).toFixed(2)}`, color: ink, font: 'bold 14px ui-sans-serif, system-ui' });
       resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;

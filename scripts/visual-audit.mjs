@@ -1304,6 +1304,7 @@ async function auditF05Cases(page,offline,select){
  if('radiusRatio'in zero||'radiusEmittedM'in zero||'radiusDaughterM'in zero)throw Error('F05 invented zero-field curvature');
  await select('cloud-chamber-beta-internal');
  const beta=await save('beta_endpoint',{mode:'cloud-chamber-recoil',decayKind:'beta-minus',t:0});await assertStatic();
+ if(!offline){const massText=await page.getByTestId('param-value-massDefectU').textContent();if(Math.abs(parseFloat(massText??'')-beta.massDefectU)>1e-8||!Number.isFinite(parseFloat(massText??'')))throw Error('F05 mass-defect display lost precision '+massText);}
  if(Math.abs(beta.emittedKineticMev+beta.daughterKineticMev-beta.qValueMev)>1e-8)throw Error('F05 beta endpoint budget');
  await select('half-life-mc-ensemble');
  const init=await save('sample_initial',{mode:'half-life-mc',t:0,remainingCount:1600});
