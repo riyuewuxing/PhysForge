@@ -1,6 +1,6 @@
 import React, { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
-import { ChevronDown, ChevronUp, Crosshair, MoveDiagonal2, RotateCcw, Ruler } from 'lucide-react';
+import { ChevronDown, Crosshair, MoveDiagonal2, RotateCcw, Ruler } from 'lucide-react';
 import type { AnySimulationPlugin } from '@physforge/simulations/registry';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
 type B1StagePlugin=typeof import('../../../../simulations/em-bounded-magnetic-field/plugin.js').emBoundedMagneticFieldPlugin;
@@ -1905,16 +1905,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             </div>
             </div>
 
-            <button
-              type="button"
-              data-testid="btn-toggle-oscilloscope"
-              onClick={onToggleOscilloscope}
-              className="pf-floating-glass absolute bottom-3 right-3 z-10 grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-slate-900/70 text-slate-200 shadow-xl backdrop-blur-xl transition hover:text-sky-200"
-              aria-label={oscilloscopeCollapsed ? '展开示波器' : '收起示波器'}
-              title={oscilloscopeCollapsed ? '展开示波器' : '收起示波器'}
-            >
-              {oscilloscopeCollapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </button>
+
           </>
         )}
 
@@ -1984,6 +1975,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             )}
             <button
               type="button"
+              data-testid="btn-toggle-oscilloscope"
               onClick={onToggleOscilloscope}
               aria-label="收起示波器"
               title="收起示波器"
