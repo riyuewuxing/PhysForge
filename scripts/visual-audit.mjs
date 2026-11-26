@@ -597,6 +597,11 @@ async function auditE03AcScope(page,origin){
   const n=Math.floor(motion.t/2),r=motion.t-2*n;
   check(motion.x0,4*n+2*r*r,'absolute displacement',1e-6);
   await photo('square');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  const acRuler=page.getByTestId('ruler-measurement');
+  await acRuler.waitFor({state:'visible'});
+  if(!(await acRuler.textContent()).includes('竖向示意'))throw Error('E03 ruler lane scale');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
   const sine=await select('sine-wave-acceleration','ac-sine-wave','x0','xQuarter');
   const wave=await runTo(2.05),w=Math.PI;
   check(wave.x0,5/w*(wave.t-Math.sin(w*wave.t)/w),'sine primitive',1e-6);
@@ -607,6 +612,10 @@ async function auditE03AcScope(page,origin){
   check(beam.screenXCm,11/3*Math.sin(2*Math.PI*beam.t/1.6),'CRT X',1e-6);
   check(beam.screenYCm,11/3*Math.sin(4*Math.PI*beam.t/1.6+Math.PI/2),'CRT Y',1e-6);
   if(beam.trailCount<100)throw Error('E03 missing actual phosphor samples');await photo('crt');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  await acRuler.waitFor({state:'visible'});
+  if(!(await acRuler.textContent()).includes('cm'))throw Error('E03 ruler physical CRT centimetres');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
   const blocked=await select('crt-plate-contact','oscilloscope-lissajous','screenXCm','screenYCm');
   check(blocked.beamStatus,3,'Y plate contact');check(blocked.trailCount,0,'blocked trail');
   if('screenYCm'in blocked||await page.getByTestId('ac-screenYCm').count())throw Error('E03 fake blocked screen reading');await photo('blocked');
@@ -684,6 +693,10 @@ async function auditE02Capacitor(page,origin){
   if('dropVyMmS'in open)throw Error('E02 invisible oil drop observable');
   await page.getByTestId('capacitor-scope-empty').waitFor({state:'visible'});
   await photo('open_double_gap');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  const capRuler=page.getByTestId('ruler-measurement');await capRuler.waitFor({state:'visible'});
+  if(!(await capRuler.textContent()).includes('mm · 横向示意'))throw Error('E02 ruler physical vertical scale');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
   const openRun=await runTo(.2);check(openRun.chargeNC,open.chargeNC,'constant Q while running');
   const top=await select('top-plate-grounded-potential','open-const-q',200,false);
   check(top.phiTopV,0,'top grounded');check(top.phiPV,-168,'top gauge');await photo('top_grounded');

@@ -5,7 +5,8 @@ import { acScopePresets } from './presets.js';
 import {
   checkInvariants,
   equivalentMetrics,
-  CRT_SCREEN_RADIUS,
+  CRT_SCREEN_DRAW_RADIUS,
+  CRT_CM_PER_DRAW_UNIT,
   EQ_MASS,
   computeObservables,
   createInitialState,
@@ -140,7 +141,7 @@ const allChannels:readonly TelemetryChannelSpec[]=[
   {key:'rodForceN',label:'有向杆反力',unit:'N',color:'#4ade80'},
   {key:'eqTotalEnergy',label:'总能量',unit:'J',color:'#f472b6'}
 ];
-const screenR=1.45,cmScale=screenR/(CRT_SCREEN_RADIUS*100);
+const screenR=CRT_SCREEN_DRAW_RADIUS,cmScale=1/CRT_CM_PER_DRAW_UNIT;
 export function acLaneGeometry(s:AcScopeState){
   const xmin=Math.min(0,...s.particles.map(p=>p.x)),xmax=Math.max(0,...s.particles.map(p=>p.x));
   const span=Math.max(2,xmax-xmin),center=(xmin+xmax)/2,left=center-.70*span,right=center+.70*span;

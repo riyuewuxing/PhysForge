@@ -26,6 +26,8 @@ import type { SpringSepParams,SpringSepState } from '../../../../simulations/mec
 type SpringStagePlugin=typeof import('../../../../simulations/mech-spring-separation/plugin.js').mechSpringSeparationPlugin;
 import type { CollisionRecoilParams,CollisionRecoilState } from '../../../../simulations/mech-collision-recoil/engine.js';
 type CollisionStagePlugin=typeof import('../../../../simulations/mech-collision-recoil/plugin.js').mechCollisionRecoilPlugin;
+import {DISPLAY_LENGTH_PER_M} from '../../../../simulations/em-capacitor-millikan/engine.js';
+import {CRT_CM_PER_DRAW_UNIT} from '../../../../simulations/em-ac-field-oscilloscope/engine.js';
 import type {CapacitorMillikanParams,CapacitorMillikanState} from '../../../../simulations/em-capacitor-millikan/engine.js';
 type CapacitorStagePlugin=typeof import('../../../../simulations/em-capacitor-millikan/plugin.js').emCapacitorMillikanPlugin;
 import type {AcScopeParams,AcScopeState} from '../../../../simulations/em-ac-field-oscilloscope/engine.js';
@@ -1859,6 +1861,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         {/* V2 实测工具箱叠加层（虚拟直尺 / 0.1° 量角器 / 三点圆规） */}
         <RulerToolboxOverlay
           activeTool={measureTool}
+          measurementSpace={capacitorStage?{kind:'vertical',factor:1000/DISPLAY_LENGTH_PER_M,unit:'mm'}:acStage&&params.mode==='oscilloscope-lissajous'?{kind:'metric',factor:CRT_CM_PER_DRAW_UNIT,unit:'cm'}:acStage&&(params.mode==='ac-square-wave'||params.mode==='ac-sine-wave')?{kind:'horizontal',factor:1,unit:'m'}:undefined}
           viewport={overlayViewport}
           frameOrigin={computeEffectiveViewport(overlayViewport, readDisplayedFrame(plugin.meta.id)?.state ?? null).frameOrigin}
         />

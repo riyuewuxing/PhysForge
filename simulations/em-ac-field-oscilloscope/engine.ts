@@ -28,6 +28,8 @@ export const CRT_PLATE_LENGTH=.08;
 export const CRT_PLATE_GAP=.02;
 export const CRT_DRIFT_LENGTH=.16;
 export const CRT_SCREEN_RADIUS=.06;
+export const CRT_SCREEN_DRAW_RADIUS=1.45;
+export const CRT_CM_PER_DRAW_UNIT=CRT_SCREEN_RADIUS*100/CRT_SCREEN_DRAW_RADIUS;
 export const EQ_MASS=1;
 export type BeamStatus='lit'|'no-acceleration'|'x-plate'|'y-plate'|'both-plates'|'screen-miss';
 export interface GroupParticle {

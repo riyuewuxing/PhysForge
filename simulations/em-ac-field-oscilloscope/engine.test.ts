@@ -134,7 +134,9 @@ describe('H33 E03 contact, real screen samples and geometry',()=>{
     expect(solveDeflectionAxis(0,80).analyticalY).toBeNull();
   });
   it('records only actual lit samples and breaks the trace after a dark interval',()=>{
-    const p={...getPreset(1),uAccelV:400,uYMaxV:200};
+    const dark={...getPreset(1),uAccelV:400,uYMaxV:200};
+    for(let i=0;i<=400;i++)expect(sampleCrt(i*dark.periodT/400,dark).status).not.toBe('lit');
+    const p={...dark,uXMaxV:20};
     let s=createInitialState(p);expect(s.beamStatus).toBe('y-plate');
     let wasDark=true,found=false;
     for(let i=0;i<400;i++){
