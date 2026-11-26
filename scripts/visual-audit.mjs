@@ -882,7 +882,16 @@ async function syncF01(page,offline,expected){
     if(offline?await page.getByTestId('sf-uplot').isVisible():(await page.getByTestId('floating-scope-dock').count()||await page.getByTestId('btn-expand-oscilloscope').count()))throw Error('F01 static scope visible');
   }else{
     if(await play.isDisabled())throw Error('F01 cylinder play disabled');
-    await page.waitForFunction(({offline,t})=>{const root=document.querySelector('[data-testid="'+(offline?'sf-uplot':'uplot-container')+'"]'),dock=offline?root:document.querySelector('[data-testid="floating-scope-dock"]');const max=Number(root?.dataset.scopeMax);return dock?.dataset.scopeUnits==='separate'&&Number.isFinite(max)&&(t===0?max<=1:max>=t-.15&&max<=t+1);},{offline,t:s.t},{timeout:5000});
+    // A single initial sample has no drawable time series. Check the
+    // empty-state contract instead of the hidden uPlot auto-range.
+    const plot=page.getByTestId(offline?'sf-uplot':'uplot-container'),empty=page.getByTestId(offline?'sf-scope-empty':'f01-scope-empty');
+    if(s.t===0){
+      await empty.waitFor({state:'visible'});
+      await page.waitForFunction(({offline})=>{const root=document.querySelector('[data-testid="'+(offline?'sf-uplot':'uplot-container')+'"]'),dock=offline?root:document.querySelector('[data-testid="floating-scope-dock"]');return !!root&&dock?.dataset.scopeUnits==='separate'&&root.dataset.sampleCount==='1'&&getComputedStyle(root).visibility==='hidden';},{offline},{timeout:5000});
+    }else{
+      await plot.waitFor({state:'visible'});
+      await page.waitForFunction(({offline,t})=>{const root=document.querySelector('[data-testid="'+(offline?'sf-uplot':'uplot-container')+'"]'),dock=offline?root:document.querySelector('[data-testid="floating-scope-dock"]');const max=Number(root?.dataset.scopeMax);return dock?.dataset.scopeUnits==='separate'&&root?.dataset.scopeTimeType==='elapsed'&&Number(root.dataset.sampleCount)>=2&&Number.isFinite(max)&&max>=t-.15&&max<=t+1;},{offline,t:s.t},{timeout:5000});
+    }
   }
   return s;
 }

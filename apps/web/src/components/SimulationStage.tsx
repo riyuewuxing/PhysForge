@@ -1249,7 +1249,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
-    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd'].includes(latestRef.current.plugin.meta.id)||latestRef.current.plugin.meta.id==='builder-custom-ode-lab';
+    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md'].includes(latestRef.current.plugin.meta.id)||latestRef.current.plugin.meta.id==='builder-custom-ode-lab';
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
@@ -1830,7 +1830,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       ],
       hooks: {
-        draw: [(u) => { if (measuredScope) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); if(contactPair){const model=plugin as unknown as ContactStagePlugin;wrap.dataset.sampledRelativeSlip=String(model.drawRelativeVelocityBand(u.ctx,u.data[0],u.data[1]!,u.data[2]!,t=>u.valToPos(t,'x',true),v=>u.valToPos(v,'y',true),u.bbox,theme==='projector'));}else delete wrap.dataset.sampledRelativeSlip; }],
+        draw: [(u) => { if (measuredScope) {wrap.dataset.scopeMax = String(u.scales.x?.max ?? '');wrap.dataset.scopeTimeType=String(u.scales.x?.time===false?'elapsed':'calendar');} if(contactPair){const model=plugin as unknown as ContactStagePlugin;wrap.dataset.sampledRelativeSlip=String(model.drawRelativeVelocityBand(u.ctx,u.data[0],u.data[1]!,u.data[2]!,t=>u.valToPos(t,'x',true),v=>u.valToPos(v,'y',true),u.bbox,theme==='projector'));}else delete wrap.dataset.sampledRelativeSlip; }],
         setCursor: [
           (u) => {
             const idx = u.cursor.idx;

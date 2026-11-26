@@ -466,7 +466,7 @@ export const SingleFileApp: React.FC = () => {
     } finally { syncingPlotRef.current = false; }
     if (measuredScope && uplotWrapRef.current) {
       uplotWrapRef.current.dataset.lastSampleT = String(snaps.at(-1)?.t ?? '');
-      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
+      if(contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice)uplotWrapRef.current.dataset.sampleCount=String(snaps.length);
       const empty = snaps.length < 2;
       uplotWrapRef.current.style.visibility = empty ? 'hidden' : '';
       if (circuitScopeEmptyRef.current) circuitScopeEmptyRef.current.style.display = empty ? 'grid' : 'none';
@@ -691,7 +691,7 @@ export const SingleFileApp: React.FC = () => {
         hooks: {
           // uPlot commits scale changes during its draw; reading immediately
           // after setData may return the previous frame's range.
-          draw: [(u) => { if (measuredScope) wrap.dataset.scopeMax = String(u.scales.x?.max ?? ''); if(contactPair){const model=targetPlugin as unknown as ContactSlicePlugin;wrap.dataset.sampledRelativeSlip=String(model.drawRelativeVelocityBand(u.ctx,u.data[0],u.data[1]!,u.data[2]!,t=>u.valToPos(t,'x',true),v=>u.valToPos(v,'y',true),u.bbox,theme==='projector'));}else delete wrap.dataset.sampledRelativeSlip; }],
+          draw: [(u) => { if (measuredScope) {wrap.dataset.scopeMax = String(u.scales.x?.max ?? '');wrap.dataset.scopeTimeType=String(u.scales.x?.time===false?'elapsed':'calendar');} if(contactPair){const model=targetPlugin as unknown as ContactSlicePlugin;wrap.dataset.sampledRelativeSlip=String(model.drawRelativeVelocityBand(u.ctx,u.data[0],u.data[1]!,u.data[2]!,t=>u.valToPos(t,'x',true),v=>u.valToPos(v,'y',true),u.bbox,theme==='projector'));}else delete wrap.dataset.sampledRelativeSlip; }],
           setCursor: [
             (u) => {
               const idx = u.cursor.idx;
