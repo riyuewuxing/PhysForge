@@ -365,7 +365,7 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
       substitutedLatex:'\\begin{aligned}\\Delta r&='+f(o.signedPathDifference)+'\\text{ m}\\\\\\Delta\\phi&='+f(o.phaseAtProbeDeg,1)+'^\\circ\\\\N&='+o.activeCount+'\\end{aligned}'},
       {id:'interference-amplitude',label:'两波均到达时的合振幅',latex:'A_{\\rm net}=2A|\\cos(\\Delta\\phi/2)|',substitutedLatex:'A_P='+f(o.analyticalAmplitude)+'\\text{ m}'}];
     if(p.mode==='standing')return [{id:'standing-wave',label:'等幅反向波叠加（无限延伸理想解）',latex:'y=2A\\sin(kx)\\cos(\\omega t)',substitutedLatex:'\\begin{aligned}k&='+k.toFixed(3)+'\\text{ rad/m}\\\\A_P&='+f(o.analyticalAmplitude)+'\\text{ m}\\\\y_P&='+f(o.probeY)+'\\text{ m}\\end{aligned}'},
-      {id:'standing-nodes',label:'固定波节与波腹',latex:'x_{\\rm node}=n\\lambda/2,\\quad x_{\\rm antinode}=(2n+1)\\lambda/4'}];
+      {id:'standing-nodes',label:'固定波节与波腹',latex:'\\begin{aligned}x_{\\rm node}&=n\\lambda/2\\\\x_{\\rm antinode}&=(2n+1)\\lambda/4\\end{aligned}'}];
     return [{id:'traveling-wave',label:'行波空间相位与质点振动',latex:'y=A\\sin(\\omega t\\mp kx)',substitutedLatex:'\\begin{aligned}v&='+c.toFixed(3)+'\\text{ m/s}\\\\\\omega&='+w.toFixed(3)+'\\text{ rad/s}\\\\k&='+k.toFixed(3)+'\\text{ rad/m}\\end{aligned}'},
       {id:'slope-velocity',label:'坡度法 · 传播方向与振动方向区分',latex:'v_y=-\\operatorname{sgn}(v_x)c\\frac{\\partial y}{\\partial x}',substitutedLatex:'\\begin{aligned}\\partial_x y&='+f(o.spatialSlope)+'\\\\v_{y,P}&='+f(o.probeVy)+'\\text{ m/s}\\end{aligned}'},
       ...(p.causalFront?[{id:'causal-front',label:'起振波前，仅沿所选方向',latex:'t_P=|x_P|/c',substitutedLatex:o.arrivalTime===undefined?'\\text{P 不在传播半轴}':'t_P='+f(o.arrivalTime)+'\\text{ s}'}]:[])];

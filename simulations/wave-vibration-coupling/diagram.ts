@@ -1,5 +1,5 @@
 import {createWorldMapper,resolveAndDrawLabels,drawGlowVectorArrow,type CanvasLabel,type DiagramPrimitive,type DiagramIR,type Viewport} from '@physforge/sim-sdk';
-import {computeWaveSpeed,computeObservables,evaluateInterferenceAtPoint,evaluateStandingWave,evaluateTransverseWave,type WaveCouplingParams,type WaveCouplingState} from './engine.js';
+import {computeWaveSpeed,computeObservables,evaluateInterferenceAtPoint,evaluateStandingWave,evaluateTransverseWave,standingSpatialFactor,type WaveCouplingParams,type WaveCouplingState} from './engine.js';
 type Point={x:number;y:number};
 export type WaveBounds={minX:number;minY:number;maxX:number;maxY:number};
 type Tone='axis'|'ink'|'muted'|'wave'|'ghost'|'probe'|'velocity'|'source'|'node'|'antinode'|'front';
@@ -81,7 +81,7 @@ export function waveDiagramScene(s:WaveCouplingState,p:WaveCouplingParams,layers
       poly(xs.map(x=>point(x,wave(x,s.t).y)),'wave');
       for(let j=0;j<=20;j++){const x=-4+8*j/20;circle(point(x,wave(x,s.t).y),.027,'wave',true);}
       if(p.mode==='standing'&&p.wavelength>0){
-        for(const sign of [-1,1])poly(xs.map(x=>point(x,sign*2*p.amplitude*Math.abs(Math.sin(2*Math.PI*x/p.wavelength)))),'ghost',true);
+        for(const sign of [-1,1])poly(xs.map(x=>point(x,sign*Math.abs(standingSpatialFactor(x,p)))),'ghost',true);
         const h=p.wavelength/2;for(let j=Math.ceil(-4/h);j<=Math.floor(4/h);j++)circle(point(j*h,0),.055,'node');
         text(-2.4,a+.28,'虚线：±2A|sin(kx)|　空心：波节','muted');
       }

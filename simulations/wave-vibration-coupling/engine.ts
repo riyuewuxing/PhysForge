@@ -112,16 +112,18 @@ export function evaluateInterferenceAtPoint(
   const vy1 = wave1Active ? A * omega * Math.cos(omega * t - k * r1) : 0;
   const vy2 = wave2Active ? A * omega * Math.cos(omega * t - k * r2 + dPhi) : 0;
 
+  const phaseDiff=dPhi-k*signedPathDiff,halfTurns=phaseDiff/Math.PI;
+  const exactNode=wave1Active&&wave2Active&&Math.abs(halfTurns-Math.round(halfTurns))<=16*Number.EPSILON*Math.max(1,Math.abs(halfTurns))&&Math.abs(Math.round(halfTurns)%2)===1;
   const analyticalAmplitude =
     wave1Active && wave2Active
-      ? 2 * A * Math.abs(Math.cos(0.5 * (k * (r2 - r1) - dPhi)))
+      ? exactNode?0:2 * A * Math.abs(Math.cos(phaseDiff/2))
       : wave1Active || wave2Active
         ? A
         : 0;
 
   return {
-    displacement: y1 + y2,
-    vy: vy1 + vy2,
+    displacement:exactNode?0:y1+y2,
+    vy:exactNode?0:vy1+vy2,
     analyticalAmplitude,
     pathDiff,signedPathDiff,r1,r2,activeCount:Number(wave1Active)+Number(wave2Active),phaseAtProbe:dPhi-k*signedPathDiff
   };
@@ -170,6 +172,12 @@ export function enumerateMultiSolutionSpeeds(
 /**
  * 等幅反向行波叠加驻波解：y(x,t) = 2 A sin(k x) cos(omega t)
  */
+/** Exact mathematical nodes within floating-point representation, not a physical amplitude threshold. */
+export function standingSpatialFactor(x:number,p:WaveCouplingParams):number{
+  if(p.frequency<=0||p.wavelength<=0||p.amplitude===0)return 0;
+  const n=2*x/p.wavelength;
+  return Math.abs(n-Math.round(n))<=16*Number.EPSILON*Math.max(1,Math.abs(n))?0:2*p.amplitude*Math.sin(Math.PI*n);
+}
 export function evaluateStandingWave(
   x: number,
   t: number,
@@ -179,9 +187,9 @@ export function evaluateStandingWave(
   const f = params.frequency;
   const lambda = params.wavelength;
   if (A === 0 || f <= 0 || lambda <= 0) return { y: 0, vy: 0, ay: 0 };
-  const k = (2 * Math.PI) / lambda;
-  const omega = 2 * Math.PI * f;
-  const spatial = 2 * A * Math.sin(k * x);
+  const omega=2*Math.PI*f;
+  const spatial=standingSpatialFactor(x,params);
+  if(spatial===0)return {y:0,vy:0,ay:0};
   const y = spatial * Math.cos(omega * t);
   const vy = -spatial * omega * Math.sin(omega * t);
   const ay = -omega * omega * y;
@@ -343,7 +351,7 @@ export function computeObservables(s:WaveCouplingState,p:WaveCouplingParams):Rec
     const r=evaluateInterferenceAtPoint(p.probeX,p.probeY,s.t,p);
     return {...obs,analyticalAmplitude:r.analyticalAmplitude,pathDifference:r.pathDiff,signedPathDifference:r.signedPathDiff,phaseAtProbeDeg:r.phaseAtProbe*180/Math.PI,activeCount:r.activeCount,r1:r.r1,r2:r.r2};
   }
-  if(p.mode==='standing')return {...obs,analyticalAmplitude:c>0?2*p.amplitude*Math.abs(Math.sin(2*Math.PI*p.probeX/p.wavelength)):0};
+  if(p.mode==='standing')return {...obs,analyticalAmplitude:Math.abs(standingSpatialFactor(p.probeX,p))};
   const dir=p.direction==='right'?1:-1,dist=dir*p.probeX;
   const active=c>0&&(!p.causalFront||(dist>=0&&dist<=c*s.t));
   const slope=active?-dir*2*Math.PI*p.amplitude/p.wavelength*Math.cos(2*Math.PI*p.frequency*s.t-dir*2*Math.PI*p.probeX/p.wavelength):0;

@@ -239,3 +239,12 @@ it('catches corrupt probe acceleration and emission state, not just an internall
   expect(checkInvariants(s,i,p).every(r=>r.passed)).toBe(true);
   expect(checkInvariants({...s,probeAccelY:s.probeAccelY+1,emittedCount:s.emittedCount+1},i,p).filter(r=>!r.passed).length).toBeGreaterThanOrEqual(2);
 });
+
+it('publishes exact zeros at mathematical nodes rather than autoscaling roundoff into false oscillation',()=>{
+  for(const p of [{...baseParams,mode:'standing' as const,probeX:1,wavelength:2},{...baseParams,mode:'interference' as const,probeX:0,probeY:1.4,phaseDiffDeg:180}]){
+    const i=createInitialState(p),s=stepWaveCoupling(i,p,.413).nextState,o=computeObservables(s,p);
+    for(const k of ['probeY','probeVy','probeAy','analyticalAmplitude'])expect(Math.abs(o[k]!)).toBe(0);
+  }
+  const p={...baseParams,mode:'standing' as const,probeX:1+1e-8,wavelength:2};
+  expect(computeObservables(createInitialState(p),p).analyticalAmplitude).toBeGreaterThan(0);
+});
