@@ -105,7 +105,7 @@ export const thermoPistonGasLawsPlugin = defineSimulationPlugin<ThermoGasParams,
   getControlHandles:(_s,p)=>[{id:'thermo-control',...thermoControl(p),handleKind:'point',color:'#fbbf24',
     onDrag:(wp):Record<string,ParamValue>=>p.mode==='mercury-tube-tilt'?{tubeTiltDeg:Math.round(Math.max(-90,Math.min(90,wp.y*90))/5)*5}:
     p.mode==='multi-stroke-pump'?{pumpStrokesK:Math.round(Math.max(0,Math.min(10,5+5*wp.y)))}:
-    {targetTempK:Math.round(Math.max(200,Math.min(600,400+200*wp.y))/10)*10}}}],
+    {targetTempK:Math.round(Math.max(200,Math.min(600,400+200*wp.y))/10)*10}}],
   sceneSerializer:{
     exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'thermo-piston-gas-laws',title:'气体实验定律与活塞模型',params}),
     importScene:dsl=>dsl.params as Partial<ThermoGasParams>
