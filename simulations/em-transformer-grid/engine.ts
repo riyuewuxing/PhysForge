@@ -107,7 +107,14 @@ export function stepTransformerGrid(s:TransformerGridState,p:TransformerGridPara
   return {nextState:{...s,t:s.t+dt,phase:(s.phase+dt*2.5)%1,current:solveTransformerMetrics(p)},events:[]};
 }
 export function computeObservables(s:TransformerGridState):Record<string,number>{
-  const m=s.current;return {t:s.t,...m,efficiencyPct:m.efficiency*100};
+  const m=s.current;
+  // Invalid internal finite sentinels must not leak into generic analysis, CSV,
+  // parameter scans, telemetry, or AI context as measured quantities.
+  if(m.operatingPointValid!==1)return {t:s.t,operatingPointValid:0,efficiencyDefined:0,
+    requestedPowerW:m.requestedPowerW,requestedCurrentA:m.requestedCurrentA,requestedLossW:m.requestedLossW,
+    maxPowerW:m.maxPowerW,powerLimitDefined:m.powerLimitDefined};
+  const {efficiency,...actual}=m;
+  return m.efficiencyDefined===1?{t:s.t,...actual,efficiency,efficiencyPct:efficiency*100}:{t:s.t,...actual};
 }
 export function checkInvariants(s:TransformerGridState,_initial:TransformerGridState,p:TransformerGridParams):InvariantReport[]{
   const m=s.current;

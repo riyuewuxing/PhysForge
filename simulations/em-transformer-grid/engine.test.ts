@@ -126,3 +126,14 @@ describe('E08 truthful topology export and mode controls',()=>{
     expect(b.some(q=>q.kind==='text'&&q.text.includes('效率 '))).toBe(false);
   });
 });
+
+it('does not publish invalid numeric sentinels or undefined efficiency as observables',()=>{
+  const p={...getPreset(1),sourceU0:100,stepUpRatioK1:5,genPowerKw:200,lineResistanceR:50};
+  const bad=computeObservables(createInitialState(p));
+  expect(bad.operatingPointValid).toBe(0);expect(bad.requestedPowerW).toBe(200000);
+  expect(bad.pInW).toBeUndefined();expect(bad.lineCurrentA).toBeUndefined();expect(bad.pUserW).toBeUndefined();
+  expect(bad.efficiencyPct).toBeUndefined();
+  const idle=computeObservables(createInitialState({...p,genPowerKw:0}));
+  expect(idle.operatingPointValid).toBe(1);expect(idle.pInW).toBe(0);
+  expect(idle.efficiencyDefined).toBe(0);expect(idle.efficiencyPct).toBeUndefined();expect(idle.efficiency).toBeUndefined();
+});

@@ -579,18 +579,19 @@ function checkE07(s,mode){
 }
 
 function checkE08(s){
+  if(s.efficiencyDefined===0&&('efficiencyPct'in s||'efficiency'in s))throw Error('E08 undefined efficiency leaked');
   const check=(k,expected)=>{if(!Number.isFinite(s[k])||Math.abs(s[k]-expected)>1e-7*Math.max(1,Math.abs(expected)))throw Error('E08 '+k+' '+JSON.stringify({actual:s[k],expected,s}));};
   if(s.mode==='multi-tap-transformer'){
     const G2=s.parallelUsersCount/s.loadR2,G3=s.branch3Closed?1/s.loadR3:0,G=G2*(s.n2Ratio/s.n1Ratio)**2+G3*(s.n3Ratio/s.n1Ratio)**2,
       U1=s.sourceU0/(1+s.primaryR0*G),I1=U1*G,U2=U1*s.n2Ratio/s.n1Ratio,U3=U1*s.n3Ratio/s.n1Ratio,
       P0=s.sourceU0*I1,P1=U1*I1,Q=I1**2*s.primaryR0,P2=U2**2*G2,P3=U3**2*G3;
-    for(const [k,x] of Object.entries({operatingPointValid:1,u1:U1,i1:I1,u2:U2,i2:U2*G2,u3:U3,i3:U3*G3,pInW:P0,pTransformerInW:P1,p2W:P2,p3W:P3,pUserW:P2+P3,pLineLossW:Q,efficiencyDefined:P0>0?1:0,efficiencyPct:P0>0?100*(P2+P3)/P0:0}))check(k,x);
+    for(const [k,x] of Object.entries({operatingPointValid:1,u1:U1,i1:I1,u2:U2,i2:U2*G2,u3:U3,i3:U3*G3,pInW:P0,pTransformerInW:P1,p2W:P2,p3W:P3,pUserW:P2+P3,pLineLossW:Q,efficiencyDefined:P0>0?1:0,...(P0>0?{efficiencyPct:100*(P2+P3)/P0}:{})}))check(k,x);
   }else{
     const P=s.genPowerKw*1000,U=s.sourceU0*s.stepUpRatioK1,I=P/U,R=s.lineResistanceR,limit=R>0?U**2/R:0;
     check('requestedPowerW',P);check('requestedCurrentA',I);check('requestedLossW',I**2*R);check('maxPowerW',limit);
-    if(R>0&&P>limit){check('operatingPointValid',0);check('efficiencyDefined',0);check('pInW',0);check('lineCurrentA',0);return;}
+    if(R>0&&P>limit){check('operatingPointValid',0);check('efficiencyDefined',0);if('pInW'in s||'lineCurrentA'in s||'pUserW'in s||'efficiencyPct'in s)throw Error('E08 invalid observables leaked');return;}
     const Ur=U-I*R,Pr=Ur*I;
-    for(const [k,x] of Object.entries({operatingPointValid:1,lineVoltageV:U,lineCurrentA:I,voltageDropV:I*R,u2:Ur,u3:Ur>0?220:0,pInW:P,pLineLossW:I*I*R,pUserW:Pr,efficiencyDefined:P>0?1:0,efficiencyPct:P>0?100*Pr/P:0}))check(k,x);
+    for(const [k,x] of Object.entries({operatingPointValid:1,lineVoltageV:U,lineCurrentA:I,voltageDropV:I*R,u2:Ur,u3:Ur>0?220:0,pInW:P,pLineLossW:I*I*R,pUserW:Pr,efficiencyDefined:P>0?1:0,...(P>0?{efficiencyPct:100*Pr/P}:{})}))check(k,x);
   }
 }
 async function waitE08Display(page,offline,expected){
