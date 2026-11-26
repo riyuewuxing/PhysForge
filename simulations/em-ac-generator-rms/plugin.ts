@@ -76,7 +76,7 @@ function coilGeometry(s:AcGeneratorState){
 }
 export interface GeneratorSafeRect{left:number;right:number;top:number;bottom:number}
 export function generatorDiagramBounds(p:AcGeneratorParams){
-  return {minX:isGeneratorLoad(p)?-2.55:-2.43,maxX:2.6,minY:p.waveform==='duty-square'?-1.35:-1.03,maxY:1.18};
+  return {minX:isGeneratorLoad(p)?-2.55:-2.43,maxX:2.6,minY:p.waveform==='duty-square'?-1.35:-1.2,maxY:1.18};
 }
 export function fitGeneratorViewport(p:AcGeneratorParams,v:Viewport,safe:GeneratorSafeRect):Viewport|null{
   const b=generatorDiagramBounds(p),w=safe.right-safe.left,h=safe.bottom-safe.top;
@@ -151,8 +151,8 @@ export const emAcGeneratorRmsPlugin=Object.assign(defineSimulationPlugin<AcGener
       {kind:'text',x:g.right,y:-.95,text:p.freqHz>0?'t/T = 1':'静止恒值',align:'end'}
     ];
     for(const seg of waveformSegments(s,p)){
-      primitives.push({kind:'polyline',points:seg.map(w=>uPoint(w,s,p)),strokeWidth:2},
-        {kind:'polyline',points:seg.map(w=>pPoint(w,s,p)),strokeWidth:2});
+      primitives.push({kind:'polyline',points:seg.map(w=>uPoint(w,s,p))},
+        {kind:'polyline',points:seg.map(w=>pPoint(w,s,p))});
     }
     if(isGeneratorLoad(p)){
       const c=coilGeometry(s);primitives.push({kind:'polyline',points:[...c.corners,c.corners[0]!]},
@@ -206,7 +206,7 @@ export const emAcGeneratorRmsPlugin=Object.assign(defineSimulationPlugin<AcGener
       const x=phaseX(p,s.referencePhase),up=uPoint({phase:s.referencePhase,voltage:s.uInstV},s,p),pp=pPoint({phase:s.referencePhase,voltage:s.uInstV},s,p);
       ctx.setLineDash([3,4]);line([{x,y:powerBase},{x,y:voltageCenter+voltageHalf}],muted);ctx.setLineDash([]);
       for(const [q,c] of [[up,blue],[pp,rose]] as const){const pt=m.toScreen(q.x,q.y);ctx.fillStyle=c;ctx.beginPath();ctx.arc(pt.x,pt.y,4,0,2*Math.PI);ctx.fill();}
-      label('wave-title',mid,1.11,waveName[p.waveform]+(isGeneratorLoad(p)?' · 负载':' · 幅值独立设定'),ink,'bold 14px sans-serif');
+      label('wave-title',mid,1.11,waveName[p.waveform]+(isGeneratorLoad(p)?' · 负载':' · 幅值按 NBSω 标定'),ink,'bold 14px sans-serif');
       label('wave-voltage',mid,.94,'u / V · ±'+us.toFixed(1)+' · Urms='+s.uRmsV.toFixed(2),blue);
       label('wave-power',mid,-.12,'p / W · 0–'+ps.toFixed(1)+' · Pavg='+s.pAvgW.toFixed(2),rose);
       for(const f of [0,.5,1])label('phase-'+f,phaseX(p,f),-.94,f===0?'0':f===.5?'½':'1',muted,'11px sans-serif');
