@@ -562,6 +562,52 @@ async function auditM03Constraints(page,origin){
 
 
 // M11 uses the actual rendered frame, not independently synthesized telemetry.
+async function auditE06Eddy(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-eddy-vortex-field');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-eddy-vortex-field');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-eddy-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('E06 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode,a,b)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.eddyRendered||'null');return s?.mode===mode&&s.t===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(([a,b])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b,[a,b]);
+    return read();
+  };
+  const runTo=async(t)=>{
+    await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.eddyRendered||'null')?.t>t,t,{timeout:18000});await play.click();
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.eddyRendered||'null'),t=Number(document.querySelector('[data-testid="eddy-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});return read();
+  };
+  const photo=async name=>page.screenshot({path:path.join(OUT_DIR,'H35_E06_'+name+'.png')});
+  const initial=await select('betatron-vortex-acceleration','betatron-vortex','bCurrent','eVortexMag');
+  check(initial.Ey,-.675,'initial E_y');check(initial.Ex,0,'initial E_x');
+  check(initial.specificKineticEnergy,.18,'initial K/m');check(initial.bLocal,1,'inside B');
+  if('solidAngleDeg'in initial||await page.getByTestId('param-slider-solidDampingGamma').count())throw Error('E06 inactive damping control');
+  await page.getByTestId('eddy-scope-empty').waitFor({state:'visible'});
+  const ramp=await runTo(.55);
+  check(ramp.bCurrent,1+1.5*ramp.t,'actual ramp');check(ramp.specificKineticEnergy-.18,ramp.specificElectricWork,'independent work',1e-6);await photo('positive_ramp');
+  const outside=await select('outer-region-1overr-decay','betatron-vortex','bCurrent','eVortexMag');
+  check(outside.bLocal,0,'outer B');check(outside.Ey,-2*.8*.8/(2*1.25),'outer E');await photo('outer');
+  await select('vortex-negative-charge','betatron-vortex','bCurrent','eVortexMag');
+  const negative=await runTo(.35);check(negative.particleChargeRatio,-1.6,'negative q/m');check(negative.specificKineticEnergy-.18,negative.specificElectricWork,'negative work',1e-6);await photo('negative');
+  await select('vortex-zero-ramp','betatron-vortex','bCurrent','eVortexMag');
+  const pure=await runTo(.55),w=2;
+  check(pure.px,.3+.6*(Math.cos(w*pure.t)-1)/w,'pure B x');check(pure.py,-.6*Math.sin(w*pure.t)/w,'pure B y');check(pure.specificKineticEnergy,.18,'pure B K/m');check(pure.eVortexMag,0,'pure B E');await photo('pure_B');
+  await select('vortex-neutral-crossing','betatron-vortex','bCurrent','eVortexMag');
+  const neutral=await runTo(1.8),hit=Math.sqrt(1.2**2-.6**2)/.6;
+  check(neutral.px,.6,'neutral x');check(neutral.py,-.6*neutral.t,'neutral y');check(neutral.eventCount,1,'neutral event');check(neutral.eventTime,hit,'neutral exit time',1e-9);check(neutral.bLocal,0,'exit B');await photo('neutral_exit');
+  const damp0=await select('eddy-solid-vs-slotted-pendulum','eddy-damping-compare','solidAngleDeg','slottedAngleDeg');
+  if('eVortexMag'in damp0||await page.getByTestId('param-slider-particleChargeRatio').count())throw Error('E06 inactive particle control');
+  const damp=await runTo(3.1),E0=9.8*(1-Math.cos(35*Math.PI/180));
+  check(damp.solidEnergySpecific+damp.solidHeatSpecific,E0,'solid energy',1e-6);check(damp.slottedEnergySpecific+damp.slottedHeatSpecific,E0,'slotted energy',1e-6);
+  if(damp.solidHeatSpecific<=damp.slottedHeatSpecific)throw Error('E06 damping contrast');await photo('damping');
+  await select('eddy-zero-damping','eddy-damping-compare','solidAngleDeg','slottedAngleDeg');
+  const zero=await runTo(1.4);check(zero.solidAngleDeg,zero.slottedAngleDeg,'equal zero damping');check(zero.solidHeatSpecific,0,'zero heat');check(zero.solidEnergySpecific,E0,'zero damping energy',1e-6);await photo('zero_damping');
+  const report={initial,ramp,outside,negative,pure,neutral,damp0,damp,zero};console.log('H35 E06 online '+JSON.stringify(report));return report;
+}
+
 async function auditE05Wireframe(page,origin){
   const url=new URL(origin);url.searchParams.set('model','em-wireframe-rotation');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2755,6 +2801,7 @@ async function main() {
     const e02CapacitorReport=await auditE02Capacitor(page,origin);
     const e03AcScopeReport=await auditE03AcScope(page,origin);
     const e05WireframeReport=await auditE05Wireframe(page,origin);
+    const e06EddyReport=await auditE06Eddy(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3288,7 +3335,32 @@ async function main() {
       if(e05Errors.length||e05Network.length)throw Error('E05 offline errors '+JSON.stringify({e05Errors,e05Network}));
       Object.assign(e05OfflineReport,{disk0,disk,fall,errors:e05Errors,network:e05Network});
     }finally{await e05Context.close();}
-    const summary = { e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e06File=path.join(OUT_DIR,'H35_E06_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-eddy-vortex-field','--preset','vortex-neutral-crossing','--out',e06File],{stdio:'inherit'});
+    const e06Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e06Page=await e06Context.newPage(),e06Errors=[],e06Network=[],e06OfflineReport={};
+    e06Page.on('pageerror',e=>e06Errors.push(e.message));e06Page.on('console',m=>{if(m.type()==='error')e06Errors.push(m.text());});e06Page.on('request',r=>{if(/^https?:/.test(r.url()))e06Network.push(r.url());});
+    try{
+      await e06Page.goto(pathToFileURL(e06File).href);
+      const canvas=e06Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-eddy-rendered'));
+      await e06Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.eddyRendered||'null')?.particleChargeRatio===0);
+      await e06Page.getByTestId('sf-play-pause').click();await e06Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.eddyRendered||'null')?.t>1.8);
+      await e06Page.getByTestId('sf-play-pause').click();
+      await e06Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.eddyRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+      const neutral=await read(),hit=Math.sqrt(1.2**2-.6**2)/.6;
+      if(neutral.eventCount!==1||Math.abs(neutral.eventTime-hit)>1e-9||Math.abs(neutral.py+.6*neutral.t)>1e-7||neutral.bLocal!==0)throw Error('E06 offline neutral '+JSON.stringify(neutral));
+      await e06Page.screenshot({path:path.join(OUT_DIR,'H35_E06_offline_neutral.png')});
+      await e06Page.locator('[data-preset-id="eddy-solid-vs-slotted-pendulum"]').click();
+      await e06Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.eddyRendered||'null');return s?.mode==='eddy-damping-compare'&&s.t===0&&document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='solidAngleDeg';});
+      await e06Page.getByTestId('sf-play-pause').click();await e06Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.eddyRendered||'null')?.t>2.5);await e06Page.getByTestId('sf-play-pause').click();
+      await e06Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.eddyRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+      const damp=await read(),E0=9.8*(1-Math.cos(35*Math.PI/180));
+      if(Math.abs(damp.solidEnergySpecific+damp.solidHeatSpecific-E0)>1e-6||Math.abs(damp.slottedEnergySpecific+damp.slottedHeatSpecific-E0)>1e-6||damp.solidHeatSpecific<=damp.slottedHeatSpecific)throw Error('E06 offline damping '+JSON.stringify(damp));
+      await e06Page.getByRole('button',{name:'黑板深蓝'}).click();await e06Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await e06Page.screenshot({path:path.join(OUT_DIR,'H35_E06_offline_damping_paper.png')});
+      if(e06Errors.length||e06Network.length)throw Error('E06 offline errors '+JSON.stringify({e06Errors,e06Network}));
+      Object.assign(e06OfflineReport,{neutral,damp,errors:e06Errors,network:e06Network});
+    }finally{await e06Context.close();}
+    const summary = { e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

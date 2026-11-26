@@ -136,3 +136,24 @@ describe('E06 signed induction, true overlap, independent energy and mode isolat
     expect(zo.solidEnergySpecific).toBeCloseTo(E0,7);
   });
 });
+
+describe('E06 short boundary excursion',()=>{
+  it('finds an exit between same-side trial endpoints using a radial extremum',()=>{
+    const p={...getPreset(0),cylinderRadiusR:1.2,particleChargeRatio:1,bField0:2,bDotRate:0};
+    const R=1.2,r=.3,center=R-r+1e-8,w=2,theta0=w*.0004;
+    const init={...createInitialState(p),px:center+r*Math.cos(theta0),py:r*Math.sin(theta0),
+      vx:w*r*Math.sin(theta0),vy:-w*r*Math.cos(theta0),particleInCore:true};
+    // The unbroken inside cyclotron trajectory starts and ends inside;
+    // it exits for a short interval near the radial maximum.
+    const radiusAt=(t:number)=>Math.hypot(center+r*Math.cos(theta0-w*t),r*Math.sin(theta0-w*t));
+    expect(radiusAt(0)).toBeLessThan(R);expect(radiusAt(.001)).toBeLessThan(R);expect(radiusAt(.002)).toBeLessThan(R);
+    expect(radiusAt(.0004)).toBeGreaterThan(R);
+    const tExit=(theta0-Math.acos((R*R-center*center-r*r)/(2*center*r)))/w;
+    const result=stepEddyVortex(init,p,.002).nextState;
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]!.time).toBeCloseTo(tExit,9);
+    expect(result.particleInCore).toBe(false);
+    expect(result.boundaryAmbiguous).toBe(false);
+    expect(Math.hypot(result.px,result.py)).toBeGreaterThan(R);
+  });
+});
