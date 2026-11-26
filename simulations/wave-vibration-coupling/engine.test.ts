@@ -161,3 +161,58 @@ describe('wave-vibration-coupling engine', () => {
     }
   });
 });
+
+describe('W01 independent retarded-time, exact emission and standing-wave oracles',()=>{
+  const p:WaveCouplingParams={...baseParams,mode:'doppler',frequency:1.5,wavelength:2,amplitude:.5,probeX:0,probeY:0,sourceSpeedRatio:.5};
+  const at=(p:WaveCouplingParams,t:number)=>stepWaveCoupling(createInitialState(p),p,t).nextState;
+  it('has no receiver signal before the first causal arrival',()=>{
+    const s=at(p,.4);
+    expect(s.probeDisplacement).toBe(0);expect(s.probeVelocityY).toBe(0);expect(s.probeAccelY).toBe(0);
+  });
+  it('uses exact retarded emission phase and observed frequency in front of a subsonic source',()=>{
+    const t=.87,c=p.wavelength*p.frequency,u=.5*c,omega=2*Math.PI*p.frequency,tau=(c*t-2)/(c-u),s=at(p,t);
+    const wObserved=omega*c/(c-u);
+    expect(s.probeDisplacement).toBeCloseTo(p.amplitude*Math.sin(omega*tau),10);
+    expect(s.probeVelocityY).toBeCloseTo(p.amplitude*wObserved*Math.cos(omega*tau),9);
+    expect(s.probeAccelY).toBeCloseTo(-p.amplitude*wObserved*wObserved*Math.sin(omega*tau),8);
+  });
+  it('matches independently differentiated off-axis retarded phase',()=>{
+    const q={...p,probeY:1.1,probeX:1.4},t=1.42,h=1e-4,c=q.wavelength*q.frequency,u=q.sourceSpeedRatio*c;
+    const y=(T:number)=>{let lo=0,hi=T;for(let j=0;j<70;j++){const tau=(lo+hi)/2;const residual=tau+Math.hypot(q.probeX+2-u*tau,q.probeY)/c-T;if(residual>0)hi=tau;else lo=tau;}return q.amplitude*Math.sin(2*Math.PI*q.frequency*(lo+hi)/2);};
+    const s=at(q,t);
+    expect(s.probeDisplacement).toBeCloseTo(y(t),10);
+    expect(Math.abs(s.probeVelocityY!-(y(t+h)-y(t-h))/(2*h))).toBeLessThan(1e-5);
+    expect(Math.abs(s.probeAccelY!-(y(t+h)-2*y(t)+y(t-h))/(h*h))).toBeLessThan(1e-4);
+  });
+  it('superposes two causal retarded branches inside the supersonic wake',()=>{
+    const q={...p,sourceSpeedRatio:1.2},c=q.wavelength*q.frequency,u=1.2*c,t=.60,w=2*Math.PI*q.frequency;
+    const a=(c*t-2)/(c-u),b=(c*t+2)/(c+u),s=at(q,t);
+    expect(a).toBeGreaterThan(0);expect(b).toBeLessThan(t);
+    expect(s.probeDisplacement).toBeCloseTo(q.amplitude*(Math.sin(w*a)+Math.sin(w*b)),10);
+    expect(s.probeVelocityY).toBeCloseTo(q.amplitude*w*(c/(c-u)*Math.cos(w*a)+c/(c+u)*Math.cos(w*b)),9);
+  });
+  it('emits every exact periodic front even when one step spans many periods',()=>{
+    const q={...p,frequency:2,wavelength:1.2},t=2.36,whole=at(q,t);
+    let split=createInitialState(q);for(let j=0;j<59;j++)split=stepWaveCoupling(split,q,t/59).nextState;
+    expect(whole.wavefronts.map(f=>f.emittedAt)).toEqual([0,.5,1,1.5,2]);
+    expect(split.wavefronts).toEqual(whole.wavefronts);
+    for(const f of whole.wavefronts)expect(f.cx).toBeCloseTo(-2+q.sourceSpeedRatio*computeWaveSpeed(q)*f.emittedAt,12);
+  });
+  it('distinguishes near-sonic finite forward frequency from undefined sonic or supersonic forward periodic arrival',()=>{
+    expect(computeDopplerFrequencies({...p,sourceSpeedRatio:.9999}).frontFreq).toBeCloseTo(p.frequency/.0001,5);
+    expect(computeDopplerFrequencies({...p,sourceSpeedRatio:1}).frontFreq).toBeUndefined();
+    expect(computeDopplerFrequencies({...p,sourceSpeedRatio:1.15}).frontFreq).toBeUndefined();
+  });
+  it('reports actual local standing-wave amplitude at nodes and antinodes',()=>{
+    for(const x of [0,.25,.5,1]){
+      const q={...baseParams,mode:'standing' as const,probeX:x};
+      expect(computeObservables(at(q,.37),q).analyticalAmplitude).toBeCloseTo(2*q.amplitude*Math.abs(Math.sin(2*Math.PI*x/q.wavelength)),12);
+    }
+  });
+  it('excludes zero propagation speed in integer-wavelength multi-solution cases',()=>{
+    const ss=enumerateMultiSolutionSpeeds(2,0,.5,2);
+    expect(ss.every(s=>s.speed>0)).toBe(true);
+    expect(ss.filter(s=>s.direction==='right').map(s=>s.speed)).toEqual([4,8,12]);
+    expect(ss.filter(s=>s.direction==='left').map(s=>s.speed)).toEqual([4,8,12]);
+  });
+});
