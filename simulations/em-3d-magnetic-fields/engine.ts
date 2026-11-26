@@ -175,14 +175,14 @@ export function isMagneticFieldDefinedAt(pos:Vec3,p:Magnetic3dParams):boolean{
     const xs=p.geometryType==='straight-wire'?[0]:[-.8*R,.8*R];
     return xs.every(x=>Math.hypot(pos.x-x,pos.y,Math.max(0,Math.abs(pos.z)-4))>tol);
   }
-  const turns=Math.max(4,Math.min(16,Math.round(p.solenoidTurns)));
-  const zs=p.geometryType==='single-loop'?[0]:p.geometryType==='helmholtz-coil'?[-.5*R,.5*R]:
-    Array.from({length:turns},(_,j)=>-1.2*R+2.4*R*j/(turns-1));
-  const dr=Math.hypot(pos.x,pos.y)-R;
-  return zs.every(z=>Math.hypot(dr,pos.z-z)>tol);
+  const dr=Math.hypot(pos.x,pos.y)-R;if(Math.abs(dr)>tol)return true;
+  if(p.geometryType==='single-loop')return Math.hypot(dr,pos.z)>tol;
+  if(p.geometryType==='helmholtz-coil')return Math.hypot(dr,Math.abs(pos.z)-.5*R)>tol;
+  const turns=Math.max(4,Math.min(16,Math.round(p.solenoidTurns))),j=Math.max(0,Math.min(turns-1,Math.round((pos.z+1.2*R)*(turns-1)/(2.4*R))));
+  return Math.hypot(dr,pos.z-(-1.2*R+2.4*R*j/(turns-1)))>tol;
 }
 function scaledCross(v:Vec3,B:Vec3,qm:number):Vec3{
-  const a=cross3(v,B);return {x:qm*a.x||0,y:qm*a.y||0,z:qm*a.z||0};
+  const a=cross3(v,B),clean=(x:number)=>x===0?0:x;return {x:clean(qm*a.x),y:clean(qm*a.y),z:clean(qm*a.z)};
 }
 export function evalBiotSavartB(pos: Vec3, params: Magnetic3dParams): Vec3 {
   if(!isMagneticFieldDefinedAt(pos,params))return {x:0,y:0,z:0};

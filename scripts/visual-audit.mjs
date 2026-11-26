@@ -2645,6 +2645,7 @@ async function main() {
         const stage = page.getByTestId('three-stage-container');
         const current = page.getByTestId('param-slider-currentI');
         await current.focus(); await current.press('Home');
+        for(let k=0;k<10;k++)await current.press('ArrowRight');
         await page.waitForFunction(() => {
           const d = document.querySelector('[data-testid="three-stage-container"]')?.dataset;
           return d?.fieldLineCount === '0' && d.conductorCount === '10' && d.renderedFieldArrow === 'false' && d.renderedForceArrow === 'false' && d.renderedVelocityArrow === 'true';

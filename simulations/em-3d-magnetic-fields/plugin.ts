@@ -1,5 +1,5 @@
 import { magnetic3dStoryDecks } from './storyDecks.js';
-import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec, type TelemetryChannelSpec } from '@physforge/sim-sdk';
 import { magnetic3dPresets } from './presets.js';
 import {
   buildMagneticConductorPaths,
@@ -234,6 +234,17 @@ export function magneticProjectionBounds(s:Magnetic3dState,p:Magnetic3dParams){
   const pad=.18*Math.max(1,p.radiusR);return {minX:minX-pad,maxX:maxX+pad,minY:minY-pad,maxY:maxY+pad};
 }
 
+const magneticChannels:readonly TelemetryChannelSpec[]=[
+  {key:'vx',label:'有向速度 vx',unit:'m/s',color:'#38bdf8'},
+  {key:'vy',label:'有向速度 vy',unit:'m/s',color:'#f472b6'},
+  {key:'vz',label:'有向速度 vz',unit:'m/s',color:'#fbbf24'},
+  {key:'speed',label:'速率',unit:'m/s',color:'#38bdf8'},
+  {key:'bMagT',label:'所在处 |B|',unit:'T',color:'#fbbf24'},
+  {key:'bMagMicroT',label:'所在处 |B|',unit:'μT',color:'#fbbf24'},
+  {key:'z',label:'轴向位置 z',unit:'m',color:'#38bdf8'},
+  {key:'ke',label:'比动能',unit:'J/kg',color:'#4ade80'},
+  {key:'vDotF',label:'磁力比功率 v·a',unit:'W/kg',color:'#f472b6'}
+];
 export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Magnetic3dParams, Magnetic3dState>({
   meta: {
     id: 'em-3d-magnetic-fields',
@@ -246,7 +257,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
   renderMode: 'three3d',
   defaultView:{minScale:.0001,scale:(p,v)=>Math.max(.0001,Math.min((v.width-50)/(p.geometryType==='straight-wire'||p.geometryType==='parallel-wires'?9.5:8*Math.max(.65,p.radiusR)),(v.height-50)/(p.geometryType==='straight-wire'||p.geometryType==='parallel-wires'?5.2*Math.max(.65,p.radiusR):6.5*Math.max(.65,p.radiusR)))/(.24*Math.min(v.width,v.height))),offsetRatioX:.05},
   paramSchema,
-  getParamFields:p=>{const keys=p.geometryType==='uniform-helix'?['geometryType','uniformBz','qOverM','vPerp','vParallel']:p.geometryType==='finite-solenoid'?['geometryType','currentI','radiusR','solenoidTurns','qOverM','vPerp','vParallel']:p.geometryType==='straight-wire'?['geometryType','currentI','qOverM','vPerp','vParallel','radiusR']:['geometryType','currentI','radiusR','qOverM','vPerp','vParallel'];return keys.flatMap(k=>paramSchema.filter(f=>f.key===k));},
+  getParamFields:p=>{const keys=p.geometryType==='uniform-helix'?['geometryType','uniformBz','qOverM','vPerp','vParallel']:p.geometryType==='finite-solenoid'?['geometryType','currentI','radiusR','solenoidTurns','qOverM','vPerp','vParallel']:p.geometryType==='straight-wire'?['geometryType','currentI','qOverM','vPerp','vParallel','radiusR']:['geometryType','currentI','radiusR','qOverM','vPerp','vParallel'];return keys.flatMap(k=>paramSchema.filter(f=>f.key===k)).map(f=>f.key==='qOverM'?{...f,label:'有向荷质比 q/m',unit:p.geometryType==='uniform-helix'?'C/kg':'×10⁶ C/kg'}:f.key==='radiusR'&&p.geometryType==='straight-wire'?{...f,label:'初始位置与场线采样尺度 R'}:f.key==='radiusR'&&p.geometryType==='parallel-wires'?{...f,label:'半间距 = 0.8R'}:f.key==='vPerp'&&p.geometryType!=='uniform-helix'?{...f,label:'初始 x 向速度'}:f.key==='vParallel'?{...f,label:'初始 z 向速度'}:f);},
   presets: magnetic3dPresets,
   engine: {
     createInitialState,
@@ -259,12 +270,8 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     { id: 'fieldLines3d', label: '3D Biot-Savart 空间磁感线', defaultVisible: true },
     { id: 'handednessTriad', label: '速度、磁场与洛伦兹加速度', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'z', label: '粒子轴向位置 z', unit: 'm', color: '#38bdf8' },
-    { key: 'bMagMicroT', label: '所在处磁感应强度 |B|', unit: 'μT', color: '#fbbf24' },
-    { key: 'ke', label: '粒子比动能 (严格守恒)', unit: 'J/kg', color: '#4ade80' },
-    { key: 'vDotF', label: '洛伦兹比功率 v·a (恒0)', unit: 'W/kg', color: '#f472b6' }
-  ],
+  telemetryChannels:magneticChannels,
+  getTelemetryChannels:p=>(p.geometryType==='uniform-helix'?['vx','vy','vz','speed','bMagT','z','ke','vDotF']:['speed','bMagMicroT','vx','vy','vz','z','ke','vDotF']).flatMap(k=>magneticChannels.filter(c=>c.key===k)),
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -318,6 +325,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     ];
   },
   getForceVectors: (state) => {
+    if(!state.fieldDefined)return [];
     const origin = {
       x: state.position.z,
       y: state.position.y

@@ -1,6 +1,6 @@
 import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
-import { em3dMagneticFieldsPlugin } from './plugin.js';
+import { em3dMagneticFieldsPlugin, magneticProjectionScene, magneticProjectionBounds } from './plugin.js';
 import { magnetic3dPresets } from './presets.js';
 import {
   MU_0,
@@ -320,4 +320,16 @@ it('explicitly rejects ideal filament measurements without leaking the finite co
   const o=computeObservables(r.nextState);
   expect(o.fieldDefined).toBe(0);expect(o.bMagT).toBeUndefined();expect(o.ax).toBeUndefined();
   expect(checkInvariants(r.nextState,initial,p).some(x=>!x.passed)).toBe(true);
+});
+
+it('exports actual conductors, field lines, signed vector projections and a separate wire transverse section',()=>{
+  const p={...getPreset(2),geometryType:'parallel-wires' as const,currentI:-2},s=createInitialState(p),layers=new Set(['conductors','fieldLines3d','handednessTriad']);
+  const marks=magneticProjectionScene(s,p,layers),ir=em3dMagneticFieldsPlugin.exportDiagramIR!(s,p);
+  expect(ir.primitives.slice(0,-1)).toEqual(marks.map(m=>m.primitive));
+  expect(marks.some(m=>m.primitive.kind==='text'&&m.primitive.text.includes('截面分离'))).toBe(true);
+  expect(marks.filter(m=>m.tone==='field'&&m.primitive.kind==='polyline').length).toBeGreaterThan(15);
+  expect(magneticProjectionBounds(s,p).maxX).toBeGreaterThan(4);
+  expect(em3dMagneticFieldsPlugin.getParamFields!(getPreset(3)).some(f=>f.key==='currentI')).toBe(false);
+  expect(em3dMagneticFieldsPlugin.getTelemetryChannels!(getPreset(3))[0]!.key).toBe('vx');
+  expect(em3dMagneticFieldsPlugin.getTelemetryChannels!(p)[1]!.key).toBe('bMagMicroT');
 });

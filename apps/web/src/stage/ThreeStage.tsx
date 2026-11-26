@@ -302,7 +302,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     scene.background = magneticBackdrop ?? new THREE.Color('#0b0f17');
     // An abstract electromagnetic field has no atmospheric attenuation.
     // Keep B1's small physical symbols legible when fitting a long trajectory.
-    scene.fog = isBoundedStage||isTokamak3d||isOrbitStage?null:new THREE.FogExp2('#0b0f17',0.085);
+    scene.fog = isMag3d||isBoundedStage||isTokamak3d||isOrbitStage?null:new THREE.FogExp2('#0b0f17',0.085);
 
     const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
     const initialMagneticParams = isMag3d ? (getFrameParams?.() ?? params) as Magnetic3dParams : null;
@@ -558,6 +558,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           marker.scale.setScalar(particleRadius);
           const particleState = state as Magnetic3dState;
           const vectorsVisible = layers.has('handednessTriad');
+          const wire=magneticParams.geometryType==='straight-wire'||magneticParams.geometryType==='parallel-wires',vectorScale=wire?1.45:1;
           const velocity = mapMagneticPoint(particleState.velocity);
           const lorentzForce = mapMagneticPoint(particleState.lorentzForce);
           const magneticField = mapMagneticPoint(particleState.bAtParticle);
@@ -565,14 +566,15 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           const forceMagnitude = lorentzForce.length();
           const fieldMagnitude = magneticField.length();
           const velocityLength = vectorsVisible
-            ? updateVectorArrow(velocityArrow, position, velocity, speed, 0.48, 0.48, 0.95)
+            ? updateVectorArrow(velocityArrow, position, velocity, speed, 0.48*vectorScale, 0.48*vectorScale, 0.95*vectorScale)
             : 0;
-          const forceLength = vectorsVisible
-            ? updateVectorArrow(lorentzForceArrow, position, lorentzForce, forceMagnitude, 0.62, 0.4, 0.82)
+          const forceLength = vectorsVisible&&particleState.fieldDefined
+            ? updateVectorArrow(lorentzForceArrow, position, lorentzForce, forceMagnitude, 0.62*vectorScale, 0.4*vectorScale, 0.82*vectorScale)
             : 0;
-          const fieldLength = vectorsVisible
-            ? updateVectorArrow(magneticFieldArrow, position, magneticField, fieldMagnitude, 0.52, 0.45, 0.9)
+          const fieldLength = vectorsVisible&&particleState.fieldDefined
+            ? updateVectorArrow(magneticFieldArrow, position, magneticField, fieldMagnitude, 0.52*vectorScale, 0.45*vectorScale, 0.9*vectorScale)
             : 0;
+          if(!particleState.fieldDefined){lorentzForceArrow.visible=false;magneticFieldArrow.visible=false;}
           if (!vectorsVisible) {
             velocityArrow.visible = false;
             lorentzForceArrow.visible = false;
@@ -581,6 +583,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           container.dataset.renderedVelocityArrow = String(velocityArrow.visible);
           container.dataset.renderedForceArrow = String(lorentzForceArrow.visible);
           container.dataset.renderedFieldArrow = String(magneticFieldArrow.visible);
+          container.dataset.magneticRendered=JSON.stringify({t:particleState.t,geometryType:magneticParams.geometryType,uniformBz:magneticParams.uniformBz,qOverM:magneticParams.qOverM,currentI:magneticParams.currentI,vPerp:magneticParams.vPerp,vParallel:magneticParams.vParallel,radiusR:magneticParams.radiusR,position:particleState.position,velocity:particleState.velocity,B:particleState.fieldDefined?particleState.bAtParticle:null,a:particleState.fieldDefined?particleState.lorentzForce:null,fieldDefined:particleState.fieldDefined,domainHalted:particleState.domainHalted,trailCount:particleState.trail.length});
           velocityLabel.visible = velocityLength > 0;
           forceLabel.visible = forceLength > 0;
           fieldLabel.visible = fieldLength > 0;
@@ -646,7 +649,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           disposeGroupChildren(staticGroup);
 
           if (isMag3d) grid.position.y = -1.2 * Math.max(0.2, (curParams as Magnetic3dParams).radiusR);
-          let renderedConductorCount = 0;
+          let renderedConductorCount = 0,renderedCurrentArrowCount=0;
           if (layers.has('conductors')) {
             const magneticParams = curParams as Magnetic3dParams;
             const fusionSegments=isTokamak3d?fusionDisplayGeometry(fusionParams).segments:[];
@@ -659,13 +662,24 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               const closed = isTokamak3d || (isMag3d && ['single-loop','helmholtz-coil','finite-solenoid'].includes(magneticParams.geometryType));
               if (closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
-              const radius = isMag3d ? Math.min(0.055, 0.063 * Math.max(0.2, magneticParams.radiusR)) : .043;
+              const radius = isMag3d ? (!closed ? .07:Math.min(0.062,0.071*Math.max(.2,magneticParams.radiusR))) : .043;
               const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), radius, isMag3d ? 14 : 10, closed);
-              staticGroup.add(new THREE.Mesh(tubeGeo, coilCopperMaterial()));
+              const copper=coilCopperMaterial();
+              if(isMag3d){copper.color.set(0xc28b61);copper.envMapIntensity=1.15;copper.roughness=.21;}
+              staticGroup.add(new THREE.Mesh(tubeGeo,copper));
+              // Signed conventional current markers along real conductor tangents.
+              if(isMag3d&&magneticParams.currentI!==0&&(!closed||renderedConductorCount%Math.max(1,Math.ceil(paths.length/4))===0)){
+                for(const fraction of (closed?[.22]:[.25,.75])){
+                  const idx=Math.max(1,Math.min(points.length-1,Math.floor(fraction*points.length)));
+                  const a=points[idx-1]!,b=points[idx]!,dir=b.clone().sub(a).normalize().multiplyScalar(Math.sign(magneticParams.currentI));
+                  const cone=new THREE.Mesh(new THREE.ConeGeometry(radius*1.55,radius*4,12),new THREE.MeshBasicMaterial({color:0xffd28c,toneMapped:false}));
+                  cone.name='signed-current-arrow';cone.position.copy(a).lerp(b,.5);cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir);staticGroup.add(cone);renderedCurrentArrowCount++;
+                }
+              }
               if (isMag3d && !closed) {
                 // The visual finite conductor is a solid cylinder, not an open pipe.
                 for (const [end, adjacent] of [[points[0]!,points[1]!],[points.at(-1)!,points.at(-2)!]] as const) {
-                  const cap=new THREE.Mesh(new THREE.CircleGeometry(radius,16),coilCopperMaterial());
+                  const cap=new THREE.Mesh(new THREE.CircleGeometry(radius,16),copper.clone());
                   cap.position.copy(end);
                   cap.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),end.clone().sub(adjacent).normalize());
                   staticGroup.add(cap);
@@ -717,6 +731,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if(isMag3d||isTokamak3d){
             container.dataset.fieldLineCount = String(renderedFieldCount);
             container.dataset.conductorCount = String(renderedConductorCount);
+            if(isMag3d)container.dataset.currentArrowCount=String(renderedCurrentArrowCount);
           }
         }
 
