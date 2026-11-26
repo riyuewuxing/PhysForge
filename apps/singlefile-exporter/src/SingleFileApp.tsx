@@ -15,6 +15,8 @@ import type { SpringSepParams,SpringSepState } from '../../../simulations/mech-s
 type SpringSlicePlugin=typeof import('../../../simulations/mech-spring-separation/plugin.js').mechSpringSeparationPlugin;
 import type { CollisionRecoilParams,CollisionRecoilState } from '../../../simulations/mech-collision-recoil/engine.js';
 type CollisionSlicePlugin=typeof import('../../../simulations/mech-collision-recoil/plugin.js').mechCollisionRecoilPlugin;
+import type {CapacitorMillikanParams,CapacitorMillikanState} from '../../../simulations/em-capacitor-millikan/engine.js';
+type CapacitorSlicePlugin=typeof import('../../../simulations/em-capacitor-millikan/plugin.js').emCapacitorMillikanPlugin;
 import {
   resolvePluginParams,
   resolveInitialCameraTransform,
@@ -184,6 +186,7 @@ export const SingleFileApp: React.FC = () => {
   const accRef = useRef(0);
   const lastFrameMsRef = useRef<number | null>(null);
   const lastUiMsRef = useRef(0);
+  const capacitorFitKey=useRef('');
   const viewportRef = useRef<Viewport>({
     width: 800,
     height: 460,
@@ -267,6 +270,16 @@ export const SingleFileApp: React.FC = () => {
       const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
       if(!model.collisionBoundsFit(s,p,v,safe)){const next=model.fitCollisionViewport(s,p,v,safe);if(next)viewportRef.current=next;}
     }
+    if(capacitorSlice&&drawState!==null){
+      const model=targetPlugin as unknown as CapacitorSlicePlugin,v=viewportRef.current,p=pm as CapacitorMillikanParams;
+      const key=JSON.stringify([p,v.width,v.height,v.scale,v.offsetX,v.offsetY]);
+      if(capacitorFitKey.current!==key){
+        const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
+        ctx.save();const next=model.fitCapacitorViewport(p,v,safe,(text,font)=>{ctx.font=font;return ctx.measureText(text).width;});ctx.restore();
+        if(next)viewportRef.current=next;
+        const q=viewportRef.current;capacitorFitKey.current=JSON.stringify([p,q.width,q.height,q.scale,q.offsetX,q.offsetY]);
+      }
+    }
     const vp = viewportRef.current;
     ctx.save();
     ctx.setTransform(vp.dpr, 0, 0, vp.dpr, 0, 0);
@@ -290,7 +303,11 @@ export const SingleFileApp: React.FC = () => {
       if(verticalSlice&&frame){canvas.dataset.verticalRendered=JSON.stringify({t:frame.t,mode:pm.trackMode,...frame.observables});canvas.dataset.verticalViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(turntableSlice&&frame){canvas.dataset.turntableRendered=JSON.stringify({t:frame.t,mode:pm.mode,...frame.observables});canvas.dataset.turntableViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(springSlice&&frame){canvas.dataset.springRendered=JSON.stringify({t:frame.t,inclineDeg:pm.inclineDeg,initialComp:pm.initialComp,externalForce:pm.externalForce,...frame.observables});canvas.dataset.springViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
-      if(capacitorSlice&&frame)canvas.dataset.capacitorRendered=JSON.stringify({t:frame.t,switchMode:pm.switchMode,groundMode:pm.groundMode,sourceVoltageU0:pm.sourceVoltageU0,distanceMm:pm.distanceMm,areaRatioS:pm.areaRatioS,dielectricEr:pm.dielectricEr,oilDropEnabled:pm.oilDropEnabled,dropChargeSteps:pm.dropChargeSteps,...frame.observables});
+      if(capacitorSlice&&frame){
+        const model=targetPlugin as unknown as CapacitorSlicePlugin;
+        ctx.save();const layout=model.capacitorLayout(drawState as CapacitorMillikanState,pm as CapacitorMillikanParams,vp,layerSet,(text,font)=>{ctx.font=font;return ctx.measureText(text).width;});ctx.restore();
+        canvas.dataset.capacitorView=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,boxes:layout.boxes,safe:{left:26,right:vp.width-26,top:28,bottom:vp.height-28}});
+        canvas.dataset.capacitorRendered=JSON.stringify({t:frame.t,switchMode:pm.switchMode,groundMode:pm.groundMode,sourceVoltageU0:pm.sourceVoltageU0,distanceMm:pm.distanceMm,areaRatioS:pm.areaRatioS,dielectricEr:pm.dielectricEr,oilDropEnabled:pm.oilDropEnabled,dropChargeSteps:pm.dropChargeSteps,...frame.observables});}
       if(electroSlice&&frame)canvas.dataset.electroRendered=JSON.stringify({t:frame.t,mode:pm.mode,q1MicroC:pm.q1MicroC,q2MicroC:pm.q2MicroC,phiA:pm.phiA,phiB:pm.phiB,phiC:pm.phiC,testChargeRatio:pm.testChargeRatio,uAccelV:pm.uAccelV,uDeflectV:pm.uDeflectV,...frame.observables});
       if(shmSlice&&frame)canvas.dataset.shmRendered=JSON.stringify({t:frame.t,mode:pm.mode,lengthL:pm.lengthL,initialAngleDeg:pm.initialAngleDeg,gravityG:pm.gravityG,massM:pm.massM,dampingGamma:pm.dampingGamma,driveAccelAmp:pm.driveAccelAmp,driveOmega:pm.driveOmega,...frame.observables});
       if(collisionSlice&&frame){canvas.dataset.collisionRendered=JSON.stringify({t:frame.t,mode:pm.mode,impactParamB:pm.impactParamB,blockLength:pm.blockLength,v10:pm.v10,dragForceF:pm.dragForceF,...frame.observables});canvas.dataset.collisionViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}

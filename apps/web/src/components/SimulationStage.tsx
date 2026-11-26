@@ -26,6 +26,8 @@ import type { SpringSepParams,SpringSepState } from '../../../../simulations/mec
 type SpringStagePlugin=typeof import('../../../../simulations/mech-spring-separation/plugin.js').mechSpringSeparationPlugin;
 import type { CollisionRecoilParams,CollisionRecoilState } from '../../../../simulations/mech-collision-recoil/engine.js';
 type CollisionStagePlugin=typeof import('../../../../simulations/mech-collision-recoil/plugin.js').mechCollisionRecoilPlugin;
+import type {CapacitorMillikanParams,CapacitorMillikanState} from '../../../../simulations/em-capacitor-millikan/engine.js';
+type CapacitorStagePlugin=typeof import('../../../../simulations/em-capacitor-millikan/plugin.js').emCapacitorMillikanPlugin;
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -363,6 +365,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const turntableSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const springSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const collisionSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
+  const capacitorSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const b1FitAtRef=useRef(-Infinity);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
@@ -371,7 +374,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
-    chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;
+    chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -768,6 +771,24 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
       }
     }
+    const capacitorAutomatic=p.meta.id==='em-capacitor-millikan'&&!userTransformedViewRef.current&&
+      !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
+    if(capacitorAutomatic&&drawState!==null){
+      const model=p as unknown as CapacitorStagePlugin,cur=latestRef.current,v=viewportRef.current;
+      const pp=pm as CapacitorMillikanParams;
+      const key=JSON.stringify([cur.resetNonce,pp.distanceMm,pp.areaRatioS,pp.sourceVoltageU0,pp.switchMode,pp.groundMode,pp.dielectricEr,pp.refDistanceMm,pp.refAreaRatioS,pp.refDielectricEr,pp.probeFracP,pp.oilDropEnabled,pp.dropChargeSteps,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      if(capacitorSafeRef.current?.key!==key){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const right=cur.presentationMode||cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-300):v.width-26;
+        const bottom=cur.presentationMode||!cur.oscilloscopeCollapsed?(dock&&dock.height>0?dock.top-box.top-14:v.height-180):v.height-76;
+        const safe={left:30,right,top:cur.presentationMode?90:28,bottom};
+        capacitorSafeRef.current={key,safe};
+        ctx.save();const next=model.fitCapacitorViewport(pp,v,safe,(text,font)=>{ctx.font=font;return ctx.measureText(text).width;});ctx.restore();
+        if(next){cameraRef.current=next;viewportRef.current=next;baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(100);}
+      }
+    }
     const baseVp = viewportRef.current;
     ctx.save();
     ctx.setTransform(baseVp.dpr, 0, 0, baseVp.dpr, 0, 0);
@@ -892,7 +913,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
       // 若锁定在运动随动参考系，标注无遮挡角标提示
       if (latestRef.current.activeFrameId !== 'ground') {
-        const text = `随动参考系锁定: (${frameOrigin.x.toFixed(2)}, ${frameOrigin.y.toFixed(2)}) m`;
+        const scale=p.meta.id==='em-capacitor-millikan'?(p as unknown as CapacitorStagePlugin).displayLengthPerM:1;
+        const text=p.meta.id==='em-capacitor-millikan'?
+          '随动参考系 · 相对板间中面 y='+(frameOrigin.y/scale*1000).toFixed(3)+' mm（水平位置仅示意）':
+          `随动参考系锁定: (${frameOrigin.x.toFixed(2)}, ${frameOrigin.y.toFixed(2)}) m`;
         const hasAutoFbdBadge = !latestRef.current.presentationMode && latestRef.current.autoFbdEnabled && !latestRef.current.poeMasked && fbdCountRef.current > 0;
         const badgeY = latestRef.current.presentationMode ? vp.height - 20 : (hasAutoFbdBadge ? 56 : 24);
         ctx.save();
@@ -928,7 +952,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if(p.meta.id==='mech-vertical-circular'&&frame&&drawState!==null){canvas.dataset.verticalRendered=JSON.stringify({t:frame.t,mode:pm.trackMode,...p.engine.computeObservables(drawState,pm)});canvas.dataset.verticalViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.verticalAutoFit=String(verticalAutomatic);}
     if(p.meta.id==='mech-conical-turntable'&&frame&&drawState!==null){canvas.dataset.turntableRendered=JSON.stringify({t:frame.t,mode:pm.mode,...p.engine.computeObservables(drawState,pm)});canvas.dataset.turntableViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.turntableAutoFit=String(turntableAutomatic);}
     if(p.meta.id==='mech-spring-separation'&&frame&&drawState!==null){canvas.dataset.springRendered=JSON.stringify({t:frame.t,inclineDeg:pm.inclineDeg,initialComp:pm.initialComp,externalForce:pm.externalForce,...p.engine.computeObservables(drawState,pm)});canvas.dataset.springViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.springAutoFit=String(springAutomatic);}
-    if(p.meta.id==='em-capacitor-millikan'&&frame&&drawState!==null)canvas.dataset.capacitorRendered=JSON.stringify({t:frame.t,switchMode:pm.switchMode,groundMode:pm.groundMode,sourceVoltageU0:pm.sourceVoltageU0,distanceMm:pm.distanceMm,areaRatioS:pm.areaRatioS,dielectricEr:pm.dielectricEr,oilDropEnabled:pm.oilDropEnabled,dropChargeSteps:pm.dropChargeSteps,...p.engine.computeObservables(drawState,pm)});
+    if(p.meta.id==='em-capacitor-millikan'&&frame&&drawState!==null){
+      const model=p as unknown as CapacitorStagePlugin;
+      ctx.save();const layout=model.capacitorLayout(drawState as CapacitorMillikanState,pm as CapacitorMillikanParams,vp,readDisplayedLayers(),(text,font)=>{ctx.font=font;return ctx.measureText(text).width;});ctx.restore();
+      canvas.dataset.capacitorView=JSON.stringify({scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,width:vp.width,height:vp.height,boxes:layout.boxes,automatic:capacitorAutomatic,safe:capacitorSafeRef.current?.safe});
+      canvas.dataset.capacitorRendered=JSON.stringify({t:frame.t,switchMode:pm.switchMode,groundMode:pm.groundMode,sourceVoltageU0:pm.sourceVoltageU0,distanceMm:pm.distanceMm,areaRatioS:pm.areaRatioS,dielectricEr:pm.dielectricEr,oilDropEnabled:pm.oilDropEnabled,dropChargeSteps:pm.dropChargeSteps,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='em-electrostatic-field'&&frame&&drawState!==null)canvas.dataset.electroRendered=JSON.stringify({t:frame.t,mode:pm.mode,q1MicroC:pm.q1MicroC,q2MicroC:pm.q2MicroC,phiA:pm.phiA,phiB:pm.phiB,phiC:pm.phiC,testChargeRatio:pm.testChargeRatio,uAccelV:pm.uAccelV,uDeflectV:pm.uDeflectV,...p.engine.computeObservables(drawState,pm)});
     if(p.meta.id==='mech-shm-resonance'&&frame&&drawState!==null)canvas.dataset.shmRendered=JSON.stringify({t:frame.t,mode:pm.mode,lengthL:pm.lengthL,initialAngleDeg:pm.initialAngleDeg,gravityG:pm.gravityG,massM:pm.massM,dampingGamma:pm.dampingGamma,driveAccelAmp:pm.driveAccelAmp,driveOmega:pm.driveOmega,...p.engine.computeObservables(drawState,pm)});
     if(p.meta.id==='mech-collision-recoil'&&frame&&drawState!==null){canvas.dataset.collisionRendered=JSON.stringify({t:frame.t,mode:pm.mode,impactParamB:pm.impactParamB,blockLength:pm.blockLength,v10:pm.v10,dragForceF:pm.dragForceF,...p.engine.computeObservables(drawState,pm)});canvas.dataset.collisionViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.collisionAutoFit=String(collisionAutomatic);}
@@ -1257,7 +1285,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     emitTelemetrySummary(true);
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
 
-  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}},[chaseStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
+  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}},[chaseStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,capacitorStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
@@ -1656,7 +1684,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
-                  if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+                  if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||capacitorStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -1682,7 +1710,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               // Like OrbitControls' start, pointer-down establishes camera
               // ownership before the first movement; a resize/fit cannot race
               // the teacher between gesture start and its first delta.
-              if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+              if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||capacitorStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {
@@ -1776,7 +1804,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (e.pointerType === 'touch') hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = hoveredHandleIdRef.current ? 'pointer' : 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||capacitorStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerCancel={(e) => {
               activePointersRef.current.clear();
@@ -1785,7 +1813,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||capacitorStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerLeave={(e) => {
               if (e.pointerType === 'touch' || dragModeRef.current) return;

@@ -562,6 +562,32 @@ async function auditM03Constraints(page,origin){
 
 
 // M11 uses the actual rendered frame, not independently synthesized telemetry.
+async function assertCapacitorLayout(page,offline=false){
+  const selector=offline?'[data-testid="sf-canvas"]':'[data-testid="simulation-canvas"]';
+  await page.waitForFunction(sel=>{const c=document.querySelector(sel);if(!c?.dataset.capacitorView)return false;
+    const v=JSON.parse(c.dataset.capacitorView);return Math.abs(v.width-c.getBoundingClientRect().width)<3&&v.boxes.length>0;
+  },selector);
+  const result=await page.evaluate(({selector,offline})=>{
+    const c=document.querySelector(selector),r=c.getBoundingClientRect(),v=JSON.parse(c.dataset.capacitorView);
+    const visible=sel=>{const el=document.querySelector(sel);if(!el||!el.getClientRects().length)return null;const a=el.getBoundingClientRect();return {left:a.left-r.left,right:a.right-r.left,top:a.top-r.top,bottom:a.bottom-r.top};};
+    const chrome=offline?[]:['[data-testid="right-control-panel"]','[data-testid="floating-scope-dock"]','[data-testid="fullscreen-formula"]','[data-testid="fullscreen-controls"]','[data-testid="fullscreen-title"]'].map(visible).filter(Boolean);
+    const intersects=(a,b)=>a.left<b.right-1&&a.right>b.left+1&&a.top<b.bottom-1&&a.bottom>b.top+1;
+    const errors=[];
+    for(const b of v.boxes){
+      if(b.left<0||b.right>r.width+1||b.top<0||b.bottom>r.height+1)errors.push('outside:'+b.id);
+      for(const d of chrome)if(intersects(b,d))errors.push('chrome:'+b.id);
+    }
+    const ids=['top-potential','overlap','bottom-potential','field-label','gap','probe','drop','meter-title','mode'];
+    const labels=v.boxes.filter(b=>ids.includes(b.id));
+    for(let i=0;i<labels.length;i++){
+      for(let j=i+1;j<labels.length;j++)if(intersects(labels[i],labels[j]))errors.push('labels:'+labels[i].id+'/'+labels[j].id);
+      for(const b of v.boxes.filter(b=>['top-plate','bottom-plate','meter'].includes(b.id)))if(intersects(labels[i],b))errors.push('geometry:'+labels[i].id+'/'+b.id);
+    }
+    return {errors,view:v,chrome};
+  },{selector,offline});
+  if(result.errors.length)throw Error('E02 layout '+JSON.stringify(result));
+  return result.view;
+}
 async function auditE02Capacitor(page,origin){
   const url=new URL(origin);url.searchParams.set('model','em-capacitor-millikan');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -586,7 +612,7 @@ async function auditE02Capacitor(page,origin){
     if(!terminal)await play.click();
     return sync();
   };
-  const photo=async(name)=>page.screenshot({path:path.join(OUT_DIR,'H31_E02_'+name+'.png')});
+  const photo=async(name)=>{await assertCapacitorLayout(page);return page.screenshot({path:path.join(OUT_DIR,'H31_E02_'+name+'.png')});};
   const open=await select('capacitor-reference-double-gap','open-const-q',200,false);
   check(open.capacitancePF,8.8541878128,'C at double gap');
   check(open.chargeNC,3.54167512512,'reference Q');check(open.voltageV,400,'U at double gap');
@@ -620,6 +646,45 @@ async function auditE02Capacitor(page,origin){
   const rise=await runTo(0,true);
   check(rise.t,tc,'rise time');check(rise.dropHeightMm,20,'top touch');check(rise.dropVyMmS,9.8*tc*1000,'upward pre-impact speed');check(rise.dropContact,1,'top contact');
   await photo('rise');
+  await select('capacitor-reversed-polarity','closed-const-u',-200,false);
+  await page.setViewportSize({width:1024,height:768});
+  await page.waitForTimeout(250);
+  await photo('compact_reverse');
+  await page.getByTestId('param-slider-distanceMm').fill('40');
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorRendered||'null')?.distanceMm===40);
+  await photo('compact_max_gap_min_overlap');
+  await page.getByTestId('btn-toggle-oscilloscope').click();
+  await page.waitForTimeout(180);await photo('compact_scope_closed');
+  const before=await assertCapacitorLayout(page),bb=await canvas.boundingBox();
+  await page.mouse.move(bb.x+bb.width*.36,bb.y+bb.height*.42);await page.mouse.wheel(0,-100);
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorView||'null')?.automatic===false);
+  const manual=JSON.parse(await canvas.getAttribute('data-capacitor-view'));
+  if(!(manual.scale>before.scale))throw Error('E02 manual zoom not retained');
+  await page.getByTestId('param-slider-distanceMm').fill('8');
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorRendered||'null')?.distanceMm===8);
+  const after=JSON.parse(await canvas.getAttribute('data-capacitor-view'));
+  if(after.automatic||after.scale!==manual.scale||after.offsetX!==manual.offsetX||after.offsetY!==manual.offsetY)throw Error('E02 manual camera overwritten');
+  await page.getByTestId('btn-reset-view').click();
+  await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.capacitorView||'null')?.automatic===true);
+  await photo('compact_min_gap');
+  const was=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+  if(was!=='projector'){
+    if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+    await page.getByTestId('btn-theme').click();
+    await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+    if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  }
+  await photo('compact_projector');
+  await page.getByTestId('btn-fullscreen-speech').click();await page.waitForSelector('[data-testid="fullscreen-controls"]');
+  await page.waitForTimeout(250);await photo('compact_fullscreen_projector');
+  await page.getByTestId('btn-exit-fullscreen-speech').click();
+  if(was!=='projector'){
+    if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+    await page.getByTestId('btn-theme').click();
+    if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  }
+  await page.setViewportSize(VIEWPORT);await page.waitForTimeout(200);
+  const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
   const report={open,openRun,top,closed,reversed,balance,balanced,fall,rise};
   console.log('H31 E02 online '+JSON.stringify(report));return report;
 }
@@ -3029,6 +3094,7 @@ async function main() {
       await e02Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.capacitorRendered||'null')?.distanceMm===40);
       const open=await read();
       if(Math.abs(open.chargeNC-3.54167512512)>1e-10||Math.abs(open.voltageV-400)>1e-8||Math.abs(open.fieldEy+10000)>1e-8)throw Error('E02 offline open '+JSON.stringify(open));
+      await assertCapacitorLayout(e02Page,true);
       await e02Page.screenshot({path:path.join(OUT_DIR,'H31_E02_offline_open.png')});
       await e02Page.locator('[data-preset-id="millikan-free-fall"]').click();
       await e02Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.capacitorRendered||'null');return s?.oilDropEnabled===true&&s.sourceVoltageU0===0&&s.t===0&&document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='dropHeightMm';});
@@ -3038,6 +3104,7 @@ async function main() {
       const fall=await read(),tc=Math.sqrt(.02/9.8);
       if(Math.abs(fall.t-tc)>1e-7||fall.dropContact!==-1||fall.dropHeightMm!==0||Math.abs(fall.dropVyMmS+9.8*tc*1000)>1e-6)throw Error('E02 offline fall '+JSON.stringify(fall));
       await e02Page.getByRole('button',{name:'黑板深蓝'}).click();await e02Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await assertCapacitorLayout(e02Page,true);
       await e02Page.screenshot({path:path.join(OUT_DIR,'H31_E02_offline_fall_paper.png')});
       if(e02Errors.length||e02Network.length)throw Error('E02 offline errors '+JSON.stringify({e02Errors,e02Network}));
       Object.assign(e02OfflineReport,{open,fall,errors:e02Errors,network:e02Network});

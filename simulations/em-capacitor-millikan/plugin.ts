@@ -1,5 +1,6 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
-import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec, type TelemetryChannelSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec, type TelemetryChannelSpec } from '@physforge/sim-sdk';
+import {capacitorLayout,capacitorInitialView,fitCapacitorViewport,capacitorBoundsFit,capacitorContentBounds} from './layout.js';
 import { capacitorMillikanPresets } from './presets.js';
 import {
   checkInvariants,
@@ -107,7 +108,11 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
     difficulty: '高三一轮',
     version: '2.0.0'
   },
-  defaultView: { scale: 1.0, offsetRatioX: -0.06, offsetRatioY: -0.09 },
+  defaultView:{
+    scale:(p,v)=>capacitorInitialView(p,v).scale,
+    offsetRatioX:(p,v)=>capacitorInitialView(p,v).offsetRatioX,
+    offsetRatioY:(p,v)=>capacitorInitialView(p,v).offsetRatioY
+  },
   paramSchema,
   getParamFields:p=>{
     const keys=['switchMode','sourceVoltageU0','distanceMm','areaRatioS','dielectricEr','groundMode','probeFracP','oilDropEnabled',
@@ -187,12 +192,11 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
   },
   renderCanvas:(ctx,state,p,viewport,activeLayers)=>{
     const m=computeCapacitorMetrics(p),g=capacitorGeometry(p),d=g.halfD,mapper=createWorldMapper(viewport);
-    const labels:CanvasLabel[]=[],paper=viewport.theme==='projector';
+    const paper=viewport.theme==='projector';
     const ink=paper?'#0f172a':'#e2e8f0',muted=paper?'#475569':'#94a3b8';
     const blue=paper?'#0369a1':'#38bdf8',gold=paper?'#92400e':'#fbbf24',rose=paper?'#be123c':'#fb7185',green=paper?'#166534':'#4ade80';
-    const label=(id:string,x:number,y:number,text:string,color=ink,font='13px sans-serif')=>{
-      const s=mapper.toScreen(x,y);labels.push({id,x:s.x,y:s.y,text,color,font});
-    };
+    const layout=capacitorLayout(state,p,viewport,activeLayers,(text,font)=>{ctx.font=font;return ctx.measureText(text).width;});
+    const palette={ink,muted,rose,gold,green};
     const line=(x1:number,y1:number,x2:number,y2:number,color:string,width=1.5)=>{
       const a=mapper.toScreen(x1,y1),b=mapper.toScreen(x2,y2);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
     };
@@ -201,7 +205,7 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
       line(x1,y1,x2,y2,color,1.5);const u=dx/n,v=dy/n,h=Math.min(8,n*.25);ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-h*u+h*.44*v,b.y-h*v-h*.44*u);ctx.lineTo(b.x-h*u-h*.44*v,b.y-h*v+h*.44*u);ctx.closePath();ctx.fill();
     };
     const plate=(left:number,right:number,y:number,polarity:number,top:boolean)=>{
-      const a=mapper.toScreen(left,y),b=mapper.toScreen(right,y),h=Math.max(7,mapper.len(.065));
+      const a=mapper.toScreen(left,y),b=mapper.toScreen(right,y),h=layout.plateHeight;
       const c=polarity>0?rose:polarity<0?blue:muted;
       const yy=a.y+(top?-h:0);
       const grad=ctx.createLinearGradient(0,yy,0,yy+h);
@@ -209,8 +213,10 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
       ctx.save();ctx.fillStyle=grad;ctx.strokeStyle=c;ctx.lineWidth=1.5;
       if(!paper&&polarity){ctx.shadowColor=c;ctx.shadowBlur=11;}
       ctx.beginPath();ctx.roundRect(a.x,yy,b.x-a.x,h,Math.min(3,h/2));ctx.fill();ctx.stroke();ctx.restore();
-      if(polarity)for(let i=0;i<6;i++){
-        const x=g.left+(i+1)*(g.right-g.left)/7,pt=mapper.toScreen(x,y+(top?-.09:.09));
+      const count=Math.max(2,Math.min(6,Math.floor(mapper.len(g.right-g.left)/21)));
+      if(polarity)for(let i=0;i<count;i++){
+        const x=g.left+(i+1)*(g.right-g.left)/(count+1),pt=mapper.toScreen(x,y);
+        pt.y+=top?8:-8;
         ctx.fillStyle=c;ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(polarity>0?'+':'−',pt.x,pt.y);
       }
     };
@@ -223,47 +229,44 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
       fieldGrad.addColorStop(1,paper?'rgba(3,105,161,.04)':'rgba(56,189,248,.05)');
       ctx.fillStyle=fieldGrad;ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);
       if(p.dielectricEr>1){ctx.strokeStyle=blue;ctx.setLineDash([4,4]);ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.setLineDash([]);}
-      if(m.fieldEy!==0)for(let k=0;k<6;k++){
-        const x=g.left+(k+1)*(g.right-g.left)/7,sign=Math.sign(m.fieldEy);
+      const count=Math.max(2,Math.min(6,Math.floor(mapper.len(g.right-g.left)/21)));
+      if(m.fieldEy!==0)for(let k=0;k<count;k++){
+        const x=g.left+(k+1)*(g.right-g.left)/(count+1),sign=Math.sign(m.fieldEy);
         arrow(x,-.62*d*sign,x,.62*d*sign,green);
       }
       plate(g.topLeft,g.topRight,d,Math.sign(m.chargeC),true);
       plate(-1.5,1.5,-d,-Math.sign(m.chargeC),false);
-      label('top-potential',(g.topLeft+g.topRight)/2,d+.26,'上板 φ='+m.phiTopV.toFixed(1)+' V',ink,'bold 13px sans-serif');
-      label('bottom-potential',0,-d-.25,'下板 φ='+m.phiBottomV.toFixed(1)+' V',ink,'bold 13px sans-serif');
-      label('overlap',(g.left+g.right)/2,d+.55,'正对面积 '+(m.area*1e4).toFixed(0)+' cm² · εr='+p.dielectricEr,muted);
       // Actual plate gap dimension, outside the left edge of overlap.
       const x=-1.74;line(x,-d,x,d,muted,1);line(x-.06,-d,x+.06,-d,muted);line(x-.06,d,x+.06,d,muted);
-      label('gap',x-.18,0,'d='+p.distanceMm+' mm',muted);
       if(p.groundMode!=='none'){
         const top=p.groundMode==='top',x=top?g.topRight:1.5,y=top?d:-d,sign=top?1:-1;
         line(x,y,x+.2,y,gold);line(x+.2,y,x+.2,y+sign*.17,gold);
         for(let i=0;i<3;i++){const w=.10-i*.027,gy=y+sign*(.17+i*.055);line(x+.2-w,gy,x+.2+w,gy,gold);}
-      }else label('gauge',-1.25,-d-.5,'中面零势（约定）',muted);
-      label('field-label',(g.left+g.right)/2,-d-.53,m.fieldEy===0?'Eᵧ=0':'Eᵧ='+m.fieldEy.toExponential(2)+' V/m',green);
+      }
     }
     if(activeLayers.has('oilDrop')){
       const py=-d+p.probeFracP*2*d,probe=mapper.toScreen(g.probeX,py);
       ctx.fillStyle=rose;ctx.beginPath();ctx.arc(probe.x,probe.y,4.5,0,Math.PI*2);ctx.fill();
-      label('probe',g.probeX-.15,py+.17,'P · '+m.phiPV.toFixed(1)+' V',rose,'bold 13px sans-serif');
+
       if(p.oilDropEnabled){
         const y=-d+2*d*state.dropYFrac,pt=mapper.toScreen(g.dropX,y),r=Math.max(5,mapper.len(.045));
         ctx.save();if(!paper){ctx.shadowColor=gold;ctx.shadowBlur=13;}
         ctx.fillStyle=gold;ctx.beginPath();ctx.arc(pt.x,pt.y,r,0,Math.PI*2);ctx.fill();ctx.restore();
-        label('drop',g.dropX+.14,y-.12,state.terminal?'触板 · 停止':'q=−'+Math.round(p.dropChargeSteps)+'e',gold,'bold 13px sans-serif');
+
       }
     }
     if(activeLayers.has('electrometer')){
-      const x=Math.max(2.35,g.topRight+.15),meter=mapper.toScreen(x,-.15),r=Math.max(27,mapper.len(.34));
+      const meter=layout.meter,r=meter.r;
       ctx.save();ctx.fillStyle=paper?'#f8fafc':'#0b172b';ctx.strokeStyle=muted;ctx.lineWidth=2;
       ctx.beginPath();ctx.arc(meter.x,meter.y,r,0,Math.PI*2);ctx.fill();ctx.stroke();
       for(let k=0;k<=8;k++){const angle=(-90+k*10)*Math.PI/180;ctx.strokeStyle=muted;ctx.beginPath();ctx.moveTo(meter.x+r*.76*Math.cos(angle),meter.y+r*.76*Math.sin(angle));ctx.lineTo(meter.x+r*.89*Math.cos(angle),meter.y+r*.89*Math.sin(angle));ctx.stroke();}
       const angle=(state.electrometerAngleDeg-90)*Math.PI/180;ctx.strokeStyle=rose;ctx.lineWidth=2.4;ctx.beginPath();ctx.moveTo(meter.x,meter.y);ctx.lineTo(meter.x+r*.72*Math.cos(angle),meter.y+r*.72*Math.sin(angle));ctx.stroke();
       ctx.fillStyle=ink;ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(m.voltageV.toFixed(0)+' V',meter.x,meter.y+r*.46);ctx.restore();
-      label('meter-title',x,-.15-.58,'静电计 · 指针示意',muted);
-      label('mode',x,-.15-.82,p.switchMode==='open-const-q'?'参考 Q 恒定':'电源 U 恒定',gold,'bold 13px sans-serif');
+
     }
-    ctx.textBaseline='alphabetic';resolveAndDrawLabels(ctx,labels,viewport.width,viewport.height);ctx.restore();
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    for(const l of layout.labels){ctx.font=l.font;ctx.fillStyle=palette[l.role];ctx.fillText(l.text,l.x,l.y);}
+    ctx.restore();
   },
   formatFormulas:(state,p)=>{
     const m=computeCapacitorMetrics(p),o=computeObservables(state,p);
@@ -277,6 +280,6 @@ export const emCapacitorMillikanPlugin = Object.assign(defineSimulationPlugin<Ca
       {id:'drop-dynamics',label:state.terminal?'首次触板，碰撞前终止':'有向油滴运动方程',latex:'\\dot v=qE_y/m-g-\\beta v',substitutedLatex:'v='+o.dropVyMmS!.toFixed(3)+'\\,\\mathrm{mm/s},\\quad a='+o.dropAcceleration!.toFixed(3)+'\\,\\mathrm{m/s^2}'});
     return items;
   }
-}), { liveFormulas });
+}), { liveFormulas,capacitorLayout,capacitorContentBounds,fitCapacitorViewport,capacitorBoundsFit,displayLengthPerM:DISPLAY_LENGTH_PER_M });
 
 export default emCapacitorMillikanPlugin;

@@ -184,3 +184,24 @@ describe('H31 geometry and teaching force parity',()=>{
     }
   });
 });
+
+describe('H32 E02 viewport regression',()=>{
+  it('fits the actual plate, gauge, marker and label bounds over all supported extremes',()=>{
+    const model=emCapacitorMillikanPlugin;
+    const layers=new Set(['plates','electrometer','oilDrop']);
+    for(const width of [620,1024,1440])for(const height of [310,570,900])for(const distanceMm of [8,20,40])for(const areaRatioS of [.3,.65,1])for(const groundMode of ['bottom','top','none'] as const){
+      const p={...getPreset(2),distanceMm,areaRatioS,groundMode,sourceVoltageU0:400};
+      const v={width,height,dpr:1,scale:1,offsetX:0,offsetY:0};
+      const safe={left:30,right:width-26,top:28,bottom:height-28};
+      const fit=model.fitCapacitorViewport(p,v,safe);
+      expect(fit).not.toBeNull();
+      const state=createInitialState(p);
+      expect(model.capacitorBoundsFit(state,p,fit!,safe)).toBe(true);
+      const l=model.capacitorLayout(state,p,fit!,layers);
+      const text=l.boxes.filter(b=>l.labels.some(t=>t.id===b.id));
+      const overlap=(a:typeof text[number],b:typeof text[number])=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
+      for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)expect(overlap(text[i]!,text[j]!),JSON.stringify({width,height,distanceMm,areaRatioS,groundMode,a:text[i]!.id,b:text[j]!.id})).toBe(false);
+      for(const label of text)for(const box of l.boxes.filter(b=>['top-plate','bottom-plate','meter'].includes(b.id)))expect(overlap(label,box),JSON.stringify({width,height,distanceMm,areaRatioS,groundMode,label:label.id,box:box.id})).toBe(false);
+    }
+  });
+});
