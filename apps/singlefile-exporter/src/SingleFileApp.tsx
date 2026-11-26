@@ -737,7 +737,7 @@ export const SingleFileApp: React.FC = () => {
               setIsPlaying((p) => !p);
               setScrubTime(null);
             }}
-            className="pf-touch-target inline-flex items-center gap-1 px-3.5 py-1.5 rounded-xl bg-sky-500 text-slate-950 font-bold cursor-pointer"
+            className={waveOpticsSlice?"pf-touch-target inline-flex items-center gap-1 px-3.5 py-1.5 rounded-xl border opacity-40 cursor-not-allowed":"pf-touch-target inline-flex items-center gap-1 px-3.5 py-1.5 rounded-xl bg-sky-500 text-slate-950 font-bold cursor-pointer"}
           >
             {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             <span>{isPlaying ? '暂停' : '运行'}</span>
@@ -749,7 +749,7 @@ export const SingleFileApp: React.FC = () => {
               setIsPlaying(false);
               setStepOnceNonce((n) => n + 1);
             }}
-            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
+            className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ borderColor: 'var(--pf-border)' }}
           >
             <StepForward className="w-4 h-4" />
@@ -783,6 +783,7 @@ export const SingleFileApp: React.FC = () => {
           </select>
           <button
             type="button"
+            disabled={waveOpticsSlice}
             onClick={() => setStrobeEnabled((v) => !v)}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
             style={{ borderColor: strobeEnabled ? 'var(--pf-accent)' : 'var(--pf-border)' }}
@@ -884,9 +885,17 @@ export const SingleFileApp: React.FC = () => {
           className="w-80 shrink-0 border-l p-3 overflow-y-auto space-y-3"
           style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
         >
-          {(equilibriumSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice)&&<section className="space-y-1 text-xs" data-testid={rippleSlice?'sf-ripple-layers':waveSlice?'sf-wave-layers':magneticSlice?'sf-magnetic-layers':lcSlice?'sf-lc-layers':transformerSlice?'sf-transformer-layers':generatorSlice?'sf-generator-layers':eddySlice?'sf-eddy-layers':wireSlice?'sf-wire-layers':acSlice?'sf-ac-layers':capacitorSlice?'sf-capacitor-layers':electroSlice?'sf-electro-layers':shmSlice?'sf-shm-layers':collisionSlice?'sf-collision-layers':springSlice?'sf-spring-layers':turntableSlice?'sf-turntable-layers':verticalSlice?'sf-vertical-layers':contactSlice?'sf-contact-layers':equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
+          {(equilibriumSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice)&&<section className="space-y-1 text-xs" data-testid={waveOpticsSlice?'sf-o01-layers':rippleSlice?'sf-ripple-layers':waveSlice?'sf-wave-layers':magneticSlice?'sf-magnetic-layers':lcSlice?'sf-lc-layers':transformerSlice?'sf-transformer-layers':generatorSlice?'sf-generator-layers':eddySlice?'sf-eddy-layers':wireSlice?'sf-wire-layers':acSlice?'sf-ac-layers':capacitorSlice?'sf-capacitor-layers':electroSlice?'sf-electro-layers':shmSlice?'sf-shm-layers':collisionSlice?'sf-collision-layers':springSlice?'sf-spring-layers':turntableSlice?'sf-turntable-layers':verticalSlice?'sf-vertical-layers':contactSlice?'sf-contact-layers':equilibriumSlice?'sf-equilibrium-layers':'sf-projectile-layers'}><div className="font-semibold">图解视图（不复位）</div>{targetPlugin.layers.map(layer=><label key={layer.id} className="flex gap-2 items-center"><input type="checkbox" data-testid={'sf-layer-'+layer.id} checked={activeLayers.includes(layer.id)} onChange={()=>setActiveLayers(ls=>ls.includes(layer.id)?ls.filter(id=>id!==layer.id):[...ls,layer.id])}/>{layer.label}</label>)}</section>}
           <div className="text-xs font-bold" style={{color:"var(--pf-accent)"}}>课堂预设速切</div>
-          <div className={equilibriumSlice?"grid grid-cols-2 gap-1.5":"space-y-1.5"}>
+          {waveOpticsSlice?<select data-testid="sf-o01-presets" aria-label="课堂预设" value={activePresetId??''} onChange={e=>{
+              const preset=targetPlugin.presets.find(p=>p.id===e.target.value);if(!preset)return;
+              setActivePresetId(preset.id);setParams(resolvePluginParams(targetPlugin.paramSchema,preset.params));
+              if(preset.visibleLayers?.length)setActiveLayers([...preset.visibleLayers]);
+              setIsPlaying(false);setScrubTime(null);setResetNonce(n=>n+1);
+            }} className="w-full rounded-lg border p-2 text-xs" style={{borderColor:'var(--pf-border)',background:'var(--pf-surface-elevated)'}}>
+              {!activePresetId&&<option value="">自定义参数</option>}
+              {targetPlugin.presets.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>:<div className={equilibriumSlice?"grid grid-cols-2 gap-1.5":"space-y-1.5"}>
             {targetPlugin.presets.map((preset) => (
               <button
                 key={preset.id}
@@ -910,7 +919,7 @@ export const SingleFileApp: React.FC = () => {
                 <div className={equilibriumSlice?"font-semibold truncate":"font-semibold"} title={preset.name}>{equilibriumSlice?preset.name.split("：")[0]:preset.name}</div>
               </button>
             ))}
-          </div>
+          </div>}
 
           {equilibriumSlice&&<section data-testid="sf-equilibrium-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{summary.observables.solutionDefined===0&&<div data-testid="sf-equilibrium-no-solution" className="font-semibold text-rose-500">当前构型无可靠有限平衡解</div>}{([['requestedInitialAngleDeg','初始请求角','°'],['initialAngleDeg','限幅后初始角','°'],['angleDeg','当前实际角','°'],['force1','F₁ 大小','N'],['force2','F₂ 大小','N'],['minPullForceN','理论拉力下界','N'],['ropeLengthM','实际绳长','m'],['rodAxialForceN','轴力 C（压正）','N'],['reactionXN','支承力 Rₓ','N'],['reactionYN','支承力 Rᵧ','N'],['supportMomentNm','固支力矩 M','N·m']] as const).filter(([key])=>key==='ropeLengthM'?params.mode==='hemisphere-suspension':key==='rodAxialForceN'?params.mode==='hinged-rod':['reactionXN','reactionYN','supportMomentNm'].includes(key)?params.mode==='fixed-rod':key==='minPullForceN'?params.mode!=='fixed-rod':true).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-equilibrium-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>准静态演示；无解处曲线留空。</div></section>}
           {chaseSlice&&<section data-testid="sf-chase-readouts" className="space-y-1 text-xs rounded-xl border p-2" style={{borderColor:'var(--pf-border)'}}>{([['deltaX','有向位置差','m'],['gap','实际间距','m'],['minGap','历史最小间距','m'],['firstCoVelocityTime','首次共速','s'],['firstMeetTime','首次相遇','s']] as const).map(([key,label,unit])=>{const v=summary.observables[key];return <div key={key} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'sf-chase-'+key}>{typeof v==='number'&&Number.isFinite(v)?v.toFixed(3)+' '+unit:'—'}</span></div>;})}<div>质点模型 · 不模拟碰撞。</div></section>}
@@ -1009,7 +1018,7 @@ export const SingleFileApp: React.FC = () => {
                       });
                       setActivePresetId(null);
                       setParams(next);
-                      if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice){setIsPlaying(false);setScrubTime(null);}
+                    if(odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||transformerSlice||waveOpticsSlice){setIsPlaying(false);setScrubTime(null);}
                       setResetNonce((n) => n + 1);
                     }}
                     className="w-full h-9"
@@ -1031,7 +1040,8 @@ export const SingleFileApp: React.FC = () => {
                           [field.key]: e.target.checked
                         })
                       );
-                      if(equilibriumSlice){setIsPlaying(false);setScrubTime(null);}
+                      if(equilibriumSlice||waveOpticsSlice){setIsPlaying(false);setScrubTime(null);}
+                      if(waveOpticsSlice)setActivePresetId(null);
                       setResetNonce((n) => n + 1);
                     }}
                   />

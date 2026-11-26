@@ -1,7 +1,7 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { waveOpticsPresets } from './presets.js';
-import { makeOpticsProfile, opticsReadout, makePattern } from './sceneGeometry.js';
+import { makeOpticsProfile, opticsReadout, makePattern, makeOpticsApparatus, binOpticsProfile } from './sceneGeometry.js';
 import {
   checkInvariants,
   computeObservables,
@@ -228,6 +228,7 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
     checkInvariants
   },
   layers: [
+    { id: 'apparatus', label: '装置剖面 / 开口几何（薄膜厚度夸大）', defaultVisible: true },
     { id: 'fringes', label: '波长示意色 · 归一化干涉/衍射图样', defaultVisible: true },
     { id: 'intensityCurve', label: '中心截面归一化光强 I/I₀', defaultVisible: true }
   ],
@@ -269,7 +270,16 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
     if(profile.points.length)primitives.push({kind:'polyline',points:profile.points.map(v=>({x:-2+4*v.u,y:v.intensity}))});
     for(const tick of profile.ticks)primitives.push({kind:'text',x:-2+4*tick.u,y:-.13,text:tick.label,align:'middle'});
     for(const mark of profile.marks)primitives.push({kind:'line',x1:-2+4*mark.u,y1:0,x2:-2+4*mark.u,y2:1,dashed:true});
-    return {width:960,height:480,viewBox:{minX:-2.45,minY:-.48,maxX:2.45,maxY:1.55},title:'波动光学 · 中心截面光强',primitives};
+    const apparatus=makeOpticsApparatus(params);
+    // Translate the shared schematic into the upper print panel; retain
+    // the exact physical graph as the first polyline in the export.
+    for(const v of apparatus.primitives){
+      if(v.kind==='line')primitives.push({...v,y1:v.y1+1.5,y2:v.y2+1.5});
+      else if(v.kind==='polyline')primitives.push({...v,points:v.points.map(q=>({...q,y:q.y+1.5}))});
+      else if(v.kind==='text')primitives.push({...v,y:v.y+1.5});
+      else if(v.kind==='rect')primitives.push({...v,y:v.y+1.5});
+    }
+    return {width:960,height:780,viewBox:{minX:-2.45,minY:-.48,maxX:2.45,maxY:3.6},title:'波动光学 · 装置与中心截面光强',primitives};
   },
   renderCanvas: (ctx,state,p,viewport,layers)=>{
     const m=createWorldMapper(viewport),profile=makeOpticsProfile(p),labels:CanvasLabel[]=[];
@@ -280,25 +290,50 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
     };
     const label=(id:string,x:number,y:number,text:string,color=ink)=>{const q=m.toScreen(x,y);labels.push({id,x:q.x,y:q.y,text,color,font:'12px sans-serif'});};
     ctx.save();
-    const isRing=p.mode==='newtons-rings',x0=isRing?-.69:-2,x1=isRing?.69:2,y0=isRing?.28:.35,y1=isRing?1.66:1.43;
+    if(layers.has('apparatus')){
+      const apparatus=makeOpticsApparatus(p);
+      for(let i=0;i<apparatus.primitives.length;i++){
+        const v=apparatus.primitives[i]!;
+        if(v.kind==='line'){
+          ctx.setLineDash(v.dashed?[3,3]:[]);line(v.x1,v.y1,v.x2,v.y2,ink,1.4);ctx.setLineDash([]);
+        }else if(v.kind==='polyline'){
+          ctx.beginPath();v.points.forEach((q,j)=>{const a=m.toScreen(q.x,q.y);if(j===0)ctx.moveTo(a.x,a.y);else ctx.lineTo(a.x,a.y);});ctx.strokeStyle=accent;ctx.lineWidth=1.7;ctx.stroke();
+        }else if(v.kind==='text')label('apparatus-'+i,v.x,v.y,v.text);
+        else if(v.kind==='rect'){
+          const a=m.toScreen(v.x,v.y+v.height),b=m.toScreen(v.x+v.width,v.y);
+          ctx.fillStyle=projector?'#64748b':'#94a3b8';ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);
+        }
+      }
+    }
+    const isRing=p.mode==='newtons-rings',withApparatus=layers.has('apparatus'),center=withApparatus?1.13:0;
+    const x0=isRing?center-.81:withApparatus?.14:-2,x1=isRing?center+.81:2.17,y0=isRing?.29:.42,y1=isRing?1.91:1.50;
     const a=m.toScreen(x0,y1),b=m.toScreen(x1,y0);
     const pattern=layers.has('fringes')?makePattern(p,state.rgbHex,(b.x-a.x)*viewport.dpr,(b.y-a.y)*viewport.dpr):undefined;
     if(pattern){
       ctx.drawImage(pattern,a.x,a.y,b.x-a.x,b.y-a.y);
       ctx.strokeStyle=projector?'#64748b':'#475569';ctx.lineWidth=1;ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);
-      if(isRing){label('ring-ruler',1.25,1.1,'视场半径 '+profile.max.toFixed(2)+' mm');label('ring-center',1.25,.75,p.halfWaveLoss?'中心暗':'中心亮');}
-      else if(p.mode==='thin-film-wedge'){label('thin-end',-1.65,1.55,'薄端 x=0');label('thick-end',1.65,1.55,'厚端 x=20 mm');}
-      else label('angle-domain',0,1.55,'远场角坐标 sinθ（非屏上距离）');
+      if(isRing){label('ring-ruler',center,2.04,'视场半径 '+profile.max.toFixed(1)+' mm · '+(p.halfWaveLoss?'中心暗':'中心亮'));}
+      else if(p.mode==='thin-film-wedge'){label('thin-end',x0+.14,1.64,'x=0');label('thick-end',x1-.15,1.64,'20 mm');label('wedge-pattern',center,1.83,'等厚干涉俯视图');}
+      else {label('angle-domain',center,1.83,'远场图样 · sin θ');label('angle-note',center,1.65,'非屏上距离');}
     }
-    if(!profile.points.length)label('invalid',0,.84,'无有效几何 · 不生成光强',projector?'#991b1b':'#fca5a5');
+    if(!profile.points.length)label('invalid',center,.84,'无有效几何 · 不生成光强',projector?'#991b1b':'#fca5a5');
     if(layers.has('intensityCurve')&&profile.points.length){
       const baseline=-.77,height=.76;
       line(-2,baseline,2,baseline,ink);line(-2,baseline,-2,baseline+height,ink);
       line(-2,baseline+height,2,baseline+height,projector?'#cbd5e1':'#334155');
       label('i1',-2.13,baseline+height,'1');label('i0',-2.13,baseline,'0');
+      const columns=Math.max(40,Math.floor(m.len(4))),bins=binOpticsProfile(profile.points,columns);
+      const averaged=profile.points.length>columns*4&&bins.some(v=>v.max-v.min>.75);
+      if(averaged){
+        ctx.globalAlpha=.24;
+        for(const v of bins)line(-2+4*v.u,baseline+height*v.min,-2+4*v.u,baseline+height*v.max,accent,1);
+        ctx.globalAlpha=1;
+      }
       ctx.beginPath();
-      for(let i=0;i<profile.points.length;i++){const v=profile.points[i]!;const q=m.toScreen(-2+4*v.u,baseline+height*v.intensity);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);}
+      const display=averaged?bins.map(v=>({u:v.u,intensity:v.mean})):profile.points;
+      for(let i=0;i<display.length;i++){const v=display[i]!;const q=m.toScreen(-2+4*v.u,baseline+height*v.intensity);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);}
       ctx.strokeStyle=accent;ctx.lineWidth=1.6;ctx.stroke();
+      label('profile-meaning',-1.25,.04,averaged?'I/I₀ · 像素均值 / 浅色极值':'I/I₀ · 中心截面');
       ctx.setLineDash([3,3]);for(const mark of profile.marks)line(-2+4*mark.u,baseline,-2+4*mark.u,baseline+height,projector?'#b45309':'#fbbf24');ctx.setLineDash([]);
       for(let i=0;i<profile.ticks.length;i++){const tick=profile.ticks[i]!;const x=-2+4*tick.u;line(x,baseline,x,baseline-.035,ink);label('tick-'+i,x,baseline-.11,tick.label);}
       label('axis',0,-1.06,profile.axis);label('readout',0,.16,opticsReadout(state,p),accent);
