@@ -50,7 +50,7 @@ export const lcRlcPresets: readonly PresetSpec<LcRlcParams>[] = [
   {id:'rlc-critical-decay',name:'临界阻尼 · 非振荡衰减',description:'L=C=0.25，R=2 Ω，电荷不反复过零。',curriculumNotes:'临界阻尼边界',params:{mode:'rlc-damped',inductanceH:.25,capacitanceF:.25,resistanceR:2,initialChargeC:.5}},
   {id:'rlc-overdamped-decay',name:'过阻尼 · 非振荡衰减',description:'L=C=0.25，R=3 Ω，比较非振荡慢衰减。',curriculumNotes:'过阻尼边界',params:{mode:'rlc-damped',inductanceH:.25,capacitanceF:.25,resistanceR:3,initialChargeC:.5}},
   {id:'rlc-detuned-driven',name:'有阻受迫 · 失谐响应',description:'ω=4 rad/s，实际瞬态与理论特解区分。',curriculumNotes:'阻抗与相位',params:{mode:'rlc-ac-resonance',inductanceH:.25,capacitanceF:.1,resistanceR:.8,driveVoltAmpUm:10,driveOmega:4}},
-  {id:'lc-lossless-resonance',name:'零电阻精确谐振 · 无有限周期稳态',description:'理想无损，非零驱动下的世俗增长；不人为加电阻。',curriculumNotes:'理想模型的适用边界',params:{mode:'rlc-ac-resonance',inductanceH:.25,capacitanceF:.1,resistanceR:0,driveVoltAmpUm:10,driveOmega:1/Math.sqrt(.25*.1)}},
+  {id:'lc-lossless-resonance',name:'零电阻精确谐振 · 无有限周期稳态',description:'理想无损，非零驱动下的随时间增长响应；不人为加电阻。',curriculumNotes:'理想模型的适用边界',params:{mode:'rlc-ac-resonance',inductanceH:.25,capacitanceF:.1,resistanceR:0,driveVoltAmpUm:10,driveOmega:1/Math.sqrt(.25*.1)}},
   {id:'lc-lossless-detuned',name:'零电阻失谐 · 非吸引特解',description:'齐次振荡不衰减，实际时域不等于特解。',curriculumNotes:'零阻尼失谐',params:{mode:'rlc-ac-resonance',inductanceH:.25,capacitanceF:.1,resistanceR:0,driveVoltAmpUm:10,driveOmega:4}},
   {id:'lc-zero-excitation',name:'零初态零驱动 · 无激发',description:'零电阻精确谐振条件下零驱动，不产生电流。',curriculumNotes:'零源退化条件',params:{mode:'rlc-ac-resonance',inductanceH:.25,capacitanceF:.1,resistanceR:0,driveVoltAmpUm:0,driveOmega:1/Math.sqrt(.25*.1)}}
 ];

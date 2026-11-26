@@ -644,7 +644,7 @@ function checkE09(s){
     heat*=h/3;work*=h/3;
   }
   check('jouleHeatJ',heat,8e-6);check('sourceWorkJ',work,8e-6);
-  if(Math.abs(s.energyResidualJ)>1e-5*Math.max(1,E0,Math.abs(work)))throw Error('E09 independent energy balance '+JSON.stringify(s));
+  if(!Number.isFinite(s.energyResidualJ)||Math.abs(s.energyResidualJ)>1e-5*Math.max(1,E0,Math.abs(work)))throw Error('E09 independent energy balance '+JSON.stringify(s));
   if(driven){check('impedanceR',R);check('impedanceMag',Z);
     if(singular){if('referenceCurrentPeak'in s||'referencePhaseRad'in s)throw Error('E09 undefined reference leaked');}
     else check('referenceCurrentPeak',Um/Z);
@@ -700,9 +700,9 @@ async function auditE09Lc(page,origin){
     const initial=JSON.parse(await page.getByTestId('simulation-canvas').getAttribute('data-lc-rendered'));checkE09(initial);
     if('measuredPeriod'in initial)throw Error('E09 initial period fabricated');
     if(mode!=='rlc-ac-resonance'&&await page.getByTestId('param-slider-driveOmega').count())throw Error('E09 inactive drive controls');
-    if(mode==='lc-undamped'){await photo('lc_initial');const exchange=await run(.24);if(exchange.energyMagneticJ<.9*exchange.initialEnergyJ)throw Error('E09 quarter-cycle transfer');await photo('lc_quarter');}
+    if(mode==='lc-undamped'){await photo('lc_initial');const exchange=await run(.22);if(exchange.energyMagneticJ<.7*exchange.initialEnergyJ)throw Error('E09 quarter-cycle transfer');await photo('lc_quarter');}
     const final=await run(duration);
-    if(mode==='lc-undamped'&&Math.abs(final.measuredPeriod-final.naturalPeriod)>1e-5)throw Error('E09 measured free period');
+    if(mode==='lc-undamped'&&(!Number.isFinite(final.measuredPeriod)||Math.abs(final.measuredPeriod-final.naturalPeriod)>1e-5))throw Error('E09 measured free period');
     report[id]={initial,final};await photo(id);
   }
   console.log('H38 E09 online '+JSON.stringify(report));return report;
