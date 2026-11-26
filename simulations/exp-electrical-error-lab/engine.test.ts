@@ -191,3 +191,53 @@ describe('F09 independent circuit topology and limiting cases (unrun)',()=>{
     }
   });
 });
+
+describe('F09 actual instrument drawing and rollover (unrun)',()=>{
+  it.each([
+    {vernierDivisions:'10' as const,targetVernierMm:23.4,N:10},
+    {vernierDivisions:'20' as const,targetVernierMm:23.45,N:20},
+    {vernierDivisions:'50' as const,targetVernierMm:23.46,N:50}
+  ])('renders the $N-division vernier with a physically coincident graduation',({N,...changes})=>{
+    const p={...getPreset(3),...changes},s=createInitialState(p);
+    const plugin=expElectricalErrorLabPlugin as SimulationPluginV2<typeof p,typeof s>;
+    const d=plugin.exportDiagramIR!(s,p);
+    // Detect vertical scale marks by a shared horizontal baseline, independent
+    // of the absolute world scale or where the designer places the instrument.
+    const groups=new Map<number,number[]>();
+    for(const q of d.primitives){
+      if(q.kind!=='line'||Math.abs(q.x1-q.x2)>1e-9||Math.abs(q.y1-q.y2)<1e-9)continue;
+      for(const y of [q.y1,q.y2]){
+        const k=Math.round(y*1e8),xs=groups.get(k)??[];
+        xs.push(q.x1);groups.set(k,xs);
+      }
+    }
+    const rows=[...groups.entries()].map(([y,xs])=>({y,xs:[...new Set(xs.map(x=>Math.round(x*1e8)/1e8))].sort((a,b)=>a-b)}));
+    const uniform=(xs:number[])=>xs.length>1&&xs.slice(1).every((x,i)=>Math.abs(x-xs[i]!-(xs[1]!-xs[0]!))<1e-6);
+    const read=s.instrument.vernierReadoutMm,j=s.instrument.vernierCoincidentIndex;
+    const matches=rows.some(main=>{
+      if(main.xs.length<Math.floor(read)+j+1||!uniform(main.xs))return false;
+      const dx=main.xs[1]!-main.xs[0]!;
+      if(!(dx>0))return false;
+      return rows.some(v=>{
+        if(v.y===main.y||v.xs.length!==N+1||!uniform(v.xs))return false;
+        const dv=v.xs[1]!-v.xs[0]!,origin=main.xs[0]!;
+        return Math.abs(dv/dx-(N-1)/N)<1e-5
+          &&Math.abs((v.xs[0]!-origin)/dx-read)<1e-5
+          &&Math.abs(v.xs[j]!-main.xs[Math.floor(read)+j]!)<1e-6;
+      });
+    });
+    expect(matches,'main and vernier scale marks must show the actual coincidence').toBe(true);
+  });
+  it.each([
+    {input:0,half:0,division:0,reading:0},
+    {input:5.494,half:10,division:49,reading:5.49},
+    {input:5.496,half:11,division:0,reading:5.50},
+    {input:5.996,half:12,division:0,reading:6.00}
+  ])('preserves micrometer sleeve/thimble rollover at $input mm',({input,half,division,reading})=>{
+    const s=decodeInstruments(0,'50',input);
+    expect(s.microFixedHalfMmCount).toBe(half);
+    expect(s.microThimbleDiv).toBe(division);
+    expect(s.microReadoutMm).toBeCloseTo(reading,12);
+    expect(s.microQuantErrorMm).toBeCloseTo(Math.abs(input-reading),12);
+  });
+});
