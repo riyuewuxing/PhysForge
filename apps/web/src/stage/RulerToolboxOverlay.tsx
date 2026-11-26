@@ -9,10 +9,25 @@ interface Point2D {
   y: number;
 }
 
+export type MeasurementSpace = {kind:'metric';factor:number;unit:'m'|'cm'} | {kind:'vertical'|'horizontal';factor:number;unit:'mm'|'m'};
+const DEFAULT_MEASUREMENT:MeasurementSpace={kind:'metric',factor:1,unit:'m'};
+export function formatRulerMeasurement(dx:number,dy:number,space:MeasurementSpace=DEFAULT_MEASUREMENT){
+  if(space.kind==='vertical')return 'Δy='+ (dy*space.factor).toFixed(3)+' '+space.unit+' · 横向示意';
+  if(space.kind==='horizontal')return 'Δx='+ (dx*space.factor).toFixed(3)+' '+space.unit+' · 竖向示意';
+  const f=space.factor;
+  return 'L='+ (Math.hypot(dx,dy)*f).toFixed(3)+' '+space.unit+' (Δx='+ (dx*f).toFixed(2)+', Δy='+ (dy*f).toFixed(2)+')';
+}
+export function formatCompassMeasurement(radius:number,space:MeasurementSpace=DEFAULT_MEASUREMENT){
+  return space.kind==='metric'?'R = '+(radius*space.factor).toFixed(3)+' '+space.unit:'图示圆 · 非物理半径';
+}
+export function formatAngleMeasurement(degrees:number,space:MeasurementSpace=DEFAULT_MEASUREMENT){
+  return (space.kind==='metric'?'':'图示角 ')+degrees.toFixed(1)+'°';
+}
 interface RulerToolboxOverlayProps {
   readonly activeTool: MeasureToolKind;
   readonly viewport: Viewport;
   readonly frameOrigin: Point2D;
+  readonly measurementSpace?:MeasurementSpace;
 }
 
 function solveCircumcircle(
@@ -46,7 +61,8 @@ function solveCircumcircle(
 export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
   activeTool,
   viewport,
-  frameOrigin
+  frameOrigin,
+  measurementSpace=DEFAULT_MEASUREMENT
 }) => {
   const [rulerPts, setRulerPts] = useState<[Point2D, Point2D]>([
     { x: -1.0, y: 0.4 },
@@ -109,7 +125,7 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
   return (
     <svg
       data-testid="ruler-toolbox-overlay"
-      className="absolute inset-0 w-full h-full z-20 pointer-events-auto select-none"
+      className="absolute inset-0 w-full h-full z-20 pointer-events-none select-none"
       onPointerMove={handlePointerMove}
       onPointerUp={() => setDragTarget(null)}
       onPointerLeave={() => setDragTarget(null)}
@@ -119,7 +135,8 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
         const p2 = toScr(rulerPts[1]);
         const dxW = rulerPts[1].x - rulerPts[0].x;
         const dyW = rulerPts[1].y - rulerPts[0].y;
-        const distW = Math.hypot(dxW, dyW);
+        const measurement=formatRulerMeasurement(dxW,dyW,measurementSpace);
+        const labelWidth=Math.max(190,measurement.length*7.5+28);
         const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
 
         return (
@@ -134,15 +151,16 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
               strokeDasharray="6 3"
             />
             <rect
-              x={mid.x - 95}
+              x={mid.x - labelWidth/2}
               y={mid.y - 32}
-              width={190}
+              width={labelWidth}
               height={24}
               rx={6}
               fill="rgba(15, 23, 42, 0.88)"
               stroke="#38bdf8"
             />
             <text
+              data-testid="ruler-measurement"
               x={mid.x}
               y={mid.y - 16}
               textAnchor="middle"
@@ -150,18 +168,19 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
               fontSize={12}
               fontFamily="monospace"
             >
-              {`L=${distW.toFixed(3)}m (Δx=${dxW.toFixed(2)}, Δy=${dyW.toFixed(2)})`}
+              {measurement}
             </text>
             {[p1, p2].map((pt, idx) => (
               <circle
                 key={idx}
+                data-testid={"ruler-handle-"+idx}
                 cx={pt.x}
                 cy={pt.y}
                 r={8}
                 fill="#38bdf8"
                 stroke="#ffffff"
                 strokeWidth={2}
-                className="cursor-grab"
+                className="cursor-grab pointer-events-auto"
                 onPointerDown={(e) => {
                   e.stopPropagation();
                   (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
@@ -192,9 +211,9 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
             <circle cx={sO.x} cy={sO.y} r={70} fill="rgba(251, 191, 36, 0.08)" stroke="#fbbf24" strokeDasharray="4 4" />
             <line x1={sO.x} y1={sO.y} x2={sA.x} y2={sA.y} stroke="#fbbf24" strokeWidth={2.5} />
             <line x1={sO.x} y1={sO.y} x2={sB.x} y2={sB.y} stroke="#fbbf24" strokeWidth={2.5} />
-            <rect x={sO.x + 12} y={sO.y - 34} width={96} height={24} rx={6} fill="rgba(15, 23, 42, 0.9)" stroke="#fbbf24" />
-            <text x={sO.x + 60} y={sO.y - 18} textAnchor="middle" fill="#fef3c7" fontSize={13} fontFamily="monospace">
-              {`${deg.toFixed(1)}°`}
+            <rect x={sO.x + 12} y={sO.y - 34} width={measurementSpace.kind==='metric'?96:152} height={24} rx={6} fill="rgba(15, 23, 42, 0.9)" stroke="#fbbf24" />
+            <text data-testid="protractor-measurement" x={sO.x + (measurementSpace.kind==='metric'?60:88)} y={sO.y - 18} textAnchor="middle" fill="#fef3c7" fontSize={13} fontFamily="monospace">
+              {formatAngleMeasurement(deg,measurementSpace)}
             </text>
             {[sA, sO, sB].map((pt, idx) => (
               <circle
@@ -205,9 +224,10 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
                 fill={idx === 1 ? '#f59e0b' : '#fde68a'}
                 stroke="#ffffff"
                 strokeWidth={2}
-                className="cursor-grab"
+                className="cursor-grab pointer-events-auto"
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
                   setDragTarget({ tool: 'protractor', index: idx });
                 }}
               />
@@ -246,21 +266,22 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
                 <rect
                   x={sCenter.x + 10}
                   y={sCenter.y - 14}
-                  width={126}
+                  width={measurementSpace.kind==='metric'?126:184}
                   height={24}
                   rx={6}
                   fill="rgba(15, 23, 42, 0.9)"
                   stroke="#34d399"
                 />
                 <text
-                  x={sCenter.x + 73}
+                  data-testid="compass-measurement"
+                  x={sCenter.x + (measurementSpace.kind==='metric'?73:102)}
                   y={sCenter.y + 2}
                   textAnchor="middle"
                   fill="#d1fae5"
                   fontSize={12}
                   fontFamily="monospace"
                 >
-                  {`R = ${circumcircle.radius.toFixed(3)} m`}
+                  {formatCompassMeasurement(circumcircle.radius,measurementSpace)}
                 </text>
               </>
             )}
@@ -273,9 +294,10 @@ export const RulerToolboxOverlay: React.FC<RulerToolboxOverlayProps> = ({
                 fill="#34d399"
                 stroke="#ffffff"
                 strokeWidth={2}
-                className="cursor-grab"
+                className="cursor-grab pointer-events-auto"
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
                   setDragTarget({ tool: 'compass', index: idx });
                 }}
               />

@@ -562,6 +562,79 @@ async function auditM03Constraints(page,origin){
 
 
 // M11 uses the actual rendered frame, not independently synthesized telemetry.
+async function auditE03AcScope(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-ac-field-oscilloscope');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-ac-field-oscilloscope');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-ac-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('E03 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode,a,b)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.acRendered||'null');return s?.mode===mode&&s.t===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(([a,b])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b,[a,b]);
+    return read();
+  };
+  const sync=async()=>{
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.acRendered||'null'),t=Number(document.querySelector('[data-testid="ac-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+    return read();
+  };
+  const runTo=async(t,beamStatus=null)=>{
+    await play.click();
+    await page.waitForFunction(([t,status])=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.acRendered||'null');return status===null?s?.t>t:s?.beamStatus===status;},[t,beamStatus],{timeout:18000});
+    await play.click();return sync();
+  };
+  const photo=async name=>page.screenshot({path:path.join(OUT_DIR,'H33_E03_'+name+'.png')});
+  const square=await select('square-wave-four-phases','ac-square-wave','x0','xQuarter');
+  if('xQuarter'in square||await page.getByTestId('param-slider-uAccelV').count())throw Error('E03 inactive reading or irrelevant CRT slider');
+  await page.getByTestId('ac-scope-empty').waitFor({state:'visible'});
+  const motion=await runTo(2.5);
+  // Independent hand-derived reference using current sampled time near the
+  // quarter-phase return: in the positive half after t=2.5, v=4*(t-2.5).
+  check(motion.xQuarter,2*(motion.t-2.5)**2,'quarter return',1e-6);
+  check(motion.vQuarter,4*(motion.t-2.5),'quarter return velocity',1e-6);
+  const n=Math.floor(motion.t/2),r=motion.t-2*n;
+  check(motion.x0,4*n+2*r*r,'absolute displacement',1e-6);
+  await photo('square');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  const acRuler=page.getByTestId('ruler-measurement');
+  await acRuler.waitFor({state:'visible'});
+  if(!(await acRuler.textContent()).includes('竖向示意'))throw Error('E03 ruler lane scale');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  const sine=await select('sine-wave-acceleration','ac-sine-wave','x0','xQuarter');
+  const wave=await runTo(2.05),w=Math.PI;
+  check(wave.x0,5/w*(wave.t-Math.sin(w*wave.t)/w),'sine primitive',1e-6);
+  check(wave.v0,5/w*(1-Math.cos(w*wave.t)),'sine velocity',1e-6);await photo('sine');
+  const crt=await select('oscilloscope-lissajous-2to1','oscilloscope-lissajous','screenXCm','screenYCm');
+  check(crt.screenXCm,0,'actual initial X');check(crt.screenYCm,11/3,'actual initial Y');check(crt.trailCount,1,'initial hit sample');
+  const beam=await runTo(1.65);
+  check(beam.screenXCm,11/3*Math.sin(2*Math.PI*beam.t/1.6),'CRT X',1e-6);
+  check(beam.screenYCm,11/3*Math.sin(4*Math.PI*beam.t/1.6+Math.PI/2),'CRT Y',1e-6);
+  if(beam.trailCount<100)throw Error('E03 missing actual phosphor samples');await photo('crt');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  await acRuler.waitFor({state:'visible'});
+  if(!(await acRuler.textContent()).includes('cm'))throw Error('E03 ruler physical CRT centimetres');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  const blocked=await select('crt-plate-contact','oscilloscope-lissajous','screenXCm','screenYCm');
+  check(blocked.beamStatus,3,'Y plate contact');check(blocked.trailCount,0,'blocked trail');
+  if('screenYCm'in blocked||await page.getByTestId('ac-screenYCm').count())throw Error('E03 fake blocked screen reading');await photo('blocked');
+  const noBeam=await select('crt-no-acceleration','oscilloscope-lissajous','screenXCm','screenYCm');
+  check(noBeam.beamStatus,1,'no acceleration');if('screenXCm'in noBeam)throw Error('E03 fictitious zero-U screen');await photo('no_beam');
+  await select('crt-screen-miss','oscilloscope-lissajous','screenXCm','screenYCm');
+  const miss=await runTo(0,5);if('screenXCm'in miss||'screenYCm'in miss)throw Error('E03 screen miss fake reading');await photo('screen_miss');
+  const zero=await select('equivalent-gravity-zero','equivalent-gravity','eqThetaDeg','eqOmega');
+  check(zero.gEffMag,0,'zero equivalent field');check(zero.rodForceN,0,'zero reaction');
+  if('eqLowestAngleDeg'in zero)throw Error('E03 invented zero-field lowest point');
+  const stationary=await runTo(.3);check(stationary.eqThetaDeg,35,'zero field stays static');await photo('zero_gravity');
+  const compression=await select('equivalent-rod-compression','equivalent-gravity','eqThetaDeg','eqOmega');
+  check(compression.rodForceN,-2.2,'signed rod compression');await photo('compression');
+  const tilted=await select('equivalent-gravity-tilted','equivalent-gravity','eqThetaDeg','eqOmega');
+  check(tilted.eqLowestAngleDeg,45,'equivalent lowest point');
+  const swing=await runTo(.6);check(swing.eqTotalEnergy,tilted.eqTotalEnergy,'energy',1e-6);await photo('tilted');
+  const report={square,motion,sine,wave,crt,beam,blocked,noBeam,miss,zero,stationary,compression,tilted,swing};console.log('H33 E03 online '+JSON.stringify(report));return report;
+}
+
 async function assertCapacitorLayout(page,offline=false){
   const selector=offline?'[data-testid="sf-canvas"]':'[data-testid="simulation-canvas"]';
   await page.waitForFunction(sel=>{const c=document.querySelector(sel);if(!c?.dataset.capacitorView)return false;
@@ -620,6 +693,20 @@ async function auditE02Capacitor(page,origin){
   if('dropVyMmS'in open)throw Error('E02 invisible oil drop observable');
   await page.getByTestId('capacitor-scope-empty').waitFor({state:'visible'});
   await photo('open_double_gap');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  const capRuler=page.getByTestId('ruler-measurement');await capRuler.waitFor({state:'visible'});
+  if(!(await capRuler.textContent()).includes('mm · 横向示意'))throw Error('E02 ruler physical vertical scale');
+  const capHandle=page.getByTestId('ruler-handle-1'),box=await capHandle.boundingBox();
+  if(!box)throw Error('E02 ruler handle missing');
+  const prior=await capRuler.textContent();
+  await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();
+  await page.mouse.move(box.x+box.width/2,box.y+box.height/2+28,{steps:6});await page.mouse.up();
+  await page.waitForFunction(prior=>document.querySelector('[data-testid="ruler-measurement"]')?.textContent!==prior,prior);
+  const moved=await capRuler.textContent();
+  if(!moved.includes('Δy=-')||!moved.includes('mm · 横向示意'))throw Error('E02 ruler drag physical delta '+moved);
+  await photo('ruler_mm');
+  await page.getByRole('button',{name:'直尺',exact:true}).click();
+  await page.getByTestId('ruler-toolbox-overlay').waitFor({state:'detached'});
   const openRun=await runTo(.2);check(openRun.chargeNC,open.chargeNC,'constant Q while running');
   const top=await select('top-plate-grounded-potential','open-const-q',200,false);
   check(top.phiTopV,0,'top grounded');check(top.phiPV,-168,'top gauge');await photo('top_grounded');
@@ -2624,6 +2711,7 @@ async function main() {
     const m11ShmReport=await auditM11Shm(page,origin);
     const e01ElectrostaticReport=await auditE01Electrostatic(page,origin);
     const e02CapacitorReport=await auditE02Capacitor(page,origin);
+    const e03AcScopeReport=await auditE03AcScope(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3109,7 +3197,30 @@ async function main() {
       if(e02Errors.length||e02Network.length)throw Error('E02 offline errors '+JSON.stringify({e02Errors,e02Network}));
       Object.assign(e02OfflineReport,{open,fall,errors:e02Errors,network:e02Network});
     }finally{await e02Context.close();}
-    const summary = { e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e03File=path.join(OUT_DIR,'H33_E03_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-ac-field-oscilloscope','--preset','crt-plate-contact','--out',e03File],{stdio:'inherit'});
+    const e03Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e03Page=await e03Context.newPage(),e03Errors=[],e03Network=[],e03OfflineReport={};
+    e03Page.on('pageerror',e=>e03Errors.push(e.message));e03Page.on('console',m=>{if(m.type()==='error')e03Errors.push(m.text());});e03Page.on('request',r=>{if(/^https?:/.test(r.url()))e03Network.push(r.url());});
+    try{
+      await e03Page.goto(pathToFileURL(e03File).href);
+      const canvas=e03Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-ac-rendered'));
+      await e03Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.acRendered||'null')?.beamStatus===3);
+      const blocked=await read();if('screenYCm'in blocked||blocked.trailCount!==0)throw Error('E03 offline blocked screen');
+      await e03Page.screenshot({path:path.join(OUT_DIR,'H33_E03_offline_blocked.png')});
+      await e03Page.locator('[data-preset-id="square-wave-four-phases"]').click();
+      await e03Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.acRendered||'null');return s?.mode==='ac-square-wave'&&s.t===0&&document.querySelector('[data-testid="sf-scope-channel-a"]')?.value==='x0';});
+      await e03Page.getByTestId('sf-play-pause').click();
+      await e03Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.acRendered||'null')?.t>2.5);
+      await e03Page.getByTestId('sf-play-pause').click();
+      await e03Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.acRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+      const motion=await read();
+      if(Math.abs(motion.xQuarter-2*(motion.t-2.5)**2)>1e-6||Math.abs(motion.vQuarter-4*(motion.t-2.5))>1e-6)throw Error('E03 offline quarter '+JSON.stringify(motion));
+      await e03Page.getByRole('button',{name:'黑板深蓝'}).click();await e03Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await e03Page.screenshot({path:path.join(OUT_DIR,'H33_E03_offline_square_paper.png')});
+      if(e03Errors.length||e03Network.length)throw Error('E03 offline errors '+JSON.stringify({e03Errors,e03Network}));
+      Object.assign(e03OfflineReport,{blocked,motion,errors:e03Errors,network:e03Network});
+    }finally{await e03Context.close();}
+    const summary = { e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
