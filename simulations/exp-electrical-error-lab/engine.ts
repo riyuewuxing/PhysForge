@@ -50,11 +50,17 @@ export interface InstrumentReadingSummary {
   readonly microQuantErrorMm: number;
 }
 
+export interface BulbOperatingPoint {
+  readonly tap: number;
+  readonly voltageV: number;
+  readonly currentA: number;
+}
 export interface ElectricalErrorState {
   readonly t: number;
   readonly emfSummary: EmfMeasurementSummary;
   readonly halfBias: HalfBiasSummary;
-  readonly bulbCurve: readonly { tap: number; voltageV: number; currentA: number }[];
+  readonly bulbCurve: readonly BulbOperatingPoint[];
+  readonly bulbOperatingPoint: BulbOperatingPoint;
   readonly instrument: InstrumentReadingSummary;
 }
 
@@ -159,35 +165,28 @@ export function solveHalfBiasViaMna(supplyV: number, rgTrue: number, iFullA = 0.
   };
 }
 
-export function solveBulbCurveViaMna(params: ElectricalErrorParams): { tap: number; voltageV: number; currentA: number }[] {
+/** Exact topology at each endpoint: collapse the zero-resistance branch, never insert epsilon R. */
+export function solveBulbOperatingPoint(params: ElectricalErrorParams, tap = params.rheostatTapFrac): BulbOperatingPoint {
   const E = Math.max(1, params.emfVolts);
-  const rMax = Math.max(5, params.rheostatMaxOhm);
-  const pts: { tap: number; voltageV: number; currentA: number }[] = [];
-  for (let k = 0; k <= 10; k++) {
-    const frac = k / 10;
-    if (params.bulbWiring === 'voltage-divider') {
-      const rBot = Math.max(1e-3, frac * rMax);
-      const rTop = Math.max(1e-3, (1 - frac) * rMax);
-      const els: NonlinearCircuitElement[] = [
-        { kind: 'voltageSource', id: 'E', pos: 1, neg: 0, voltage: E },
-        { kind: 'resistor', id: 'Rtop', a: 1, b: 2, resistance: rTop },
-        { kind: 'resistor', id: 'Rbot', a: 2, b: 0, resistance: rBot },
-        { kind: 'lamp', id: 'L', a: 2, b: 0, k: 0.14, alpha: 0.62 }
-      ];
-      const sol = solveNonlinearMna(2, els, 0);
-      pts.push({ tap: frac, voltageV: sol.elementVoltages.L ?? 0, currentA: sol.elementCurrents.L ?? 0 });
-    } else {
-      const rSer = Math.max(1e-3, (1 - frac) * rMax);
-      const els: NonlinearCircuitElement[] = [
-        { kind: 'voltageSource', id: 'E', pos: 1, neg: 0, voltage: E },
-        { kind: 'resistor', id: 'Rser', a: 1, b: 2, resistance: rSer },
-        { kind: 'lamp', id: 'L', a: 2, b: 0, k: 0.14, alpha: 0.62 }
-      ];
-      const sol = solveNonlinearMna(2, els, 0);
-      pts.push({ tap: frac, voltageV: sol.elementVoltages.L ?? 0, currentA: sol.elementCurrents.L ?? 0 });
-    }
+  const R = Math.max(5, params.rheostatMaxOhm);
+  const frac = Math.max(0, Math.min(1, tap));
+  if (params.bulbWiring === 'voltage-divider' && frac === 0)
+    return { tap: 0, voltageV: 0, currentA: 0 };
+  const lamp = { kind:'lamp' as const, id:'L', a:2, b:0, k:0.14, alpha:0.62 };
+  const source = { kind:'voltageSource' as const, id:'E', pos:1, neg:0, voltage:E };
+  if (frac === 1) {
+    const sol=solveNonlinearMna(1,[source,{...lamp,a:1}],0);
+    return {tap:frac,voltageV:E,currentA:sol.elementCurrents.L!};
   }
-  return pts;
+  const els: NonlinearCircuitElement[] = [source,
+    {kind:'resistor',id:'Rtop',a:1,b:2,resistance:(1-frac)*R},lamp];
+  if(params.bulbWiring==='voltage-divider')
+    els.push({kind:'resistor',id:'Rbot',a:2,b:0,resistance:frac*R});
+  const sol=solveNonlinearMna(2,els,0);
+  return {tap:frac,voltageV:sol.elementVoltages.L!,currentA:sol.elementCurrents.L!};
+}
+export function solveBulbCurveViaMna(params: ElectricalErrorParams): BulbOperatingPoint[] {
+  return Array.from({length:11},(_,k)=>solveBulbOperatingPoint(params,k/10));
 }
 
 export function decodeInstruments(
@@ -211,11 +210,11 @@ export function decodeInstruments(
     vernierMainMm: vMain,
     vernierCoincidentIndex: vIndex,
     vernierReadoutMm: Number(vReadout.toFixed(4)),
-    vernierQuantErrorMm: Math.abs(vReadout - vTicks * vStep),
+    vernierQuantErrorMm: Math.abs(vReadout - targetVernierMm),
     microFixedHalfMmCount: mHalfCount,
     microThimbleDiv: mThimble,
     microReadoutMm: Number(mReadout.toFixed(4)),
-    microQuantErrorMm: Math.abs(mReadout - mTicks * 0.01)
+    microQuantErrorMm: Math.abs(mReadout - targetMicroMm)
   };
 }
 
@@ -225,6 +224,7 @@ export function createInitialState(params: ElectricalErrorParams): ElectricalErr
     emfSummary: solveEmfViaMna(params),
     halfBias: solveHalfBiasViaMna(params.halfBiasSupplyV, params.rgTrueOhm),
     bulbCurve: solveBulbCurveViaMna(params),
+      bulbOperatingPoint: solveBulbOperatingPoint(params),
     instrument: decodeInstruments(params.targetVernierMm, params.vernierDivisions, params.targetMicrometerMm)
   };
 }
@@ -242,6 +242,7 @@ export function stepElectricalErrorLab(
       emfSummary: solveEmfViaMna(params),
       halfBias: solveHalfBiasViaMna(params.halfBiasSupplyV, params.rgTrueOhm),
       bulbCurve: solveBulbCurveViaMna(params),
+      bulbOperatingPoint: solveBulbOperatingPoint(params),
       instrument: decodeInstruments(params.targetVernierMm, params.vernierDivisions, params.targetMicrometerMm)
     },
     events: []
@@ -255,7 +256,9 @@ export function computeObservables(state: ElectricalErrorState): Record<string, 
     rFittedOhm: state.emfSummary.rFittedOhm,
     rgMeasuredOhm: state.halfBias.rgMeasuredOhm,
     vernierReadoutMm: state.instrument.vernierReadoutMm,
-    microReadoutMm: state.instrument.microReadoutMm
+    microReadoutMm: state.instrument.microReadoutMm,
+    bulbVoltageV:state.bulbOperatingPoint.voltageV,
+    bulbCurrentA:state.bulbOperatingPoint.currentA
   };
 }
 
