@@ -54,3 +54,51 @@ describe('optics-wave-interference wedge, Newton rings & missing order (O01)', (
     expect(Number.isFinite(evalFraunhoferGratingIntensity(0, p0))).toBe(true);
   });
 });
+
+describe('H42 independent optical domain and phase regressions', () => {
+  it('zero-angle flat film is a constant dark or bright field, not a fictitious wedge', () => {
+    const p={...getPreset(0),wedgeAngleDeg:0};
+    expect(evalThinFilmIntensity(10,p)).toBeLessThan(1e-14);
+    expect(evalThinFilmIntensity(17,{...p,halfWaveLoss:false})).toBeCloseTo(1,14);
+    expect(computeKeyOpticsMetrics(p).wedgeSpacingMm).toBeUndefined();
+  });
+  it('first positive Newton dark ring changes with reflected phase and uses exact spherical geometry', () => {
+    const p={...getPreset(2),refractiveIndexN2:1.4,halfWaveLoss:false};
+    const h=p.wavelengthNm*1e-9/(4*p.refractiveIndexN2);
+    const exact=1000*Math.sqrt(h*(2*p.lensRadiusR-h));
+    const r=computeKeyOpticsMetrics(p).newtonR1Mm;
+    expect(r).toBeCloseTo(exact,10);
+    expect(evalNewtonRingIntensity(r!,p)).toBeLessThan(1e-14);
+    expect(evalNewtonRingIntensity(0,p)).toBeCloseTo(1,14);
+  });
+  it('spherical sag and dark-center intensity are stable at submicrometric radial distance', () => {
+    const p=getPreset(2);
+    const r=1e-6,R=p.lensRadiusR;
+    const h=r*r/(R+Math.sqrt(R*R-r*r));
+    const expected=Math.sin(2*Math.PI*p.refractiveIndexN2*h/(p.wavelengthNm*1e-9))**2;
+    expect(Math.abs(evalNewtonRingIntensity(r*1000,p)!/expected-1)).toBeLessThan(1e-6);
+  });
+  it('does not extend the spherical lens beyond its defined radius', () => {
+    expect(evalNewtonRingIntensity(501,{...getPreset(2),lensRadiusR:.5})).toBeUndefined();
+  });
+  it('rejects overlapping multi-slits and out-of-domain sine rather than silently editing geometry', () => {
+    const p={...getPreset(3),slitWidthMicron:8,gratingPitchMicron:4};
+    expect(evalFraunhoferGratingIntensity(.15,p)).toBeUndefined();
+    expect(evalFraunhoferGratingIntensity(1.01,getPreset(3))).toBeUndefined();
+    expect(computeKeyOpticsMetrics(p)).toMatchObject({gratingValid:false,missingOrders:[]});
+  });
+  it('lists actual missing orders for noninteger pitch/width and removes nonexistent single-slit orders', () => {
+    const p={...getPreset(3),wavelengthNm:500,slitWidthMicron:2,gratingPitchMicron:5};
+    expect(computeKeyOpticsMetrics(p)).toMatchObject({gratingValid:true,gratingMaxOrder:10,missingOrders:[5,10]});
+    expect(evalFraunhoferGratingIntensity(.5,p)).toBeLessThan(1e-14);
+    expect(evalFraunhoferGratingIntensity(.1,p)).toBeGreaterThan(.4);
+    const s={...p,slitCountN:1,gratingPitchMicron:1};
+    expect(evalFraunhoferGratingIntensity(0,s)).toBeCloseTo(1,14);
+    expect(computeKeyOpticsMetrics(s)).toMatchObject({gratingValid:true,missingOrders:[]});
+    expect(computeKeyOpticsMetrics(s).missingOrder).toBeUndefined();
+  });
+  it('static monochromatic intensity has no fabricated evolution time', () => {
+    const p=getPreset(0);
+    expect(stepWaveOptics(createInitialState(p),p,2).nextState.t).toBe(0);
+  });
+});
