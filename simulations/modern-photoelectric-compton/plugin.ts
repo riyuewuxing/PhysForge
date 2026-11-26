@@ -39,13 +39,13 @@ const paramSchema: readonly ParamFieldSpec<PhotoelectricComptonParams>[] = [
   },
   { key: 'customWorkFunctionEv', kind: 'number', label: '自定义逸出功 W₀', unit: 'eV', defaultValue: 2.36, min: 1.0, max: 6.5, step: 0.05 },
   { key: 'wavelengthNm', kind: 'number', label: '入射光波长 λ', unit: 'nm', defaultValue: 405, min: 200, max: 750, step: 5 },
-  { key: 'intensityRel', kind: 'number', label: '相对光强 P', defaultValue: 1.4, min: 0.2, max: 3.0, step: 0.1 },
+  { key: 'intensityRel', kind: 'number', label: '相对光强 P', defaultValue: 1.4, min: 0, max: 3.0, step: 0.1 },
   { key: 'anodeVoltageV', kind: 'number', label: '光电管电压 U_AK', unit: 'V', defaultValue: 0, min: -5.0, max: 6.0, step: 0.1 },
   { key: 'freezeRefEnabled', kind: 'boolean', label: '叠加对比参考曲线', defaultValue: true },
   { key: 'refWavelengthNm', kind: 'number', label: '参考波长 λ_ref', unit: 'nm', defaultValue: 450, min: 200, max: 750, step: 5 },
-  { key: 'refIntensityRel', kind: 'number', label: '参考光强 P_ref', defaultValue: 0.8, min: 0.2, max: 3.0, step: 0.1 },
+  { key: 'refIntensityRel', kind: 'number', label: '参考光强 P_ref', defaultValue: 0.8, min: 0, max: 3.0, step: 0.1 },
   { key: 'xrayWavelengthNm', kind: 'number', label: '入射 X 射线波长 λ', unit: 'nm', defaultValue: 0.071, min: 0.01, max: 0.2, step: 0.002 },
-  { key: 'scatterAngleDeg', kind: 'number', label: '光子散射角 θ', unit: '°', defaultValue: 90, min: 10, max: 180, step: 5 }
+  { key: 'scatterAngleDeg', kind: 'number', label: '光子散射角 θ', unit: '°', defaultValue: 90, min: 0, max: 180, step: 5 }
 ];
 
 // Diagram coordinates are illustrative; physical axis values are explicit.
@@ -125,7 +125,7 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
         primitives.push({ kind: 'polyline', points: curve(reference, params.refIntensityRel), dashed: true });
       }
       primitives.push({ kind: 'polyline', points: curve(state.photoelectric, params.intensityRel) });
-      if (state.photoelectric.thresholdPassed && -state.photoelectric.stoppingVoltageV >= plot.uMin) {
+      if (state.photoelectric.stoppingDefined && -state.photoelectric.stoppingVoltageV >= plot.uMin) {
         const stopX = graphX(-state.photoelectric.stoppingVoltageV);
         primitives.push({kind:'circle',cx:stopX,cy:plot.y,r:0.025},
           {kind:'text',x:stopX,y:plot.y-0.27,text:'−Uc',align:'middle'});
@@ -234,7 +234,7 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
       ctx.lineTo(anodeBottom.x, anodeBottom.y);
       ctx.stroke();
 
-      if (state.photoelectric.thresholdPassed) {
+      if (state.photoelectric.emissionActive) {
         ctx.fillStyle = '#38bdf8';
         const travel = state.photoelectric.currentMa > 0 ? 0.44 : 0.18;
         for (let eIdx = 0; eIdx < 5; eIdx++) {
@@ -273,7 +273,7 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
       }
       labels.push({id:'voltage-axis',x:toPx(uMax),y:toPy(0)+32,text:'U_AK (V)',color:axisColor},
         {id:'current-axis',x:toPx(0),y:toPy(plot.iMax)-15,text:'I (mA)',color:axisColor});
-      if (state.photoelectric.thresholdPassed && -state.photoelectric.stoppingVoltageV >= uMin) {
+      if (state.photoelectric.stoppingDefined && -state.photoelectric.stoppingVoltageV >= uMin) {
         const x = toPx(-state.photoelectric.stoppingVoltageV);
         ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.beginPath();
         ctx.arc(x,toPy(0),4,0,Math.PI*2); ctx.stroke();
@@ -339,7 +339,7 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
           color: '#a855f7',
           onDrag: (world) => {
             const degrees = (Math.atan2(world.y, world.x + 0.8) * 180) / Math.PI;
-            return { scatterAngleDeg: Math.max(10, Math.min(180, Math.round(degrees / 5) * 5)) };
+            return { scatterAngleDeg: Math.max(0, Math.min(180, Math.round(degrees / 5) * 5)) };
           }
         }
       ];
@@ -374,7 +374,7 @@ export const modernPhotoelectricComptonPlugin = defineSimulationPlugin<
     {
       id: 'einstein-compton',
       label: params.mode === 'photoelectric' ? '爱因斯坦光电效应方程' : '康普顿波长偏移与能量守恒',
-      latex: params.mode === 'photoelectric' ? (state.photoelectric.thresholdPassed ? 'h\\nu - W_0 = eU_c' : 'h\\nu \\le W_0,\\quad I=0') : '\\Delta\\lambda = \\frac{h}{m_e c}(1 - \\cos\\theta)',
+      latex: params.mode === 'photoelectric' ? (state.photoelectric.stoppingDefined ? 'h\\nu - W_0 = eU_c' : state.photoelectric.thresholdPassed?'P=0,\\quad I=0':'h\\nu \\le W_0,\\quad I=0') : '\\Delta\\lambda = \\frac{h}{m_e c}(1 - \\cos\\theta)',
       substitutedLatex:
         params.mode === 'photoelectric'
           ? (state.photoelectric.thresholdPassed
