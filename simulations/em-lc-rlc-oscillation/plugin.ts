@@ -152,7 +152,7 @@ export function lcScene(s:LcRlcState,p:LcRlcParams,layers:ReadonlySet<string>):M
     label(.53,cy+.30,'X_L='+ref.xl.toFixed(2),'magnetic');label(.53,cy-.32,'X_C='+ref.xc.toFixed(2),'negative');
     label(2.14,cy+.24,'R='+R.toFixed(2)+' Ω','wire');
     label(2.14,cy-.23,'|Z|='+ref.zMag.toFixed(3)+' Ω','electric');
-    label(1.55,-.91,ref.referenceCurrentPeak===undefined?responseLabels[ref.responseKind]:'参考 Iₘ='+ref.referenceCurrentPeak.toFixed(3)+' A · 非瞬时电流','gold');
+    label(1.55,-.91,ref.referenceCurrentPeak===undefined?(responseLabels[ref.responseKind]??'—'):'参考 Iₘ='+ref.referenceCurrentPeak.toFixed(3)+' A · 非瞬时电流','gold');
   }
   if(driven){
     line(rail.left,rail.y,rail.right,rail.y,'gold');
@@ -220,14 +220,14 @@ export const emLcRlcOscillationPlugin=Object.assign(defineSimulationPlugin<LcRlc
   },
   formatFormulas:(s,p)=>{
     const driven=p.mode==='rlc-ac-resonance',ref=computeImpedanceSummary(p),items=[
-      {id:'lc-kvl',label:'有向瞬时电压与电流',latex:'u_L+Ri+q/C=u_s,\\quad i=\\dot q',
+      {id:'lc-kvl',label:'有向瞬时电压与电流',latex:'u_L+Ri+q/C=u_s',
         substitutedLatex:'i='+s.currentI.toFixed(3)+'\\,\\mathrm A,\\;q='+s.chargeQ.toFixed(3)+'\\,\\mathrm C'},
       {id:'lc-energy',label:'实际功—热账本',latex:'E_C+E_L+Q_{\\rm heat}=E_0+W_s',
         substitutedLatex:'Q_{\\rm heat}='+s.jouleHeatJ.toFixed(3)+'\\,\\mathrm J,\\;W_s='+s.sourceWorkJ.toFixed(3)+'\\,\\mathrm J'}
     ];
     if(!driven){items.unshift({id:'lc-period',label:dampLabels[s.dampingRegime]??'自由响应',latex:'T_0=2\\pi\\sqrt{LC}',
       substitutedLatex:'T_0='+s.naturalPeriod.toFixed(3)+'\\,\\mathrm s'+(s.measuredPeriod===null?'':',\\;T_{\\rm meas}='+s.measuredPeriod.toFixed(3)+'\\,\\mathrm s')});}
-    else items.unshift({id:'lc-reference',label:responseLabels[ref.responseKind]??'解析参考',latex:'|Z|=\\sqrt{R^2+(\\omega L-1/(\\omega C))^2}',
+    else items.unshift({id:'lc-reference',label:responseLabels[ref.responseKind]??'解析参考',latex:'|Z|=\\sqrt{R^2+(X_L-X_C)^2}',
       substitutedLatex:'|Z|='+ref.zMag.toFixed(3)+'\\,\\Omega'+(ref.referenceCurrentPeak===undefined?'':',\\;I_m='+ref.referenceCurrentPeak.toFixed(3)+'\\,\\mathrm A')});
     return items;
   }

@@ -610,6 +610,104 @@ async function waitE08Display(page,offline,expected){
   }else if(s.efficiencyDefined===0&&((await page.getByTestId(prefix+'efficiencyPct').innerText()).trim()!=='—'))throw Error('E08 undefined efficiency shown as actual');
   return s;
 }
+
+function e09Homogeneous(q,i,a,w0,t){
+  if(Math.abs(a-w0)<=1e-12*Math.max(1,a,w0)){
+    const B=i+a*q,e=Math.exp(-a*t);return {q:e*(q+B*t),i:e*(i-a*B*t)};
+  }
+  if(a<w0){
+    const b=Math.sqrt(w0*w0-a*a),B=(i+a*q)/b,c=Math.cos(b*t),sn=Math.sin(b*t),e=Math.exp(-a*t);
+    return {q:e*(q*c+B*sn),i:e*((-a*q+B*b)*c+(-q*b-a*B)*sn)};
+  }
+  const b=Math.sqrt(a*a-w0*w0),r1=-a+b,r2=-a-b,A=(i-r2*q)/(r1-r2),B=q-A;
+  return {q:A*Math.exp(r1*t)+B*Math.exp(r2*t),i:r1*A*Math.exp(r1*t)+r2*B*Math.exp(r2*t)};
+}
+function checkE09(s){
+  const L=s.inductanceH,C=s.capacitanceF,driven=s.mode==='rlc-ac-resonance',R=s.mode==='lc-undamped'?0:s.resistanceR,
+    w=s.driveOmega,Um=driven?s.driveVoltAmpUm:0,w0=1/Math.sqrt(L*C),a=R/(2*L),q0=driven?0:s.initialChargeC,E0=q0*q0/(2*C),
+    xl=w*L,xc=1/(w*C),delta=xl-xc,singular=R===0&&Math.abs(delta)<=1e-12*Math.max(1,xl,xc),Z=singular?0:Math.hypot(R,delta);
+  const kind=driven?(singular?(Um>0?3:4):R>0?1:2):0,regime=R===0?0:Math.abs(a-w0)<=1e-12*Math.max(1,a,w0)?2:a>w0?3:1;
+  const trajectory=t=>{
+    if(!driven)return e09Homogeneous(q0,0,a,w0,t);
+    if(singular){const A=Um/(2*L*w0);return {q:A*t*Math.sin(w0*t),i:A*(Math.sin(w0*t)+w0*t*Math.cos(w0*t))};}
+    const I=Um/Z,phi=Math.atan2(delta,R),h=e09Homogeneous(I*Math.sin(phi)/w,-I*Math.cos(phi),a,w0,t);
+    return {q:h.q+I*Math.sin(w*t-phi)/w,i:h.i+I*Math.cos(w*t-phi)};
+  };
+  const check=(k,x,tol=3e-6)=>{if(!Number.isFinite(s[k])||Math.abs(s[k]-x)>tol*Math.max(1,Math.abs(x)))throw Error('E09 '+k+' '+JSON.stringify({actual:s[k],expected:x,t:s.t,mode:s.mode}));};
+  const {q,i}=trajectory(s.t),EC=q*q/(2*C),EL=L*i*i/2,u=Um*Math.cos(w*s.t);
+  for(const [k,x] of Object.entries({chargeQ:q,currentI:i,energyElectricJ:EC,energyMagneticJ:EL,totalEmEnergyJ:EC+EL,uCapV:q/C,uResV:R*i,uDriveV:u,uIndV:u-R*i-q/C,lossPowerW:R*i*i,drivePowerW:u*i,dampingRegime:regime,responseKind:kind,naturalPeriod:2*Math.PI/w0}))check(k,x);
+  let heat=0,work=0;
+  if(s.t>0){
+    // Independent Simpson quadrature of the analytical trajectory, not the RK4 energy ledger.
+    const n=2*Math.max(100,Math.ceil(s.t*Math.max(w,w0)*100)),h=s.t/n;
+    for(let j=0;j<=n;j++){const t=j*h,ii=trajectory(t).i,c=j===0||j===n?1:j%2===0?2:4;heat+=c*R*ii*ii;work+=c*Um*Math.cos(w*t)*ii;}
+    heat*=h/3;work*=h/3;
+  }
+  check('jouleHeatJ',heat,8e-6);check('sourceWorkJ',work,8e-6);
+  if(Math.abs(s.energyResidualJ)>1e-5*Math.max(1,E0,Math.abs(work)))throw Error('E09 independent energy balance '+JSON.stringify(s));
+  if(driven){check('impedanceR',R);check('impedanceMag',Z);
+    if(singular){if('referenceCurrentPeak'in s||'referencePhaseRad'in s)throw Error('E09 undefined reference leaked');}
+    else check('referenceCurrentPeak',Um/Z);
+  }else if('referenceCurrentPeak'in s)throw Error('E09 free oscillation has fictitious driven response');
+  if(!driven&&regime>=2&&'measuredPeriod'in s)throw Error('E09 nonoscillatory fabricated period');
+  return {q,i,heat,work,kind,regime};
+}
+async function syncE09(page,offline){
+  const prefix=offline?'sf-':'',canvas=page.getByTestId(offline?'sf-canvas':'simulation-canvas');
+  await page.waitForFunction(({offline,prefix})=>{
+    const s=JSON.parse(document.querySelector('[data-testid="'+(offline?'sf-canvas':'simulation-canvas')+'"]')?.dataset.lcRendered||'null');
+    const t=Number(document.querySelector('[data-testid="'+prefix+'lc-readouts"]')?.dataset.sampleTime),
+      plot=Number(document.querySelector('[data-testid="'+(offline?'sf-uplot':'uplot-container')+'"]')?.dataset.lastSampleT);
+    return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-plot)<1e-10;
+  },{offline,prefix},{timeout:6000});
+  const s=JSON.parse(await canvas.getAttribute('data-lc-rendered'));checkE09(s);
+  if(s.responseKind===3||s.responseKind===4){
+    if(await page.getByTestId(prefix+'lc-referenceCurrentPeak').count())throw Error('E09 fake finite reference in UI');
+    if(!(await page.getByTestId(prefix+'lc-status').innerText()).includes(s.responseKind===3?'无有限周期稳态':'退化无激发'))throw Error('E09 singular/zero status missing');
+  }
+  if(!('measuredPeriod'in s)&&((await page.getByTestId(prefix+'lc-measuredPeriod').innerText()).trim()!=='—'))throw Error('E09 unmeasured period not blank');
+  const readout=await page.getByTestId(prefix+'lc-chargeQ').innerText();
+  if(Math.abs(Number.parseFloat(readout)-s.chargeQ)>.0006)throw Error('E09 stale charge readout');
+  return s;
+}
+async function auditE09Lc(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-lc-rlc-oscillation');await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-lc-rlc-oscillation');
+  const play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),report={};
+  const photo=name=>page.screenshot({path:path.join(OUT_DIR,'H38_E09_'+name+'.png')});
+  const run=async t=>{
+    await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.lcRendered||'null')?.t>t,t,{timeout:18000});await play.click();
+    return syncE09(page,false);
+  };
+  for(const [id,mode,kind,regime,duration] of [
+    ['lc-free-energy-exchange','lc-undamped',0,0,1.84],
+    ['rlc-damped-decay','rlc-damped',0,1,.83],
+    ['rlc-critical-decay','rlc-damped',0,2,.70],
+    ['rlc-overdamped-decay','rlc-damped',0,3,.70],
+    ['rlc-series-resonance-peak','rlc-ac-resonance',1,1,.82],
+    ['rlc-detuned-driven','rlc-ac-resonance',1,1,.82],
+    ['lc-lossless-resonance','rlc-ac-resonance',3,0,.95],
+    ['lc-lossless-detuned','rlc-ac-resonance',2,0,.85],
+    ['lc-zero-excitation','rlc-ac-resonance',4,0,.30]
+  ]){
+    await selectPreset(page,id,true);
+    await page.waitForFunction(({mode,kind,regime})=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.lcRendered||'null');return s?.mode===mode&&s.responseKind===kind&&s.dampingRegime===regime&&s.t===0;},{mode,kind,regime});
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    const expected=mode==='lc-undamped'?['energyElectricJ','energyMagneticJ','shared']:mode==='rlc-damped'?['totalEmEnergyJ','jouleHeatJ','shared']:['currentI','uDriveV','separate'];
+    await page.waitForFunction(([a,b,u])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b&&document.querySelector('[data-testid="floating-scope-dock"]')?.dataset.scopeUnits===u,expected);
+    await page.waitForFunction(()=>document.querySelector('[data-testid="viewport-zoom-badge"]')?.textContent?.trim()==='100%',null,{timeout:5000});
+    await page.getByTestId('lc-scope-empty').waitFor({state:'visible'});
+    const initial=JSON.parse(await page.getByTestId('simulation-canvas').getAttribute('data-lc-rendered'));checkE09(initial);
+    if('measuredPeriod'in initial)throw Error('E09 initial period fabricated');
+    if(mode!=='rlc-ac-resonance'&&await page.getByTestId('param-slider-driveOmega').count())throw Error('E09 inactive drive controls');
+    if(mode==='lc-undamped'){await photo('lc_initial');const exchange=await run(.24);if(exchange.energyMagneticJ<.9*exchange.initialEnergyJ)throw Error('E09 quarter-cycle transfer');await photo('lc_quarter');}
+    const final=await run(duration);
+    if(mode==='lc-undamped'&&Math.abs(final.measuredPeriod-final.naturalPeriod)>1e-5)throw Error('E09 measured free period');
+    report[id]={initial,final};await photo(id);
+  }
+  console.log('H38 E09 online '+JSON.stringify(report));return report;
+}
+
 async function auditE08Transformer(page,origin){
   const url=new URL(origin);url.searchParams.set('model','em-transformer-grid');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2919,6 +3017,7 @@ async function main() {
     const e06EddyReport=await auditE06Eddy(page,origin);
     const e07GeneratorReport=await auditE07Generator(page,origin);
     const e08TransformerReport=await auditE08Transformer(page,origin);
+    const e09LcReport=await auditE09Lc(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3511,7 +3610,24 @@ async function main() {
       if(e08Errors.length||e08Network.length)throw Error('E08 offline errors '+JSON.stringify({e08Errors,e08Network}));
       Object.assign(e08OfflineReport,{errors:e08Errors,network:e08Network});
     }finally{await e08Context.close();}
-    const summary = { e08TransformerReport,e08OfflineReport,e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e09File=path.join(OUT_DIR,'H38_E09_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-lc-rlc-oscillation','--preset','lc-free-energy-exchange','--out',e09File],{stdio:'inherit'});
+    const e09Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e09Page=await e09Context.newPage(),e09Errors=[],e09Network=[],e09OfflineReport={};
+    e09Page.on('pageerror',e=>e09Errors.push(e.message));e09Page.on('console',m=>{if(m.type()==='error')e09Errors.push(m.text());});e09Page.on('request',r=>{if(/^https?:/.test(r.url()))e09Network.push(r.url());});
+    try{
+      await e09Page.goto(pathToFileURL(e09File).href);
+      for(const [id,kind,mode] of [['lc-free-energy-exchange',0,'lc-undamped'],['rlc-damped-decay',0,'rlc-damped'],['lc-lossless-resonance',3,'rlc-ac-resonance']]){
+        if(id!=='lc-free-energy-exchange')await e09Page.locator('[data-preset-id="'+id+'"]').click();
+        await e09Page.waitForFunction(({kind,mode})=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.lcRendered||'null');return s?.responseKind===kind&&s.mode===mode&&s.t===0;},{kind,mode});
+        checkE09(JSON.parse(await e09Page.getByTestId('sf-canvas').getAttribute('data-lc-rendered')));
+        await e09Page.getByTestId('sf-play-pause').click();await e09Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.lcRendered||'null')?.t>.78);await e09Page.getByTestId('sf-play-pause').click();
+        const s=await syncE09(e09Page,true);e09OfflineReport[id]=s;
+        await e09Page.screenshot({path:path.join(OUT_DIR,'H38_E09_offline_'+id+'.png')});
+      }
+      if(e09Errors.length||e09Network.length)throw Error('E09 offline errors '+JSON.stringify({e09Errors,e09Network}));
+      Object.assign(e09OfflineReport,{errors:e09Errors,network:e09Network});
+    }finally{await e09Context.close();}
+    const summary = { e09LcReport,e09OfflineReport,e08TransformerReport,e08OfflineReport,e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
