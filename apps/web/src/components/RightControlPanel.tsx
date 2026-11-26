@@ -83,7 +83,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
       coreFields: core,
       extraFields: plugin.paramSchema.filter((field) => !coreKeys.has(field.key) && (!valid||valid.includes(field.key)))
     };
-  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template,params.radiusM,params.anchorHeightM,params.systemMode,params.trackMode,params.switchMode,params.oilDropEnabled]);
+  }, [plugin, params.mode, params.topology, params.sceneMode, params.scenario, params.template,params.radiusM,params.anchorHeightM,params.systemMode,params.trackMode,params.switchMode,params.oilDropEnabled,params.geometryType]);
 
   const renderField = (field: (typeof plugin.paramSchema)[number]) => {
     const value = params[field.key] ?? field.defaultValue;
@@ -290,6 +290,14 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
   <div className="text-[10px]">{params.mode==='long-distance-grid'?'固定送端功率；受端可调匝比。零输入效率未定义；无解时只列请求，不列伪造测量值。':'理想一原双副；基准为指定户数、S 断开。R₀损耗不属于理想变压器。'}</div>
 
   </section>
+        ) : plugin.meta.id==='em-3d-magnetic-fields' ? (
+          <section data-testid="magnetic-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
+  <div className="font-semibold" data-testid="magnetic-status">{telemetry.observables.domainHalted===1?'理想丝线奇异域 · 已暂停':params.geometryType==='uniform-helix'?'匀强场 · 有向轨迹':'有限稳恒电流 · 试探粒子'}</div>
+  <div className="flex justify-between gap-2"><span>实际荷质比 q/m</span><span data-testid="magnetic-qm" style={{color:'var(--pf-text)'}}>{(Number(params.qOverM)*(params.geometryType==='uniform-helix'?1:1e6)).toExponential(2)} C/kg</span></div>
+  {([['x','x 坐标','m'],['y','y 坐标','m'],['z','z 坐标','m'],['vx','有向 vx','m/s'],['vy','有向 vy','m/s'],['vz','有向 vz','m/s'],['bMagT','磁感应强度 |B|','T'],['bMagMicroT','磁感应强度 |B|','μT'],['ke','比动能','J/kg'],['vDotF','磁力比功率','W/kg']] as const).filter(([k])=>k==='bMagT'?params.geometryType==='uniform-helix':k==='bMagMicroT'?params.geometryType!=='uniform-helix':true).map(([k,label,unit])=>{const v=telemetry.observables[k];return <div key={k} className="flex justify-between gap-2"><span>{label}</span><span data-testid={'magnetic-'+k} className="tabular-nums" style={{color:'var(--pf-text)'}}>{typeof v==='number'&&Number.isFinite(v)?(k==='vDotF'?v.toExponential(2):v.toFixed(3))+' '+unit:'—'}</span></div>;})}
+  <div className="text-[10px]">矢量长度只示意方向；非匀强场局部回旋公式不代表整条实际轨迹。理想丝线奇点不提供场值。</div>
+
+</section>
         ) : plugin.meta.id==='em-lc-rlc-oscillation' ? (
           <section data-testid="lc-readouts" data-sample-time={telemetry.t} className="space-y-1 text-xs" style={{color:'var(--pf-text-muted)'}}>
   <div className="font-semibold" data-testid="lc-status">{params.mode==='rlc-ac-resonance'?(['—','有吸引的周期稳态参考','无阻尼特解参考 · 非吸引','理想精确谐振 · 无有限周期稳态','零驱动 · 退化无激发'][telemetry.observables.responseKind??0]??'—'):(['无阻尼自由振荡','欠阻尼自由振荡','临界阻尼 · 非振荡','过阻尼 · 非振荡'][telemetry.observables.dampingRegime??0]??'—')}</div>
@@ -331,7 +339,7 @@ export const RightControlPanel: React.FC<RightControlPanelProps> = ({
             <summary className="cursor-pointer list-none py-2 text-[11px] font-medium text-slate-400 hover:text-slate-200">更多参数与图层 <span className="float-right">⌄</span></summary>
             <div className="space-y-2.5 pb-3">
               {extraFields.map(renderField)}
-              {['mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-transformer-grid','em-lc-rlc-oscillation'].includes(plugin.meta.id)?<div className="space-y-1 text-xs">{telemetry.invariants.map(i=><div key={i.name} className={i.passed?'text-emerald-400':'text-rose-400'}>{i.name}：{i.measuredError.toExponential(2)} {i.unit??''}</div>)}</div>:<EnergyBarChart observables={telemetry.observables} invariants={telemetry.invariants} />}
+              {['mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-transformer-grid','em-lc-rlc-oscillation','em-3d-magnetic-fields'].includes(plugin.meta.id)?<div className="space-y-1 text-xs">{telemetry.invariants.map(i=><div key={i.name} className={i.passed?'text-emerald-400':'text-rose-400'}>{i.name}：{i.measuredError.toExponential(2)} {i.unit??''}</div>)}</div>:<EnergyBarChart observables={telemetry.observables} invariants={telemetry.invariants} />}
               <div className="space-y-1 pt-1">
                 {plugin.layers.map((layer) => (
                   <label key={layer.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[11px] text-slate-300 hover:bg-white/5">

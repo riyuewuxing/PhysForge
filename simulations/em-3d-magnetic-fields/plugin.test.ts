@@ -13,12 +13,14 @@ function renderCoil(currentI: number) {
     currentI
   };
   const state = createInitialState(params);
-  const arcs: Array<{ x: number; y: number; radius: number }> = [];
+  const arcs: Array<{ x: number; y: number; radius: number; filled:boolean }> = [];
   let closedPaths = 0;
+  let lastArc:(typeof arcs)[number]|null=null;
   const context = {
-    save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {},
-    closePath() { closedPaths += 1; }, stroke() {}, fill() {},
-    arc(x: number, y: number, radius: number) { arcs.push({ x, y, radius }); }
+    save() {}, restore() {}, beginPath() { lastArc=null; }, moveTo() {}, lineTo() {}, setLineDash() {},
+    closePath() { closedPaths += 1; }, stroke() {}, fill() { if(lastArc)lastArc.filled=true; },
+    arc(x: number, y: number, radius: number) { lastArc={x,y,radius,filled:false};arcs.push(lastArc); },
+    measureText(text:string){return {width:8*text.length};},fillText(){}
   } as unknown as CanvasRenderingContext2D;
   em3dMagneticFieldsPlugin.renderCanvas?.(
     context, state, params, viewport, new Set(['conductors', 'fieldLines3d'])
@@ -29,9 +31,8 @@ function renderCoil(currentI: number) {
 describe('em-3d-magnetic-fields 2D fallback', () => {
   it('marks opposite coil cross-sections with current direction and arrows each projected field line', () => {
     const mapper = createWorldMapper(viewport);
-    const dotRadius = Math.max(1.5, mapper.len(0.055) * 0.18);
     const hasDotAt = (arcs: ReturnType<typeof renderCoil>['arcs'], x: number, y: number) =>
-      arcs.some(arc => arc.radius === dotRadius && Math.hypot(arc.x - x, arc.y - y) < 1e-8);
+      arcs.some(arc => arc.filled && Math.hypot(arc.x - x, arc.y - y) < 1e-8);
     const top = mapper.toScreen(0.5, 1);
     const bottom = mapper.toScreen(0.5, -1);
 

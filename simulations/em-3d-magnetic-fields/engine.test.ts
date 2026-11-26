@@ -1,12 +1,14 @@
 import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
-import { em3dMagneticFieldsPlugin } from './plugin.js';
+import { em3dMagneticFieldsPlugin, magneticProjectionScene, magneticProjectionBounds } from './plugin.js';
 import { magnetic3dPresets } from './presets.js';
 import {
   MU_0,
   checkInvariants,
   createInitialState,
   evalBiotSavartB,
+  isMagneticFieldDefinedAt,
+  computeObservables,
   stepMagnetic3d,
   trace3dFieldLines,
   getMagneticDisplayFieldLines,
@@ -227,4 +229,107 @@ describe('em-3d-magnetic-fields Biot-Savart & 3D Boris invariants (E10)', () => 
       });
     }
   });
+});
+
+describe('E10 independent signed gyro and finite-wire physics',()=>{
+  it('resolves transverse phase and radius even at maximum uniform cyclotron frequency',()=>{
+    for(const sign of [-1,1]){
+      const p={...getPreset(3),qOverM:4*sign,uniformBz:4,vPerp:2.4,vParallel:-.7},initial=createInitialState(p),w=p.qOverM*p.uniformBz,t=1.173;
+      let s=initial;
+      for(let j=0;j<73;j++)s=stepMagnetic3d(s,p,t/73).nextState;
+      expect(s.velocity.x).toBeCloseTo(p.vPerp*Math.cos(w*t),4);
+      expect(s.velocity.y).toBeCloseTo(-p.vPerp*Math.sin(w*t),4);
+      expect(s.position.x).toBeCloseTo(initial.position.x+p.vPerp/w*Math.sin(w*t),5);
+      expect(s.position.y).toBeCloseTo(initial.position.y+p.vPerp/w*(Math.cos(w*t)-1),5);
+      expect(s.position.z).toBeCloseTo(initial.position.z+p.vParallel*t,9);
+      const radius=Math.hypot(s.position.x-initial.position.x,s.position.y-initial.position.y+p.vPerp/w);
+      expect(radius).toBeCloseTo(Math.abs(p.vPerp/w),9);
+    }
+  });
+  it('supports both signs and true zero of Bz, current and charge at the public parameter boundary',()=>{
+    const base=getPreset(3),schema=em3dMagneticFieldsPlugin.paramSchema;
+    const signed=resolvePluginParams(schema,{...base,uniformBz:-4,qOverM:-3,currentI:-2});
+    expect(signed.uniformBz).toBe(-4);expect(signed.qOverM).toBe(-3);expect(signed.currentI).toBe(-2);
+    const zero=resolvePluginParams(schema,{...base,uniformBz:0,qOverM:0,currentI:0});
+    expect(zero.uniformBz).toBe(0);
+  });
+  it('matches the analytic finite straight segment away from the filament including near field',()=>{
+    for(const rho of [.02,.12,.6,1.8])for(const z of [0,1.5,4.5]){
+      const p={...getPreset(2),geometryType:'straight-wire' as const,currentI:-2.5};
+      const B=evalBiotSavartB({x:rho,y:0,z},p);
+      const expected=MU_0*p.currentI/(4*Math.PI*rho)*((4-z)/Math.hypot(rho,4-z)+(4+z)/Math.hypot(rho,4+z));
+      expect(Math.abs((B.y-expected)/expected)).toBeLessThan(1e-8);
+      expect(B.x).toBe(0);expect(B.z).toBe(0);
+    }
+  });
+  it('rejects corrupted Lorentz acceleration that does spurious magnetic work',()=>{
+    const p=getPreset(3),s=createInitialState(p);
+    const bad={...s,lorentzForce:{x:10,y:0,z:2}};
+    expect(checkInvariants(bad).some(r=>!r.passed)).toBe(true);
+  });
+  it('zero field and parallel-only motion are not described as real helical orbits',()=>{
+    for(const p of [{...getPreset(3),uniformBz:0},{...getPreset(3),vPerp:0}]){
+      const s=createInitialState(p);
+      const f=em3dMagneticFieldsPlugin.formatFormulas!(s,p)[0]!;
+      expect(f.substitutedLatex).not.toContain('R&=');
+      expect(f.substitutedLatex).toContain('直线');
+    }
+  });
+  it('uniform export never labels irrelevant source current or conductor radius',()=>{
+    const p=getPreset(3),s=createInitialState(p),ir=em3dMagneticFieldsPlugin.exportDiagramIR!(s,p);
+    expect(ir.primitives.some(q=>(q.kind==='text'||q.kind==='mathLabel')&&q.text.includes('I='))).toBe(false);
+    expect(ir.primitives.some(q=>(q.kind==='text'||q.kind==='mathLabel')&&q.text.includes('B'))).toBe(true);
+  });
+});
+
+describe('E10 reversed fields and degeneracy',()=>{
+  it('analytic finite parallel wires superpose with exact central cancellation and reversed sign',()=>{
+    const p={...getPreset(2),geometryType:'parallel-wires' as const,currentI:2.3};
+    const x=.27,y=.41,z=1.1,R=p.radiusR;
+    let bx=0,by=0;
+    for(const x0 of [-.8*R,.8*R]){const dx=x-x0,r=Math.hypot(dx,y),c=MU_0*p.currentI/(4*Math.PI*r)*((4-z)/Math.hypot(r,4-z)+(4+z)/Math.hypot(r,4+z));bx-=c*y/r;by+=c*dx/r;}
+    const B=evalBiotSavartB({x,y,z},p),rev=evalBiotSavartB({x,y,z},{...p,currentI:-p.currentI});
+    expect(B.x).toBeCloseTo(bx,15);expect(B.y).toBeCloseTo(by,15);
+    expect(rev.x).toBeCloseTo(-bx,15);expect(rev.y).toBeCloseTo(-by,15);
+    expect(Math.hypot(...Object.values(evalBiotSavartB({x:0,y:0,z:0},p)))).toBeLessThan(1e-14);
+  });
+  it('checks real magnetic vector and analytic uniform trajectory, not merely speed',()=>{
+    const p={...getPreset(3),uniformBz:-4,qOverM:-4},i=createInitialState(p),s=stepMagnetic3d(i,p,.8).nextState;
+    expect(checkInvariants(s,i,p).every(r=>r.passed)).toBe(true);
+    expect(checkInvariants({...s,position:{...s.position,x:s.position.x+.2}},i,p).some(r=>!r.passed)).toBe(true);
+  });
+  it('zero charge, zero B and parallel-only yield exact straight motion',()=>{
+    for(const p of [{...getPreset(3),qOverM:0},{...getPreset(3),uniformBz:0},{...getPreset(3),vPerp:0}]){
+      const i=createInitialState(p),s=stepMagnetic3d(i,p,.7).nextState;
+      expect(s.position.x).toBeCloseTo(i.position.x+i.velocity.x*.7,10);
+      expect(s.position.y).toBeCloseTo(i.position.y+i.velocity.y*.7,10);
+      expect(s.position.z).toBeCloseTo(i.position.z+i.velocity.z*.7,10);
+      expect(s.lorentzForce).toEqual({x:0,y:0,z:0});
+    }
+  });
+});
+
+it('explicitly rejects ideal filament measurements without leaking the finite compatibility sentinel',()=>{
+  const p={...getPreset(2),geometryType:'straight-wire' as const,currentI:2},initial=createInitialState(p);
+  expect(isMagneticFieldDefinedAt({x:0,y:0,z:0},p)).toBe(false);
+  expect(isMagneticFieldDefinedAt({x:0,y:0,z:5},p)).toBe(true);
+  expect(isMagneticFieldDefinedAt({x:0,y:0,z:0},{...p,currentI:0})).toBe(true);
+  const invalid={...initial,position:{x:0,y:0,z:0}};
+  const r=stepMagnetic3d(invalid,p,.01);
+  expect(r.halt).toBe(true);expect(r.advancedTime).toBe(0);
+  const o=computeObservables(r.nextState);
+  expect(o.fieldDefined).toBe(0);expect(o.bMagT).toBeUndefined();expect(o.ax).toBeUndefined();
+  expect(checkInvariants(r.nextState,initial,p).some(x=>!x.passed)).toBe(true);
+});
+
+it('exports actual conductors, field lines, signed vector projections and a separate wire transverse section',()=>{
+  const p={...getPreset(2),geometryType:'parallel-wires' as const,currentI:-2},s=createInitialState(p),layers=new Set(['conductors','fieldLines3d','handednessTriad']);
+  const marks=magneticProjectionScene(s,p,layers),ir=em3dMagneticFieldsPlugin.exportDiagramIR!(s,p);
+  expect(ir.primitives.slice(0,-1)).toEqual(marks.map(m=>m.primitive));
+  expect(marks.some(m=>m.primitive.kind==='text'&&m.primitive.text.includes('截面分离'))).toBe(true);
+  expect(marks.filter(m=>m.tone==='field'&&m.primitive.kind==='polyline').length).toBeGreaterThan(15);
+  expect(magneticProjectionBounds(s,p).maxX).toBeGreaterThan(4);
+  expect(em3dMagneticFieldsPlugin.getParamFields!(getPreset(3)).some(f=>f.key==='currentI')).toBe(false);
+  expect(em3dMagneticFieldsPlugin.getTelemetryChannels!(getPreset(3))[0]!.key).toBe('vx');
+  expect(em3dMagneticFieldsPlugin.getTelemetryChannels!(p)[1]!.key).toBe('bMagMicroT');
 });
