@@ -2,7 +2,8 @@ import { resolvePluginParams, type SimulationPluginV2 } from '@physforge/sim-sdk
 import { describe, expect, it } from 'vitest';
 import { compRigidRollingSlipPlugin } from './plugin.js';
 import { rigidRollingPresets } from './presets.js';
-import { createInitialState, stepRigidRollingSlip, type RigidRollingParams } from './engine.js';
+import { createInitialState, stepRigidRollingSlip, rollingQuantities, computeObservables, type RigidRollingParams } from './engine.js';
+import { rollingScene } from './geometry.js';
 
 function getPreset(idx: number): RigidRollingParams {
   return resolvePluginParams(compRigidRollingSlipPlugin.paramSchema, rigidRollingPresets[idx]!.params);
@@ -137,5 +138,69 @@ describe('C01 independent signed dynamics and diagram contracts (H59 pre-fix)', 
     expect(d.primitives.filter(v=>v.kind==='circle').length).toBeGreaterThanOrEqual(4);
     const tracks=d.primitives.filter(v=>v.kind==='hatchedGround');
     expect(tracks.some(v=>v.kind==='hatchedGround' && Math.abs(v.y2-v.y1)>1e-4)).toBe(true);
+  });
+});
+
+describe('F10 independent boundary and display consistency',()=>{
+  it('does not invent friction or a lock when kinetic friction vanishes',()=>{
+    const p={...getPreset(0),muK:0,v0Mps:-3,omega0Radps:18};
+    const a=createInitialState(p),b=stepRigidRollingSlip(a,p,4).nextState,q=rollingQuantities(b,p);
+    expect(b.mode).toBe('slipping');expect(b.transitionTimeS).toBeNull();expect(b.events).toHaveLength(0);
+    expect(b.v).toBe(-3);expect(b.omega).toBe(18);expect(b.x).toBeCloseTo(-12,10);
+    expect(b.theta).toBeCloseTo(72,10);expect(q.heat).toBe(0);expect(q.predictedTime).toBeNull();
+    expect(b.currentEnergyJ).toBeCloseTo(a.currentEnergyJ,10);
+    expect(compRigidRollingSlipPlugin.getForceVectors!(b,p).some(f=>f.id==='friction')).toBe(false);
+  });
+  it('integrates positive dissipation, with exactly one lock and partition-independent final state',()=>{
+    const p=getPreset(1),R=p.radiusM,m=p.massKg,c=.4,u=p.v0Mps-R*p.omega0Radps,A=p.muK*9.8*(1+1/c),tc=Math.abs(u)/A;
+    const a=createInitialState(p),t=tc*.41,b=stepRigidRollingSlip(a,p,t).nextState;
+    const Q=p.muK*m*9.8*(Math.abs(u)*t-.5*A*t*t);
+    expect(rollingQuantities(b,p).heat).toBeCloseTo(Q,8);expect(b.currentEnergyJ+Q).toBeCloseTo(a.currentEnergyJ,8);
+    const end=tc+.37,whole=stepRigidRollingSlip(a,p,end).nextState;
+    let split=a;for(let i=0;i<113;i++)split=stepRigidRollingSlip(split,p,end/113).nextState;
+    expect(split.events).toHaveLength(1);expect(whole.events).toHaveLength(1);
+    expect(split.x).toBeCloseTo(whole.x,6);expect(split.theta).toBeCloseTo(whole.theta,6);
+    expect(split.v).toBeCloseTo(whole.v,7);expect(split.transitionTimeS!).toBeCloseTo(tc,7);
+    const obs=computeObservables(split,p);
+    expect(obs.translationalEnergyJ!+obs.rotationalEnergyJ!+obs.dissipatedEnergyJ!).toBeCloseTo(a.currentEnergyJ,7);
+  });
+  for(const shape of ['solid-sphere','solid-cylinder','hollow-sphere','thin-ring'] as const){
+    it('matches actual static friction, tangent geometry, and torque at steep incline: '+shape,()=>{
+      const p={...getPreset(2),shape,inclineDeg:45,muK:0};
+      const c=shape==='solid-sphere'?.4:shape==='solid-cylinder'?.5:shape==='hollow-sphere'?2/3:1;
+      const s=stepRigidRollingSlip(createInitialState(p),p,2).nextState,q=rollingQuantities(s,p),sc=rollingScene(s,p);
+      const a=9.8*Math.sin(Math.PI/4)/(1+c),f=-c*p.massKg*a;
+      expect(s.v).toBeCloseTo(2*a,10);expect(q.f).toBeCloseTo(f,10);expect(q.acceleration).toBeCloseTo(a,10);
+      expect(q.angularAcceleration*p.radiusM).toBeCloseTo(a,10);expect(q.requiredStaticMu).toBeCloseTo(c/(1+c),10);
+      expect(q.vEnergy+q.wEnergy+q.pEnergy).toBeCloseTo(0,9);
+      const vec=compRigidRollingSlipPlugin.getForceVectors!(s,p).find(v=>v.id==='friction')!;
+      expect(vec.force.x*sc.tangent.x+vec.force.y*sc.tangent.y).toBeCloseTo(f,10);
+      expect(vec.origin).toEqual(sc.selected.contact);
+      expect(compRigidRollingSlipPlugin.referenceFrames![0]!.getOrigin(s,p)).toEqual(sc.selected.center);
+      expect(sc.bodies).toHaveLength(4);
+      for(const b of sc.bodies){
+        const dx=b.center.x-b.contact.x,dy=b.center.y-b.contact.y;
+        expect(Math.hypot(dx,dy)).toBeCloseTo(b.radius,10);
+        expect(dx*sc.tangent.x+dy*sc.tangent.y).toBeCloseTo(0,10);
+        expect((b.trackEnd.y-b.trackStart.y)/(b.trackEnd.x-b.trackStart.x)).toBeCloseTo(-1,10);
+        expect((b.contact.x-b.trackStart.x)*sc.normal.x+(b.contact.y-b.trackStart.y)*sc.normal.y).toBeCloseTo(0,10);
+        expect(Math.hypot(b.contact.x-b.trackStart.x,b.contact.y-b.trackStart.y)/Math.hypot(b.trackEnd.x-b.trackStart.x,b.trackEnd.y-b.trackStart.y)).toBeCloseTo(b.distance/sc.raceExtent,10);
+      }
+    });
+  }
+  it('uses a translated metric window without falsifying displacement or contact position',()=>{
+    const p=getPreset(0),s=stepRigidRollingSlip(createInitialState(p),p,40).nextState,sc=rollingScene(s,p);
+    expect(sc.selected.contact.x+sc.windowOrigin).toBeCloseTo(s.x,10);
+    expect(sc.selected.center.y).toBeCloseTo(p.radiusM,10);
+    expect(sc.selected.contact.y).toBe(0);expect(Math.abs(sc.selected.center.x)).toBeLessThan(2);
+    const f=compRigidRollingSlipPlugin.getForceVectors!(s,p).find(v=>v.id==='normal')!;
+    expect(f.origin).toEqual(sc.selected.contact);
+  });
+  it('filters controls by physical mode and exposes signed initial rotation drag',()=>{
+    const p=getPreset(0),a=createInitialState(p),handles=compRigidRollingSlipPlugin.getControlHandles!(a,p);
+    expect(handles[1]!.onDrag({x:.2,y:0}).omega0Radps).toBeLessThan(0);
+    const race=getPreset(2),keys=compRigidRollingSlipPlugin.getParamFields!(race).map(f=>f.key);
+    expect(keys).not.toContain('muK');expect(keys).not.toContain('v0Mps');expect(keys).toContain('inclineDeg');
+    expect(compRigidRollingSlipPlugin.getParamFields!(p).map(f=>f.key)).not.toContain('inclineDeg');
   });
 });
