@@ -606,6 +606,7 @@ const ClassroomApp: React.FC = () => {
             type="button"
             data-testid="btn-analysis-lab-menu"
             onClick={() => {
+              setToolsOpen(false);
               setLabFrames(snapshotsGetterRef.current());
               setAnalysisLabOpen(true);
             }}

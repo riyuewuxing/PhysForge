@@ -1,4 +1,5 @@
 import {
+  bisectEvent,
   createScaleContext,
   extractIsolines,
   integrateAdaptiveRK45,
@@ -37,6 +38,8 @@ export interface ElectrostaticState {
   readonly vy: number;
   readonly trail: readonly { x: number; y: number }[];
   readonly initialEnergy: number;
+  readonly tubePhase: 'approach'|'inside'|'exit'|'hit'|null;
+  readonly tubeWork: number;
   readonly events: readonly PhysicsEvent[];
 }
 
@@ -80,7 +83,8 @@ export function solveThreePointUniformField(params: ElectrostaticParams): {
   A: { x: number; y: number; phi: number };
   B: { x: number; y: number; phi: number };
   C: { x: number; y: number; phi: number };
-  equalPointOnAC: { x: number; y: number };
+  equalPointOnAC: { x: number; y: number } | null;
+  construction: {start:{x:number;y:number;phi:number;id:string};end:{x:number;y:number};lowId:string;highId:string;fraction:number}|null;
 } {
   const A = { x: -1.4, y: -0.9, phi: params.phiA };
   const B = { x: 0.2, y: 1.1, phi: params.phiB };
@@ -98,18 +102,26 @@ export function solveThreePointUniformField(params: ElectrostaticParams): {
   const gx = (dPhiB * by - ay * dPhiC) / det;
   const gy = (ax * dPhiC - dPhiB * bx) / det;
 
-  const tAC =
-    Math.abs(C.phi - A.phi) > 1e-9
-      ? Math.max(0, Math.min(1, (B.phi - A.phi) / (C.phi - A.phi)))
-      : 0.5;
-  const equalPointOnAC = {
-    x: A.x + tAC * (C.x - A.x),
-    y: A.y + tAC * (C.y - A.y)
+  // Legacy A-C intersection is defined only when that line can contain B's potential.
+  const tAC=C.phi!==A.phi?(B.phi-A.phi)/(C.phi-A.phi):null;
+  const equalPointOnAC=tAC===null?(B.phi===A.phi?{x:A.x,y:A.y}:null):
+    {x:A.x+tAC*(C.x-A.x),y:A.y+tAC*(C.y-A.y)};
+  const [low,mid,high]=[{...A,id:'A'},{...B,id:'B'},{...C,id:'C'}].sort((a,b)=>a.phi-b.phi);
+  const span=high!.phi-low!.phi;
+  const fraction=span===0?0:(mid!.phi-low!.phi)/span;
+  const construction=span===0?null:{
+    start:mid!,
+    end:{x:low!.x+fraction*(high!.x-low!.x),y:low!.y+fraction*(high!.y-low!.y)},
+    lowId:low!.id,highId:high!.id,fraction
   };
-  return { Ex: -gx, Ey: -gy, A, B, C, equalPointOnAC };
+  return { Ex: gx===0?0:-gx, Ey: gy===0?0:-gy, A, B, C, equalPointOnAC,construction };
 }
 
 export function extractElectrostaticIsolines(params: ElectrostaticParams): IsolineContour[] {
+  if(params.mode==='deflection-tube')return [];
+  if(params.mode==='dipole-point-charges'&&params.q1MicroC===0&&params.q2MicroC===0)return [];
+  const uniform=params.mode==='uniform-three-point'?solveThreePointUniformField(params):null;
+  if(uniform&&uniform.Ex===0&&uniform.Ey===0)return [];
   const nx = 121;
   const ny = 89;
   const bounds = { xMin: -3.2, xMax: 3.2, yMin: -2.2, yMax: 2.2 };
@@ -120,19 +132,15 @@ export function extractElectrostaticIsolines(params: ElectrostaticParams): Isoli
     for (let i = 0; i < nx; i++) {
       const x = bounds.xMin + (i / (nx - 1)) * (bounds.xMax - bounds.xMin);
       const val =
-        params.mode === 'uniform-three-point'
-          ? (() => {
-              const sol = solveThreePointUniformField(params);
-              return sol.A.phi - sol.Ex * (x - sol.A.x) - sol.Ey * (y - sol.A.y);
-            })()
-          : evalPointChargePotentialAndField(x, y, params).phi;
-      grid[j * nx + i] = Math.max(-12, Math.min(12, val));
+        uniform ? uniform.A.phi-uniform.Ex*(x-uniform.A.x)-uniform.Ey*(y-uniform.A.y)
+          : evalPointChargePotentialAndField(x,y,params).phi;
+      grid[j * nx + i] = val;
     }
   }
 
   const levels =
     params.mode === 'uniform-three-point'
-      ? [0, 2, 4, 6, 8, 10, 12]
+      ? Array.from({length:9},(_,i)=>Math.min(params.phiA,params.phiB,params.phiC)+i*(Math.max(params.phiA,params.phiB,params.phiC)-Math.min(params.phiA,params.phiB,params.phiC))/8)
       : [-4, -2.5, -1.2, -0.5, 0, 0.5, 1.2, 2.5, 4];
   return extractIsolines(grid, nx, ny, bounds, levels);
 }
@@ -146,7 +154,7 @@ export function traceFieldLines(params: ElectrostaticParams): { x: number; y: nu
   ];
   for (const ch of list) {
     if (Math.abs(ch.q) < 0.05) continue;
-    const count = 10;
+    const count = Math.max(3,Math.round(4*Math.abs(ch.q)));
     const dir = ch.q > 0 ? 1 : -1;
     for (let k = 0; k < count; k++) {
       const ang = (k / count) * Math.PI * 2 + 0.12;
@@ -163,7 +171,9 @@ export function traceFieldLines(params: ElectrostaticParams): { x: number; y: nu
     const pts: { x: number; y: number }[] = [{ x: s.x, y: s.y }];
     let cx = s.x;
     let cy = s.y;
-    for (let step = 0; step < 90; step++) {
+    for (let step = 0; step < 160; step++) {
+      const field=evalPointChargePotentialAndField(cx,cy,params);
+      if(Math.hypot(field.Ex,field.Ey)<1e-8)break;
       const next = stepRK4([cx, cy], 0, 0.06, (_t, xy) => {
         const { Ex, Ey } = evalPointChargePotentialAndField(xy[0]!, xy[1]!, params);
         const mag = Math.hypot(Ex, Ey);
@@ -173,11 +183,13 @@ export function traceFieldLines(params: ElectrostaticParams): { x: number; y: nu
       cy = next[1]!;
       pts.push({ x: cx, y: cy });
       if (Math.abs(cx) > 3.3 || Math.abs(cy) > 2.3) break;
-      const nearCharge =
-        Math.hypot(cx - params.x1, cy) < 0.12 || Math.hypot(cx - params.x2, cy) < 0.12;
+      const nearCharge=list.some(ch=>ch.q!==0&&Math.hypot(cx-ch.cx,cy)<0.12);
       if (nearCharge) break;
     }
-    lines.push(pts);
+    // Reverse negative-source integration to make every polyline follow the physical E direction.
+    // Connections already seeded from a positive source need not be drawn twice.
+    if(s.dir<0&&list.some(ch=>ch.q>0&&Math.hypot(cx-ch.cx,cy)<0.12))continue;
+    if(pts.length>1)lines.push(s.dir<0?pts.reverse():pts);
   }
   return lines;
 }
@@ -207,7 +219,7 @@ export function createInitialState(params: ElectrostaticParams): ElectrostaticSt
   const py0 = params.mode === 'deflection-tube' ? 0 : params.startY;
   const vx0 =
     params.mode === 'deflection-tube'
-      ? Math.sqrt(Math.max(0.1, 2 * Math.abs(params.testChargeRatio) * params.uAccelV))
+      ? Math.sqrt(2 * Math.abs(params.testChargeRatio) * params.uAccelV)
       : params.v0x;
   const vy0 = params.mode === 'deflection-tube' ? 0 : params.v0y;
 
@@ -225,8 +237,60 @@ export function createInitialState(params: ElectrostaticParams): ElectrostaticSt
     vy: vy0,
     trail: [{ x: pxDim, y: pyDim }],
     initialEnergy: e0,
+    tubePhase:params.mode==='deflection-tube'?'approach':null,
+    tubeWork:0,
     events: []
   };
+}
+
+/** Exact piecewise constant acceleration. Plate crossings are bracketed in time,
+ * with a separate phase preventing repeated events at a shared endpoint. */
+function stepTube(state:ElectrostaticState,p:ElectrostaticParams,dt:number):StepResult<ElectrostaticState>{
+  if(state.tubePhase==='hit')return {nextState:state,events:[],halt:true,advancedTime:0};
+  let cur=state,remaining=dt;
+  const events:PhysicsEvent[]=[];
+  let trail=[...state.trail];
+  const append=(q:ElectrostaticState,force=false)=>{
+    const last=trail.at(-1);
+    if(force||!last||Math.hypot(q.px-last.x,q.py-last.y)>0.03)
+      trail=[...trail.slice(-300),{x:q.px,y:q.py}];
+  };
+  for(let transitions=0;remaining>0&&transitions<3;transitions++){
+    const phase=cur.tubePhase;
+    const ay=phase==='inside'?p.testChargeRatio*p.uDeflectV/2:0;
+    const advance=(q:ElectrostaticState,h:number):ElectrostaticState=>{
+      const py=q.py+q.vy*h+0.5*ay*h*h;
+      return {...q,t:q.t+h,px:q.px+q.vx*h,py,vy:q.vy+ay*h,tubeWork:q.tubeWork+ay*(py-q.py)};
+    };
+    const end=advance(cur,remaining);
+    const root=(fn:(q:ElectrostaticState)=>number)=>{
+      // Snap only roundoff-sized endpoint errors; never clip a physical overshoot.
+      if(Math.abs(fn(end))<=8*Number.EPSILON)return remaining;
+      const hit=bisectEvent(cur,cur.t,remaining,advance,fn,{timeTolerance:1e-13,triggerOnStartZero:true});
+      return hit?.timeOffset??null;
+    };
+    const edge=phase==='approach'?-1:1;
+    const crossing=(phase==='approach'||phase==='inside')&&cur.vx>0?root(q=>q.px-edge):null;
+    const wall=phase==='inside'&&ay!==0?root(q=>Math.sign(ay)*q.py-1):null;
+    const hitWall=wall!==null&&(crossing===null||wall<=crossing+1e-12);
+    const h=hitWall?wall:crossing;
+    if(h===null){cur=end;append(cur);remaining=0;break;}
+    const next=advance(cur,h);
+    remaining=Math.max(0,remaining-h);
+    const nextPhase=hitWall?'hit':phase==='approach'?'inside':'exit';
+    const py=hitWall?Math.sign(ay):next.py;
+    cur={...next,px:hitWall?next.px:edge,py,tubePhase:nextPhase,
+      tubeWork:next.tubeWork+ay*(py-next.py)};
+    append(cur,true);
+    const kind=hitWall?'hit-plate':phase==='approach'?'entry-plate':'exit-plate';
+    events.push({id:kind+'-'+(state.events.length+events.length),time:cur.t,
+      label:hitWall?'首次触板 · 碰撞前停止':phase==='approach'?'进入理想偏转区':'离开理想偏转区',
+      position:{x:cur.px,y:cur.py},metrics:{vx:cur.vx,vy:cur.vy,...(nextPhase==='exit'?{yExit:cur.py}:{})}});
+    if(hitWall)break;
+  }
+  const terminal=cur.tubePhase==='hit';
+  return {nextState:{...cur,trail,events:[...state.events,...events]},events,
+    ...(terminal?{halt:true,advancedTime:cur.t-state.t}:{})};
 }
 
 export function stepElectrostatic(
@@ -235,6 +299,7 @@ export function stepElectrostatic(
   dt: number
 ): StepResult<ElectrostaticState> {
   if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
+  if(params.mode==='deflection-tube')return stepTube(state,params,dt);
   if (dt === 0) return { nextState: state, events: [] };
 
   const eta = params.testChargeRatio;
@@ -258,15 +323,6 @@ export function stepElectrostatic(
   const trail = append ? [...state.trail.slice(-300), { x: nx, y: ny }] : state.trail;
 
   const events: PhysicsEvent[] = [];
-  if (params.mode === 'deflection-tube' && state.px <= 1.0 && nx > 1.0) {
-    events.push({
-      id: `exit-plate-${state.events.length}`,
-      time: state.t + dt,
-      label: `粒子离开偏转极板 (y=${ny.toFixed(3)}m)`,
-      position: { x: nx, y: ny },
-      metrics: { yExit: ny }
-    });
-  }
 
   return {
     nextState: {
@@ -287,19 +343,25 @@ export function computeObservables(
   state: ElectrostaticState,
   params: ElectrostaticParams
 ): Record<string, number> {
-  const { phi, Ex, Ey } = getFieldAt(state.px, state.py, params);
+  const tube=params.mode==='deflection-tube';
+  const inside=state.tubePhase==='inside'||state.tubePhase==='hit';
+  const field=tube?{phi:inside?-params.uDeflectV*state.py/2:0,Ex:0,Ey:inside?params.uDeflectV/2:0}:getFieldAt(state.px,state.py,params);
+  const {phi,Ex,Ey}=field;
+  const construction=params.mode==='uniform-three-point'?solveThreePointUniformField(params).construction:null;
   const ek = 0.5 * (state.vx * state.vx + state.vy * state.vy);
   const ep = params.testChargeRatio * phi;
   return {
     t: state.t,
     px: state.px,
     py: state.py,
+    vx:state.vx,vy:state.vy,
     Ex,
     Ey,
     eMag: Math.hypot(Ex, Ey),
     phi,
     ek,
-    totalEnergy: ek + ep
+    ...(params.mode==='uniform-three-point'?{constructionDefined:construction?1:0,...(construction?{constructionStartX:construction.start.x,constructionStartY:construction.start.y,constructionEndX:construction.end.x,constructionEndY:construction.end.y,constructionFraction:construction.fraction,constructionPhi:construction.start.phi}:{})}:{}),
+    ...(tube?{tubeWork:state.tubeWork,energyResidual:Math.abs(ek-state.tubeWork-state.initialEnergy),tubePhase:state.tubePhase==='approach'?0:state.tubePhase==='inside'?1:state.tubePhase==='exit'?2:3,terminal:state.tubePhase==='hit'?1:0,...(state.events.find(e=>e.id.startsWith('exit-plate'))?{yExit:state.events.find(e=>e.id.startsWith('exit-plate'))!.position!.y}:{})}:{totalEnergy:ek+ep,energyResidual:Math.abs(ek+ep-state.initialEnergy)})
   };
 }
 
@@ -309,20 +371,8 @@ export function checkInvariants(
   params: ElectrostaticParams
 ): InvariantReport[] {
   const obs = computeObservables(state, params);
-  const conservative = params.mode !== 'deflection-tube';
-  const err =
-    conservative && Math.abs(state.initialEnergy) > 1e-9
-      ? Math.abs(obs.totalEnergy! - state.initialEnergy) / Math.abs(state.initialEnergy)
-      : conservative
-        ? Math.abs(obs.totalEnergy! - state.initialEnergy)
-        : 0;
-
-  return [
-    {
-      name: conservative ? '静电场机械能与电势能守恒 (Ek+qφ)' : '数值有限性检定',
-      measuredError: err,
-      tolerance: 1e-5,
-      passed: Number.isFinite(obs.totalEnergy) && err < 1e-5
-    }
-  ];
+  const conservative=params.mode!=='deflection-tube';
+  const err=conservative?(Math.abs(state.initialEnergy)>1e-9?obs.energyResidual!/Math.abs(state.initialEnergy):obs.energyResidual!):obs.energyResidual!/Math.max(1e-9,Math.abs(state.initialEnergy));
+  return [{name:conservative?'静电场总能量守恒':'偏转区电场功—动能平衡',measuredError:err,tolerance:1e-5,
+    passed:Object.values(obs).every(Number.isFinite)&&err<1e-5}];
 }

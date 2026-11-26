@@ -1,5 +1,5 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
-import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec, type TelemetryChannelSpec } from '@physforge/sim-sdk';
 import { electrostaticPresets } from './presets.js';
 import {
   checkInvariants,
@@ -45,8 +45,8 @@ const paramSchema: readonly ParamFieldSpec<ElectrostaticParams>[] = [
 const liveFormulas: readonly LiveFormulaSpec[] = [
   {
     "id": "two-charge-potential",
-    "title": "两点电荷电势叠加（零势能参考在无穷远）",
-    "latex": "\\varphi=k\\left(\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q1MicroC}{q_1}}}{r_1}+\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q2MicroC}{q_2}}}{r_2}\\right)",
+    "title": "软化点电荷归一化电势（无穷远零势）",
+    "latex": "\\varphi^*=\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q1MicroC}{q_1^*}}}{\\sqrt{r_1^2+\\delta^2}}+\\frac{\\htmlClass{pf-live-var}{\\htmlData{param=q2MicroC}{q_2^*}}}{\\sqrt{r_2^2+\\delta^2}}",
     "bindings": [
       {
         "tokenKey": "q1MicroC",
@@ -150,6 +150,32 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
     }
   }
 ];
+// Static geometry is independent of simulation time and particle initial conditions.
+let contourCache:{key:string;value:ReturnType<typeof extractElectrostaticIsolines>}|null=null;
+let lineCache:{key:string;value:ReturnType<typeof traceFieldLines>}|null=null;
+function fieldKey(p:ElectrostaticParams){
+  return JSON.stringify(p.mode==='uniform-three-point'?[p.mode,p.phiA,p.phiB,p.phiC]:
+    [p.mode,p.q1MicroC,p.q2MicroC,p.x1,p.x2]);
+}
+function contoursFor(p:ElectrostaticParams){
+  const key=fieldKey(p);
+  if(contourCache?.key!==key)contourCache={key,value:extractElectrostaticIsolines(p)};
+  return contourCache.value;
+}
+function linesFor(p:ElectrostaticParams){
+  const key=fieldKey(p);
+  if(lineCache?.key!==key)lineCache={key,value:traceFieldLines(p)};
+  return lineCache.value;
+}
+const allChannels:readonly TelemetryChannelSpec[]=[
+  {key:'phi',label:'所在处电势 φ',unit:'V',color:'#fbbf24'},
+  {key:'eMag',label:'场强大小 |E|',unit:'V/m',color:'#38bdf8'},
+  {key:'ek',label:'动能（单位质量模型）',unit:'J',color:'#4ade80'},
+  {key:'totalEnergy',label:'总能量 K+qφ',unit:'J',color:'#f472b6'},
+  {key:'py',label:'有向偏转 y',unit:'m',color:'#38bdf8'},
+  {key:'vy',label:'横向速度 vy',unit:'m/s',color:'#f472b6'},
+  {key:'tubeWork',label:'板内电场功 W',unit:'J',color:'#fbbf24'}
+];
 export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<ElectrostaticParams, ElectrostaticState>({
   meta: {
     id: 'em-electrostatic-field',
@@ -159,8 +185,15 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
     difficulty: '压轴专题',
     version: '2.0.0'
   },
-  defaultView: { scale: 0.85, offsetRatioX: 0.05 },
+  defaultView: { scale: p=>p.mode==='deflection-tube'?0.82:0.85, offsetRatioX: -0.04,offsetRatioY:-0.10 },
   paramSchema,
+  getParamFields:p=>{
+    const keys=p.mode==='dipole-point-charges'?['mode','q1MicroC','q2MicroC','testChargeRatio','x1','x2','v0x','v0y','startY']:
+      p.mode==='uniform-three-point'?['mode','phiA','phiB','phiC','testChargeRatio','v0x','v0y','startY']:
+      ['mode','uAccelV','uDeflectV','testChargeRatio'];
+    return keys.flatMap(key=>paramSchema.filter(f=>f.key===key).map(f=>f.key==='testChargeRatio'?
+      {...f,label:p.mode==='dipole-point-charges'?'归一化荷质比 η':'荷质比 q/m',unit:p.mode==='dipole-point-charges'?'':'C/kg'}:f));
+  },
   presets: electrostaticPresets,
   engine: {
     createInitialState,
@@ -169,17 +202,17 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
     checkInvariants
   },
   layers: [
-    { id: 'equipotentials', label: 'Marching Squares 等势线', defaultVisible: true },
-    { id: 'fieldLines', label: 'RK4 双向电场线', defaultVisible: true },
-    { id: 'particle', label: 'RK45 试探电荷与轨迹', defaultVisible: true },
-    { id: 'profileCurve', label: '连线 E(x) 与 φ(x) 曲线', defaultVisible: true }
+    { id: 'equipotentials', label: '等势线（虚线）', defaultVisible: true },
+    { id: 'fieldLines', label: '电场线及电场方向', defaultVisible: true },
+    { id: 'particle', label: '试探粒子及轨迹', defaultVisible: true },
+    { id: 'profileCurve', label: 'y=0.25 m 电势剖面', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'phi', label: '所在处电势 φ', unit: 'V', color: '#fbbf24' },
-    { key: 'eMag', label: '场强大小 |E|', unit: 'V/m', color: '#38bdf8' },
-    { key: 'ek', label: '粒子动能 Ek', unit: 'J', color: '#4ade80' },
-    { key: 'totalEnergy', label: '总能量 Ek+qφ', unit: 'J', color: '#f472b6' }
-  ],
+  telemetryChannels:allChannels,
+  getTelemetryChannels:p=>{
+    const keys=p.mode==='deflection-tube'?['py','vy','ek','tubeWork']:['phi','eMag','ek','totalEnergy'];
+    return keys.flatMap(key=>allChannels.filter(c=>c.key===key).map(c=>p.mode==='dipole-point-charges'&&key==='phi'?{...c,label:'归一化电势 φ*',unit:'Φ₀'}:
+      p.mode==='dipole-point-charges'&&key==='eMag'?{...c,label:'归一化场强 |E*|',unit:'E₀'}:c));
+  },
   getForceVectors: (state, params) => {
     const obs = computeObservables(state, params);
     const fx = params.testChargeRatio * (obs.Ex ?? 0);
@@ -187,7 +220,8 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
     return [
       {
         id: 'electric-force',
-        label: 'qE',
+        label: 'qE (m=1kg)',
+        unit:'N',
         origin: { x: state.px, y: state.py },
         force: { x: fx, y: fy },
         category: 'electric',
@@ -225,36 +259,58 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
     }),
     importScene: (dsl) => dsl.params as Partial<ElectrostaticParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'circle', cx: params.x1, cy: 0, r: 0.16, fill: true },
-      { kind: 'circle', cx: params.x2, cy: 0, r: 0.16 },
-      { kind: 'trajectory', points: state.trail.map((p) => ({ x: p.x, y: p.y })), strokeWidth: 2 },
-      { kind: 'circle', cx: state.px, cy: state.py, r: 0.08, fill: true },
-      {
-        kind: 'mathLabel',
-        x: 2.8,
-        y: 1.8,
-        text: `q_1=${params.q1MicroC},\\; q_2=${params.q2MicroC}`,
-        align: 'end'
+  exportDiagramIR:(state,params)=>{
+    const primitives:DiagramPrimitive[]=[];
+    if(params.mode==='dipole-point-charges'){
+      for(const [x,q] of [[params.x1,params.q1MicroC],[params.x2,params.q2MicroC]] as const){
+        primitives.push({kind:'circle',cx:x,cy:0,r:.10},
+          {kind:'text',x,y:-.22,text:(q>0?'+':'')+q+' μC',align:'middle'});
       }
-    ];
-    return {
-      width: 720,
-      height: 440,
-      viewBox: { minX: -3.2, minY: -2.2, maxX: 3.2, maxY: 2.2 },
-      title: '静电场线与等势面偏转配图',
-      primitives
-    };
+      for(const pts of linesFor(params)){
+        primitives.push({kind:'polyline',points:pts});
+        const k=Math.floor(pts.length/2),a=pts[Math.max(0,k-1)]!,b=pts[k]!;
+        primitives.push({kind:'arrow',x1:a.x,y1:a.y,x2:b.x,y2:b.y});
+      }
+    }else if(params.mode==='uniform-three-point'){
+      const sol=solveThreePointUniformField(params);
+      primitives.push({kind:'polyline',points:[sol.A,sol.B,sol.C],closed:true});
+      for(const [id,p] of [['A',sol.A],['B',sol.B],['C',sol.C]] as const)
+        primitives.push({kind:'circle',cx:p.x,cy:p.y,r:.035,fill:true},{kind:'text',x:p.x,y:p.y+.14,text:id+' '+p.phi+' V'});
+      if(sol.construction){const {start,end}=sol.construction;primitives.push({kind:'line',x1:start.x,y1:start.y,x2:end.x,y2:end.y,strokeWidth:2});}
+      const norm=Math.hypot(sol.Ex,sol.Ey);
+      if(norm>0)primitives.push({kind:'arrow',x1:0,y1:0,x2:sol.Ex/norm,y2:sol.Ey/norm,label:'E'});
+      else primitives.push({kind:'text',x:0,y:1.5,text:'E = 0 · 全平面等势',align:'middle'});
+    }else{
+      for(const y of [-1,1])primitives.push({kind:'line',x1:-1,y1:y,x2:1,y2:y,strokeWidth:3});
+      primitives.push({kind:'line',x1:-1.6,y1:0,x2:2.6,y2:0,dashed:true},
+        {kind:'text',x:0,y:1.25,text:params.uDeflectV>0?'−':params.uDeflectV<0?'+':'0',align:'middle'},
+        {kind:'text',x:0,y:-1.25,text:params.uDeflectV>0?'+':params.uDeflectV<0?'−':'0',align:'middle'});
+      if(params.uDeflectV!==0)primitives.push({kind:'arrow',x1:0,y1:-.5*Math.sign(params.uDeflectV),x2:0,y2:.5*Math.sign(params.uDeflectV),label:'E'});
+    }
+    if(params.mode!=='deflection-tube')for(const c of contoursFor(params))for(const seg of c.segments)
+      primitives.push({kind:'line',x1:seg.a.x,y1:seg.a.y,x2:seg.b.x,y2:seg.b.y,dashed:true});
+    primitives.push({kind:'trajectory',points:state.trail,strokeWidth:2},{kind:'circle',cx:state.px,cy:state.py,r:.05,fill:true});
+    const pts=[...state.trail,{x:state.px,y:state.py}];
+    return {width:720,height:440,viewBox:{minX:Math.min(-3.4,...pts.map(p=>p.x-.2)),minY:Math.min(-2.4,...pts.map(p=>p.y-.2)),maxX:Math.max(3.4,...pts.map(p=>p.x+.2)),maxY:Math.max(2.4,...pts.map(p=>p.y+.2))},title:'静电场与粒子运动',primitives};
   },
   renderCanvas: (ctx, state, params, viewport, activeLayers) => {
     const m = createWorldMapper(viewport);
     const labels: CanvasLabel[] = [];
+    const paper=viewport.theme==='projector';
+    const ink=paper?'#0f172a':'#e2e8f0', guide=paper?'#64748b':'#94a3b8';
+    const blue=paper?'#0369a1':'#38bdf8', gold=paper?'#92400e':'#fbbf24',green=paper?'#166534':'#4ade80';
+    const arrow=(x1:number,y1:number,x2:number,y2:number,color:string,width=2)=>{
+      const dx=x2-x1,dy=y2-y1,n=Math.hypot(dx,dy);if(n<1e-9)return;
+      const ux=dx/n,uy=dy/n,h=Math.min(9,n*.45);
+      ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=width;
+      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(x2,y2);ctx.lineTo(x2-h*ux+h*.45*uy,y2-h*uy-h*.45*ux);ctx.lineTo(x2-h*ux-h*.45*uy,y2-h*uy+h*.45*ux);ctx.closePath();ctx.fill();
+    };
     ctx.save();
 
     if (activeLayers.has('equipotentials') && params.mode !== 'deflection-tube') {
-      const contours = extractElectrostaticIsolines(params);
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+      const contours = contoursFor(params);
+      ctx.strokeStyle = paper?'rgba(146,64,14,.65)':'rgba(251,191,36,.55)';
       ctx.lineWidth = 1.2;
       ctx.setLineDash([4, 3]);
       for (const c of contours) {
@@ -272,8 +328,8 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
 
     if (activeLayers.has('fieldLines')) {
       if (params.mode === 'dipole-point-charges') {
-        const lines = traceFieldLines(params);
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+        const lines = linesFor(params);
+        ctx.strokeStyle = paper?'rgba(3,105,161,.78)':'rgba(56,189,248,.65)';
         ctx.lineWidth = 1.5;
         for (const pts of lines) {
           if (pts.length < 2) continue;
@@ -285,6 +341,10 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
             ctx.lineTo(point.x, point.y);
           }
           ctx.stroke();
+          const k=Math.floor(pts.length/2),at=pts[k]!,field=evalPointChargePotentialAndField(at.x,at.y,params);
+          const norm=Math.hypot(field.Ex,field.Ey);
+          if(norm>1e-8){const p=m.toScreen(at.x,at.y),q=m.toScreen(at.x+.10*field.Ex/norm,at.y+.10*field.Ey/norm);arrow(p.x,p.y,q.x,q.y,blue,1.5);}
+          ctx.strokeStyle=paper?'rgba(3,105,161,.78)':'rgba(56,189,248,.65)';ctx.lineWidth=1.5;
         }
       } else if (params.mode === 'uniform-three-point') {
         const sol = solveThreePointUniformField(params);
@@ -305,32 +365,27 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
         ctx.closePath();
         ctx.stroke();
 
-        // Equal-potential segment B <-> equalPointOnAC
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 2.2;
-        const equal = m.toScreen(sol.equalPointOnAC.x, sol.equalPointOnAC.y);
-        ctx.beginPath();
-        ctx.moveTo(b.x, b.y);
-        ctx.lineTo(equal.x, equal.y);
-        ctx.stroke();
-
-        // E vector
-        const eMag = Math.hypot(sol.Ex, sol.Ey) || 1;
-        const eOrigin = m.toScreen(0, 0);
-        const eEnd = m.toScreen((sol.Ex / eMag) * 1.1, (sol.Ey / eMag) * 1.1);
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(eOrigin.x, eOrigin.y);
-        ctx.lineTo(eEnd.x, eEnd.y);
-        ctx.stroke();
-
+        if(sol.construction){
+          const start=m.toScreen(sol.construction.start.x,sol.construction.start.y),end=m.toScreen(sol.construction.end.x,sol.construction.end.y);
+          ctx.strokeStyle=gold;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(start.x,start.y);ctx.lineTo(end.x,end.y);ctx.stroke();
+          ctx.fillStyle=gold;ctx.beginPath();ctx.arc(end.x,end.y,3,0,Math.PI*2);ctx.fill();
+          if(sol.construction.fraction>0&&sol.construction.fraction<1)labels.push({id:'equal-constructed',x:end.x,y:end.y+15,text:'D ('+sol.construction.start.phi+'V)',color:gold,font:'12px sans-serif'});
+        }
+        const eMag=Math.hypot(sol.Ex,sol.Ey);
+        if(eMag>0){
+          const a=m.toScreen(0,0),b=m.toScreen(1.1*sol.Ex/eMag,1.1*sol.Ey/eMag);
+          arrow(a.x,a.y,b.x,b.y,blue,3);
+          labels.push({id:'uniform-field-vector',x:b.x,y:b.y-12,text:'E = '+eMag.toFixed(2)+' V/m',color:blue,font:'13px sans-serif'});
+        }else{
+          const a=m.toScreen(0,1.5);labels.push({id:'zero-uniform',x:a.x,y:a.y,text:'E = 0 · 全平面等势',color:gold,font:'bold 14px sans-serif'});
+        }
         for (const pt of pts) {
           const point = m.toScreen(pt.x, pt.y);
+          ctx.fillStyle=ink;
           ctx.beginPath();
-          ctx.arc(point.x, point.y, m.len(0.025), 0, Math.PI * 2);
+          ctx.arc(point.x, point.y, Math.max(3,m.len(0.025)), 0, Math.PI * 2);
           ctx.fill();
-          labels.push({ id: `uniform-point-${pt.name[0]}`, x: point.x, y: point.y - m.len(0.1), text: pt.name, color: '#e2e8f0', font: '12px sans-serif' });
+          labels.push({ id: `uniform-point-${pt.name[0]}`, x: point.x, y: point.y - m.len(0.1), text: pt.name, color: ink, font: '12px sans-serif' });
         }
       } else {
         // Parallel plates
@@ -346,17 +401,36 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
         ctx.moveTo(plateLeftBottom.x, plateLeftBottom.y);
         ctx.lineTo(plateRightBottom.x, plateRightBottom.y);
         ctx.stroke();
+        const sign=Math.sign(params.uDeflectV);
+        const left=m.toScreen(-1,1),right=m.toScreen(1,-1);
+        if(sign){
+          ctx.fillStyle=paper?'rgba(3,105,161,.07)':'rgba(56,189,248,.09)';ctx.fillRect(left.x,left.y,right.x-left.x,right.y-left.y);
+          for(let i=0;i<5;i++){
+            const x=-.8+i*.4,a=m.toScreen(x,-.60*sign),b=m.toScreen(x,.60*sign);
+            arrow(a.x,a.y,b.x,b.y,blue,1.4);
+          }
+        }
+        for(const y of [-1,1]){
+          const a=m.toScreen(-1,y),b=m.toScreen(1,y),c=y===sign?blue:y===-sign?gold:guide;
+          ctx.strokeStyle=c;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+          const mid=m.toScreen(0,y);labels.push({id:'plate-'+y,x:mid.x,y:mid.y+(y>0?-15:15),text:sign===0?'0 V':y===sign?'− 极板':'+ 极板',color:c,font:'bold 13px sans-serif'});
+        }
+        const axisA=m.toScreen(-1.6,0),axisB=m.toScreen(2.7,0);
+        ctx.strokeStyle=guide;ctx.lineWidth=1;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(axisA.x,axisA.y);ctx.lineTo(axisB.x,axisB.y);ctx.stroke();ctx.setLineDash([]);
       }
     }
 
     if (params.mode === 'dipole-point-charges') {
       const drawCharge = (x: number, q: number, label: string) => {
-        ctx.fillStyle = q > 0 ? '#f43f5e' : q < 0 ? '#38bdf8' : '#64748b';
+        const color=q>0?(paper?'#be123c':'#fb7185'):q<0?blue:guide;
+        ctx.fillStyle=color;
         const point = m.toScreen(x, 0);
         ctx.beginPath();
-        ctx.arc(point.x, point.y, m.len(0.075), 0, Math.PI * 2);
-        ctx.fill();
-        labels.push({ id: `charge-${label}`, x: point.x, y: point.y + m.len(0.15), text: `${label}${q > 0 ? '+' : ''}${q}`, color: '#fff', font: 'bold 12px sans-serif' });
+        const r=Math.max(5,m.len(.095));
+        ctx.save();if(!paper&&q!==0){ctx.shadowColor=color;ctx.shadowBlur=14;}
+        ctx.arc(point.x, point.y,r,0,Math.PI*2);ctx.fill();ctx.restore();
+        ctx.fillStyle=paper?'#fff':'#0f172a';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 13px sans-serif';ctx.fillText(q>0?'+':q<0?'−':'0',point.x,point.y);ctx.textBaseline='alphabetic';
+        labels.push({ id: `charge-${label}`, x: point.x, y: point.y + m.len(0.15), text: `${label}${q > 0 ? '+' : ''}${q} μC`, color: ink, font: 'bold 12px sans-serif' });
       };
       drawCharge(params.x1, params.q1MicroC, 'q₁=');
       drawCharge(params.x2, params.q2MicroC, 'q₂=');
@@ -364,7 +438,7 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
 
     if (activeLayers.has('particle')) {
       if (state.trail.length > 1) {
-        ctx.strokeStyle = '#4ade80';
+        ctx.strokeStyle = green;
         ctx.lineWidth = 2.2;
         ctx.beginPath();
         const first = m.toScreen(state.trail[0]!.x, state.trail[0]!.y);
@@ -376,46 +450,45 @@ export const emElectrostaticFieldPlugin = Object.assign(defineSimulationPlugin<E
         ctx.stroke();
       }
       const particle = m.toScreen(state.px, state.py);
-      ctx.fillStyle = '#4ade80';
+      ctx.fillStyle = green;
       ctx.beginPath();
-      ctx.arc(particle.x, particle.y, m.len(0.04), 0, Math.PI * 2);
+      ctx.arc(particle.x, particle.y, Math.max(3,m.len(0.04)), 0, Math.PI * 2);
       ctx.fill();
     }
 
     if (activeLayers.has('profileCurve') && params.mode === 'dipole-point-charges') {
-      const bx = viewport.width - 205;
-      const by = 22;
-      const bw = 185;
-      const bh = 88;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      for (let i = 0; i <= 50; i++) {
-        const x = -2.8 + (i / 50) * 5.6;
-        const val = Math.max(-5, Math.min(5, evalPointChargePotentialAndField(x, 0.25, params).phi));
-        const px = bx + 10 + (i / 50) * (bw - 20);
-        const py = by + bh * 0.55 - val * 6;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
-      ctx.stroke();
-      labels.push({ id: 'potential-profile-title', x: bx + 95, y: by + 15, text: '连线邻域 φ(x) 分布', color: '#cbd5e1', font: '11px sans-serif' });
+      // World-anchored inset respects pan/zoom; plot an honest range, not a clipped curve.
+      const a=m.toScreen(-3.1,2.15),u=m.len(1.8)/200;
+      ctx.save();ctx.translate(a.x,a.y);ctx.scale(u,u);
+      const samples=Array.from({length:101},(_,i)=>evalPointChargePotentialAndField(-2.8+i*5.6/100,.25,params).phi);
+      const max=Math.max(1,...samples.map(Math.abs));
+      ctx.fillStyle=paper?'rgba(248,250,252,.96)':'rgba(15,23,42,.90)';ctx.strokeStyle=guide;ctx.lineWidth=1;
+      ctx.beginPath();ctx.roundRect(0,0,200,114,8);ctx.fill();ctx.stroke();
+      ctx.fillStyle=ink;ctx.font='12px sans-serif';ctx.textAlign='left';ctx.fillText('φ* 剖面 · y=0.25 m',10,16);
+      ctx.font='10px sans-serif';ctx.fillText(max.toFixed(2),6,32);ctx.fillText('−'+max.toFixed(2),6,94);
+      ctx.strokeStyle=guide;ctx.beginPath();ctx.moveTo(32,27);ctx.lineTo(32,94);ctx.moveTo(32,60);ctx.lineTo(190,60);ctx.stroke();
+      ctx.strokeStyle=gold;ctx.lineWidth=1.6;ctx.beginPath();
+      samples.forEach((v,i)=>{const x=32+i*158/100,y=60-v/max*32;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.stroke();
+      ctx.fillStyle=ink;ctx.fillText('−2.8',31,106);ctx.textAlign='right';ctx.fillText('2.8 x/m',190,106);ctx.restore();
     }
 
     resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
   },
-  formatFormulas: (state, params) => {
-    const obs = computeObservables(state, params);
+  formatFormulas:(state,params)=>{
+    const o=computeObservables(state,params);
+    if(params.mode==='deflection-tube')return [
+      {id:'tube-speed',label:'加速区出口速度（已完成加速）',latex:'v_x=\\sqrt{2|q/m|U_1}',substitutedLatex:'v_x='+state.vx.toFixed(3)+'\\,\\mathrm{m/s}'},
+      {id:'tube-motion',label:'理想偏转区（未触板、非零荷质比）',latex:'y_{\\rm exit}=\\operatorname{sgn}(q/m)\\frac{U_2 L_p^2}{4dU_1}',substitutedLatex:state.tubePhase==='hit'?'\\text{plate contact: no exit}':o.yExit===undefined?'y='+state.py.toFixed(3)+'\\,\\mathrm m':'y_{\\rm exit}='+o.yExit.toFixed(3)+'\\,\\mathrm m'},
+      {id:'tube-energy',label:'板内电场功—动能',latex:'K-K_0=W_E',substitutedLatex:'K='+o.ek!.toFixed(3)+',\\quad W_E='+state.tubeWork.toFixed(3)+'\\,\\mathrm J'}
+    ];
+    const normalized=params.mode==='dipole-point-charges';
     return [
-      {
-        id: 'electrostatic-state',
-        label: '场强、电势与能量守恒',
-        latex: 'E_{\\text{tot}} = E_k + q\\varphi',
-        substitutedLatex: `\\varphi=${(obs.phi ?? 0).toFixed(3)}\\text{ V},\\; |E|=${(obs.eMag ?? 0).toFixed(3)},\\; E_{\\text{tot}}=${(obs.totalEnergy ?? 0).toFixed(4)}`
-      }
+      {id:'electrostatic-state',label:normalized?'归一化场强与电势（δ=0.01m）':'匀强场电势梯度',
+        latex:normalized?'\\varphi^*=\\sum_i\\frac{q_i^*}{\\sqrt{r_i^2+\\delta^2}},\\quad\\mathbf E^*=-\\nabla\\varphi^*':'\\mathbf E=-\\nabla\\varphi',
+        substitutedLatex:(normalized?'\\varphi^*=':'\\varphi=')+o.phi!.toFixed(3)+(normalized?'':'\\,\\mathrm V')+',\\quad '+(normalized?'|E^*|=':'|E|=')+o.eMag!.toFixed(3)+(normalized?'':'\\,\\mathrm{V/m}')},
+      {id:'electrostatic-energy',label:'单位质量试探粒子能量守恒',
+        latex:normalized?'K+\\eta\\varphi^*=\\mathrm{const}':'K+q\\varphi=\\mathrm{const}',substitutedLatex:'E_{\\rm tot}='+o.totalEnergy!.toFixed(4)+'\\,\\mathrm J'}
     ];
   }
 }), { liveFormulas });
