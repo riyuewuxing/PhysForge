@@ -2,6 +2,7 @@ import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { thermoCyclesKineticMdPlugin } from './plugin.js';
 import { thermoCycleMdPresets } from './presets.js';
+import { thermalGeometry } from './sceneGeometry.js';
 import {
   createInitialState,
   evaluateClosedCycle,
@@ -169,4 +170,21 @@ describe('F02 independent ledger and fitted sample statistics',()=>{
     expect(computeSpeedStatistics(b.particles).temperatureProxy/computeSpeedStatistics(a.particles).temperatureProxy).toBeCloseTo(4,12);
     expect(b.particles.map(q=>[q.x,q.y])).toEqual(a.particles.map(q=>[q.x,q.y]));
   });
+});
+
+describe('F02 shared diagram and initial measurement contract',()=>{
+ it('shares real particles and histogram geometry with SVG and omits premeasurement wall pressure',()=>{
+  const p=getPreset(0),s=createInitialState(p),g=thermalGeometry(s,p),ir=thermoCyclesKineticMdPlugin.exportDiagramIR!(s,p);
+  expect(g.stats!.count).toBe(300);expect(g.marks.filter(q=>q.primitive.kind==='circle'&&(q.tone==='gas'||q.tone==='pollen'))).toHaveLength(301);
+  expect(ir.primitives).toEqual(g.marks.map(q=>q.primitive));expect(computeObservables(s,p)).not.toHaveProperty('wallPressure');
+  expect(ir.primitives.some(q=>q.kind==='text'&&q.text.includes('约化单位'))).toBe(true);
+ });
+ it('uses a directed P-V path and ledger shared by Canvas and SVG, without clipping data',()=>{
+  for(const p of [getPreset(1),getPreset(2),{...getPreset(1),tHotK:900,tColdK:200,compressionRatioV2OverV1:4}]){
+   const s=createInitialState(p),g=thermalGeometry(s,p),ir=thermoCyclesKineticMdPlugin.exportDiagramIR!(s,p);
+   expect(ir.primitives).toEqual(g.marks.map(q=>q.primitive));expect(ir.primitives.filter(q=>q.kind==='arrow')).toHaveLength(4);
+   expect(ir.primitives.filter(q=>q.kind==='polyline')).toHaveLength(4);
+   for(const q of ir.primitives)if(q.kind==='polyline')for(const xy of q.points){expect(xy.x).toBeGreaterThan(ir.viewBox.minX);expect(xy.x).toBeLessThan(ir.viewBox.maxX);expect(xy.y).toBeGreaterThan(ir.viewBox.minY);expect(xy.y).toBeLessThan(ir.viewBox.maxY);}
+  }
+ });
 });

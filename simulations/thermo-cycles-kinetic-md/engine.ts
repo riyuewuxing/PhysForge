@@ -319,7 +319,7 @@ export function stepThermoCycleMd(state:ThermoCycleMdState,params:ThermoCycleMdP
 export function computeObservables(s:ThermoCycleMdState,p:ThermoCycleMdParams):Record<string,number>{
   if(p.mode==='kinetic-md-box'){
     const stats=computeSpeedStatistics(s.particles);
-    return {t:s.t,kineticEnergy:s.kineticEnergy,wallPressure:s.wallPressure,pressureMeasured:s.t>0?1:0,
+    return {t:s.t,kineticEnergy:s.kineticEnergy,...(s.t>0?{wallPressure:s.wallPressure}:{}),pressureMeasured:s.t>0?1:0,
       wallImpulseTotal:s.wallImpulseTotal,lastStepPressure:s.lastStepPressure,gasCount:stats.count,particleCount:s.particles.length,
       rmsSpeed:stats.rmsSpeed,meanSpeed:stats.meanSpeed,temperatureProxy:stats.temperatureProxy,maxwellKs:stats.cdfDistance,
       energyRelativeError:Math.abs(s.kineticEnergy-s.initialKineticEnergy)/Math.max(1e-12,s.initialKineticEnergy),
