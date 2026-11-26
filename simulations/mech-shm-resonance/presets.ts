@@ -5,7 +5,7 @@ export const shmResonancePresets: readonly PresetSpec<ShmResonanceParams>[] = [
   {
     id: 'small-angle-pendulum-reference',
     name: '小角单摆等时性与参考圆对照 (2°)',
-    description: '验证小角周期 T=2π√(L/g) 与底部参考圆投影的严格同步性',
+    description: '对照小角周期 T₀=2π√(L/g)；参考圆表示线性角坐标的真实相位，非线性摆独立演化',
     curriculumNotes: '选择性必修一 · 单摆与简谐运动',
     params: {
       mode: 'pendulum-compare',
@@ -52,8 +52,8 @@ export const shmResonancePresets: readonly PresetSpec<ShmResonanceParams>[] = [
   },
   {
     id: 'forced-resonance-peak',
-    name: '受迫振动与共振曲线峰值 (ω_res=√(ω₀²-2γ²))',
-    description: '驱动频率逼近理论共振峰，振幅显著放大并锁定稳态受迫相位差',
+    name: '受迫振动与线性理论幅频峰',
+    description: '驱动频率逼近线性理论幅频峰；实际非线性摆独立积分，观察暂态、耗散与外力功',
     curriculumNotes: '选择性必修一 · 受迫振动与共振',
     params: {
       mode: 'forced-resonance',

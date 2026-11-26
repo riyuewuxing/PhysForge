@@ -4,6 +4,8 @@ import { mechShmResonancePlugin } from './plugin.js';
 import { shmResonancePresets } from './presets.js';
 import {
   computeNaturalOmega,
+  computeLinearResponseAmplitude,
+  checkInvariants,
   computeObservables,
   computeTheoreticalResonanceOmega,
   createInitialState,
@@ -127,5 +129,64 @@ describe('M11 physical reference and work-energy regression', () => {
     const s=stepShmResonance(createInitialState(p),p,3).nextState;
     expect(s.theta).toBe(0);
     expect(s.measuredPeriod).toBeNull();
+  });
+});
+
+describe('M11 analytic amplitude, physical forces and domain boundaries', () => {
+  it('uses the exact linear response denominator; no fake finite undamped peak', () => {
+    const p={...getPreset(3), dampingGamma:0};
+    const w=computeNaturalOmega(p);
+    expect(computeLinearResponseAmplitude(p,w)).toBeNull();
+    expect(computeLinearResponseAmplitude({...p,driveAccelAmp:0},w)).toBe(0);
+    expect(computeLinearResponseAmplitude(p,w*0.999)).toBeCloseTo(p.driveAccelAmp/(w*w-(w*0.999)**2),7);
+    const weak={...p,dampingGamma:0.0001};
+    expect(computeLinearResponseAmplitude(weak,w)).toBeCloseTo(weak.driveAccelAmp/(2*weak.dampingGamma*w),6);
+    const strong={...p,lengthL:3,gravityG:1.6,dampingGamma:1.2};
+    expect(computeTheoreticalResonanceOmega(strong)).toBe(0);
+    expect(computeLinearResponseAmplitude(strong,0)!).toBeGreaterThan(computeLinearResponseAmplitude(strong,0.5)!);
+  });
+
+  it('shows the complete tangential and radial physical forces, including signed rod reaction',()=>{
+    const p=getPreset(3);
+    const s=stepShmResonance(createInitialState(p),p,0.43).nextState;
+    const v=mechShmResonancePlugin.getForceVectors!(s,p);
+    expect(v.map(f=>f.id)).toEqual(['mg','tension','damping','drive']);
+    const fx=v.reduce((a,f)=>a+f.force.x,0), fy=v.reduce((a,f)=>a+f.force.y,0);
+    const a=-p.gravityG/p.lengthL*Math.sin(s.theta)-2*p.dampingGamma*s.omega+p.driveAccelAmp*Math.cos(p.driveOmega*s.t);
+    expect(fx).toBeCloseTo(p.massM*p.lengthL*(a*Math.cos(s.theta)-s.omega**2*Math.sin(s.theta)),10);
+    expect(fy).toBeCloseTo(p.massM*p.lengthL*(a*Math.sin(s.theta)+s.omega**2*Math.cos(s.theta)),10);
+    const upright={...createInitialState(p),theta:Math.PI};
+    const reaction=mechShmResonancePlugin.getForceVectors!(upright,p).find(f=>f.id==='tension')!;
+    expect(reaction.force.y).toBeCloseTo(p.massM*p.gravityG,10);
+  });
+
+  it('matches independent elliptic-integral periods for large amplitudes across substep partitions',()=>{
+    for(const angle of [30,60,90]){
+      const p={...getPreset(1),initialAngleDeg:angle};
+      const k=Math.sin(angle*Math.PI/360);
+      const n=4000,h=Math.PI/(2*n);
+      let sum=0;
+      for(let j=0;j<=n;j++)sum+=(j===0||j===n?1:j%2===0?2:4)/Math.sqrt(1-k*k*Math.sin(j*h)**2);
+      const expected=4*Math.sqrt(p.lengthL/p.gravityG)*sum*h/3;
+      for(const dt of [0.003,0.017,0.17]){
+        let s=createInitialState(p);
+        for(let j=0;j<Math.ceil(2.5*expected/dt);j++)s=stepShmResonance(s,p,dt).nextState;
+        expect(s.measuredPeriod).not.toBeNull();
+        expect(Math.abs(s.measuredPeriod!-expected)).toBeLessThan(1e-7);
+        expect(checkInvariants(s,createInitialState(p),p).every(r=>r.passed)).toBe(true);
+      }
+    }
+  });
+
+  it('preserves finite work-energy accounting across extreme allowed parameters and large public step sizes',()=>{
+    for(const L of [0.4,3])for(const gamma of [0,0.05,1.2])for(const drive of [0,3]){
+      const p={...getPreset(3),lengthL:L,gravityG:L===0.4?20:1.6,dampingGamma:gamma,driveAccelAmp:drive,initialAngleDeg:90,driveOmega:2.5};
+      const initial=createInitialState(p);
+      let s=initial;
+      for(let j=0;j<160;j++){
+        s=stepShmResonance(s,p,0.125).nextState;
+        expect(checkInvariants(s,initial,p).every(r=>r.passed)).toBe(true);
+      }
+    }
   });
 });
