@@ -4,8 +4,8 @@ import type { NuclearRecoilDecayParams } from './engine.js';
 export const nuclearRecoilPresets: readonly PresetSpec<NuclearRecoilDecayParams>[] = [
   {
     id: 'cloud-chamber-alpha-external',
-    name: 'Ra-226 α 衰变磁云室反冲径迹（外切圆 R₁/R₂ = q₂/q₁）',
-    description: '静止母核 α 衰变发生质能亏损并释放反冲动量，两同号粒子在磁场中作外切反向回旋圆周',
+    name: 'α 衰变理想二体反冲（模型参数）',
+    description: '静止母核理想二体运动，磁场中比较同号粒子外切轨迹；输入为教学模型质量，非核素实测数据',
     curriculumNotes: '选择性必修三 第五章第 2–3 节 · 磁云室衰变径迹识别与质能方程',
     params: {
       mode: 'cloud-chamber-recoil',
@@ -23,8 +23,8 @@ export const nuclearRecoilPresets: readonly PresetSpec<NuclearRecoilDecayParams>
   },
   {
     id: 'cloud-chamber-beta-internal',
-    name: 'Th-234 β⁻ 衰变磁云室径迹（内切圆 + 相对论速度校正）',
-    description: '出射负电子与正电反冲子核电性相反，洛伦兹力同向，轨迹呈典型内切圆弧，半径比严格等于 Z_子',
+    name: 'β⁻ 端点理想化（模型参数）',
+    description: '仅反中微子能量趋零的端点极限，电子和子核动量反向等大；一般三体 β 衰变不满足该半径比',
     curriculumNotes: '选择性必修三 第五章 · α/β 衰变外切/内切圆定量判据',
     params: {
       mode: 'cloud-chamber-recoil',
@@ -43,7 +43,7 @@ export const nuclearRecoilPresets: readonly PresetSpec<NuclearRecoilDecayParams>
   {
     id: 'half-life-mc-ensemble',
     name: '半衰期蒙特卡洛统计规律（N₀=1600 可重复确定性 PRNG）',
-    description: '展示半衰期是对大量原子核衰变的统计规律：N(t) = N₀(1/2)^(t/T)，少量核起伏大而大样本逼近指数',
+    description: '样本阶梯与理论期望分开；固定种子一次抽取各核寿命，改变时间步长不改变实现',
     curriculumNotes: '选择性必修三 第五章第 2 节 · 半衰期的统计本质与确定性实验复现',
     params: {
       mode: 'half-life-mc',
@@ -61,9 +61,9 @@ export const nuclearRecoilPresets: readonly PresetSpec<NuclearRecoilDecayParams>
   },
   {
     id: 'chain-fission-control-rod',
-    name: '重核裂变链式反应与镉控制棒临界调节（k_eff = 1）',
-    description: '调节控制棒中子吸收比例使有效倍增系数 k_eff 穿过 1.0，直观对比次临界衰减与超临界雪崩',
-    curriculumNotes: '选择性必修三 第五章第 4 节 · 核裂变、临界体积与反应堆安全控制',
+    name: '抽象代际期望对比（非时间仿真）',
+    description: '仅比较抽象代际期望；不代表反应堆运行、装置安全或实际粒子轨迹',
+    curriculumNotes: '选择性必修三 第五章第 4 节 · 代际期望的数学示意',
     params: {
       mode: 'chain-fission',
       decayKind: 'alpha',

@@ -38,8 +38,8 @@ const paramSchema: readonly ParamFieldSpec<NuclearRecoilDecayParams>[] = [
   { key: 'nucleiCountN0', kind: 'number', label: '初始原子核数 N₀', defaultValue: 1600, min: 16, max: 4000, step: 100 },
   { key: 'halfLifeS', kind: 'number', label: '半衰期 T_{1/2}', unit: 's', defaultValue: 2.0, min: 0.5, max: 6.0, step: 0.5 },
   { key: 'seed', kind: 'number', label: 'PRNG 随机种子', defaultValue: 20261122, min: 1, max: 99999999, step: 1 },
-  { key: 'kEffectiveRaw', kind: 'number', label: '单次裂变平均倍增系数', defaultValue: 2.2, min: 1.2, max: 2.8, step: 0.1 },
-  { key: 'controlRodAbsorption', kind: 'number', label: '控制棒中子吸收比', defaultValue: 0.545, min: 0, max: 0.85, step: 0.02 }
+  { key: 'kEffectiveRaw', kind: 'number', label: '抽象倍增参数', defaultValue: 2.2, min: 1.2, max: 2.8, step: 0.1 },
+  { key: 'controlRodAbsorption', kind: 'number', label: '抽象移除比例', defaultValue: 0.545, min: 0, max: 0.85, step: 0.02 }
 ];
 
 function recoilScale(state: NuclearRecoilDecayState): number {
@@ -313,7 +313,7 @@ export const modernNuclearRecoilDecayPlugin = defineSimulationPlugin<
     return [
       {
         id: 'control-rod-absorption',
-        label: `吸收率=${(params.controlRodAbsorption * 100).toFixed(0)}%`,
+        label: `移除比例=${(params.controlRodAbsorption * 100).toFixed(0)}%`,
         position: { x: 1.85, y: -0.9 + (params.controlRodAbsorption / 0.85) * 1.55 },
         handleKind: 'point',
         color: '#4ade80',

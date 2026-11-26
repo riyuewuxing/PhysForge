@@ -276,7 +276,10 @@ export function checkInvariants(state: NuclearRecoilDecayState): InvariantReport
     const error = Math.abs(count - state.remainingCount);
     return [{ name: 'Undecayed count equals flags', measuredError: error, tolerance: 0, passed: error === 0 }];
   }
-  if (state.mode === 'chain-fission') return [];
+  if (state.mode === 'chain-fission') {
+    const valid = state.chainGenerations.every(g => Number.isFinite(g.neutrons) && g.neutrons >= 0);
+    return [{ name: 'Finite nonnegative abstract expectation samples', measuredError: valid ? 0 : 1, tolerance: 0, passed: valid }];
+  }
   const r = state.recoil;
   const energyError = Math.abs(r.emittedKineticMev + r.daughterKineticMev - r.qValueMev) / r.qValueMev;
   const reports: InvariantReport[] = [{ name: 'Ideal recoil kinetic-energy budget', measuredError: energyError, tolerance: 1e-10, passed: energyError < 1e-10 }];
