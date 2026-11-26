@@ -6,6 +6,7 @@ import {
   createInitialState,
   evaluateClosedCycle,
   computeObservables,
+  computeSpeedStatistics,
   evaluateMaxwellKsStat,
   stepThermoCycleMd,
   type ThermoCycleMdParams
@@ -41,7 +42,8 @@ describe('thermo-cycles-kinetic-md cycles & SpatialHash2D MD invariants (T02)', 
     const relEnergyDrift = Math.abs(st.kineticEnergy - s0.kineticEnergy) / s0.kineticEnergy;
     expect(relEnergyDrift).toBeLessThan(1e-8);
 
-    // KS critical value at N=300, alpha=0.05 is ~ 1.36 / sqrt(300) = 0.0785
+    // Keep the historical seeded-run discrepancy threshold as regression,
+    // not a formal hypothesis-test critical value for a fitted CDF.
     const ksStat = evaluateMaxwellKsStat(st.particles);
     expect(ksStat).toBeLessThan(0.0785);
   });
@@ -129,5 +131,42 @@ describe('H45 independent cycle and hard-disk regressions',()=>{
     const a=stepThermoCycleMd(s,p,.01).nextState;
     expect(a.particles.every(q=>q.x>=q.radius-1e-12&&q.x<=a.boxSize-q.radius+1e-12)).toBe(true);
     expect(a.kineticEnergy).toBeCloseTo(.5,10);
+  });
+});
+
+describe('F02 independent ledger and fitted sample statistics',()=>{
+  it('derives rectangle extrema from actual corner states, not unused hot-source input',()=>{
+    const p={...getPreset(2),tHotK:400,tColdK:300,compressionRatioV2OverV1:2,rectPressureRatio:2},c=evaluateClosedCycle(p),d=evaluateClosedCycle({...p,tHotK:900});
+    expect(c).toEqual(d);expect(c.valid).toBe(true);
+    expect(c.minTemperatureK).toBeCloseTo(300,10);expect(c.maxTemperatureK).toBeCloseTo(1200,10);
+    const R=8.31446261815324,n=p.molesN;
+    expect(c.sumWJ).toBeCloseTo(n*R*300,8);
+    expect(c.qInJ).toBeCloseTo(n*R*(1.5*300+2.5*600),8);
+    expect(c.efficiency).toBeCloseTo(300/(1.5*300+2.5*600),10);
+    for(const s of c.segments)expect(s.qJ-s.wJ).toBeCloseTo(s.duJ,8);
+  });
+  it('closes each Carnot endpoint continuously and preserves adiabatic PV^gamma',()=>{
+    const p=getPreset(1),c=evaluateClosedCycle(p);
+    for(let i=0;i<4;i++){
+      const a=c.segments[i]!,b=c.segments[(i+1)%4]!;
+      expect(a.points.at(-1)!.vL).toBeCloseTo(b.points[0]!.vL,10);
+      expect(a.points.at(-1)!.pKPa).toBeCloseTo(b.points[0]!.pKPa,10);
+      if(i%2===1){const q=a.points[0]!,k=q.pKPa*q.vL**(5/3);for(const v of a.points)expect(v.pKPa*v.vL**(5/3)/k).toBeCloseTo(1,12);}
+    }
+    expect(c.efficiency).toBeCloseTo(1-p.tColdK/p.tHotK,12);
+  });
+  it('accounts for every gas sample without including tracer or folding the tail into an ordinary bin',()=>{
+    const particles=[{x:1,y:1,vx:0,vy:0,radius:.14,mass:1},{x:2,y:2,vx:3,vy:4,radius:.14,mass:1},{x:3,y:3,vx:30,vy:0,radius:.14,mass:1},{x:4,y:4,vx:90,vy:0,radius:.32,mass:20}];
+    const s=computeSpeedStatistics(particles);
+    expect(s.count).toBe(3);expect(s.bins.reduce((n,b)=>n+b.count,0)).toBe(3);
+    expect(s.bins.reduce((n,b)=>n+b.fraction,0)).toBeCloseTo(1,12);
+    expect(s.bins.reduce((n,b)=>n+b.expectedFraction,0)+s.theoreticalTail).toBeCloseTo(1,12);
+    expect(s.bins.at(-1)!.hi).toBeGreaterThan(30);
+    expect(s.rmsSpeed**2).toBeCloseTo(925/3,10);
+  });
+  it('initial speed multiplier scales gas temperature proxy by its square with an identical seed',()=>{
+    const p={...getPreset(0),brownianPollen:true,mdSpeedScale:1},a=createInitialState(p),b=createInitialState({...p,mdSpeedScale:2});
+    expect(computeSpeedStatistics(b.particles).temperatureProxy/computeSpeedStatistics(a.particles).temperatureProxy).toBeCloseTo(4,12);
+    expect(b.particles.map(q=>[q.x,q.y])).toEqual(a.particles.map(q=>[q.x,q.y]));
   });
 });
