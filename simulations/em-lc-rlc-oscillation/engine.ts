@@ -128,7 +128,7 @@ export function stepLcRlcOscillation(s:LcRlcState,p:LcRlcParams,dt:number):StepR
     cur=next;
   }
   cur={...cur,t:s.t+dt};
-  return {nextState:{...s,t:cur.t,chargeQ:cur.q,currentI:cur.i,...actualValues(cur,p,s.initialEnergyJ),
+  return {nextState:{t:cur.t,initialEnergyJ:s.initialEnergyJ,chargeQ:cur.q,currentI:cur.i,...actualValues(cur,p,s.initialEnergyJ),
     ...d,reference:computeImpedanceSummary(p),measuredPeriod,lastUpwardCrossT,events:[]},events};
 }
 export function computeObservables(s:LcRlcState):Record<string,number>{

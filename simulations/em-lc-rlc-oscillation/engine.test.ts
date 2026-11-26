@@ -1,6 +1,6 @@
 import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
-import { emLcRlcOscillationPlugin } from './plugin.js';
+import { emLcRlcOscillationPlugin, lcScene } from './plugin.js';
 import { lcRlcPresets } from './presets.js';
 import {
   checkInvariants,
@@ -31,8 +31,8 @@ describe('em-lc-rlc-oscillation period, 20-cycle conservation, and resonance pea
     expect(st.measuredPeriod).not.toBeNull();
     expect(Math.abs(st.measuredPeriod! - expectedT) / expectedT).toBeLessThan(1e-5);
     const reports = checkInvariants(st, initial, params);
-    expect(reports[0]!.passed).toBe(true);
-    expect(reports[0]!.measuredError).toBeLessThan(1e-5);
+    expect(reports.every(r=>r.passed)).toBe(true);
+    expect(Math.abs(st.energyElectricJ+st.energyMagneticJ-initial.initialEnergyJ)/initial.initialEnergyJ).toBeLessThan(1e-5);
   });
 
   it('reaches exact resonance current amplitude Um / R at omega = 1/sqrt(LC)', () => {
@@ -142,5 +142,27 @@ describe('E09 exact independent driven and boundary checks',()=>{
     for(let j=0;j<500;j++){s=stepLcRlcOscillation(s,p,.004).nextState;negative ||= s.drivePowerW<0;expect(s.jouleHeatJ).toBeGreaterThanOrEqual(previousQ);previousQ=s.jouleHeatJ;}
     expect(negative).toBe(true);expect(s.energyResidualJ).toBeCloseTo(0,6);
     expect(checkInvariants(s,initial,p).every(r=>r.passed)).toBe(true);
+  });
+});
+
+describe('E09 shared circuit/export and mode-specific controls',()=>{
+  const layers=new Set(['circuit','energyBars','phasorPlot']);
+  it('keeps capacitor and source gaps and exports the same physical geometry',()=>{
+    for(const p of [getPreset(0),getPreset(1),getPreset(2)]){
+      const s=createInitialState(p),marks=lcScene(s,p,layers).map(m=>m.primitive);
+      expect(emLcRlcOscillationPlugin.exportDiagramIR!(s,p).primitives).toEqual(marks);
+      expect(marks.some(q=>q.kind==='line'&&q.x1===-2.73&&q.x2===-2.73&&Math.min(q.y1,q.y2)<.06&&Math.max(q.y1,q.y2)>.06)).toBe(false);
+      expect(marks.some(q=>q.kind==='polyline'&&q.points.length===81)).toBe(true);
+      if(p.mode==='rlc-ac-resonance')expect(marks.some(q=>q.kind==='line'&&q.y1===-.72&&q.y2===-.72&&Math.min(q.x1,q.x2)<-1.55&&Math.max(q.x1,q.x2)>-1.55)).toBe(false);
+    }
+  });
+  it('does not expose inactive driving controls or fabricated reference curves',()=>{
+    const free=getPreset(0),drive=getPreset(1);
+    expect(emLcRlcOscillationPlugin.getParamFields!(free).some(f=>f.key==='driveOmega')).toBe(false);
+    expect(emLcRlcOscillationPlugin.getControlHandles!(createInitialState(free),free)).toHaveLength(0);
+    expect(emLcRlcOscillationPlugin.getParamFields!(drive).some(f=>f.key==='initialChargeC')).toBe(false);
+    const singular={...drive,resistanceR:0,driveOmega:computeLcNaturalOmega(drive)},s=createInitialState(singular);
+    expect(lcScene(s,singular,layers).some(m=>m.primitive.kind==='text'&&m.primitive.text.includes('无有限周期稳态'))).toBe(true);
+    expect(lcScene(s,singular,layers).some(m=>m.primitive.kind==='text'&&m.primitive.text.includes('峰值标尺'))).toBe(false);
   });
 });
