@@ -82,3 +82,59 @@ describe('em-electrostatic-field physics & numerical verification (E01)', () => 
     expect(Number.isFinite(s1.px)).toBe(true);
   });
 });
+
+describe('H30 E01 boundary and independent electrostatic contracts',()=>{
+  it('constructs a real equipotential segment for every potential ordering and ties',()=>{
+    for(const [a,b,c] of [[0,4,12],[0,12,4],[4,0,12],[4,12,0],[12,0,4],[12,4,0],[4,4,12],[4,12,4],[12,4,4],[4,4,4]]){
+      const p={...getPreset(2),phiA:a!,phiB:b!,phiC:c!};
+      const sol=solveThreePointUniformField(p);
+      if(a===b&&b===c){expect(sol.Ex).toBe(0);expect(sol.Ey).toBe(0);expect(sol.construction).toBeNull();continue;}
+      const e=sol.construction!;
+      expect(e).not.toBeNull();
+      expect(Math.hypot(e.end.x-e.start.x,e.end.y-e.start.y)).toBeGreaterThan(0.1);
+      expect(sol.Ex*(e.end.x-e.start.x)+sol.Ey*(e.end.y-e.start.y)).toBeCloseTo(0,10);
+      expect(sol.A.phi-sol.Ex*(e.end.x-sol.A.x)-sol.Ey*(e.end.y-sol.A.y)).toBeCloseTo(e.start.phi,10);
+    }
+  });
+  it('locates entry and exit exactly independently of frame partition, including negative charge',()=>{
+    for(const eta of [-1,1]){
+      const p={...getPreset(3),testChargeRatio:eta};
+      const vx=Math.sqrt(2*Math.abs(eta)*p.uAccelV);
+      const te=0.4/vx, tx=2.4/vx, ey=eta*p.uDeflectV/(4*p.uAccelV*Math.abs(eta))*2;
+      for(const h of [0.007,0.19,1.2]){
+        let s=createInitialState(p);
+        for(let i=0;i<Math.ceil(1.2/h);i++)s=stepElectrostatic(s,p,h).nextState;
+        const entry=s.events.find(e=>e.id.startsWith('entry-plate'))!;
+        const exit=s.events.find(e=>e.id.startsWith('exit-plate'))!;
+        expect(entry.time).toBeCloseTo(te,7);
+        expect(exit.time).toBeCloseTo(tx,7);
+        expect(exit.position!.x).toBeCloseTo(1,10);
+        expect(exit.position!.y).toBeCloseTo(ey,7);
+        expect(s.events.filter(e=>e.id.startsWith('exit-plate'))).toHaveLength(1);
+      }
+    }
+  });
+  it('stops on a plate before exit and never invents collision dynamics',()=>{
+    for(const eta of [-2,2]){
+      const p={...getPreset(3),testChargeRatio:eta,uAccelV:4,uDeflectV:16};
+      const v=Math.sqrt(2*Math.abs(eta)*p.uAccelV);
+      const t=0.4/v+Math.sqrt(2/Math.abs(eta*p.uDeflectV/2));
+      const result=stepElectrostatic(createInitialState(p),p,2);
+      expect(result.halt).toBe(true);
+      expect(result.advancedTime).toBeCloseTo(t,7);
+      expect(result.nextState.py).toBeCloseTo(Math.sign(eta),10);
+      expect(result.nextState.px).toBeCloseTo(-1+v*(t-0.4/v),7);
+      expect(result.nextState.events.some(e=>e.id.startsWith('exit-plate'))).toBe(false);
+      expect(stepElectrostatic(result.nextState,p,1).advancedTime).toBe(0);
+    }
+  });
+  it('neutral particle cannot acquire acceleration-stage speed',()=>{
+    const p={...getPreset(3),testChargeRatio:0};
+    const s=createInitialState(p);
+    expect(s.vx).toBe(0);
+    const r=stepElectrostatic(s,p,1);
+    expect(r.nextState.px).toBe(s.px);
+    expect(r.nextState.py).toBe(0);
+    expect(r.nextState.events).toHaveLength(0);
+  });
+});
