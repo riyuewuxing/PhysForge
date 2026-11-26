@@ -880,7 +880,19 @@ async function syncF01(page,offline,expected){
   if(s.mode!=='stop-pin-cylinder'){
     if(!await play.isDisabled())throw Error('F01 static play enabled');
     if(offline?await page.getByTestId('sf-uplot').isVisible():(await page.getByTestId('floating-scope-dock').count()||await page.getByTestId('btn-expand-oscilloscope').count()))throw Error('F01 static scope visible');
-  }else if(await play.isDisabled())throw Error('F01 cylinder play disabled');
+  }else{
+    if(await play.isDisabled())throw Error('F01 cylinder play disabled');
+    // A single initial sample has no drawable time series. Check the
+    // empty-state contract instead of the hidden uPlot auto-range.
+    const plot=page.getByTestId(offline?'sf-uplot':'uplot-container'),empty=page.getByTestId(offline?'sf-scope-empty':'f01-scope-empty');
+    if(s.t===0){
+      await empty.waitFor({state:'visible'});
+      await page.waitForFunction(({offline})=>{const root=document.querySelector('[data-testid="'+(offline?'sf-uplot':'uplot-container')+'"]'),dock=offline?root:document.querySelector('[data-testid="floating-scope-dock"]');return !!root&&dock?.dataset.scopeUnits==='separate'&&root.dataset.sampleCount==='1'&&getComputedStyle(root).visibility==='hidden';},{offline},{timeout:5000});
+    }else{
+      await plot.waitFor({state:'visible'});
+      await page.waitForFunction(({offline,t})=>{const root=document.querySelector('[data-testid="'+(offline?'sf-uplot':'uplot-container')+'"]'),dock=offline?root:document.querySelector('[data-testid="floating-scope-dock"]');const max=Number(root?.dataset.scopeMax);return dock?.dataset.scopeUnits==='separate'&&root?.dataset.scopeTimeType==='elapsed'&&Number(root.dataset.sampleCount)>=2&&Number.isFinite(max)&&max>=t-.15&&max<=t+1;},{offline,t:s.t},{timeout:5000});
+    }
+  }
   return s;
 }
 async function auditF01Cases(page,offline,select){
@@ -931,6 +943,111 @@ async function auditF01(page,origin){
   const url=new URL(origin);url.searchParams.set('model','thermo-piston-gas-laws');await page.goto(url.toString(),{waitUntil:'networkidle'});
   await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='thermo-piston-gas-laws');
   return auditF01Cases(page,false,id=>selectPreset(page,id,true));
+}
+
+
+const f02Cases=[
+ ['kinetic-md-300-maxwell',{mode:'kinetic-md-box',particleCountN:300,brownianPollen:true,mdSpeedScale:1},true],
+ ['md-400-pollen',{mode:'kinetic-md-box',particleCountN:400,brownianPollen:true,mdSpeedScale:1},true],
+ ['md-fast-sample',{mode:'kinetic-md-box',particleCountN:200,brownianPollen:false,mdSpeedScale:2},true],
+ ['carnot-ideal-cycle',{mode:'cycle-carnot',tHotK:600,tColdK:300,cycleValid:1},false],
+ ['carnot-crossed-reservoirs',{mode:'cycle-carnot',tHotK:400,tColdK:450,cycleValid:0},false],
+ ['rect-pv-thermo-cycle',{mode:'cycle-rect-pv',tColdK:300,cycleValid:1},false],
+ ['rect-pv-wide',{mode:'cycle-rect-pv',compressionRatioV2OverV1:4,rectPressureRatio:3,cycleValid:1},false]
+];
+function checkF02(s){
+ const R=8.31446261815324,near=(a,b,tol=1e-8)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<=tol*Math.max(1,Math.abs(b));
+ const must=(ok,msg)=>{if(!ok)throw Error('F02 '+msg+' '+JSON.stringify({mode:s.mode,t:s.t,N:s.gasCount,cycleValid:s.cycleValid}));};
+ must(near(s.t,s.outerTime,1e-10),'time mismatch');
+ if(s.mode==='kinetic-md-box'){
+  const N=Math.round(s.particleCountN),ms=s.gasSpeeds.reduce((v,q)=>v+q*q,0)/N;
+  must(s.gasSpeeds.length===N&&s.gasCount===N&&s.pollenCount===Number(s.brownianPollen)&&s.particleCount===N+s.pollenCount,'gas count');
+  must(s.wallGap>=-1e-10&&near(s.kineticEnergy,s.initialKineticEnergy)&&near(s.rmsSpeed,Math.sqrt(ms))&&near(s.temperatureProxy,ms/2),'energy/boundary/sample');
+  const a=[...s.gasSpeeds].sort((x,y)=>x-y);let D=0;for(let i=0;i<N;i++){const F=1-Math.exp(-a[i]*a[i]/ms);D=Math.max(D,Math.abs((i+1)/N-F),Math.abs(i/N-F));}
+  must(near(D,s.maxwellKs,1e-10)&&!s.cycle.valid&&s.cycle.segments.length===0&&!('efficiencyPct'in s),'unrelated cycle or fitted distance');
+  if(s.t>0)must(s.pressureMeasured===1&&near(s.wallPressure,s.wallImpulseTotal/(4*s.boxSize*s.t))&&s.wallImpulseTotal>=0&&s.collisions>=0&&s.maxPenetration>=0,'wall impulse ledger');
+  else must(s.pressureMeasured===0&&!('wallPressure'in s),'false initial measurement');
+  return s;
+ }
+ must(s.t===0&&s.outerTime===0&&s.gasSpeeds.length===0&&s.pollenCount===0&&!('kineticEnergy'in s),'static unrelated MD/fake time');
+ if(s.mode==='cycle-carnot'&&s.tHotK<=s.tColdK){must(s.cycleValid===0&&s.cycle.segments.length===0&&!('efficiencyPct'in s),'silent reservoir repair');return s;}
+ const c=s.cycle,n=s.molesN,Tc=s.tColdK,r=s.compressionRatioV2OverV1,cv=1.5*R;must(s.cycleValid===1&&c.valid&&c.segments.length===4,'valid cycle not rendered');
+ let W,Q,du;
+ if(s.mode==='cycle-carnot'){
+  const Th=s.tHotK;W=[n*R*Th*Math.log(r),n*cv*(Th-Tc),-n*R*Tc*Math.log(r),-n*cv*(Th-Tc)];Q=[W[0],0,W[2],0];du=[0,-W[1],0,-W[3]];
+  must(near(c.maxTemperatureK,Th)&&near(c.minTemperatureK,Tc),'Carnot extrema');
+ }else{
+  const Tb=Tc*s.rectPressureRatio,Td=Tc*r,Th=Tb*r;W=[0,n*R*Tb*(r-1),0,-n*R*Tc*(r-1)];du=[n*cv*(Tb-Tc),n*cv*(Th-Tb),n*cv*(Td-Th),n*cv*(Tc-Td)];Q=du.map((u,i)=>u+W[i]);
+  must(near(c.maxTemperatureK,Th)&&near(c.minTemperatureK,Tc),'rectangle extrema');
+ }
+ for(let i=0;i<4;i++){const seg=c.segments[i],next=c.segments[(i+1)%4],last=seg.points.at(-1),first=next.points[0];must(near(seg.wJ,W[i])&&near(seg.qJ,Q[i])&&near(seg.duJ,du[i])&&near(last.vL,first.vL)&&near(last.pKPa,first.pKPa),'segment ledger/closure');}
+ const net=W.reduce((a,b)=>a+b,0),qin=Q.reduce((a,b)=>a+Math.max(0,b),0);
+ must(near(s.sumWJ,net)&&near(s.qInJ,qin)&&near(s.efficiencyPct,100*net/qin)&&near(s.carnotEfficiencyPct,100*(1-c.minTemperatureK/c.maxTemperatureK)),'net ledger');
+ return s;
+}
+async function syncF02(page,offline,expected){
+ const canvasId=offline?'sf-canvas':'simulation-canvas',prefix=offline?'sf-f02':'f02';
+ await page.waitForFunction(({canvasId,expected})=>{const s=JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.thermalRendered||'null');return s&&Object.entries(expected).every(([k,v])=>s[k]===v);},{canvasId,expected},{timeout:10000});
+ const s=checkF02(JSON.parse(await page.getByTestId(canvasId).getAttribute('data-thermal-rendered')));
+ await page.getByTestId(prefix+'-status').waitFor({state:'visible'});
+ const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+ const input=key=>page.getByTestId((offline?'sf-param-':'param-slider-')+key);
+ const read=async(key,v)=>page.waitForFunction(({id,v})=>Math.abs(parseFloat(document.querySelector('[data-testid="'+id+'"]')?.textContent||'NaN')-v)<.000006,{id:prefix+'-'+key,v});
+ if(s.mode==='kinetic-md-box'){
+  if(await play.isDisabled()||await input('tHotK').count())throw Error('F02 MD controls');
+  await read('gasCount',s.gasCount);
+  if(s.t===0)await page.waitForFunction(id=>document.querySelector('[data-testid="'+id+'"]')?.textContent?.includes('尚未测量'),prefix+'-wallPressure');
+  else await read('wallPressure',s.wallPressure);
+ }else{
+  if(!await play.isDisabled())throw Error('F02 static play enabled');
+  if(offline?await page.getByTestId('sf-uplot').isVisible():(await page.getByTestId('floating-scope-dock').count()||await page.getByTestId('btn-expand-oscilloscope').count()))throw Error('F02 static scope visible');
+  if(await input('particleCountN').count()||s.mode==='cycle-rect-pv'&&await input('tHotK').count())throw Error('F02 irrelevant controls');
+  if(s.cycleValid===1)await read('efficiencyPct',s.efficiencyPct);
+  else if(await page.getByTestId(prefix+'-efficiencyPct').count())throw Error('F02 invalid cycle efficiency shown');
+ }
+ return s;
+}
+async function auditF02Cases(page,offline,select){
+ const canvasId=offline?'sf-canvas':'simulation-canvas',play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),out={},prefix=offline?'H45_F02_offline_':'H45_F02_';
+ for(const [id,expected,dynamic] of f02Cases){
+  await select(id);const initial=await syncF02(page,offline,{...expected,outerTime:0});
+  if(dynamic){
+   if(id==='kinetic-md-300-maxwell')await page.screenshot({path:path.join(OUT_DIR,prefix+id+'_initial.png')});
+   await play.click();
+   await page.waitForFunction(canvasId=>{const s=JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.thermalRendered||'null');return s&&s.outerTime>.8&&s.wallImpulseTotal>0&&s.collisions>0;},canvasId,{timeout:25000});
+   await play.click();const final=await syncF02(page,offline,expected);
+   if(final.outerTime<=0||final.wallImpulseTotal<=0||final.collisions<=0||(expected.brownianPollen&&final.trailCount<2))throw Error('F02 no actual MD evolution');
+   out[id]={initial,final};
+  }else out[id]=initial;
+  await page.screenshot({path:path.join(OUT_DIR,prefix+id+'.png')});
+ }
+ await select('carnot-crossed-reservoirs');await syncF02(page,offline,{mode:'cycle-carnot',cycleValid:0});
+ await page.getByTestId(offline?'sf-param-tHotK':'param-slider-tHotK').fill('600');
+ out.carnotInteraction=await syncF02(page,offline,{mode:'cycle-carnot',tHotK:600,tColdK:450,cycleValid:1});
+ await select('kinetic-md-300-maxwell');const s=await syncF02(page,offline,{mode:'kinetic-md-box',mdSpeedScale:1,outerTime:0});
+ await page.getByTestId(offline?'sf-param-mdSpeedScale':'param-slider-mdSpeedScale').fill('2');
+ const a=await syncF02(page,offline,{mode:'kinetic-md-box',mdSpeedScale:2,outerTime:0});if(Math.abs(a.temperatureProxy/s.temperatureProxy-4)>1e-10)throw Error('F02 speed multiplier temperature proxy');
+ out.speedInteraction={initial:s,changed:a};
+ await select('rect-pv-wide');await syncF02(page,offline,{mode:'cycle-rect-pv',cycleValid:1});
+ if(offline){
+  await page.getByRole('button',{name:'黑板深蓝'}).click();await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+  await page.screenshot({path:path.join(OUT_DIR,prefix+'rectangle_projector.png')});
+ }else{
+  const initialTheme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme')),menu=page.getByTestId('tools-menu'),tools=page.getByTestId('btn-tools-menu');
+  const setTheme=async t=>{if(await page.evaluate(()=>document.documentElement.getAttribute('data-theme'))!==t){if(!await menu.isVisible())await tools.click();await page.getByTestId('btn-theme').click();await page.waitForFunction(t=>document.documentElement.getAttribute('data-theme')===t,t);}if(await menu.isVisible())await tools.click();};
+  await setTheme('projector');await page.screenshot({path:path.join(OUT_DIR,prefix+'rectangle_projector.png')});await setTheme(initialTheme??'chalkboard');
+  await select('carnot-ideal-cycle');await syncF02(page,false,{mode:'cycle-carnot',cycleValid:1});
+  await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
+  const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,svgPath=path.join(OUT_DIR,'H45_F02_carnot.svg');await svg.saveAs(svgPath);
+  const bytes=fs.readFileSync(svgPath,'utf8');if(!bytes.includes('<svg')||!bytes.includes('逐段热量')||!bytes.includes('P / kPa')||!bytes.includes('V / L')||/NaN|Infinity/.test(bytes))throw Error('F02 cycle SVG');
+  await preview.screenshot({path:path.join(OUT_DIR,prefix+'carnot_svg.png')});out.export={name:svg.suggestedFilename(),bytes:Buffer.byteLength(bytes)};await page.getByTestId('btn-close-export-studio').click();
+ }
+ return out;
+}
+async function auditF02(page,origin){
+ const url=new URL(origin);url.searchParams.set('model','thermo-cycles-kinetic-md');await page.goto(url.toString(),{waitUntil:'networkidle'});
+ await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='thermo-cycles-kinetic-md');
+ return auditF02Cases(page,false,id=>selectPreset(page,id,true));
 }
 
 async function auditW02(page,origin){
@@ -3478,6 +3595,7 @@ async function main() {
     const w02Report=await auditW02(page,origin);
     const o01Report=await auditO01(page,origin);
     const f01Report=await auditF01(page,origin);
+    const f02Report=await auditF02(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3491,8 +3609,8 @@ async function main() {
     const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
     const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
     if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    Object.assign(combined,{f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    Object.assign(combined,{f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
     console.log('VISUAL_AUDIT_ONLINE: PASS');
     await context.close();
     }
@@ -4188,8 +4306,20 @@ async function main() {
       Object.assign(f01OfflineReport,{errors:f01Errors,network:f01Network});
     }finally{await f01Context.close();}
 
-    Object.assign(combined,{f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+
+    const f02File=path.join(OUT_DIR,'H45_F02_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','thermo-cycles-kinetic-md','--preset','kinetic-md-300-maxwell','--out',f02File],{stdio:'inherit'});
+    const f02Context=await browser.newContext({viewport:VIEWPORT,offline:true}),f02Page=await f02Context.newPage(),f02Errors=[],f02Network=[];let f02OfflineReport;
+    f02Page.on('pageerror',e=>f02Errors.push(e.message));f02Page.on('console',m=>{if(m.type()==='error')f02Errors.push(m.text());});f02Page.on('request',r=>{if(/^https?:/.test(r.url()))f02Network.push(r.url());});
+    try{
+      await f02Page.goto(pathToFileURL(f02File).href);
+      f02OfflineReport=await auditF02Cases(f02Page,true,id=>f02Page.getByTestId('sf-f02-presets').selectOption(id));
+      if(f02Errors.length||f02Network.length)throw Error('F02 offline errors '+JSON.stringify({f02Errors,f02Network}));
+      Object.assign(f02OfflineReport,{errors:f02Errors,network:f02Network});
+    }finally{await f02Context.close();}
+
+    Object.assign(combined,{f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
     console.log('VISUAL_AUDIT_OFFLINE: PASS');
     }
     console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));

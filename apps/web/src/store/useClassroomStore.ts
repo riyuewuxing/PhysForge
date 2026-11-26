@@ -170,6 +170,7 @@ const NON_TIME_SERIES_MODEL_IDS = new Set([
 export function isNonTimeSeriesModel(modelId: string, params: ParamRecord): boolean {
   if (NON_TIME_SERIES_MODEL_IDS.has(modelId)) return true;
   if(modelId==='thermo-piston-gas-laws')return params.mode!=='stop-pin-cylinder';
+  if(modelId==='thermo-cycles-kinetic-md')return params.mode!=='kinetic-md-box';
   if (modelId === 'circuit-dc-capacitor-mna' || modelId === 'builder-circuit-mna') {
     const dynamicTopologies = new Set(['rc-transient', 'rc-bridge-charge', 'series-parallel-dynamic']);
     return !dynamicTopologies.has(String(params.topology ?? ''));
@@ -367,7 +368,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
       autoFreezeBadge: null,
       paramContextEpoch: s.paramContextEpoch + (contextChanged ? 1 : 0),
       ...((plugin.getParamFields||plugin.meta.id==='mech-kinematics-chase')?{isPlaying:false}:{}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'topology')||(plugin.meta.id==='thermo-piston-gas-laws'&&Object.prototype.hasOwnProperty.call(patch,'mode'))
+      ...(Object.prototype.hasOwnProperty.call(patch, 'topology')||((plugin.meta.id==='thermo-piston-gas-laws'||plugin.meta.id==='thermo-cycles-kinetic-md')&&Object.prototype.hasOwnProperty.call(patch,'mode'))
         ? { oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, resolved) }
         : {}),
       canUndo: paramCommandStack.canUndo(plugin.meta.id),
@@ -384,7 +385,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       activePresetId: null,
       params: entry.beforeParams,
-      ...(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'?{isPlaying:false,oscilloscopeCollapsed:isNonTimeSeriesModel(s.loadedPlugin.meta.id,entry.beforeParams)}:{}),
+      ...((s.loadedPlugin.meta.id==='thermo-piston-gas-laws'||s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md')?{isPlaying:false,oscilloscopeCollapsed:isNonTimeSeriesModel(s.loadedPlugin.meta.id,entry.beforeParams)}:{}),
       scrubTime: null,
       autoFreezeBadge: null,
       paramContextEpoch: s.paramContextEpoch + 1,
@@ -402,7 +403,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       activePresetId: null,
       params: entry.afterParams,
-      ...(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'?{isPlaying:false,oscilloscopeCollapsed:isNonTimeSeriesModel(s.loadedPlugin.meta.id,entry.afterParams)}:{}),
+      ...((s.loadedPlugin.meta.id==='thermo-piston-gas-laws'||s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md')?{isPlaying:false,oscilloscopeCollapsed:isNonTimeSeriesModel(s.loadedPlugin.meta.id,entry.afterParams)}:{}),
       scrubTime: null,
       autoFreezeBadge: null,
       paramContextEpoch: s.paramContextEpoch + 1,
@@ -419,11 +420,11 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
         : [...s.activeLayers, layerId]
     })),
 
-  setPlaying: (playing) => set((s) => ({ isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder'))?false:playing, scrubTime: playing ? null : s.scrubTime,
+  setPlaying: (playing) => set((s) => ({ isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box'))?false:playing, scrubTime: playing ? null : s.scrubTime,
     autoFreezeBadge: playing ? null : s.autoFreezeBadge })),
   togglePlaying: () =>
     set((s) => ({
-      isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder'))?false:!s.isPlaying,
+      isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box'))?false:!s.isPlaying,
       scrubTime: !s.isPlaying ? null : s.scrubTime,
       autoFreezeBadge: !s.isPlaying ? null : s.autoFreezeBadge
     })),
@@ -528,7 +529,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       isPlaying: false,
       scrubTime: null,
-      stepOnceNonce: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder'))?s.stepOnceNonce:s.stepOnceNonce + 1
+      stepOnceNonce: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box'))?s.stepOnceNonce:s.stepOnceNonce + 1
     })),
   setScrubTime: (t) => set({ scrubTime: t }),
   setTelemetry: (telemetry) => set({ telemetry })
