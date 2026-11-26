@@ -9,9 +9,12 @@ on:
       - 'apps/web/src/index.css'
       - 'packages/sim-sdk/src/visualKit*'
       - 'scripts/visual-audit.mjs'
+      - 'scripts/visual_review_pack.py'
+      - 'scripts/test_visual_review_pack.py'
       - '.github/workflows/v31-polish-audit.yml'
 permissions:
   contents: read
+  actions: read
 jobs:
   visual:
     name: visual (${{ matrix.phase }})
@@ -48,4 +51,461 @@ jobs:
         with:
           name: v31-polish-visual-${{ matrix.phase }}
           path: artifacts/ui-audit/
+          retention-days: 7
+
+  base-review:
+    name: Recover exact parent visual evidence (${{ matrix.phase }})
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline]
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check Pillow==11.3.0
+        timeout-minutes: 2
+      - run: python -m unittest discover -s scripts -p test_visual_review_pack.py
+        timeout-minutes: 1
+      - name: Resolve exact parent or recover legacy raw inside public runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_REPO: ${{ github.repository }}
+          REVIEW_HEAD: ${{ github.event.pull_request.base.sha }}
+          REVIEW_PHASE: ${{ matrix.phase }}
+        run: python scripts/visual_review_pack.py --resolve-base --repo "$REVIEW_REPO" --head "$REVIEW_HEAD" --phase "$REVIEW_PHASE" --out artifacts/base-review --prefixes H53_F07,H56_F08
+        timeout-minutes: 4
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/manifest.json') != '' }}
+        with:
+          name: v31-polish-base-manifest-${{ matrix.phase }}
+          path: artifacts/base-review/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/review-01.zip') != '' }}
+        with:
+          name: v31-polish-base-review-${{ matrix.phase }}-01
+          path: artifacts/base-review/review-01.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/review-02.zip') != '' }}
+        with:
+          name: v31-polish-base-review-${{ matrix.phase }}-02
+          path: artifacts/base-review/review-02.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/review-03.zip') != '' }}
+        with:
+          name: v31-polish-base-review-${{ matrix.phase }}-03
+          path: artifacts/base-review/review-03.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/review-04.zip') != '' }}
+        with:
+          name: v31-polish-base-review-${{ matrix.phase }}-04
+          path: artifacts/base-review/review-04.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/review-05.zip') != '' }}
+        with:
+          name: v31-polish-base-review-${{ matrix.phase }}-05
+          path: artifacts/base-review/review-05.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/review-06.zip') != '' }}
+        with:
+          name: v31-polish-base-review-${{ matrix.phase }}-06
+          path: artifacts/base-review/review-06.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/review-07.zip') != '' }}
+        with:
+          name: v31-polish-base-review-${{ matrix.phase }}-07
+          path: artifacts/base-review/review-07.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/base-review/review-08.zip') != '' }}
+        with:
+          name: v31-polish-base-review-${{ matrix.phase }}-08
+          path: artifacts/base-review/review-08.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+  review:
+    name: Lossless bounded screenshot review (${{ matrix.phase }})
+    needs: [visual, base-review]
+    if: ${{ always() && !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check Pillow==11.3.0
+        timeout-minutes: 2
+      - uses: actions/download-artifact@v4
+        with:
+          name: v31-polish-visual-${{ matrix.phase }}
+          path: artifacts/raw-review
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: v31-polish-base-manifest-${{ matrix.phase }}
+          path: artifacts/base-manifest
+      - name: Verify original PNGs, compare exact parent and split review payloads
+        env:
+          REVIEW_HEAD: ${{ github.event.pull_request.head.sha }}
+          REVIEW_BASE: ${{ github.event.pull_request.base.sha }}
+          REVIEW_PHASE: ${{ matrix.phase }}
+        run: python scripts/visual_review_pack.py --raw artifacts/raw-review --out artifacts/small-review --head "$REVIEW_HEAD" --base-sha "$REVIEW_BASE" --phase "$REVIEW_PHASE" --baseline artifacts/base-manifest/manifest.json --prefixes H53_F07,H56_F08
+        timeout-minutes: 3
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/manifest.json') != '' }}
+        with:
+          name: v31-polish-review-manifest-${{ matrix.phase }}
+          path: artifacts/small-review/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-01.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-01
+          path: artifacts/small-review/review-01.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-02.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-02
+          path: artifacts/small-review/review-02.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-03.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-03
+          path: artifacts/small-review/review-03.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-04.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-04
+          path: artifacts/small-review/review-04.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-05.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-05
+          path: artifacts/small-review/review-05.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-06.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-06
+          path: artifacts/small-review/review-06.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-07.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-07
+          path: artifacts/small-review/review-07.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-08.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-08
+          path: artifacts/small-review/review-08.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-09.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-09
+          path: artifacts/small-review/review-09.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-10.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-10
+          path: artifacts/small-review/review-10.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-11.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-11
+          path: artifacts/small-review/review-11.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-12.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-12
+          path: artifacts/small-review/review-12.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-13.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-13
+          path: artifacts/small-review/review-13.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-14.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-14
+          path: artifacts/small-review/review-14.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-15.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-15
+          path: artifacts/small-review/review-15.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-16.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-16
+          path: artifacts/small-review/review-16.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-17.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-17
+          path: artifacts/small-review/review-17.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-18.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-18
+          path: artifacts/small-review/review-18.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-19.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-19
+          path: artifacts/small-review/review-19.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-20.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-20
+          path: artifacts/small-review/review-20.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-21.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-21
+          path: artifacts/small-review/review-21.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-22.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-22
+          path: artifacts/small-review/review-22.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-23.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-23
+          path: artifacts/small-review/review-23.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-24.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-24
+          path: artifacts/small-review/review-24.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-25.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-25
+          path: artifacts/small-review/review-25.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-26.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-26
+          path: artifacts/small-review/review-26.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-27.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-27
+          path: artifacts/small-review/review-27.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-28.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-28
+          path: artifacts/small-review/review-28.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-29.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-29
+          path: artifacts/small-review/review-29.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-30.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-30
+          path: artifacts/small-review/review-30.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-31.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-31
+          path: artifacts/small-review/review-31.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-32.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-32
+          path: artifacts/small-review/review-32.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-33.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-33
+          path: artifacts/small-review/review-33.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-34.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-34
+          path: artifacts/small-review/review-34.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-35.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-35
+          path: artifacts/small-review/review-35.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-36.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-36
+          path: artifacts/small-review/review-36.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-37.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-37
+          path: artifacts/small-review/review-37.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-38.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-38
+          path: artifacts/small-review/review-38.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-39.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-39
+          path: artifacts/small-review/review-39.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('artifacts/small-review/review-40.zip') != '' }}
+        with:
+          name: v31-polish-review-${{ matrix.phase }}-40
+          path: artifacts/small-review/review-40.zip
+          compression-level: 0
+          if-no-files-found: error
           retention-days: 7
