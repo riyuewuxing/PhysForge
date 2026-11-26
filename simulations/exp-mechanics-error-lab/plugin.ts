@@ -105,6 +105,12 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
     const put=(id:string,x:number,y:number,text:string,color=ink,font='11px ui-sans-serif, system-ui')=>{
       const q=toScreen(x,y);labels.push({id,x:q.x,y:q.y,text,color,font});
     };
+    // Quantitative labels must never be moved by collision avoidance.
+    const anchored=(x:number,y:number,text:string,align:CanvasTextAlign='center',size=10)=>{
+      const q=toScreen(x,y);
+      ctx.save();ctx.fillStyle=ink;ctx.textAlign=align;ctx.textBaseline='middle';
+      ctx.font=size+'px ui-sans-serif, system-ui';ctx.fillText(text,q.x,q.y);ctx.restore();
+    };
     const line=(x1:number,y1:number,x2:number,y2:number)=>{
       const a=toScreen(x1,y1),b=toScreen(x2,y2);
       ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
@@ -116,15 +122,18 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
       ctx.strokeStyle='#334155';ctx.lineWidth=1;
       for(const t of g.ticks){
         line(t.x,tapeY+.12,t.x,tapeY+(t.major?-.015:.045));
-        if(t.major)put('tick-'+t.reading,t.x,tapeY+.19,Number(t.reading.toPrecision(5)).toString()+' cm',ink,'10px ui-sans-serif, system-ui');
+        if(t.major)anchored(t.x,tapeY+.19,Number(t.reading.toPrecision(5)).toString()+' cm');
       }
       for(const d of g.dots){
         const q=toScreen(d.x,tapeY-.19);
         ctx.fillStyle='#0f172a';ctx.beginPath();ctx.arc(q.x,q.y,3,0,Math.PI*2);ctx.fill();
-        put('dot-'+d.index,d.x,tapeY-.39,'x'+d.index+'='+d.reading.toFixed(2),ink,'10px ui-sans-serif, system-ui');
+        // Seven reading cells remain complete even when physical dots cluster.
+        const cell=(3.5/g.dots.length),cx=-1.75+cell*(d.index+.5);
+        const cellPx=Math.abs(toScreen(cx+cell,tapeY).x-toScreen(cx,tapeY).x);
+        anchored(cx,tapeY-.40,'x'+d.index+'='+d.reading.toFixed(2),'center',Math.min(10,Math.max(6,cellPx/6.2)));
       }
       ctx.strokeStyle='#d97706';ctx.lineWidth=2;line(g.zeroX,tapeY+.14,g.zeroX,tapeY-.32);
-      put('tape-note',0,1.57,'50 Hz · 每5点取一个计数点 · T=0.10 s');
+      put('tape-note',0,1.57,'50 Hz · 每5点取一个计数点 · T=0.10 s · x 读数/cm');
     }
     if(activeLayers.has('afCurve')){
       const colors:Record<GraphRole,string>={axis:ink,tick:ink,theory:projector?'#075985':'#38bdf8',fit:projector?'#6d28d9':'#c4b5fd',measured:projector?'#92400e':'#fbbf24',overlay:projector?'#be123c':'#f43f5e',legend:ink};
@@ -144,7 +153,10 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
           const q=toScreen(p.cx,p.cy);ctx.beginPath();ctx.arc(q.x,q.y,Math.max(2,m.len(p.r)),0,Math.PI*2);ctx.fill();
         }else if(p.kind==='rect'){
           const a=toScreen(p.x,p.y+p.height);ctx.strokeRect(a.x,a.y,m.len(p.width),m.len(p.height));
-        }else if(p.kind==='text')put('graph-'+idx,p.x,p.y,p.text,color);
+         }else if(p.kind==='text'){
+          if(role==='tick')anchored(p.x,p.y,p.text,p.align==='end'?'right':p.align==='start'?'left':'center');
+          else put('graph-'+idx,p.x,p.y,p.text,color);
+        }
       });
       ctx.setLineDash([]);
     }
@@ -156,9 +168,15 @@ export const expMechanicsErrorLabPlugin = defineSimulationPlugin<MechanicsErrorP
   formatFormulas: (state) => [
     {
       id: 'mechanics-error-diff',
-      label: '预先向正方向运动：恒阻力加速度与逐差',
-      latex: 'a_{\\text{真}}=\\frac{mg+Mg\\sin\\theta-f}{M+m},\\quad a=\\frac{(s_4+s_5+s_6)-(s_1+s_2+s_3)}{9T^2}',
-      substitutedLatex: `a_{\\text{真}}=${state.aTrueMps2.toFixed(4)}\\text{ m/s}^2,\\; a_{\\text{逐}}=${state.aDiffMeasuredMps2.toFixed(4)}\\text{ m/s}^2,\\; R^2=${state.rSquared.toFixed(5)}`
+      label: '预先向正方向运动：恒阻力加速度',
+      latex: 'a_{\\text{真}}=\\frac{mg+Mg\\sin\\theta-f}{M+m}',
+      substitutedLatex: `a_{\\text{真}}=${state.aTrueMps2.toFixed(4)}\\text{ m/s}^2`
+    },
+    {
+      id: 'mechanics-error-tape-diff',
+      label: '六段纸带逐差（T=0.10 s）',
+      latex: 'a=\\frac{(s_4+s_5+s_6)-(s_1+s_2+s_3)}{9T^2}',
+      substitutedLatex: `a_{\\text{逐}}=${state.aDiffMeasuredMps2.toFixed(4)}\\text{ m/s}^2,\\;R^2=${state.rSquared.toFixed(5)}`
     }
   ]
 });

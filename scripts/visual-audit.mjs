@@ -1307,6 +1307,7 @@ async function auditF08Mechanics(page,offline,select){
  await select('af-under-compensated-f-intercept');
  const under=await sync({scenario:'under-compensated',noise:0,offset:0});
  if(!(under.analyticF>0))throw Error('F08 positive F intercept');
+ if(offline)await page.waitForFunction(()=>document.querySelector('[data-testid="sf-uplot"]')?.dataset.scopeTimeType==='elapsed',null,{timeout:5000});
  await save('under',under);
  await setNumber('rulerOffsetCm','20');const shifted=await sync({scenario:'under-compensated',offset:20});
  if(Math.abs(shifted.aDiff-under.aDiff)>1e-12||Math.abs(shifted.scale-under.scale)>1e-12||shifted.dots.some((d,i)=>Math.abs(d.x-under.dots[i].x)>1e-12||Math.abs(d.reading-under.dots[i].reading+20)>1e-9))throw Error('F08 ruler shift changed physical coordinates');

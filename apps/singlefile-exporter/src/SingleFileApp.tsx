@@ -90,7 +90,8 @@ const lcSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'
 const magneticSlice=targetPlugin.paramSchema.some(f=>f.key==='geometryType'&&f.kind==='select'&&f.options.some(o=>o.value==='uniform-helix'));
 const waveSlice=targetPlugin.paramSchema.some(f=>f.key==='mode'&&f.kind==='select'&&f.options.some(o=>o.value==='doppler'));
 const rippleSlice=targetPlugin.paramSchema.some(f=>f.key==='wavelengthCells');
-const baseMeasuredScope=circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice;
+const mechanicsErrorSlice=targetPlugin.meta.id==='exp-mechanics-error-lab';
+const baseMeasuredScope=mechanicsErrorSlice||circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],
   'incline-slide':['scenario','gravity','massRatio','restitution','friction','inclineDeg'],
