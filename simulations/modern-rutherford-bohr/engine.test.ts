@@ -5,6 +5,8 @@ import { rutherfordBohrPresets } from './presets.js';
 import {
   solveBohrTransitions,
   computeObservables,
+  sampleRutherfordAtTime,
+  RUTHERFORD_DEMO_DURATION_S,
   solveRutherfordScattering,
   stepRutherfordBohr,
   createInitialState,
@@ -127,5 +129,30 @@ describe('H47 F04 independent scattering and hydrogen spectrum regressions',()=>
     const or=computeObservables(createInitialState(getPreset(0)));
     expect(or).not.toHaveProperty('bohrLinesCount');
     expect(or).not.toHaveProperty('hAlphaNm');
+  });
+});
+
+describe('F04 prepared actual-time trajectory and no hidden recomputation',()=>{
+  it('stores numerical positions, velocities and monotonically increasing physical timestamps, including the turn',()=>{
+    const r=solveRutherfordScattering(5,79,25);
+    expect(r.trajectoryFm).toHaveLength(201);
+    expect(r.angularMomentumDriftRel).toBeLessThan(1e-8);expect(r.maxPositionErrorFm).toBeLessThan(1e-5);
+    const middle=r.trajectoryFm[100]!;
+    expect(Math.hypot(middle.x,middle.y)).toBeCloseTo(r.minDistanceFm,5);
+    expect(Math.abs(middle.x*middle.vx+middle.y*middle.vy)).toBeLessThan(1e-7);
+    for(let i=1;i<r.trajectoryFm.length;i++)expect(r.trajectoryFm[i]!.time22).toBeGreaterThan(r.trajectoryFm[i-1]!.time22);
+    expect(sampleRutherfordAtTime(r,0)).toEqual(r.trajectoryFm[0]);
+    expect(sampleRutherfordAtTime(r,r.timeOfFlight22)).toEqual(r.trajectoryFm.at(-1));
+  });
+  it('maps demonstration time to physical elapsed trajectory time, halts at the final sample and reuses the solved path',()=>{
+    const p=getPreset(0),s=createInitialState(p);if(s.mode!=='rutherford')throw Error('expected Rutherford');
+    const a=stepRutherfordBohr(s,p,RUTHERFORD_DEMO_DURATION_S/2).nextState;if(a.mode!=='rutherford')throw Error('expected Rutherford');
+    expect(a.rutherford).toBe(s.rutherford);expect(a.sample.time22).toBeCloseTo(s.rutherford.timeOfFlight22/2,12);
+    const res=stepRutherfordBohr(a,p,10),b=res.nextState;if(b.mode!=='rutherford')throw Error('expected Rutherford');
+    expect(res.halt).toBe(true);expect(res.advancedTime).toBe(RUTHERFORD_DEMO_DURATION_S/2);
+    expect(b.sample).toEqual(s.rutherford.trajectoryFm.at(-1));expect(b.t).toBe(RUTHERFORD_DEMO_DURATION_S);
+    const bohr=getPreset(1),sb=createInitialState(bohr);
+    expect(stepRutherfordBohr(sb,bohr,2)).toMatchObject({nextState:sb,advancedTime:0,halt:true});
+    expect(sb.rutherford).toBeNull();
   });
 });

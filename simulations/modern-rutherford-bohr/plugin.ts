@@ -87,7 +87,7 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
     const primitives: DiagramPrimitive[] = [];
     if (params.mode === 'rutherford') {
       primitives.push({ kind: 'fieldMarker', x: 0, y: 0, symbol: 'plus', radius: 6 });
-      const pts = state.rutherford.trajectoryFm
+      const pts = state.rutherford!.trajectoryFm
         .filter((_, idx) => idx % 3 === 0)
         .map((p) => ({ x: p.x / 60, y: p.y / 60 }));
       if (pts.length > 1) primitives.push({ kind: 'trajectory', points: pts, strokeWidth: 2 });
@@ -136,7 +136,7 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
       const targetLabel = m.toScreen(0.07, -0.02);
       labels.push({ id: 'rutherford-target-label', ...targetLabel, text: `Z=${params.targetZ}`, color: '#e2e8f0', font: 'bold 12px ui-sans-serif, system-ui' });
 
-      const pts = state.rutherford.trajectoryFm;
+      const pts = state.rutherford!.trajectoryFm;
       if (pts.length > 1) {
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 3;
@@ -150,8 +150,7 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
         }
         ctx.stroke();
 
-        const idx = Math.min(pts.length - 1, Math.floor(state.animCursor * pts.length));
-        const curPt = pts[idx]!;
+        const curPt = state.sample ?? pts[0]!;
         ctx.fillStyle = '#f43f5e';
         ctx.beginPath();
         const point = m.toScreen(curPt.x / 65, curPt.y / 65);
@@ -159,7 +158,7 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
         ctx.fill();
       }
 
-      labels.push({ id: 'rutherford-summary', ...m.toScreen(0.3, 1.55), text: `RK45 偏转角 θ = ${state.rutherford.simulatedAngleDeg.toFixed(3)}° (解析 ${state.rutherford.analyticalAngleDeg.toFixed(3)}°) | 最近距离 ${state.rutherford.minDistanceFm.toFixed(2)} fm`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
+      labels.push({ id: 'rutherford-summary', ...m.toScreen(0.3, 1.55), text: `RK45 偏转角 θ = ${state.rutherford!.simulatedAngleDeg.toFixed(3)}° (解析 ${state.rutherford!.analyticalAngleDeg.toFixed(3)}°) | 最近距离 ${state.rutherford!.minDistanceFm.toFixed(2)} fm`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
       resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
       ctx.restore();
       return;
@@ -184,7 +183,7 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
       labels.push({ id: `bohr-level-${n}`, x: m.toX(rightX + 0.05), y: y + 4, text: `n=${n} (${e.toFixed(2)} eV)`, color: '#e2e8f0', font: 'bold 12px ui-sans-serif, system-ui' });
     }
 
-    const visibleLines = state.bohr.spectralLines.filter((l) => l.lowerN === 2);
+    const visibleLines = state.bohr!.spectralLines.filter((l) => l.lowerN === 2);
     visibleLines.forEach((line, i) => {
       const x = leftX + 0.22 + i * 0.2;
       const y1 = yOfEv(bohrEnergyEv(line.upperN));
@@ -212,8 +211,8 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
     });
 
     labels.push({ id: 'bohr-excitation-summary', ...m.toScreen(1.15, 0.28), text:
-      `激发态 n=${params.excitedLevelN} (${params.populationMode === 'ensemble' ? `一群原子 C_n^2=${state.bohr.totalCombinationLines} 条` : `单原子至多 ${state.bohr.maxSingleAtomLines} 条`}) · ${state.bohr.excitationAccepted
-        ? `探针激发成功：跃迁至 ${state.bohr.ionized ? '电离连续态' : `n=${state.bohr.reachedLevel}`}，剩余动能 ${state.bohr.residualElectronEv.toFixed(2)} eV`
+      `激发态 n=${params.excitedLevelN} (${params.populationMode === 'ensemble' ? `一群原子 C_n^2=${state.bohr!.totalCombinationLines} 条` : `单原子至多 ${state.bohr!.maxSingleAtomLines} 条`}) · ${state.bohr!.excitationAccepted
+        ? `探针激发成功：跃迁至 ${state.bohr!.ionized ? '电离连续态' : `n=${state.bohr!.reachedLevel}`}，剩余动能 ${state.bohr!.residualElectronEv?.toFixed(2)??'未指定'} eV`
         : `光子能量 ${params.probeEnergyEv.toFixed(2)} eV 不匹配任何能级差 ΔE`}`,
       color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
     resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
@@ -242,9 +241,8 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
   },
   getForceVectors: (state, params) => {
     if (params.mode !== 'rutherford') return [];
-    const points = state.rutherford.trajectoryFm;
-    const index = Math.min(points.length - 1, Math.floor(state.animCursor * points.length));
-    const point = points[index] ?? points[Math.floor(points.length / 2)] ?? { x: -40, y: params.impactParamFm };
+    const points = state.rutherford!.trajectoryFm;
+    const point = state.sample ?? points[0]!;
     const radius = Math.hypot(point.x, point.y);
     if (radius < 1e-6) return [];
     const magnitude = Math.min(40, (params.targetZ * 2) / Math.max(25, radius * radius));
@@ -263,9 +261,8 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
     label: 'α 入射粒子随动参考系',
     getOrigin: (state, params) => {
       if (params.mode !== 'rutherford') return { x: 0, y: 0 };
-      const points = state.rutherford.trajectoryFm;
-      const index = Math.min(points.length - 1, Math.floor(state.animCursor * points.length));
-      const point = points[index];
+      const points = state.rutherford!.trajectoryFm;
+      const point = state.sample ?? points[0]!;
       return point ? { x: point.x / 65, y: point.y / 65 } : { x: 0, y: 0 };
     }
   }],
@@ -276,8 +273,8 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
       latex: params.mode === 'rutherford' ? '\\tan\\frac{\\theta}{2}=\\frac{k Z_1 Z_2 e^2}{2 K_\\alpha b}' : 'E_n=-\\frac{13.6}{n^2}\\text{ eV}',
       substitutedLatex:
         params.mode === 'rutherford'
-          ? `\\theta=${state.rutherford.simulatedAngleDeg.toFixed(3)}^\\circ,\\; r_{\\min}=${state.rutherford.minDistanceFm.toFixed(2)}\\text{ fm}`
-          : `n=${params.excitedLevelN},\\; C_n^2=${state.bohr.totalCombinationLines}`
+          ? `\\theta=${state.rutherford!.simulatedAngleDeg.toFixed(3)}^\\circ,\\; r_{\\min}=${state.rutherford!.minDistanceFm.toFixed(2)}\\text{ fm}`
+          : `n=${params.excitedLevelN},\\; C_n^2=${state.bohr!.totalCombinationLines}`
     }
   ]
 });
