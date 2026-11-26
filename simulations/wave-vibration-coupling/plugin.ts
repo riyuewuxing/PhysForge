@@ -361,7 +361,7 @@ export const waveVibrationCouplingPlugin = Object.assign(defineSimulationPlugin<
         substitutedLatex:'\\begin{aligned}f_{\\rm front}&='+f(d.frontFreq,2)+'\\\\f_{\\rm back}&='+f(d.backFreq,2)+'\\end{aligned}'},
         ...(p.sourceSpeedRatio>1?[{id:'mach-envelope',label:'有限历程马赫包络，非真实激波强度',latex:'\\sin\\alpha=1/\\beta',substitutedLatex:'\\alpha='+f(o.machAngleDeg,2)+'^\\circ'}]:[])];
     }
-    if(p.mode==='interference')return [{id:'interference-delta',label:'有符号波程差与接收相位',latex:'\\Delta r=r_2-r_1,\\quad\\Delta\\phi=\\phi_0-k\\Delta r',
+    if(p.mode==='interference')return [{id:'interference-delta',label:'有符号波程差与两源到齐后的相位条件',latex:'\\Delta r=r_2-r_1,\\quad\\Delta\\phi=\\phi_0-k\\Delta r',
       substitutedLatex:'\\begin{aligned}\\Delta r&='+f(o.signedPathDifference)+'\\text{ m}\\\\\\Delta\\phi&='+f(o.phaseAtProbeDeg,1)+'^\\circ\\\\N&='+o.activeCount+'\\end{aligned}'},
       {id:'interference-amplitude',label:'两波均到达时的合振幅',latex:'A_{\\rm net}=2A|\\cos(\\Delta\\phi/2)|',substitutedLatex:'A_P='+f(o.analyticalAmplitude)+'\\text{ m}'}];
     if(p.mode==='standing')return [{id:'standing-wave',label:'等幅反向波叠加（无限延伸理想解）',latex:'y=2A\\sin(kx)\\cos(\\omega t)',substitutedLatex:'\\begin{aligned}k&='+k.toFixed(3)+'\\text{ rad/m}\\\\A_P&='+f(o.analyticalAmplitude)+'\\text{ m}\\\\y_P&='+f(o.probeY)+'\\text{ m}\\end{aligned}'},

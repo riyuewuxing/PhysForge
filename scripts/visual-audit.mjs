@@ -691,6 +691,10 @@ function checkW01(s){
     check('signed path',s.signedPathDifference,r2-r1);check('absolute path',s.pathDifference,Math.abs(r2-r1));check('active count',s.activeCount,Number(a1)+Number(a2));
   }else{
     const u=c*s.sourceSpeedRatio,X=s.probeX+2,Y=s.probeY;
+    if(Math.hypot(X-u*t,Y)<1e-11){
+      if(s.probeSampleDefined!==0||'probeY'in s||'probeVy'in s||'probeAy'in s||'localFrequencyHz'in s)throw Error('W01 singular source sample leaked');
+      return s;
+    }
     // Independent root isolation in emission time: the arrival-time function
     // is convex. Split at its minimum for the supersonic case, then bisect.
     const arrival=tau=>tau+Math.hypot(X-u*tau,Y)/c;
@@ -740,6 +744,12 @@ async function auditW01(page,origin){
   const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),report={};
   const photo=name=>page.screenshot({path:path.join(OUT_DIR,'H40_W01_'+name+'.png')});
   const run=async t=>{await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.waveRendered||'null')?.t>t,t,{timeout:15000});await play.click();return syncW01(page,false);};
+  // Narrow physical windows need deterministic real single-step interaction,
+  // not a timeout or assumed pause latency. Each click advances exactly 4 fixed substeps.
+  const stepTo=async(target)=>{let before=JSON.parse(await canvas.getAttribute('data-wave-rendered')).t;for(let j=0;before<target-1e-10&&j<180;j++){
+    await page.getByTestId('btn-step').click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.waveRendered||'null')?.t>t,before);
+    const next=JSON.parse(await canvas.getAttribute('data-wave-rendered')).t;if(Math.abs(next-before-1/60)>1e-8)throw Error('W01 incorrect single-step duration '+JSON.stringify({before,next}));before=next;
+  }if(Math.abs(before-target)>1e-8)throw Error('W01 did not reach exact deterministic sample '+JSON.stringify({before,target}));return syncW01(page,false);};
   for(const [id,mode,duration] of [['transverse-slope-rule','transverse',.5],['causal-wavefront-startup','transverse',1.43],['causal-wavefront-left','transverse',1.35],['standing-wave-nodes','standing',.4],['standing-wave-node','standing',.4],['interference-in-phase','interference',.42],['interference-anti-phase-misconception','interference',.42],['interference-causal-two-arrivals','interference',.9],['doppler-moving-source','doppler',2.35],['doppler-offaxis','doppler',1.45],['doppler-sonic-boundary','doppler',.45],['doppler-two-branches','doppler',.58],['supersonic-mach-cone','doppler',1.25]]){
     await selectPreset(page,id,true);await page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.waveRendered||'null');return s?.mode===mode&&s.t===0;},mode);
     const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
@@ -751,8 +761,11 @@ async function auditW01(page,origin){
     if(mode==='standing'&&await page.locator('#param-direction').count())throw Error('W01 irrelevant direction control');
     if(mode!=='doppler'&&await page.getByTestId('param-slider-sourceSpeedRatio').count())throw Error('W01 irrelevant source speed control');
     if(id==='causal-wavefront-startup'){await photo('causal_initial');const pre=await run(.7);if(pre.probeY!==0)throw Error('W01 precocious receiver');await photo('causal_before_arrival');}
-    if(id==='interference-causal-two-arrivals'){const one=await run(.51);if(one.activeCount!==1)throw Error('W01 single-source stage');await photo('interference_single_source');}
-    const final=await run(duration);
+    if(id==='interference-causal-two-arrivals'){const one=await stepTo(.55);if(one.activeCount!==1)throw Error('W01 single-source stage');await photo('interference_single_source');}
+    if(id==='doppler-sonic-boundary'){const edge=await stepTo(2/3);if(edge.probeSampleDefined!==0||'probeY'in edge)throw Error('W01 exact sonic singularity');if((await page.getByTestId('wave-probeY').innerText()).trim()!=='—')throw Error('W01 singular readout not blank');await photo('sonic_source_singularity');}
+    const final=id==='doppler-two-branches'?await stepTo(.6):id==='doppler-sonic-boundary'?await stepTo(.85):await run(duration);
+    if(id==='doppler-two-branches'&&final.arrivalCount!==2)throw Error('W01 actual two-branch window not demonstrated');
+    if(id==='doppler-sonic-boundary'&&final.arrivalCount!==1)throw Error('W01 sonic trailing branch not demonstrated');
     report[id]={initial,final};await photo(id);
   }
   console.log('H40 W01 online '+JSON.stringify(report));return report;
