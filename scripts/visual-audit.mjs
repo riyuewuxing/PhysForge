@@ -670,6 +670,66 @@ async function syncE09(page,offline){
   if(Math.abs(Number.parseFloat(readout)-s.chargeQ)>.0006)throw Error('E09 stale charge readout');
   return s;
 }
+
+function checkE10(raw){
+  const s=raw.position?raw:{...raw,position:{x:raw.x,y:raw.y,z:raw.z},velocity:{x:raw.vx,y:raw.vy,z:raw.vz},B:{x:raw.bxT,y:raw.byT,z:raw.bzT},a:{x:raw.ax,y:raw.ay,z:raw.az}};
+  const t=s.t,p=s.position,v=s.velocity,B=s.B,a=s.a,qm=s.qOverM*(s.geometryType==='uniform-helix'?1:1e6);
+  const check=(label,got,want,tol=3e-5)=>{if(!Number.isFinite(got)||Math.abs(got-want)>tol*Math.max(1,Math.abs(want)))throw Error('E10 '+label+' '+JSON.stringify({got,want,s}));};
+  if(!B||!a)throw Error('E10 unexpected undefined field');
+  const speed=Math.hypot(v.x,v.y,v.z);
+  check('speed',speed,Math.hypot(s.vPerp,s.vParallel),1e-8);
+  check('ax',a.x,qm*(v.y*B.z-v.z*B.y),1e-9);
+  check('ay',a.y,qm*(v.z*B.x-v.x*B.z),1e-9);
+  check('az',a.z,qm*(v.x*B.y-v.y*B.x),1e-9);
+  check('specific work',v.x*a.x+v.y*a.y+v.z*a.z,0,1e-8);
+  if(s.geometryType==='uniform-helix'){
+    const w=qm*s.uniformBz,c=Math.cos(w*t),sn=Math.sin(w*t);
+    check('Bx',B.x,0);check('By',B.y,0);check('Bz',B.z,s.uniformBz);
+    check('vx',v.x,s.vPerp*c);check('vy',v.y,-s.vPerp*sn);check('vz',v.z,s.vParallel,1e-9);
+    check('x',p.x,.4+(w===0?s.vPerp*t:s.vPerp/w*sn));
+    check('y',p.y,w===0?0:s.vPerp/w*(c-1));
+    check('z',p.z,-1.2+s.vParallel*t,1e-9);
+  }else if(s.geometryType==='straight-wire'){
+    const rho=Math.hypot(p.x,p.y),M=1e-7*s.currentI/rho*((4-p.z)/Math.hypot(rho,4-p.z)+(4+p.z)/Math.hypot(rho,4+p.z));
+    check('finite-wire Bx',B.x,-M*p.y/rho,1e-12);check('finite-wire By',B.y,M*p.x/rho,1e-12);check('finite-wire Bz',B.z,0,1e-12);
+  }
+  return s;
+}
+async function auditE10Magnetic(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-3d-magnetic-fields');await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-3d-magnetic-fields');
+  const stage=page.getByTestId('three-stage-container'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),report={};
+  await stage.waitFor({state:'visible',timeout:20000});
+  for(const [id,geometry,qm,bz,I,vperp] of [
+    ['uniform-negative-charge','uniform-helix',-4,4,2,2.4],
+    ['uniform-negative-field','uniform-helix',4,-4,2,2.4],
+    ['uniform-zero-field','uniform-helix',1,0,2,1.5],
+    ['uniform-parallel-only','uniform-helix',1,2,2,0],
+    ['finite-wire-reverse','straight-wire',1.2,2,-2.5,1]
+  ]){
+    await selectPreset(page,id,true);
+    await page.waitForFunction(({geometry,qm,bz,I,vperp})=>{const s=JSON.parse(document.querySelector('[data-testid="three-stage-container"]')?.dataset.magneticRendered||'null');return s?.geometryType===geometry&&s.qOverM===qm&&s.uniformBz===bz&&s.currentI===I&&s.vPerp===vperp&&s.t===0;},{geometry,qm,bz,I,vperp},{timeout:10000});
+    const initial=checkE10(JSON.parse(await stage.getAttribute('data-magnetic-rendered')));
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    const expected=geometry==='uniform-helix'?['vx','vy','shared']:['speed','bMagMicroT','separate'];
+    await page.waitForFunction(([a,b,u])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b&&document.querySelector('[data-testid="floating-scope-dock"]')?.dataset.scopeUnits===u,expected);
+    await page.getByTestId('magnetic-scope-empty').waitFor({state:'visible'});
+    if(geometry==='uniform-helix'&&await page.getByTestId('param-slider-currentI').count())throw Error('E10 irrelevant current control');
+    if(geometry==='straight-wire'&&await page.getByTestId('param-slider-uniformBz').count())throw Error('E10 irrelevant uniform B control');
+    if(id==='uniform-zero-field'||id==='uniform-parallel-only'){
+      await page.waitForFunction(()=>document.querySelector('[data-testid="three-stage-container"]')?.dataset.renderedForceArrow==='false');
+    }
+    if(id==='uniform-zero-field')await page.waitForFunction(()=>{const d=document.querySelector('[data-testid="three-stage-container"]')?.dataset;return d?.renderedFieldArrow==='false'&&d.fieldLineCount==='0';});
+    if(geometry==='straight-wire')await page.waitForFunction(()=>{const d=document.querySelector('[data-testid="three-stage-container"]')?.dataset;return d?.conductorCount==='1'&&d.fieldLineCount==='9'&&d.currentArrowCount==='2'&&d.currentArrowDirection==='-1';});
+    await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="three-stage-container"]')?.dataset.magneticRendered||'null')?.t>.38,null,{timeout:15000});await play.click();
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="three-stage-container"]')?.dataset.magneticRendered||'null'),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT),t=Number(document.querySelector('[data-testid="magnetic-readouts"]')?.dataset.sampleTime);return s&&Math.abs(s.t-t)<1e-9&&Math.abs(s.t-p)<1e-9;},null,{timeout:8000});
+    const final=checkE10(JSON.parse(await stage.getAttribute('data-magnetic-rendered')));
+    const vx=parseFloat(await page.getByTestId('magnetic-vx').innerText());if(Math.abs(vx-final.velocity.x)>.0006)throw Error('E10 stale signed velocity readout');
+    report[id]={initial,final};await page.screenshot({path:path.join(OUT_DIR,'H39_E10_'+id+'.png')});
+  }
+  console.log('H39 E10 online '+JSON.stringify(report));return report;
+}
+
 async function auditE09Lc(page,origin){
   const url=new URL(origin);url.searchParams.set('model','em-lc-rlc-oscillation');await page.goto(url.toString(),{waitUntil:'networkidle'});
   await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-lc-rlc-oscillation');
@@ -3019,6 +3079,7 @@ async function main() {
     const e07GeneratorReport=await auditE07Generator(page,origin);
     const e08TransformerReport=await auditE08Transformer(page,origin);
     const e09LcReport=await auditE09Lc(page,origin);
+    const e10MagneticReport=await auditE10Magnetic(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3628,7 +3689,25 @@ async function main() {
       if(e09Errors.length||e09Network.length)throw Error('E09 offline errors '+JSON.stringify({e09Errors,e09Network}));
       Object.assign(e09OfflineReport,{errors:e09Errors,network:e09Network});
     }finally{await e09Context.close();}
-    const summary = { e09LcReport,e09OfflineReport,e08TransformerReport,e08OfflineReport,e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e10File=path.join(OUT_DIR,'H39_E10_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-3d-magnetic-fields','--preset','uniform-negative-charge','--out',e10File],{stdio:'inherit'});
+    const e10Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e10Page=await e10Context.newPage(),e10Errors=[],e10Network=[],e10OfflineReport={};
+    e10Page.on('pageerror',e=>e10Errors.push(e.message));e10Page.on('console',m=>{if(m.type()==='error')e10Errors.push(m.text());});e10Page.on('request',r=>{if(/^https?:/.test(r.url()))e10Network.push(r.url());});
+    try{
+      await e10Page.goto(pathToFileURL(e10File).href);
+      for(const [id,geometry,qm] of [['uniform-negative-charge','uniform-helix',-4],['uniform-zero-field','uniform-helix',1],['finite-wire-reverse','straight-wire',1.2]]){
+        if(id!=='uniform-negative-charge')await e10Page.locator('[data-preset-id="'+id+'"]').click();
+        await e10Page.waitForFunction(({geometry,qm})=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.magneticRendered||'null');return s?.geometryType===geometry&&s.qOverM===qm&&s.t===0;},{geometry,qm});
+        checkE10(JSON.parse(await e10Page.getByTestId('sf-canvas').getAttribute('data-magnetic-rendered')));
+        await e10Page.getByTestId('sf-play-pause').click();await e10Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.magneticRendered||'null')?.t>.4);await e10Page.getByTestId('sf-play-pause').click();
+        await e10Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.magneticRendered||'null'),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT),t=Number(document.querySelector('[data-testid="sf-magnetic-readouts"]')?.dataset.sampleTime);return s&&Math.abs(s.t-t)<1e-9&&Math.abs(s.t-p)<1e-9;});
+        const s=checkE10(JSON.parse(await e10Page.getByTestId('sf-canvas').getAttribute('data-magnetic-rendered')));e10OfflineReport[id]=s;
+        await e10Page.screenshot({path:path.join(OUT_DIR,'H39_E10_offline_'+id+'.png')});
+      }
+      if(e10Errors.length||e10Network.length)throw Error('E10 offline errors '+JSON.stringify({e10Errors,e10Network}));
+      Object.assign(e10OfflineReport,{errors:e10Errors,network:e10Network});
+    }finally{await e10Context.close();}
+    const summary = { e10MagneticReport,e10OfflineReport,e09LcReport,e09OfflineReport,e08TransformerReport,e08OfflineReport,e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

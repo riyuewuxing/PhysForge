@@ -649,7 +649,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           disposeGroupChildren(staticGroup);
 
           if (isMag3d) grid.position.y = -1.2 * Math.max(0.2, (curParams as Magnetic3dParams).radiusR);
-          let renderedConductorCount = 0,renderedCurrentArrowCount=0;
+          let renderedConductorCount = 0,renderedCurrentArrowCount=0,renderedCurrentDirection=0;
           if (layers.has('conductors')) {
             const magneticParams = curParams as Magnetic3dParams;
             const fusionSegments=isTokamak3d?fusionDisplayGeometry(fusionParams).segments:[];
@@ -674,6 +674,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
                   const a=points[idx-1]!,b=points[idx]!,dir=b.clone().sub(a).normalize().multiplyScalar(Math.sign(magneticParams.currentI));
                   const cone=new THREE.Mesh(new THREE.ConeGeometry(radius*1.55,radius*4,12),new THREE.MeshBasicMaterial({color:0xffd28c,toneMapped:false}));
                   cone.name='signed-current-arrow';cone.position.copy(a).lerp(b,.5);cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir);staticGroup.add(cone);renderedCurrentArrowCount++;
+                  renderedCurrentDirection=Math.sign(new THREE.Vector3(0,1,0).applyQuaternion(cone.quaternion).dot(b.clone().sub(a)));
                 }
               }
               if (isMag3d && !closed) {
@@ -731,7 +732,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if(isMag3d||isTokamak3d){
             container.dataset.fieldLineCount = String(renderedFieldCount);
             container.dataset.conductorCount = String(renderedConductorCount);
-            if(isMag3d)container.dataset.currentArrowCount=String(renderedCurrentArrowCount);
+            if(isMag3d){container.dataset.currentArrowCount=String(renderedCurrentArrowCount);container.dataset.currentArrowDirection=String(renderedCurrentDirection);}
           }
         }
 
