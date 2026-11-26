@@ -1140,7 +1140,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       ctx.save();
       ctx.fillStyle = 'rgba(251, 191, 36, 0.92)';
       ctx.font = 'bold 14px system-ui, sans-serif';
-      ctx.fillText(`时间轴回放 t = ${frame.t.toFixed(3)} s`, vp.width - 210, 28);
+      ctx.fillText(p.meta.id==='thermo-cycles-kinetic-md'?`时间轴回放 t* = ${frame.t.toFixed(3)}（约化）`:`时间轴回放 t = ${frame.t.toFixed(3)} s`, vp.width - 210, 28);
       ctx.restore();
     }
 

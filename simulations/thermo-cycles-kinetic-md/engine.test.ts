@@ -188,3 +188,11 @@ describe('F02 shared diagram and initial measurement contract',()=>{
   }
  });
 });
+
+it('shows the requested crossed reservoir values as actual geometry without an invented cycle',()=>{
+ const p={...getPreset(1),tHotK:400,tColdK:450},s=createInitialState(p),g=thermalGeometry(s,p);
+ expect(s.cycle.valid).toBe(false);expect(g.marks.some(m=>m.primitive.kind==='line')).toBe(true);
+ expect(g.marks.filter(m=>m.primitive.kind==='polyline')).toHaveLength(0);
+ expect(g.marks.some(m=>m.primitive.kind==='text'&&m.primitive.text.includes('400.0 K'))).toBe(true);
+ expect(g.marks.some(m=>m.primitive.kind==='text'&&m.primitive.text.includes('450.0 K'))).toBe(true);
+});

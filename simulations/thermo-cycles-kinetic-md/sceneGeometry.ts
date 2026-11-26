@@ -46,7 +46,19 @@ export function thermalGeometry(s:ThermoCycleMdState,p:ThermoCycleMdParams){
     return {marks,stats};
   }
   const c=s.cycle;
-  if(!c.valid){text(0,.35,'当前参数无有效热机循环','alert');text(0,.05,'卡诺要求 T_H > T_C > 0；体积比 > 1','alert');text(0,-.23,'保持输入，不自动改写热源温度');return {marks,stats:null};}
+  if(!c.valid){
+    text(0,1.24,'当前参数无有效热机循环','alert');
+    text(0,1.02,'卡诺要求 T_H > T_C > 0；体积比 > 1','alert');
+    const hi=niceMax(Math.max(1,p.tHotK,p.tColdK)*1.05),x0=-1.50,w=3.00;
+    const X=(t:number)=>x0+w*t/hi;
+    line(x0,-.55,x0+w,-.55);
+    for(let i=0;i<=4;i++){const x=x0+w*i/4;line(x,-.55,x,-.60);text(x,-.74,num(hi*i/4));}
+    text(0,-.96,'请求温度 / K');
+    line(x0,.54,X(p.tHotK),.54,'heat');circle(X(p.tHotK),.54,.035,'heat');text(x0,.70,'T_H = '+num(p.tHotK)+' K','heat','start');
+    line(x0,.02,X(p.tColdK),.02,'cool');circle(X(p.tColdK),.02,.035,'cool');text(x0,.18,'T_C = '+num(p.tColdK)+' K','cool','start');
+    text(0,-1.20,'保留请求参数 · 不生成 P–V 路径或效率','alert');
+    return {marks,stats:null};
+  }
   const all=c.segments.flatMap(q=>q.points),x0=-2.16,x1=.10,y0=-1.02,y1=1.04;
   const vmax=niceMax(Math.max(...all.map(q=>q.vL))*1.05),pmax=niceMax(Math.max(...all.map(q=>q.pKPa))*1.05);
   const mx=(v:number)=>x0+(x1-x0)*v/vmax,my=(v:number)=>y0+(y1-y0)*v/pmax;
@@ -70,7 +82,7 @@ export function thermalGeometry(s:ThermoCycleMdState,p:ThermoCycleMdParams){
       push({kind:'arrow',x1:q.x-u*.06,y1:q.y-v*.06,x2:q.x+u*.06,y2:q.y+v*.06},tone);
     }
     const corner=points[0]!;
-    circle(corner.x,corner.y,.024,tone);text(corner.x+(i===0||i===3?-.06:.07),corner.y+(i===0||i===1?.09:-.10),'ABCD'[i]!,tone,i===0||i===3?'end':'start');
+    circle(corner.x,corner.y,.024,tone);text(corner.x+(i===0||i===3?-.06:.07),corner.y+(i===0||i===1 ? .09 : -.10),'ABCD'[i]!,tone,i===0||i===3?'end':'start');
   });
   const x=[.51,1.10,1.65,2.21],top=1.02;
   text(1.36,1.38,'逐段热量、功、内能（J）');
