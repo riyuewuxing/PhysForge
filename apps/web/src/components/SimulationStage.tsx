@@ -46,6 +46,7 @@ import type {WaveFdtdState} from '../../../../simulations/wave-2d-ripple-fdtd/en
 type RippleStagePlugin=typeof import('../../../../simulations/wave-2d-ripple-fdtd/plugin.js').wave2dRippleFdtdPlugin;
 import type {TransformerGridParams} from '../../../../simulations/em-transformer-grid/engine.js';
 type TransformerStagePlugin=typeof import('../../../../simulations/em-transformer-grid/plugin.js').emTransformerGridPlugin;
+import type {ThermoGasState} from '../../../../simulations/thermo-piston-gas-laws/engine.js';
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
 import type {
@@ -299,6 +300,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const rippleStage=plugin.meta.id==='wave-2d-ripple-fdtd';
   const transformerStage=plugin.meta.id==='em-transformer-grid';
   const waveOpticsStage=plugin.meta.id==='optics-wave-interference';
+  const thermoStaticStage=plugin.meta.id==='thermo-piston-gas-laws'&&params.mode!=='stop-pin-cylinder';
   const shmCameraKeyRef=useRef('');
   const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
@@ -1179,6 +1181,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const model=p as unknown as LcStagePlugin,b=model.lcDiagramBounds();
       canvas.dataset.lcRendered=JSON.stringify({t:frame.t,mode:pm.mode,inductanceH:pm.inductanceH,capacitanceF:pm.capacitanceF,resistanceR:pm.resistanceR,initialChargeC:pm.initialChargeC,driveVoltAmpUm:pm.driveVoltAmpUm,driveOmega:pm.driveOmega,...p.engine.computeObservables(drawState,pm)});
       canvas.dataset.lcView=JSON.stringify({bounds:b,width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:lcSafeRef.current?.safe});
+    }
+    if(p.meta.id==='thermo-piston-gas-laws'&&frame&&drawState!==null){
+      const s=drawState as ThermoGasState;
+      canvas.dataset.thermoRendered=JSON.stringify({...pm,outerTime:frame.t,pvHistory:s.pvHistory,pumpStages:s.pumpStages,events:s.events,...p.engine.computeObservables(drawState,pm)});
     }
     if(p.meta.id==='optics-wave-interference'&&frame&&drawState!==null){
       canvas.dataset.waveOpticsRendered=JSON.stringify({...pm,outerTime:frame.t,...p.engine.computeObservables(drawState,pm)});
@@ -2176,7 +2182,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         )}
       </div>
 
-      {!presentationMode && !oscilloscopeCollapsed && !transformerStage && !waveOpticsStage && (
+      {!presentationMode && !oscilloscopeCollapsed && !transformerStage && !waveOpticsStage && !thermoStaticStage && (
         <div data-testid="floating-scope-dock" data-scope-units={splitScopeUnits ? 'separate' : 'shared'} className={`pf-floating-glass pf-compact-scope absolute bottom-3 left-1/2 z-10 w-[min(410px,calc(100%-24px))] -translate-x-1/2 overflow-hidden rounded-2xl border border-white/10 px-3 pt-2 shadow-2xl ${heroScope ? 'pf-hero-scope' : ''}`}>
           <div className="mb-1 flex h-7 items-center justify-between gap-2 text-xs">
             <span className="shrink-0 font-semibold" style={{color:equilibriumScope?'var(--pf-text-muted)':undefined}} title={equilibriumScope?'准静态参数扫描时间，不是物体运动时间':undefined}>{equilibriumScope?'示波器 · 演示':'示波器'}</span>
@@ -2238,7 +2244,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           </div>
         </div>
       )}
-      {!presentationMode && oscilloscopeCollapsed && !transformerStage && !waveOpticsStage && (
+      {!presentationMode && oscilloscopeCollapsed && !transformerStage && !waveOpticsStage && !thermoStaticStage && (
         <button
           type="button"
           data-testid="btn-expand-oscilloscope"
