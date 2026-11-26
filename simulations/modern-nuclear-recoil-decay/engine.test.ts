@@ -145,3 +145,18 @@ it('draws a labeled, similarity-transformed daughter inset using the actual shar
     expect(ir.primitives.some(x=>x.kind==='text'&&x.text.includes('子核局部放大'))).toBe(true);
   }
 });
+
+it('exports the actual paused sample staircase, current marker and labeled axes',()=>{
+  const p=getPreset(2),s=stepNuclearRecoilDecay(createInitialState(p),p,1.25).nextState;
+  const ir=modernNuclearRecoilDecayPlugin.exportDiagramIR!(s,p);
+  const paths=ir.primitives.filter(x=>x.kind==='polyline');
+  expect(paths).toHaveLength(2);
+  const sample=paths[0]!.points,expected=paths[1]!.points;
+  expect(sample[0]).toEqual({x:.15,y:.9});
+  const wantX=.15+1.25/(4*s.halfLifeS)*1.95,wantY=-.9+s.remainingCount/s.decayedFlags.length*1.8;
+  expect(sample.at(-1)!.x).toBeCloseTo(wantX,12);expect(sample.at(-1)!.y).toBeCloseTo(wantY,12);
+  expect(expected.at(-1)!.y).toBeCloseTo(-.9+1.8/16,12);
+  expect(ir.primitives.some(x=>x.kind==='circle'&&Math.abs(x.cx-wantX)<1e-12&&Math.abs(x.cy-wantY)<1e-12)).toBe(true);
+  expect(ir.primitives.some(x=>x.kind==='text'&&x.text==='N/N₀')).toBe(true);
+  expect(ir.primitives.some(x=>x.kind==='text'&&x.text==='N(t) = '+s.remainingCount+' / '+s.decayedFlags.length)).toBe(true);
+});
