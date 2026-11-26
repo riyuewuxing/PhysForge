@@ -67,5 +67,9 @@ export const transformerGridPresets: readonly PresetSpec<TransformerGridParams>[
       stepUpRatioK1: 10,
       lineResistanceR: 20
     }
-  }
+  },
+  {id:'grid-10x-reference',name:'同功率 · 十倍升压基准',description:'100 kW、250 V、20 Ω，k=10 时线损32 kW。',curriculumNotes:'固定送端功率对比',params:{mode:'long-distance-grid',sourceU0:250,genPowerKw:100,stepUpRatioK1:10,lineResistanceR:20}},
+  {id:'grid-infeasible-request',name:'过载请求 · 无有效工作点',description:'100 V、k=5、R=50 Ω，200 kW 请求超过5 kW无源受端上限。',curriculumNotes:'可行域边界',params:{mode:'long-distance-grid',sourceU0:100,genPowerKw:200,stepUpRatioK1:5,lineResistanceR:50}},
+  {id:'grid-zero-power',name:'零功率 · 效率未定义',description:'开路无功率传输，不能定义零输入效率。',curriculumNotes:'边界情况',params:{mode:'long-distance-grid',sourceU0:250,genPowerKw:0,stepUpRatioK1:20,lineResistanceR:20}},
+  {id:'multi-tap-open-load',name:'副路全部断开 · 有电压无电流',description:'副线圈仍有感应有效电压，但开路电流和输入功率为零。',curriculumNotes:'空载理想变压器',params:{mode:'multi-tap-transformer',sourceU0:220,primaryR0:10,n1Ratio:2,n2Ratio:1,n3Ratio:1,parallelUsersCount:0,branch3Closed:false}}
 ];

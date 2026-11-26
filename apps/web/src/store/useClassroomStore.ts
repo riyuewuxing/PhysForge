@@ -163,7 +163,8 @@ const NON_TIME_SERIES_MODEL_IDS = new Set([
   'optics-wave-interference',
   'mech-dynamic-equilibrium',
   'mech-constrained-velocity',
-  'exp-electrical-error-lab'
+  'exp-electrical-error-lab',
+  'em-transformer-grid'
 ]);
 
 export function isNonTimeSeriesModel(modelId: string, params: ParamRecord): boolean {

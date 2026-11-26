@@ -577,6 +577,81 @@ function checkE07(s,mode){
     if(!Number.isFinite(s[key])||Math.abs(s[key]-expected)>1e-6)throw Error('E07 '+mode+' '+key+' '+JSON.stringify({actual:s[key],expected,t}));
   }
 }
+
+function checkE08(s){
+  if(s.efficiencyDefined===0&&('efficiencyPct'in s||'efficiency'in s))throw Error('E08 undefined efficiency leaked');
+  const check=(k,expected)=>{if(!Number.isFinite(s[k])||Math.abs(s[k]-expected)>1e-7*Math.max(1,Math.abs(expected)))throw Error('E08 '+k+' '+JSON.stringify({actual:s[k],expected,s}));};
+  if(s.mode==='multi-tap-transformer'){
+    const G2=s.parallelUsersCount/s.loadR2,G3=s.branch3Closed?1/s.loadR3:0,G=G2*(s.n2Ratio/s.n1Ratio)**2+G3*(s.n3Ratio/s.n1Ratio)**2,
+      U1=s.sourceU0/(1+s.primaryR0*G),I1=U1*G,U2=U1*s.n2Ratio/s.n1Ratio,U3=U1*s.n3Ratio/s.n1Ratio,
+      P0=s.sourceU0*I1,P1=U1*I1,Q=I1**2*s.primaryR0,P2=U2**2*G2,P3=U3**2*G3;
+    for(const [k,x] of Object.entries({operatingPointValid:1,u1:U1,i1:I1,u2:U2,i2:U2*G2,u3:U3,i3:U3*G3,pInW:P0,pTransformerInW:P1,p2W:P2,p3W:P3,pUserW:P2+P3,pLineLossW:Q,efficiencyDefined:P0>0?1:0,...(P0>0?{efficiencyPct:100*(P2+P3)/P0}:{})}))check(k,x);
+  }else{
+    const P=s.genPowerKw*1000,U=s.sourceU0*s.stepUpRatioK1,I=P/U,R=s.lineResistanceR,limit=R>0?U**2/R:0;
+    check('requestedPowerW',P);check('requestedCurrentA',I);check('requestedLossW',I**2*R);check('maxPowerW',limit);
+    if(R>0&&P>limit){check('operatingPointValid',0);check('efficiencyDefined',0);if('pInW'in s||'lineCurrentA'in s||'pUserW'in s||'efficiencyPct'in s)throw Error('E08 invalid observables leaked');return;}
+    const Ur=U-I*R,Pr=Ur*I;
+    for(const [k,x] of Object.entries({operatingPointValid:1,lineVoltageV:U,lineCurrentA:I,voltageDropV:I*R,u2:Ur,u3:Ur>0?220:0,pInW:P,pLineLossW:I*I*R,pUserW:Pr,efficiencyDefined:P>0?1:0,...(P>0?{efficiencyPct:100*Pr/P}:{})}))check(k,x);
+  }
+}
+async function waitE08Display(page,offline,expected){
+  await page.waitForFunction(({offline,expected})=>{
+    const c=document.querySelector('[data-testid="'+(offline?'sf-canvas':'simulation-canvas')+'"]'),s=JSON.parse(c?.dataset.transformerRendered||'null'),prefix=offline?'sf-transformer-':'transformer-';
+    if(!s||!Object.entries(expected).every(([k,v])=>s[k]===v))return false;
+    const valid=s.operatingPointValid===1,key=valid?'pInW':'requestedPowerW',node=document.querySelector('[data-testid="'+prefix+key+'"]');
+    return node&&Math.abs(Number.parseFloat(node.textContent||'NaN')-s[key])<=.006;
+  },{offline,expected},{timeout:10000});
+  const s=JSON.parse(await page.getByTestId(offline?'sf-canvas':'simulation-canvas').getAttribute('data-transformer-rendered'));
+  checkE08(s);
+  const prefix=offline?'sf-transformer-':'transformer-';
+  if(s.operatingPointValid===0){
+    if(await page.getByTestId(prefix+'pInW').count()||await page.getByTestId(prefix+'lineCurrentA').count())throw Error('E08 invalid sentinel shown as actual');
+    if(!(await page.getByTestId(prefix+'status').innerText()).includes('无有效工作点'))throw Error('E08 invalid status absent');
+  }else if(s.efficiencyDefined===0&&((await page.getByTestId(prefix+'efficiencyPct').innerText()).trim()!=='—'))throw Error('E08 undefined efficiency shown as actual');
+  return s;
+}
+async function auditE08Transformer(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-transformer-grid');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-transformer-grid');
+  const photo=async name=>page.screenshot({path:path.join(OUT_DIR,'H37_E08_'+name+'.png')});
+  const select=async(id,expected)=>{await selectPreset(page,id,true);const s=await waitE08Display(page,false,expected);
+    if(await page.getByTestId('floating-scope-dock').count()||await page.getByTestId('btn-expand-oscilloscope').count())throw Error('E08 static scene fabricated time scope');
+    await page.waitForFunction(()=>document.querySelector('[data-testid="viewport-zoom-badge"]')?.textContent?.trim()==='100%',null,{timeout:5000});
+    return s;};
+  const multi=await select('primary-resistor-parallel-users',{mode:'multi-tap-transformer',branch3Closed:true,parallelUsersCount:2});
+  if(await page.getByTestId('param-slider-genPowerKw').count())throw Error('E08 inactive grid controls');
+  await photo('multi_closed');
+  await page.getByRole('checkbox',{name:'闭合第 2 副路开关'}).uncheck();
+  const opened=await waitE08Display(page,false,{mode:'multi-tap-transformer',branch3Closed:false});
+  if(opened.u1<=multi.u1||opened.i1>=multi.i1||opened.i3!==0||opened.u3<=0)throw Error('E08 open switch response');
+  await photo('multi_switch_open');
+  const dual=await select('multi-tap-dual-secondary',{mode:'multi-tap-transformer',primaryR0:0,n1Ratio:4,branch3Closed:true});
+  await page.getByRole('checkbox',{name:'闭合第 2 副路开关'}).uncheck();
+  const dualOpen=await waitE08Display(page,false,{mode:'multi-tap-transformer',primaryR0:0,branch3Closed:false});
+  if(dualOpen.u2!==dual.u2||dualOpen.i1>=dual.i1)throw Error('E08 ideal primary source independence');
+  const idle=await select('multi-tap-open-load',{mode:'multi-tap-transformer',parallelUsersCount:0,branch3Closed:false});
+  await photo('multi_no_load');
+  const grid10=await select('grid-10x-reference',{mode:'long-distance-grid',stepUpRatioK1:10,genPowerKw:100});
+  if(await page.getByTestId('param-slider-primaryR0').count())throw Error('E08 inactive primary controls');
+  await photo('grid_10x');
+  const slider=page.getByTestId('param-slider-stepUpRatioK1');await slider.press('ArrowRight');await slider.press('ArrowRight');
+  const grid20=await waitE08Display(page,false,{mode:'long-distance-grid',stepUpRatioK1:20,genPowerKw:100});
+  if(Math.abs(grid20.pLineLossW/grid10.pLineLossW-.25)>1e-10)throw Error('E08 loss ratio');
+  await photo('grid_20x');
+  const invalid=await select('grid-infeasible-request',{mode:'long-distance-grid',genPowerKw:200,stepUpRatioK1:5,operatingPointValid:0});await photo('grid_invalid');
+  const zero=await select('grid-zero-power',{mode:'long-distance-grid',genPowerKw:0,efficiencyDefined:0});await photo('grid_zero');
+  await select('high-voltage-10x-vs-20x',{mode:'long-distance-grid',genPowerKw:100,stepUpRatioK1:20});
+  const menu=page.getByTestId('btn-tools-menu');if((await menu.getAttribute('aria-expanded'))!=='true')await menu.click();
+  const theme=await page.locator('html').getAttribute('data-theme');
+  if(theme!=='projector')await page.getByTestId('btn-theme').click();
+  await page.waitForFunction(()=>document.documentElement.dataset.theme==='projector');
+  if((await menu.getAttribute('aria-expanded'))==='true')await menu.click();
+  await photo('grid_projector');
+  if(theme!=='projector'){if((await menu.getAttribute('aria-expanded'))!=='true')await menu.click();await page.getByTestId('btn-theme').click();await page.waitForFunction(()=>document.documentElement.dataset.theme==='chalkboard');if((await menu.getAttribute('aria-expanded'))==='true')await menu.click();}
+  const report={multi,opened,dual,dualOpen,idle,grid10,grid20,invalid,zero};console.log('H37 E08 online '+JSON.stringify(report));return report;
+}
+
 async function auditE07Generator(page,origin){
   const url=new URL(origin);url.searchParams.set('model','em-ac-generator-rms');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2843,6 +2918,7 @@ async function main() {
     const e05WireframeReport=await auditE05Wireframe(page,origin);
     const e06EddyReport=await auditE06Eddy(page,origin);
     const e07GeneratorReport=await auditE07Generator(page,origin);
+    const e08TransformerReport=await auditE08Transformer(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3420,7 +3496,22 @@ async function main() {
       if(e07Errors.length||e07Network.length)throw Error('E07 offline errors '+JSON.stringify({e07Errors,e07Network}));
       Object.assign(e07OfflineReport,{errors:e07Errors,network:e07Network});
     }finally{await e07Context.close();}
-    const summary = { e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e08File=path.join(OUT_DIR,'H37_E08_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-transformer-grid','--preset','primary-resistor-parallel-users','--out',e08File],{stdio:'inherit'});
+    const e08Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e08Page=await e08Context.newPage(),e08Errors=[],e08Network=[],e08OfflineReport={};
+    e08Page.on('pageerror',e=>e08Errors.push(e.message));e08Page.on('console',m=>{if(m.type()==='error')e08Errors.push(m.text());});e08Page.on('request',r=>{if(/^https?:/.test(r.url()))e08Network.push(r.url());});
+    try{
+      await e08Page.goto(pathToFileURL(e08File).href);
+      for(const [id,expected] of [['primary-resistor-parallel-users',{mode:'multi-tap-transformer',parallelUsersCount:2,branch3Closed:true}],['high-voltage-10x-vs-20x',{mode:'long-distance-grid',stepUpRatioK1:20,genPowerKw:100}],['grid-infeasible-request',{mode:'long-distance-grid',operatingPointValid:0}],['grid-zero-power',{mode:'long-distance-grid',genPowerKw:0,efficiencyDefined:0}]]){
+        if(id!=='primary-resistor-parallel-users')await e08Page.locator('[data-preset-id="'+id+'"]').click();
+        const s=await waitE08Display(e08Page,true,expected);e08OfflineReport[id]=s;
+        if(await e08Page.getByTestId('sf-uplot').isVisible())throw Error('E08 offline static scope visible');
+        await e08Page.screenshot({path:path.join(OUT_DIR,'H37_E08_offline_'+id+'.png')});
+      }
+      if(e08Errors.length||e08Network.length)throw Error('E08 offline errors '+JSON.stringify({e08Errors,e08Network}));
+      Object.assign(e08OfflineReport,{errors:e08Errors,network:e08Network});
+    }finally{await e08Context.close();}
+    const summary = { e08TransformerReport,e08OfflineReport,e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
