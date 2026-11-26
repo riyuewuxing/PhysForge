@@ -1323,7 +1323,7 @@ async function auditF05Cases(page,offline,select){
  const initialTheme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
  const setTheme=async t=>{
   if(await page.evaluate(()=>document.documentElement.getAttribute('data-theme'))===t)return;
-  if(offline){await page.getByRole('button',{name:t==='projector'?'黑板深蓝':'投影浅色'}).click();}
+  if(offline){await page.getByRole('button',{name:t==='projector'?'黑板深蓝':'投影白底'}).click();}
   else{const menu=page.getByTestId('tools-menu');if(!await menu.isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();if(await menu.isVisible())await page.getByTestId('btn-tools-menu').click();}
   await page.waitForFunction(t=>document.documentElement.getAttribute('data-theme')===t,t);
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
