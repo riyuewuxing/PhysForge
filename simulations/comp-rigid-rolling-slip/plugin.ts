@@ -1,6 +1,6 @@
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { createWorldMapper, defineSimulationPlugin, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
-import { rollingScene, rollingItems, rollingDiagram, SPEED_SCALE, V_LANE, W_LANE, type RollingRole } from './geometry.js';
+import { rollingScene, rollingItems, rollingDiagram, rollingViewBounds, fitRollingViewport, SPEED_SCALE, V_LANE, W_LANE, type RollingRole } from './geometry.js';
 import { rigidRollingPresets } from './presets.js';
 import {
   SHAPE_INERTIA_COEFF,
@@ -49,7 +49,7 @@ const paramSchema: readonly ParamFieldSpec<RigidRollingParams>[] = [
   { key: 'inclineDeg', kind: 'number', label: '斜面倾角 θ', unit: '°', defaultValue: 20, min: 5, max: 45, step: 5 }
 ];
 
-export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingParams, RigidRollingState>({
+export const compRigidRollingSlipPlugin = Object.assign(defineSimulationPlugin<RigidRollingParams, RigidRollingState>({
   meta: {
     id: 'comp-rigid-rolling-slip',
     title: '刚体定轴转动与滑滚转换 (C01)',
@@ -161,7 +161,7 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
       t:s.t,scenario:p.scenario,shape:p.shape,m:p.massKg,R:p.radiusM,v0:p.v0Mps,omega0:p.omega0Radps,mu:p.muK,incline:p.inclineDeg,
       mode:s.mode,x:s.x,v:s.v,omega:s.omega,theta:s.theta,tC:s.transitionTimeS,vC:s.transitionSpeedMps,
       energy:s.currentEnergyJ,initialEnergy:s.initialEnergyJ,q,bodies:sc.bodies,windowOrigin:sc.windowOrigin,raceExtent:sc.raceExtent,
-      selected:sc.selected,normal:sc.normal,tangent:sc.tangent,
+      selected:sc.selected,normal:sc.normal,tangent:sc.tangent,viewBounds:rollingViewBounds(p,vp),
       handles:{v:screen(p.v0Mps*SPEED_SCALE,V_LANE-.09),omega:screen(-p.omega0Radps*p.radiusM*SPEED_SCALE,W_LANE-.09),scale:m.len(SPEED_SCALE)}
     });
   },
@@ -181,6 +181,6 @@ export const compRigidRollingSlipPlugin = defineSimulationPlugin<RigidRollingPar
       {id:'rolling-heat',label:'滑动耗散与机械能闭合',latex:'Q=\\frac{mc(u_0^2-u^2)}{2(1+c)}',substitutedLatex:'Q='+q.heat.toFixed(3)+'\\ \\mathrm{J}'}
     ];
   }
-});
+}),{fitRollingViewport,rollingViewBounds});
 
 export default compRigidRollingSlipPlugin;

@@ -17,6 +17,8 @@ import type { SpringSepParams,SpringSepState } from '../../../simulations/mech-s
 type SpringSlicePlugin=typeof import('../../../simulations/mech-spring-separation/plugin.js').mechSpringSeparationPlugin;
 import type { CollisionRecoilParams,CollisionRecoilState } from '../../../simulations/mech-collision-recoil/engine.js';
 type CollisionSlicePlugin=typeof import('../../../simulations/mech-collision-recoil/plugin.js').mechCollisionRecoilPlugin;
+import type { RigidRollingParams } from '../../../simulations/comp-rigid-rolling-slip/engine.js';
+type RollingSlicePlugin=typeof import('../../../simulations/comp-rigid-rolling-slip/plugin.js').compRigidRollingSlipPlugin;
 import type {CapacitorMillikanParams,CapacitorMillikanState} from '../../../simulations/em-capacitor-millikan/engine.js';
 type CapacitorSlicePlugin=typeof import('../../../simulations/em-capacitor-millikan/plugin.js').emCapacitorMillikanPlugin;
 import type {AcScopeParams,AcScopeState} from '../../../simulations/em-ac-field-oscilloscope/engine.js';
@@ -311,6 +313,11 @@ export const SingleFileApp: React.FC = () => {
       const model=targetPlugin as unknown as CollisionSlicePlugin,v=viewportRef.current,s=drawState as CollisionRecoilState,p=pm as CollisionRecoilParams;
       const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
       if(!model.collisionBoundsFit(s,p,v,safe)){const next=model.fitCollisionViewport(s,p,v,safe);if(next)viewportRef.current=next;}
+    }
+    if(rollingSlice&&drawState!==null){
+      const model=targetPlugin as unknown as RollingSlicePlugin,v=viewportRef.current,p=pm as RigidRollingParams;
+      const next=model.fitRollingViewport(p,v,{left:26,right:v.width-26,top:28,bottom:v.height-28});
+      if(next)viewportRef.current=next;
     }
     if(capacitorSlice&&drawState!==null){
       const model=targetPlugin as unknown as CapacitorSlicePlugin,v=viewportRef.current,p=pm as CapacitorMillikanParams;

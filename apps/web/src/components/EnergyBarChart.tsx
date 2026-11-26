@@ -86,7 +86,9 @@ export const EnergyBarChart: React.FC<EnergyBarChartProps> = ({ observables, inv
         </div>
       ) : (
         <div className="text-xs" style={{ color: 'var(--pf-text-muted)' }}>
-          当前波动模型以振幅与相位耦合观测量为主
+          {observables.angularMomentumContact!==undefined&&observables.requiredStaticMu!==undefined
+            ? '平动、转动及有符号势能请见模型图解与公式；此通用柱状图不合并有符号势能。'
+            : '当前波动模型以振幅与相位耦合观测量为主'}
         </div>
       )}
 

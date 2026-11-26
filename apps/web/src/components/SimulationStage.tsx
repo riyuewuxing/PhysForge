@@ -26,6 +26,8 @@ import type { SpringSepParams,SpringSepState } from '../../../../simulations/mec
 type SpringStagePlugin=typeof import('../../../../simulations/mech-spring-separation/plugin.js').mechSpringSeparationPlugin;
 import type { CollisionRecoilParams,CollisionRecoilState } from '../../../../simulations/mech-collision-recoil/engine.js';
 type CollisionStagePlugin=typeof import('../../../../simulations/mech-collision-recoil/plugin.js').mechCollisionRecoilPlugin;
+import type { RigidRollingParams } from '../../../../simulations/comp-rigid-rolling-slip/engine.js';
+type RollingStagePlugin=typeof import('../../../../simulations/comp-rigid-rolling-slip/plugin.js').compRigidRollingSlipPlugin;
 import {DISPLAY_LENGTH_PER_M} from '../../../../simulations/em-capacitor-millikan/engine.js';
 import {CRT_CM_PER_DRAW_UNIT} from '../../../../simulations/em-ac-field-oscilloscope/engine.js';
 import type {CapacitorMillikanParams,CapacitorMillikanState} from '../../../../simulations/em-capacitor-millikan/engine.js';
@@ -290,6 +292,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const turntableStage=plugin.meta.id==='mech-conical-turntable';
   const springStage=plugin.meta.id==='mech-spring-separation';
   const collisionStage=plugin.meta.id==='mech-collision-recoil';
+  const rollingStage=plugin.meta.id==='comp-rigid-rolling-slip';
   const shmStage=plugin.meta.id==='mech-shm-resonance';
   const electroStage=plugin.meta.id==='em-electrostatic-field';
   const capacitorStage=plugin.meta.id==='em-capacitor-millikan';
@@ -400,6 +403,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const b1FitKeyRef=useRef('');
   const chaseSafeRef=useRef<{key:string;safe:ChaseSafeRect}|null>(null);
   const constrainedFitKeyRef=useRef('');
+  const rollingFitKeyRef=useRef('');
   const projectileSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const contactSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const verticalSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
@@ -423,7 +427,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const initialCamera = resolveInitialCameraTransform(v2, latestRef.current.params, width, height);
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
-    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;
+    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;rollingFitKeyRef.current='';
     chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
@@ -819,6 +823,21 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       if(fresh||!model.collisionBoundsFit(ss,pp,v,safe)){
         const next=model.fitCollisionViewport(ss,pp,v,safe);
         if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
+      }
+    }
+    const rollingAutomatic=p.meta.id==='comp-rigid-rolling-slip'&&!userTransformedViewRef.current&&
+      !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
+    if(rollingAutomatic&&drawState!==null){
+      const model=p as unknown as RollingStagePlugin,cur=latestRef.current,v=viewportRef.current,pp=pm as RigidRollingParams;
+      const key=JSON.stringify([cur.resetNonce,pp.scenario,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      if(rollingFitKeyRef.current!==key){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const right=cur.presentationMode||cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-300):v.width-26;
+        const bottom=cur.presentationMode||!cur.oscilloscopeCollapsed?Math.min(v.height-175,dock&&dock.height>0?dock.top-box.top-14:v.height-180):v.height-76;
+        const next=model.fitRollingViewport(pp,v,{left:30,right,top:cur.presentationMode?90:28,bottom});
+        if(next){rollingFitKeyRef.current=key;cameraRef.current=next;viewportRef.current=next;baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(100);}
       }
     }
     const capacitorAutomatic=p.meta.id==='em-capacitor-millikan'&&!userTransformedViewRef.current&&
@@ -1301,7 +1320,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
-    const mechanics=['builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(latestRef.current.plugin.meta.id)||latestRef.current.plugin.meta.id==='builder-custom-ode-lab'||latestRef.current.plugin.meta.id==='stse-gravity-assist-rendezvous'||(latestRef.current.plugin.meta.id==='stse-em-launch-regen-brake'&&latestRef.current.params.mode==='regen-brake');
+    const mechanics=['comp-rigid-rolling-slip','builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(latestRef.current.plugin.meta.id)||latestRef.current.plugin.meta.id==='builder-custom-ode-lab'||latestRef.current.plugin.meta.id==='stse-gravity-assist-rendezvous'||(latestRef.current.plugin.meta.id==='stse-em-launch-regen-brake'&&latestRef.current.params.mode==='regen-brake');
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
@@ -1523,7 +1542,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   // Publish its paused frame before paint, without changing continuous cadence.
   useLayoutEffect(()=>{
     const current=latestRef.current;
-    if(!['mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(current.plugin.meta.id)&&current.plugin.meta.id!=='stse-gravity-assist-rendezvous'&&!(current.plugin.meta.id==='stse-em-launch-regen-brake'&&current.params.mode==='regen-brake')||isPlaying)return;
+    if(!['comp-rigid-rolling-slip','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(current.plugin.meta.id)&&current.plugin.meta.id!=='stse-gravity-assist-rendezvous'&&!(current.plugin.meta.id==='stse-em-launch-regen-brake'&&current.params.mode==='regen-brake')||isPlaying)return;
     if(current.scrubTime===null&&simStateModelIdRef.current===current.plugin.meta.id&&
       simStateResetNonceRef.current===current.resetNonce&&simStateRef.current!==null&&simulationTimeRef.current>lastSnapshotTRef.current){
       const state=simStateRef.current,t=simulationTimeRef.current;
@@ -1581,7 +1600,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     lastSnapshotTRef.current = stepT;
 
     renderFrameToCanvas();
-    syncUPlotData(['mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd'].includes(latestRef.current.plugin.meta.id));
+    syncUPlotData(['comp-rigid-rolling-slip','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd'].includes(latestRef.current.plugin.meta.id));
     emitTelemetrySummary(true);
   }, [stepOnceNonce]);
 
@@ -1591,7 +1610,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     emitTelemetrySummary(true);
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
 
-  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}else if(acStage){acSafeRef.current=null;renderFrameToCanvas();}else if(wireStage){wireSafeRef.current=null;renderFrameToCanvas();}else if(eddyStage){eddySafeRef.current=null;renderFrameToCanvas();}else if(generatorStage){generatorSafeRef.current=null;renderFrameToCanvas();}else if(lcStage){lcSafeRef.current=null;renderFrameToCanvas();}else if(waveStage){waveSafeRef.current=null;renderFrameToCanvas();}else if(rippleStage){rippleSafeRef.current=null;renderFrameToCanvas();}else if(transformerStage){transformerSafeRef.current=null;renderFrameToCanvas();}else if(orbitCompareStage){orbitCompareSafeRef.current=null;renderFrameToCanvas();}},[orbitCompareStage,chaseStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,capacitorStage,acStage,wireStage,eddyStage,generatorStage,lcStage,waveStage,rippleStage,transformerStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
+  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(rollingStage){rollingFitKeyRef.current='';renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}else if(acStage){acSafeRef.current=null;renderFrameToCanvas();}else if(wireStage){wireSafeRef.current=null;renderFrameToCanvas();}else if(eddyStage){eddySafeRef.current=null;renderFrameToCanvas();}else if(generatorStage){generatorSafeRef.current=null;renderFrameToCanvas();}else if(lcStage){lcSafeRef.current=null;renderFrameToCanvas();}else if(waveStage){waveSafeRef.current=null;renderFrameToCanvas();}else if(rippleStage){rippleSafeRef.current=null;renderFrameToCanvas();}else if(transformerStage){transformerSafeRef.current=null;renderFrameToCanvas();}else if(orbitCompareStage){orbitCompareSafeRef.current=null;renderFrameToCanvas();}},[orbitCompareStage,chaseStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,rollingStage,capacitorStage,acStage,wireStage,eddyStage,generatorStage,lcStage,waveStage,rippleStage,transformerStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
@@ -1795,7 +1814,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const equilibriumScope=plugin.meta.id==='mech-dynamic-equilibrium';
   const constrainedScope=plugin.meta.id==='mech-constrained-velocity';
   const projectileScope=plugin.meta.id==='mech-projectile-coupling';
-  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||electroStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||magneticStage||waveStage||rippleStage||thermoStage||thermalCycleStage||atomicStage||nuclearStage||orbitCompareStage;
+  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||shmStage||electroStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||magneticStage||waveStage||rippleStage||thermoStage||thermalCycleStage||atomicStage||nuclearStage||orbitCompareStage;
   const contactPair=contactStage&&((channelA==='vBlock'&&channelB==='vCarrier')||(channelA==='vCarrier'&&channelB==='vBlock'));
   const semanticScope=heroScope||measuredScope;
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
@@ -1990,7 +2009,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
-                  if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+                  if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -2016,7 +2035,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               // Like OrbitControls' start, pointer-down establishes camera
               // ownership before the first movement; a resize/fit cannot race
               // the teacher between gesture start and its first delta.
-              if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+              if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {
@@ -2110,7 +2129,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (e.pointerType === 'touch') hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = hoveredHandleIdRef.current ? 'pointer' : 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerCancel={(e) => {
               activePointersRef.current.clear();
@@ -2119,7 +2138,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerLeave={(e) => {
               if (e.pointerType === 'touch' || dragModeRef.current) return;
@@ -2294,7 +2313,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : measuredScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
-            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={atomicStage?'f04-scope-empty':thermalCycleStage?'f02-scope-empty':thermoStage?'f01-scope-empty':rippleStage?'ripple-scope-empty':waveStage?'wave-scope-empty':magneticStage?'magnetic-scope-empty':lcStage?'lc-scope-empty':generatorStage?'generator-scope-empty':eddyStage?'eddy-scope-empty':wireStage?'wire-scope-empty':acStage?'ac-scope-empty':capacitorStage?'capacitor-scope-empty':electroStage?'electro-scope-empty':shmStage?'shm-scope-empty':collisionStage?'collision-scope-empty':springStage?'spring-scope-empty':turntableStage?'turntable-scope-empty':verticalStage?'vertical-scope-empty':contactStage?'contact-scope-empty':equilibriumScope?'equilibrium-scope-empty':constrainedScope?'constrained-scope-empty':projectileScope?'projectile-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={rollingStage?'f10-scope-empty':atomicStage?'f04-scope-empty':thermalCycleStage?'f02-scope-empty':thermoStage?'f01-scope-empty':rippleStage?'ripple-scope-empty':waveStage?'wave-scope-empty':magneticStage?'magnetic-scope-empty':lcStage?'lc-scope-empty':generatorStage?'generator-scope-empty':eddyStage?'eddy-scope-empty':wireStage?'wire-scope-empty':acStage?'ac-scope-empty':capacitorStage?'capacitor-scope-empty':electroStage?'electro-scope-empty':shmStage?'shm-scope-empty':collisionStage?'collision-scope-empty':springStage?'spring-scope-empty':turntableStage?'turntable-scope-empty':verticalStage?'vertical-scope-empty':contactStage?'contact-scope-empty':equilibriumScope?'equilibrium-scope-empty':constrainedScope?'constrained-scope-empty':projectileScope?'projectile-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽

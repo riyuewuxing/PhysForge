@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { compRigidRollingSlipPlugin } from './plugin.js';
 import { rigidRollingPresets } from './presets.js';
 import { createInitialState, stepRigidRollingSlip, rollingQuantities, computeObservables, type RigidRollingParams } from './engine.js';
-import { rollingScene } from './geometry.js';
+import { rollingScene, rollingViewBounds, fitRollingViewport } from './geometry.js';
 
 function getPreset(idx: number): RigidRollingParams {
   return resolvePluginParams(compRigidRollingSlipPlugin.paramSchema, rigidRollingPresets[idx]!.params);
@@ -202,5 +202,32 @@ describe('F10 independent boundary and display consistency',()=>{
     const race=getPreset(2),keys=compRigidRollingSlipPlugin.getParamFields!(race).map(f=>f.key);
     expect(keys).not.toContain('muK');expect(keys).not.toContain('v0Mps');expect(keys).toContain('inclineDeg');
     expect(compRigidRollingSlipPlugin.getParamFields!(p).map(f=>f.key)).not.toContain('inclineDeg');
+  });
+});
+
+describe('F10 viewport fits actual unoccluded space (H61)',()=>{
+  for(const scenario of ['flat-bowling-slip','incline-race'] as const){
+    it('fits '+scenario+' into desktop safe rectangle and full offline stage without distortion',()=>{
+      const p={...getPreset(0),scenario};
+      for(const [width,height,safe] of [
+        [1392,852,{left:30,right:1080,top:28,bottom:672}],
+        [1060,640,{left:26,right:1034,top:28,bottom:612}]
+      ] as const){
+        const v={width,height,dpr:1,scale:1,offsetX:0,offsetY:0};
+        const fitted=fitRollingViewport(p,v,safe)!;
+        const b=rollingViewBounds(p,fitted);
+        expect(b.left).toBeGreaterThanOrEqual(safe.left-1e-8);
+        expect(b.right).toBeLessThanOrEqual(safe.right+1e-8);
+        expect(b.top).toBeGreaterThanOrEqual(safe.top-1e-8);
+        expect(b.bottom).toBeLessThanOrEqual(safe.bottom+1e-8);
+        expect((b.left+b.right)/2).toBeCloseTo((safe.left+safe.right)/2,9);
+        expect((b.top+b.bottom)/2).toBeCloseTo((safe.top+safe.bottom)/2,9);
+        expect((b.right-b.left)/(b.bottom-b.top)).toBeCloseTo(4.56/(scenario==='incline-race'?4.8:3.58),9);
+        expect(Math.max((b.right-b.left)/(safe.right-safe.left),(b.bottom-b.top)/(safe.bottom-safe.top))).toBeCloseTo(1,9);
+      }
+    });
+  }
+  it('rejects an empty safe rectangle',()=>{
+    expect(fitRollingViewport(getPreset(0),{width:800,height:500,dpr:1,scale:1,offsetX:0,offsetY:0},{left:20,right:10,top:0,bottom:100})).toBeNull();
   });
 });

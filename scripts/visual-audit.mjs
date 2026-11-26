@@ -1287,6 +1287,15 @@ async function auditF10Rolling(page,offline,select){
  const sync=async expected=>{
    await page.waitForFunction(({canvasId,expected})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.rigidRollingRendered;if(!raw)return false;const r=JSON.parse(raw);return Object.entries(expected).every(([k,v])=>typeof v==='number'?Math.abs(r[k]-v)<1e-9:r[k]===v);},{canvasId,expected},{timeout:10000});
    const r=await read(),c=coefficients[r.shape],I=c*r.m*r.R*r.R,g=9.8;
+   const box=await canvas.boundingBox();if(!box)throw Error('F10 missing canvas');
+   const b=r.viewBounds;
+   if(!b||b.left<0||b.top<0||b.right>box.width+1||b.bottom>box.height+1)throw Error('F10 scene outside canvas '+JSON.stringify(b));
+   if(!offline){
+     const dock=await page.getByTestId('floating-scope-dock').boundingBox();
+     const panel=await page.getByTestId('right-control-panel').boundingBox();
+     if(dock&&box.y+b.bottom>dock.y-2)throw Error('F10 scene occluded by scope '+JSON.stringify({b,dock,box}));
+     if(panel&&box.x+b.right>panel.x-2)throw Error('F10 scene occluded by panel '+JSON.stringify({b,panel,box}));
+   }
    if(!near(r.q.I,I)||!near(r.q.u,r.v-r.R*r.omega)||!near(r.q.vEnergy,.5*r.m*r.v*r.v)||!near(r.q.wEnergy,.5*I*r.omega*r.omega))throw Error('F10 physical observables');
    if(r.scenario==='flat-bowling-slip'){
      const u0=r.v0-r.R*r.omega0,A=r.mu*g*(1+1/c),tc=Math.abs(u0)<=1e-9?0:A>0?Math.abs(u0)/A:Infinity;
@@ -1314,6 +1323,11 @@ async function auditF10Rolling(page,offline,select){
    await page.waitForFunction(({canvasId,t})=>JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.rigidRollingRendered||'null')?.t>=t,{canvasId,t},{timeout:15000});
    await play.click();
    await page.waitForFunction(({offline})=>{const e=document.querySelector(offline?'[data-testid="sf-play-pause"]':'[data-testid="topbar"] [data-testid="btn-play-pause"]');return e&&(/运行|播放/.test(e.textContent||'')||/运行|播放/.test(e.getAttribute('title')||'')||e.getAttribute('aria-label')==='运行'||e.getAttribute('aria-pressed')==='false');},{offline},{timeout:5000});
+   if(!offline)await page.waitForFunction(()=>{
+     const c=document.querySelector('[data-testid="simulation-canvas"]'),scope=document.querySelector('[data-testid="uplot-container"]'),bar=document.querySelector('[data-testid="topbar"]');
+     const r=JSON.parse(c?.dataset.rigidRollingRendered||'null'),t=Number(bar?.textContent?.match(/t\s*=\s*([\d.]+)\s*s/)?.[1]);
+     return r&&scope?.dataset.scopeTimeType==='elapsed'&&Number(scope.dataset.sampleCount)>1&&Math.abs(Number(scope.dataset.lastSampleT)-r.t)<1e-9&&Math.abs(t-r.t)<=.00501;
+   },null,{timeout:5000});
    return sync(expected);
  };
  const formulas=async ids=>{

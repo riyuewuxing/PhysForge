@@ -1,5 +1,5 @@
 import { CLASSROOM_GRAVITY, degToRad } from '@physforge/physics-core';
-import type { DiagramIR, DiagramPrimitive } from '@physforge/sim-sdk';
+import { createWorldMapper, type DiagramIR, type DiagramPrimitive, type Viewport } from '@physforge/sim-sdk';
 import { rollingQuantities, SHAPE_INERTIA_COEFF, type RigidBodyShape, type RigidRollingParams, type RigidRollingState } from './engine.js';
 
 type Point={x:number;y:number};
@@ -101,8 +101,26 @@ export function rollingItems(s:RigidRollingState,p:RigidRollingParams):RollingIt
   }
   return items;
 }
+export type RollingSafeRect={left:number;right:number;top:number;bottom:number};
+export function rollingWorldBounds(p:RigidRollingParams){
+  const race=p.scenario==='incline-race';
+  return {minX:-2.28,minY:race?-2.37:-1.76,maxX:2.28,maxY:race?2.43:1.82};
+}
+export function rollingViewBounds(p:RigidRollingParams,v:Viewport):RollingSafeRect{
+  const b=rollingWorldBounds(p),m=createWorldMapper(v);
+  const a=m.toScreen(b.minX,b.maxY),z=m.toScreen(b.maxX,b.minY);
+  return {left:a.x,right:z.x,top:a.y,bottom:z.y};
+}
+export function fitRollingViewport(p:RigidRollingParams,v:Viewport,safe:RollingSafeRect):Viewport|null{
+  const b=rollingWorldBounds(p),base=.24*Math.min(v.width,v.height);
+  const ppm=Math.min((safe.right-safe.left)/(b.maxX-b.minX),(safe.bottom-safe.top)/(b.maxY-b.minY));
+  if(!Number.isFinite(ppm)||!Number.isFinite(base)||ppm<=0||base<=0)return null;
+  return {...v,scale:ppm/base,
+    offsetX:(safe.left+safe.right)/2-.45*v.width-(b.minX+b.maxX)*ppm/2,
+    offsetY:(safe.top+safe.bottom)/2-.5*v.height+(b.minY+b.maxY)*ppm/2};
+}
 export function rollingDiagram(s:RigidRollingState,p:RigidRollingParams):DiagramIR {
   const race=p.scenario==='incline-race';
-  return {width:900,height:race?980:680,viewBox:{minX:-2.28,minY:race?-2.37:-1.76,maxX:2.28,maxY:race?2.43:1.82},
+  return {width:900,height:race?980:680,viewBox:rollingWorldBounds(p),
     title:race?'四刚体斜面理想纯滚动竞速':'水平刚体滑滚转换与接触点速度',primitives:rollingItems(s,p).map(x=>x.primitive)};
 }
