@@ -102,12 +102,29 @@ export async function auditSceneHeadless(
 
   const steps = Math.max(1, options.steps ?? 40);
   const dt = options.dt ?? 0.02;
+  const staticAnalytic = plugin.timeSemantics === 'static-analytic';
   try {
-    for (let i = 0; i < steps; i++) {
-      const step=plugin.engine.step(state,resolvedParams,dt);
-      state=step.nextState;
-      if(step.advancedTime===0)throw new Error('Engine did not advance; cannot certify headless physics.');
-      if(step.halt)break;
+    if (staticAnalytic) {
+      // Static experiments still exercise their solver and invariants. Only
+      // an explicitly declared model can certify a zero-time terminal result.
+      const initialObs = plugin.engine.computeObservables(initial, resolvedParams);
+      if (initialObs.t !== 0 || Object.values(initialObs).some(v => !Number.isFinite(v))) {
+        throw new Error('Static analytic initial observations must be finite with t=0.');
+      }
+      const step = plugin.engine.step(state, resolvedParams, dt);
+      state = step.nextState;
+      if (step.advancedTime !== 0 || step.halt !== true || step.events.length !== 0) {
+        throw new Error('Static analytic solver must explicitly halt without advancing time or emitting time events.');
+      }
+      const finalObs = plugin.engine.computeObservables(state, resolvedParams);
+      if (finalObs.t !== 0) throw new Error('Static analytic solver advanced physical time.');
+    } else {
+      for (let i = 0; i < steps; i++) {
+        const step=plugin.engine.step(state,resolvedParams,dt);
+        state=step.nextState;
+        if(step.advancedTime===0)throw new Error('Engine did not advance; cannot certify headless physics.');
+        if(step.halt)break;
+      }
     }
   } catch (err) {
     plugin.engine.disposeState?.(state);
@@ -131,6 +148,7 @@ export async function auditSceneHeadless(
   const invariants = plugin.engine.checkInvariants
     ? plugin.engine.checkInvariants(state, initial, resolvedParams)
     : [];
+  if (staticAnalytic && invariants.length === 0) errors.push('Static analytic certification requires explicit physical invariants.');
   for (const inv of invariants) {
     if (!inv.passed) {
       errors.push(
