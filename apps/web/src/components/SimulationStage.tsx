@@ -46,6 +46,7 @@ import type {WaveFdtdState} from '../../../../simulations/wave-2d-ripple-fdtd/en
 type RippleStagePlugin=typeof import('../../../../simulations/wave-2d-ripple-fdtd/plugin.js').wave2dRippleFdtdPlugin;
 import type {TransformerGridParams} from '../../../../simulations/em-transformer-grid/engine.js';
 type TransformerStagePlugin=typeof import('../../../../simulations/em-transformer-grid/plugin.js').emTransformerGridPlugin;
+import type {ThermoCycleMdState} from '../../../../simulations/thermo-cycles-kinetic-md/engine.js';
 import type {ThermoGasState} from '../../../../simulations/thermo-piston-gas-laws/engine.js';
 import type { ClassroomTheme, TelemetrySummary } from '../store/useClassroomStore.js';
 import { isSimulationPluginV3, resolvePluginParams } from '@physforge/sim-sdk';
@@ -300,7 +301,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const rippleStage=plugin.meta.id==='wave-2d-ripple-fdtd';
   const transformerStage=plugin.meta.id==='em-transformer-grid';
   const waveOpticsStage=plugin.meta.id==='optics-wave-interference';
-  const thermoStaticStage=plugin.meta.id==='thermo-piston-gas-laws'&&params.mode!=='stop-pin-cylinder';
+  const thermoStage=plugin.meta.id==='thermo-piston-gas-laws';
+  const thermalCycleStage=plugin.meta.id==='thermo-cycles-kinetic-md';
+  const thermoStaticStage=(thermoStage&&params.mode!=='stop-pin-cylinder')||(thermalCycleStage&&params.mode!=='kinetic-md-box');
   const shmCameraKeyRef=useRef('');
   const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
@@ -347,7 +350,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.getTelemetryChannels?channels:plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics','mech-conical-turntable','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','wave-vibration-coupling'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined,plugin.getTelemetryChannels?params.template:undefined,capacitorStage?params.oilDropEnabled:undefined,magneticStage?params.geometryType:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics','mech-conical-turntable','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','wave-vibration-coupling'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined,plugin.getTelemetryChannels?params.template:undefined,capacitorStage?params.oilDropEnabled:undefined,magneticStage?params.geometryType:undefined,thermalCycleStage?params.mode:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -1182,6 +1185,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       canvas.dataset.lcRendered=JSON.stringify({t:frame.t,mode:pm.mode,inductanceH:pm.inductanceH,capacitanceF:pm.capacitanceF,resistanceR:pm.resistanceR,initialChargeC:pm.initialChargeC,driveVoltAmpUm:pm.driveVoltAmpUm,driveOmega:pm.driveOmega,...p.engine.computeObservables(drawState,pm)});
       canvas.dataset.lcView=JSON.stringify({bounds:b,width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,safe:lcSafeRef.current?.safe});
     }
+    if(p.meta.id==='thermo-cycles-kinetic-md'&&frame&&drawState!==null){
+      const s=drawState as ThermoCycleMdState;
+      canvas.dataset.thermalRendered=JSON.stringify({...pm,outerTime:frame.t,cycle:s.cycle,initialKineticEnergy:s.initialKineticEnergy,boxSize:s.boxSize,gasSpeeds:s.particles.filter(q=>q.mass===1).map(q=>Math.hypot(q.vx,q.vy)),pollenCount:s.particles.filter(q=>q.mass>2).length,wallGap:s.particles.reduce((m,q)=>Math.min(m,q.x-q.radius,q.y-q.radius,s.boxSize-q.x-q.radius,s.boxSize-q.y-q.radius),s.boxSize),trailCount:s.brownianTrail.length,...p.engine.computeObservables(drawState,pm)});
+    }
     if(p.meta.id==='thermo-piston-gas-laws'&&frame&&drawState!==null){
       const s=drawState as ThermoGasState;
       canvas.dataset.thermoRendered=JSON.stringify({...pm,outerTime:frame.t,pvHistory:s.pvHistory,pumpStages:s.pumpStages,events:s.events,...p.engine.computeObservables(drawState,pm)});
@@ -1736,7 +1743,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const equilibriumScope=plugin.meta.id==='mech-dynamic-equilibrium';
   const constrainedScope=plugin.meta.id==='mech-constrained-velocity';
   const projectileScope=plugin.meta.id==='mech-projectile-coupling';
-  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||electroStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||magneticStage||waveStage||rippleStage;
+  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope||contactStage||verticalStage||turntableStage||springStage||collisionStage||shmStage||electroStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||magneticStage||waveStage||rippleStage||thermoStage||thermalCycleStage;
   const contactPair=contactStage&&((channelA==='vBlock'&&channelB==='vCarrier')||(channelA==='vCarrier'&&channelB==='vBlock'));
   const semanticScope=heroScope||measuredScope;
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
@@ -1778,7 +1785,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         {
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
-          values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + 's' : `${v.toFixed(1)}s`),
+          values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + (thermalCycleStage?'*':'s') : `${v.toFixed(1)}s`),
           ...(deviceScope ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : {}),
           ...(heroScope ? { size: 30 } : measuredScope ? { size: 24 } : {})
         },
@@ -1794,7 +1801,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }] : [])
       ],
       series: [
-        { label: '时间 t (s)' },
+        { label: thermalCycleStage?'约化时间 t*':'时间 t (s)' },
         {
           label: specA ? `${specA.label} (${specA.unit})` : '通道 A',
           stroke: scopeColorA,
@@ -2235,7 +2242,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : measuredScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
-            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={rippleStage?'ripple-scope-empty':waveStage?'wave-scope-empty':magneticStage?'magnetic-scope-empty':lcStage?'lc-scope-empty':generatorStage?'generator-scope-empty':eddyStage?'eddy-scope-empty':wireStage?'wire-scope-empty':acStage?'ac-scope-empty':capacitorStage?'capacitor-scope-empty':electroStage?'electro-scope-empty':shmStage?'shm-scope-empty':collisionStage?'collision-scope-empty':springStage?'spring-scope-empty':turntableStage?'turntable-scope-empty':verticalStage?'vertical-scope-empty':contactStage?'contact-scope-empty':equilibriumScope?'equilibrium-scope-empty':constrainedScope?'constrained-scope-empty':projectileScope?'projectile-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={thermalCycleStage?'f02-scope-empty':thermoStage?'f01-scope-empty':rippleStage?'ripple-scope-empty':waveStage?'wave-scope-empty':magneticStage?'magnetic-scope-empty':lcStage?'lc-scope-empty':generatorStage?'generator-scope-empty':eddyStage?'eddy-scope-empty':wireStage?'wire-scope-empty':acStage?'ac-scope-empty':capacitorStage?'capacitor-scope-empty':electroStage?'electro-scope-empty':shmStage?'shm-scope-empty':collisionStage?'collision-scope-empty':springStage?'spring-scope-empty':turntableStage?'turntable-scope-empty':verticalStage?'vertical-scope-empty':contactStage?'contact-scope-empty':equilibriumScope?'equilibrium-scope-empty':constrainedScope?'constrained-scope-empty':projectileScope?'projectile-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽
