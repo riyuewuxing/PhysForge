@@ -7,6 +7,8 @@ import {
   checkInvariants,
   createInitialState,
   evalBiotSavartB,
+  isMagneticFieldDefinedAt,
+  computeObservables,
   stepMagnetic3d,
   trace3dFieldLines,
   getMagneticDisplayFieldLines,
@@ -305,4 +307,17 @@ describe('E10 reversed fields and degeneracy',()=>{
       expect(s.lorentzForce).toEqual({x:0,y:0,z:0});
     }
   });
+});
+
+it('explicitly rejects ideal filament measurements without leaking the finite compatibility sentinel',()=>{
+  const p={...getPreset(2),geometryType:'straight-wire' as const,currentI:2},initial=createInitialState(p);
+  expect(isMagneticFieldDefinedAt({x:0,y:0,z:0},p)).toBe(false);
+  expect(isMagneticFieldDefinedAt({x:0,y:0,z:5},p)).toBe(true);
+  expect(isMagneticFieldDefinedAt({x:0,y:0,z:0},{...p,currentI:0})).toBe(true);
+  const invalid={...initial,position:{x:0,y:0,z:0}};
+  const r=stepMagnetic3d(invalid,p,.01);
+  expect(r.halt).toBe(true);expect(r.advancedTime).toBe(0);
+  const o=computeObservables(r.nextState);
+  expect(o.fieldDefined).toBe(0);expect(o.bMagT).toBeUndefined();expect(o.ax).toBeUndefined();
+  expect(checkInvariants(r.nextState,initial,p).some(x=>!x.passed)).toBe(true);
 });

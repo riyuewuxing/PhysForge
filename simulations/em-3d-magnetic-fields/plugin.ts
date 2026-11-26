@@ -1,8 +1,8 @@
 import { magnetic3dStoryDecks } from './storyDecks.js';
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type LiveFormulaSpec, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { magnetic3dPresets } from './presets.js';
 import {
-  buildConductorSegments,
+  buildMagneticConductorPaths,
   checkInvariants,
   computeObservables,
   createInitialState,
@@ -25,7 +25,7 @@ export function magnetic3dDefaultVisibleHeight(params: Magnetic3dParams, aspect:
   switch (params.geometryType) {
     case 'finite-solenoid': return Math.max(5 * R, 3.6 * R / (0.72 * a));
     case 'straight-wire':
-    case 'parallel-wires': return Math.max(5.8, 9.2 / (0.68 * a));
+    case 'parallel-wires': return Math.max(4.5, 8.8 / (0.78 * a));
     case 'single-loop':
     case 'helmholtz-coil': return Math.max(4.8 * R, 3.2 * R / (0.72 * a));
     case 'uniform-helix': return Math.max(4.8, 4.5 / a);
@@ -149,6 +149,91 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
   }
 ];
 
+
+type Tone='wire'|'field'|'trail'|'velocity'|'force'|'muted'|'ink';
+type Mark={primitive:DiagramPrimitive;tone:Tone;solid?:boolean};
+type Point={x:number;y:number};
+const side=(p:{x:number;y:number;z:number}):Point=>({x:p.z,y:p.y});
+/** All primary geometry stays in the exact 3D morph plane z-y.
+ * Axial wires overlap in that projection, so show a separately labeled
+ * transverse x-y section rather than moving the actual conductor. */
+export function magneticProjectionScene(s:Magnetic3dState,p:Magnetic3dParams,layers:ReadonlySet<string>):Mark[]{
+  const marks:Mark[]=[],R=Math.max(.2,p.radiusR),wire=p.geometryType==='straight-wire'||p.geometryType==='parallel-wires';
+  const add=(primitive:DiagramPrimitive,tone:Tone,solid=false)=>marks.push({primitive,tone,solid});
+  const line=(a:Point,b:Point,tone:Tone,dashed=false)=>add({kind:'line',x1:a.x,y1:a.y,x2:b.x,y2:b.y,dashed},tone);
+  const circle=(x:number,y:number,r:number,tone:Tone,fill=false)=>add({kind:'circle',cx:x,cy:y,r,fill},tone,fill);
+  const label=(x:number,y:number,text:string,tone:Tone='ink')=>add({kind:'text',x,y,text,align:'middle'},tone);
+  const poly=(points:Point[],tone:Tone)=>{if(points.length>=2)add({kind:'polyline',points},tone);};
+  const arrow=(a:Point,b:Point,tone:Tone)=>{if(Math.hypot(a.x-b.x,a.y-b.y)>1e-8)add({kind:'arrow',x1:a.x,y1:a.y,x2:b.x,y2:b.y},tone);};
+  const direction=(points:Point[],tone:Tone,size:number)=>{
+    let best:{a:Point;b:Point;d:number}|undefined;
+    for(let i=1;i<points.length;i++){const a=points[i-1]!,b=points[i]!,d=Math.abs(i-points.length/2);if(Math.hypot(b.x-a.x,b.y-a.y)>1e-8&&(!best||d<best.d))best={a,b,d};}
+    if(!best)return;const dx=best.b.x-best.a.x,dy=best.b.y-best.a.y,n=Math.hypot(dx,dy),x=(best.a.x+best.b.x)/2,y=(best.a.y+best.b.y)/2;
+    arrow({x:x-size*dx/n,y:y-size*dy/n},{x:x+size*dx/n,y:y+size*dy/n},tone);
+  };
+  if(layers.has('conductors')){
+    for(const path of buildMagneticConductorPaths(p))if(path.length)poly([side(path[0]!.a),...path.map(q=>side(q.b))],'wire');
+    if(p.currentI!==0&&!wire&&p.geometryType!=='uniform-helix'){
+      const turns=Math.max(4,Math.min(16,Math.round(p.solenoidTurns))),zs=p.geometryType==='single-loop'?[0]:p.geometryType==='helmholtz-coil'?[-.5*R,.5*R]:Array.from({length:turns},(_,j)=>-1.2*R+2.4*R*j/(turns-1));
+      for(const z of zs)for(const y of [-R,R]){
+        const r=.075*R;circle(z,y,r,'wire');if(y*p.currentI>0)circle(z,y,.022*R,'wire',true);
+        else{const a=r*.48;line({x:z-a,y:y-a},{x:z+a,y:y+a},'wire');line({x:z-a,y:y+a},{x:z+a,y:y-a},'wire');}
+      }
+    }
+    if(wire&&p.currentI!==0)for(const z of [-2.5,0,2.5])arrow({x:z-.22*Math.sign(p.currentI),y:0},{x:z+.22*Math.sign(p.currentI),y:0},'wire');
+  }
+  if(layers.has('fieldLines3d')){
+    const lines=getMagneticDisplayFieldLines(p);
+    for(const points of lines){const projected=points.map(side);poly(projected,'field');direction(projected,'field',.045*R);}
+  }
+  if(wire){
+    const center={x:2.45,y:2.0*R},scale=.52,section=(p:{x:number;y:number}):Point=>({x:center.x+scale*p.x,y:center.y+scale*p.y});
+    const half=1.1*R,lo={x:center.x-half,y:center.y-half},hi={x:center.x+half,y:center.y+half};
+    add({kind:'rect',x:lo.x,y:lo.y,width:2*half,height:2*half},'muted');
+    label(center.x,hi.y+.16*R,'横截面 x-y · +z 出纸面','muted');
+    if(layers.has('fieldLines3d')){
+      const mid=getMagneticDisplayFieldLines(p).filter(q=>Math.abs(q[0]?.z??99)<1e-9);
+      for(const q of mid){const pts=q.map(section);poly(pts,'field');direction(pts,'field',.035*R);}
+    }
+    if(layers.has('conductors')){
+      const xs=p.geometryType==='straight-wire'?[0]:[-.8*R,.8*R];
+      for(const x of xs){const a=section({x,y:0}),r=.08*R;circle(a.x,a.y,r,'wire');
+        if(p.currentI>0)circle(a.x,a.y,.022*R,'wire',true);
+        if(p.currentI<0){const d=r*.55;line({x:a.x-d,y:a.y-d},{x:a.x+d,y:a.y+d},'wire');line({x:a.x-d,y:a.y+d},{x:a.x+d,y:a.y-d},'wire');}
+      }
+    }
+    label(center.x,lo.y-.16*R,p.geometryType==='parallel-wires'?'侧视重合 · 截面分离':'有限导线 · 横截面','muted');
+  }
+  poly(s.trail.map(side),'trail');const pos=side(s.position);circle(pos.x,pos.y,Math.max(.033,.04*R),'trail',true);
+  if(layers.has('handednessTriad')){
+    for(const [v,tone,name] of [[s.velocity,'velocity','v'],[s.bAtParticle,'field','B'],[s.lorentzForce,'force','a洛']] as const){
+      if(tone!=='velocity'&&!s.fieldDefined)continue;
+      const n=Math.hypot(v.x,v.y,v.z);if(n<=1e-10)continue;
+      // Same relative direction as the actual 3D vector. Projection may vanish;
+      // an out-of-plane vector is indicated by a dot or cross, never a fake arrow.
+      const d=side(v),size=.55*Math.max(.6,R),end={x:pos.x+size*d.x/n,y:pos.y+size*d.y/n};
+      if(Math.hypot(end.x-pos.x,end.y-pos.y)<.018*R){
+        const r=.07*R;circle(pos.x,pos.y,r,tone);if(v.x<0)circle(pos.x,pos.y,.02*R,tone,true);else{const h=r*.5;line({x:pos.x-h,y:pos.y-h},{x:pos.x+h,y:pos.y+h},tone);line({x:pos.x-h,y:pos.y+h},{x:pos.x+h,y:pos.y-h},tone);}
+        label(pos.x+.14*R,pos.y+.14*R,name+' 垂直纸面',tone);
+      }else{arrow(pos,end,tone);label(end.x,end.y+.12*R,name,tone);}
+    }
+  }
+  return marks;
+}
+export function magneticProjectionBounds(s:Magnetic3dState,p:Magnetic3dParams){
+  const marks=magneticProjectionScene(s,p,new Set(['conductors','fieldLines3d','handednessTriad']));
+  let minX=-1,maxX=1,minY=-1,maxY=1;
+  const include=(x:number,y:number,r=0)=>{minX=Math.min(minX,x-r);maxX=Math.max(maxX,x+r);minY=Math.min(minY,y-r);maxY=Math.max(maxY,y+r);};
+  for(const {primitive:q} of marks){
+    if(q.kind==='line'||q.kind==='arrow'){include(q.x1,q.y1);include(q.x2,q.y2);}
+    else if(q.kind==='polyline'||q.kind==='trajectory')for(const v of q.points)include(v.x,v.y);
+    else if(q.kind==='circle')include(q.cx,q.cy,q.r);
+    else if(q.kind==='text'||q.kind==='mathLabel')include(q.x,q.y,.15);
+    else if(q.kind==='rect'){include(q.x,q.y);include(q.x+q.width,q.y+q.height);}
+  }
+  const pad=.18*Math.max(1,p.radiusR);return {minX:minX-pad,maxX:maxX+pad,minY:minY-pad,maxY:maxY+pad};
+}
+
 export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Magnetic3dParams, Magnetic3dState>({
   meta: {
     id: 'em-3d-magnetic-fields',
@@ -159,6 +244,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     version: '2.0.0'
   },
   renderMode: 'three3d',
+  defaultView:{minScale:.0001,scale:(p,v)=>Math.max(.0001,Math.min((v.width-50)/(p.geometryType==='straight-wire'||p.geometryType==='parallel-wires'?9.5:8*Math.max(.65,p.radiusR)),(v.height-50)/(p.geometryType==='straight-wire'||p.geometryType==='parallel-wires'?5.2*Math.max(.65,p.radiusR):6.5*Math.max(.65,p.radiusR)))/(.24*Math.min(v.width,v.height))),offsetRatioX:.05},
   paramSchema,
   getParamFields:p=>{const keys=p.geometryType==='uniform-helix'?['geometryType','uniformBz','qOverM','vPerp','vParallel']:p.geometryType==='finite-solenoid'?['geometryType','currentI','radiusR','solenoidTurns','qOverM','vPerp','vParallel']:p.geometryType==='straight-wire'?['geometryType','currentI','qOverM','vPerp','vParallel','radiusR']:['geometryType','currentI','radiusR','qOverM','vPerp','vParallel'];return keys.flatMap(k=>paramSchema.filter(f=>f.key===k));},
   presets: magnetic3dPresets,
@@ -188,154 +274,29 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     }),
     importScene: (dsl) => dsl.params as Partial<Magnetic3dParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'trajectory', points: state.trail.map((p) => { const q = magnetic3dDisplayPoint(p); return { x: q.x, y: q.y }; }), strokeWidth: 1.5 },
-      { kind: 'circle', cx: state.position.z, cy: state.position.y, r: 0.08, fill: true },
-      {
-        kind: 'mathLabel',
-        x: 1.8,
-        y: 1.5,
-        text: params.geometryType==='uniform-helix'?`B_z=${params.uniformBz}\\text{T}`:`I=${params.currentI}\\text{A},\\; R=${params.radiusR.toFixed(1)}\\text{m}`,
-        align: 'end'
-      }
-    ];
-    return {
-      width: 680,
-      height: 440,
-      viewBox: { minX: -2.2, minY: -2.2, maxX: 2.2, maxY: 2.2 },
-      title: '3D 电磁空间场二维侧视配图',
-      primitives
-    };
+  exportDiagramIR:(s,p)=>{
+    const viewBox=magneticProjectionBounds(s,p),primitives=magneticProjectionScene(s,p,new Set(['conductors','fieldLines3d','handednessTriad'])).map(m=>m.primitive);
+    const caption=p.geometryType==='uniform-helix'?'Bz='+p.uniformBz.toFixed(2)+' T · q/m='+p.qOverM.toFixed(2)+' C/kg':'I='+p.currentI.toFixed(2)+' A · z-y 侧投影';
+    primitives.push({kind:'text',x:(viewBox.minX+viewBox.maxX)/2,y:viewBox.maxY+.08,text:caption,align:'middle'});
+    viewBox.maxY+=.35;
+    return {width:960,height:540,viewBox,title:'空间磁场二维侧投影（矢量长度仅示意）',primitives};
   },
-  // Pure 2D XY projection fallback for non-WebGL headless / singlefile inspection
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const m = createWorldMapper(viewport);
-    const project3D = (p: { x: number; y: number; z: number }) => { const q = magnetic3dDisplayPoint(p); return m.toScreen(q.x, q.y); };
-
-    ctx.save();
-    if (activeLayers.has('conductors')) {
-      const segs = buildConductorSegments(params);
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 2.4;
-      ctx.beginPath();
-      for (const s of segs) {
-        const a = project3D(s.a);
-        const b = project3D(s.b);
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-      }
-      ctx.stroke();
+  renderCanvas:(ctx,s,p,v,layers)=>{
+    const m=createWorldMapper(v),paper=v.theme==='projector',colors:Record<Tone,string>=paper?{wire:'#92400e',field:'#0369a1',trail:'#b45309',velocity:'#92400e',force:'#be123c',muted:'#475569',ink:'#0f172a'}:{wire:'#eabf94',field:'#67e8f9',trail:'#fbbf24',velocity:'#fbbf24',force:'#fb7185',muted:'#94a3b8',ink:'#e2e8f0'};
+    const labels:CanvasLabel[]=[];ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+    for(const [i,{primitive:q,tone,solid}] of magneticProjectionScene(s,p,layers).entries()){
+      const color=colors[tone];ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=tone==='field'?1.2:tone==='muted'?1.2:2.4;
+      ctx.globalAlpha=tone==='field'&&q.kind==='polyline'?.55:1;ctx.shadowBlur=!paper&&tone!=='muted'&&q.kind!=='text'?tone==='field'?3:6:0;ctx.shadowColor=color;
+      if(q.kind==='text'){const a=m.toScreen(q.x,q.y);labels.push({id:'e10-flat-'+i,x:a.x,y:a.y,text:q.text,color,font:'12px sans-serif'});}
+      else if(q.kind==='line'||q.kind==='arrow'){
+        const a=m.toScreen(q.x1,q.y1),b=m.toScreen(q.x2,q.y2);ctx.setLineDash(q.dashed?[4,4]:[]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);
+        if(q.kind==='arrow'){const dx=b.x-a.x,dy=b.y-a.y,n=Math.hypot(dx,dy);if(n>1){const u=dx/n,w=dy/n,h=Math.min(10,Math.max(3,n*.36));ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-h*u+h*.55*w,b.y-h*w-h*.55*u);ctx.lineTo(b.x-h*u-h*.55*w,b.y-h*w+h*.55*u);ctx.closePath();ctx.fill();}}
+      }else if(q.kind==='polyline'||q.kind==='trajectory'){
+        const points=q.points;if(!points.length)continue;const a=m.toScreen(points[0]!.x,points[0]!.y);ctx.beginPath();ctx.moveTo(a.x,a.y);for(const point of points.slice(1)){const b=m.toScreen(point.x,point.y);ctx.lineTo(b.x,b.y);}ctx.stroke();
+      }else if(q.kind==='circle'){const a=m.toScreen(q.cx,q.cy);ctx.beginPath();ctx.arc(a.x,a.y,Math.max(q.fill?1.5:2.8,m.len(q.r)),0,2*Math.PI);if(solid)ctx.fill();else ctx.stroke();}
+      else if(q.kind==='rect'){const a=m.toScreen(q.x,q.y+q.height),b=m.toScreen(q.x+q.width,q.y);ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);}
     }
-
-    if (activeLayers.has('fieldLines3d')) {
-      const lines = getMagneticDisplayFieldLines(params);
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
-      ctx.lineWidth = 1.4;
-      for (const pts of lines) {
-        if (pts.length < 2) continue;
-        ctx.beginPath();
-        const p0 = project3D(pts[0]!);
-        ctx.moveTo(p0.x, p0.y);
-        for (let i = 1; i < pts.length; i++) {
-          const pi = project3D(pts[i]!);
-          ctx.lineTo(pi.x, pi.y);
-        }
-        ctx.stroke();
-
-        const midIndex = Math.floor((pts.length - 1) / 2);
-        let direction: { ax: number; ay: number; bx: number; by: number; distance: number } | null = null;
-        for (let index = 1; index < pts.length; index++) {
-          const a = project3D(pts[index - 1]!);
-          const b = project3D(pts[index]!);
-          const distance = Math.hypot(b.x - a.x, b.y - a.y);
-          if (distance <= 1e-3 || (direction && Math.abs(index - midIndex) >= direction.distance)) continue;
-          direction = { ax: a.x, ay: a.y, bx: b.x, by: b.y, distance: Math.abs(index - midIndex) };
-        }
-        if (direction) {
-          const dx = direction.bx - direction.ax, dy = direction.by - direction.ay;
-          const length = Math.hypot(dx, dy), ux = dx / length, uy = dy / length;
-          const halfLength = Math.max(3, m.len(0.055)), headLength = Math.max(2.5, m.len(0.035));
-          const centerX = 0.5 * (direction.ax + direction.bx), centerY = 0.5 * (direction.ay + direction.by);
-          const tipX = centerX + ux * halfLength, tipY = centerY + uy * halfLength;
-          const baseX = tipX - ux * headLength, baseY = tipY - uy * headLength;
-          const wing = headLength * 0.58;
-          ctx.save();
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
-          ctx.fillStyle = 'rgba(56, 189, 248, 0.95)';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(centerX - ux * halfLength, centerY - uy * halfLength);
-          ctx.lineTo(tipX, tipY);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(tipX, tipY);
-          ctx.lineTo(baseX - uy * wing, baseY + ux * wing);
-          ctx.lineTo(baseX + uy * wing, baseY - ux * wing);
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-    }
-
-    if (activeLayers.has('conductors') && params.currentI !== 0 &&
-        (params.geometryType === 'single-loop' || params.geometryType === 'helmholtz-coil' || params.geometryType === 'finite-solenoid')) {
-      const R = Math.max(0.2, params.radiusR);
-      const turns = Math.max(4, Math.min(16, Math.round(params.solenoidTurns)));
-      const centers = params.geometryType === 'single-loop'
-        ? [0]
-        : params.geometryType === 'helmholtz-coil'
-          ? [-0.5 * R, 0.5 * R]
-          : Array.from({ length: turns }, (_, index) => -1.2 * R + (index / (turns - 1)) * 2.4 * R);
-      const currentSign = Math.sign(params.currentI);
-      const markerRadius = Math.max(4, m.len(0.055));
-      const dotRadius = Math.max(1.5, markerRadius * 0.18);
-      ctx.strokeStyle = '#f59e0b';
-      ctx.fillStyle = '#f59e0b';
-      ctx.lineWidth = 1.7;
-      for (const zCenter of centers) {
-        for (const side of [1, -1] as const) {
-          const screen = project3D({ x: 0, y: side * R, z: zCenter });
-          const currentOutOfPage = side * currentSign > 0;
-          ctx.beginPath();
-          ctx.arc(screen.x, screen.y, markerRadius, 0, Math.PI * 2);
-          ctx.stroke();
-          if (currentOutOfPage) {
-            ctx.beginPath();
-            ctx.arc(screen.x, screen.y, dotRadius, 0, Math.PI * 2);
-            ctx.fill();
-          } else {
-            const arm = markerRadius * 0.45;
-            ctx.beginPath();
-            ctx.moveTo(screen.x - arm, screen.y - arm);
-            ctx.lineTo(screen.x + arm, screen.y + arm);
-            ctx.moveTo(screen.x - arm, screen.y + arm);
-            ctx.lineTo(screen.x + arm, screen.y - arm);
-            ctx.stroke();
-          }
-        }
-      }
-    }
-
-    if (state.trail.length > 1) {
-      ctx.strokeStyle = '#f4b44f';
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      const t0 = project3D(state.trail[0]!);
-      ctx.moveTo(t0.x, t0.y);
-      for (let i = 1; i < state.trail.length; i++) {
-        const ti = project3D(state.trail[i]!);
-        ctx.lineTo(ti.x, ti.y);
-      }
-      ctx.stroke();
-    }
-    const sp = project3D(state.position);
-    ctx.fillStyle = '#f4b44f';
-    ctx.beginPath();
-    ctx.arc(sp.x, sp.y, m.len(0.03), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    ctx.globalAlpha=1;ctx.shadowBlur=0;resolveAndDrawLabels(ctx,labels,v.width,v.height);ctx.restore();
   },
   getControlHandles: (state, params) => {
     const origin = {
@@ -389,6 +350,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     }
   ],
   formatFormulas: (state, params): import('@physforge/sim-sdk').FormulaDisplayItem[] => {
+    if(!state.fieldDefined)return [{id:'ideal-filament',label:'理想丝线奇异点 · 场无定义',latex:'\\text{理想丝线处不提供磁场测量}'}];
     const obs = computeObservables(state);
     const speed = obs.speed ?? 0;
     const specificEnergy = obs.ke ?? 0;

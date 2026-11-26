@@ -43,6 +43,8 @@ export interface Magnetic3dState {
   readonly bAtParticle: Vec3;
   readonly lorentzForce: Vec3;
   readonly speed0: number;
+  readonly fieldDefined: boolean;
+  readonly domainHalted: boolean;
   readonly events: readonly PhysicsEvent[];
 }
 
@@ -165,7 +167,25 @@ function finiteAxialWireB(pos:Vec3,x0:number,prefactor:number):Vec3 {
   const mag=prefactor*factor/rho;
   return {x:-mag*y/rho,y:mag*x/rho,z:0};
 }
+/** Numerical exclusion of exact ideal-filament singularities, not a wire radius. */
+export function isMagneticFieldDefinedAt(pos:Vec3,p:Magnetic3dParams):boolean{
+  if(p.geometryType==='uniform-helix'||p.currentI===0)return true;
+  const R=Math.max(.2,p.radiusR),tol=1e-8;
+  if(p.geometryType==='straight-wire'||p.geometryType==='parallel-wires'){
+    const xs=p.geometryType==='straight-wire'?[0]:[-.8*R,.8*R];
+    return xs.every(x=>Math.hypot(pos.x-x,pos.y,Math.max(0,Math.abs(pos.z)-4))>tol);
+  }
+  const turns=Math.max(4,Math.min(16,Math.round(p.solenoidTurns)));
+  const zs=p.geometryType==='single-loop'?[0]:p.geometryType==='helmholtz-coil'?[-.5*R,.5*R]:
+    Array.from({length:turns},(_,j)=>-1.2*R+2.4*R*j/(turns-1));
+  const dr=Math.hypot(pos.x,pos.y)-R;
+  return zs.every(z=>Math.hypot(dr,pos.z-z)>tol);
+}
+function scaledCross(v:Vec3,B:Vec3,qm:number):Vec3{
+  const a=cross3(v,B);return {x:qm*a.x||0,y:qm*a.y||0,z:qm*a.z||0};
+}
 export function evalBiotSavartB(pos: Vec3, params: Magnetic3dParams): Vec3 {
+  if(!isMagneticFieldDefinedAt(pos,params))return {x:0,y:0,z:0};
   if (params.geometryType === 'uniform-helix') {
     return { x: 0, y: 0, z: params.uniformBz };
   }
@@ -407,14 +427,15 @@ export function createInitialState(params: Magnetic3dParams): Magnetic3dState {
   const bAtParticle = evalBiotSavartB(pos, params);
   const scaleQm =
     params.geometryType === 'uniform-helix' ? params.qOverM : params.qOverM / MAG3D_SCALE.chargeUnit;
-  const fL = cross3(vel, bAtParticle);
+  const fieldDefined=isMagneticFieldDefinedAt(pos,params);
   return {
     t: 0,
     position: pos,
     velocity: vel,
     trail: [pos],
     bAtParticle,
-    lorentzForce: { x: scaleQm * fL.x, y: scaleQm * fL.y, z: scaleQm * fL.z },
+    lorentzForce: scaledCross(vel,bAtParticle,scaleQm),
+    fieldDefined,domainHalted:!fieldDefined,
     speed0: Math.hypot(vel.x, vel.y, vel.z),
     events: []
   };
@@ -427,6 +448,7 @@ export function stepMagnetic3d(
 ): StepResult<Magnetic3dState> {
   if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
   if (dt === 0) return { nextState: state, events: [] };
+  if(state.domainHalted)return {nextState:state,events:[],advancedTime:0,halt:true};
 
   const effQOverM =
     params.geometryType === 'uniform-helix' ? params.qOverM : params.qOverM / MAG3D_SCALE.chargeUnit;
@@ -437,15 +459,16 @@ export function stepMagnetic3d(
   const maxH=omega>0?Math.min(.004,.002/omega):.004;
   const subN=Math.max(1,Math.ceil(dt/maxH)),subH=dt/subN;
 
-  let curP = { position: state.position, velocity: state.velocity, t: state.t };
-  for (let i = 0; i < subN; i++) {
-    curP = stepBorisPusher(
-      curP,
-      (pos) => ({ E: { x: 0, y: 0, z: 0 }, B: evalBiotSavartB(pos, params) }),
-      effQOverM,
-      1.0,
-      subH
-    );
+  let curP={position:state.position,velocity:state.velocity,t:state.t};
+  let halted=!isMagneticFieldDefinedAt(curP.position,params);
+  for(let i=0;i<subN&&!halted;i++){
+    let invalid=false;
+    const next=stepBorisPusher(curP,pos=>{
+      if(!isMagneticFieldDefinedAt(pos,params))invalid=true;
+      return {E:{x:0,y:0,z:0},B:evalBiotSavartB(pos,params)};
+    },effQOverM,1,subH);
+    if(invalid||!isMagneticFieldDefinedAt(next.position,params)){halted=true;break;}
+    curP=next;
   }
 
   const last = state.trail[state.trail.length - 1];
@@ -454,8 +477,8 @@ export function stepMagnetic3d(
   const trail = dist > 0.03 ? [...state.trail.slice(-300), np] : state.trail;
 
   const bAtParticle = evalBiotSavartB(np, params);
-  const fRaw = cross3(curP.velocity, bAtParticle);
-
+  const fieldDefined=isMagneticFieldDefinedAt(np,params);
+  const events:PhysicsEvent[]=halted?[{id:'ideal-filament-boundary',time:curP.t,label:'理想丝线奇异域：保留最后有效状态并暂停',position:np}]:[];
   return {
     nextState: {
       ...state,
@@ -464,9 +487,9 @@ export function stepMagnetic3d(
       velocity: curP.velocity,
       trail,
       bAtParticle,
-      lorentzForce: { x: effQOverM * fRaw.x, y: effQOverM * fRaw.y, z: effQOverM * fRaw.z }
+      lorentzForce: scaledCross(curP.velocity,bAtParticle,effQOverM),fieldDefined,domainHalted:halted,events
     },
-    events: []
+    events, ...(halted?{advancedTime:Math.max(0,curP.t-state.t),halt:true}:{})
   };
 }
 
@@ -480,13 +503,13 @@ export function computeObservables(state: Magnetic3dState): Record<string, numbe
     y: state.position.y,
     z: state.position.z,
     vx:state.velocity.x,vy:state.velocity.y,vz:state.velocity.z,
-    bxT:state.bAtParticle.x,byT:state.bAtParticle.y,bzT:state.bAtParticle.z,
+    fieldDefined:state.fieldDefined?1:0,domainHalted:state.domainHalted?1:0,
+    speed,ke,
+    ...(state.fieldDefined?{bxT:state.bAtParticle.x,byT:state.bAtParticle.y,bzT:state.bAtParticle.z,
     ax:state.lorentzForce.x,ay:state.lorentzForce.y,az:state.lorentzForce.z,
     bMagT:Math.hypot(state.bAtParticle.x,state.bAtParticle.y,state.bAtParticle.z),
     bMagMicroT: Math.hypot(state.bAtParticle.x, state.bAtParticle.y, state.bAtParticle.z) * 1e6,
-    speed,
-    ke,
-    vDotF
+    vDotF}:{})
   };
 }
 
@@ -501,6 +524,9 @@ export function checkInvariants(state:Magnetic3dState,initial?:Magnetic3dState,p
     report('磁加速度与速度正交',Math.abs(dot3(v,a))/Math.max(1e-12,norm(v)*norm(a)),1e-10),
     report('磁加速度与磁场正交',Math.abs(dot3(B,a))/Math.max(1e-20,norm(B)*norm(a)),1e-10)
   ];
+  if(params&&(!state.fieldDefined||!isMagneticFieldDefinedAt(state.position,params))){
+    out.push(report('理想丝线场定义域',1,0));return out;
+  }
   if(params){
     const expectedB=evalBiotSavartB(state.position,params),qm=params.geometryType==='uniform-helix'?params.qOverM:params.qOverM/MAG3D_SCALE.chargeUnit,cross=cross3(v,expectedB),
       expectedA={x:qm*cross.x,y:qm*cross.y,z:qm*cross.z};
