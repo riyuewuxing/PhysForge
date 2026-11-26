@@ -103,7 +103,8 @@ const ClassroomApp: React.FC = () => {
 
   const plugin = store.loadedPlugin;
   const thermalCycle=plugin.meta.id==='thermo-cycles-kinetic-md';
-  const thermoStatic=(plugin.meta.id==='thermo-piston-gas-laws'&&store.params.mode!=='stop-pin-cylinder')||(thermalCycle&&store.params.mode!=='kinetic-md-box');
+  const quantumStatic=plugin.meta.id==='modern-photoelectric-compton';
+  const thermoStatic=(plugin.meta.id==='thermo-piston-gas-laws'&&store.params.mode!=='stop-pin-cylinder')||(thermalCycle&&store.params.mode!=='kinetic-md-box')||quantumStatic;
   const v2Plugin = plugin as SimulationPluginV2<ParamRecord, unknown>;
   const liveFormulas = selectLiveFormulas(isSimulationPluginV3(plugin) ? plugin.liveFormulas : undefined, store.params);
   const storyNavigationRef = useRef<StoryNavigation | null>(null);
@@ -329,7 +330,7 @@ const ClassroomApp: React.FC = () => {
             {(plugin.meta.id==='builder-optics-ray'?OPTICS_TITLES[String(store.params.sceneMode)]:undefined) ?? WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title.replace(/\s*\([A-Z]\d+\)$/, '')}
           </div>
           <div className="font-mono text-[11px] tabular-nums text-slate-400">
-            {thermoStatic?(thermalCycle?'静态解析循环 · 调参比较':'独立等温状态 · 调参比较'):thermalCycle?`t* = ${store.telemetry.t.toFixed(2)}（约化）`:plugin.meta.id==='optics-wave-interference'?'静态归一化光强 · 调参比较':plugin.meta.id==='em-transformer-grid'?'稳态有效值 · 调参比较':`t = ${store.telemetry.t.toFixed(2)} s`}
+            {thermoStatic?(quantumStatic?'静态量子实验 · 调参比较':thermalCycle?'静态解析循环 · 调参比较':'独立等温状态 · 调参比较'):thermalCycle?`t* = ${store.telemetry.t.toFixed(2)}（约化）`:plugin.meta.id==='optics-wave-interference'?'静态归一化光强 · 调参比较':plugin.meta.id==='em-transformer-grid'?'稳态有效值 · 调参比较':`t = ${store.telemetry.t.toFixed(2)} s`}
           </div>
         </div>
 
