@@ -5,7 +5,7 @@ export const shmResonancePresets: readonly PresetSpec<ShmResonanceParams>[] = [
   {
     id: 'small-angle-pendulum-reference',
     name: '小角单摆等时性与参考圆对照 (2°)',
-    description: '验证小角周期 T=2π√(L/g) 与底部参考圆投影的严格同步性',
+    description: '对照小角周期 T₀=2π√(L/g)；参考圆表示线性角坐标的真实相位，非线性摆独立演化',
     curriculumNotes: '选择性必修一 · 单摆与简谐运动',
     params: {
       mode: 'pendulum-compare',
@@ -52,8 +52,8 @@ export const shmResonancePresets: readonly PresetSpec<ShmResonanceParams>[] = [
   },
   {
     id: 'forced-resonance-peak',
-    name: '受迫振动与共振曲线峰值 (ω_res=√(ω₀²-2γ²))',
-    description: '驱动频率逼近理论共振峰，振幅显著放大并锁定稳态受迫相位差',
+    name: '受迫振动与线性理论幅频峰',
+    description: '驱动频率逼近线性理论幅频峰；实际非线性摆独立积分，观察暂态、耗散与外力功',
     curriculumNotes: '选择性必修一 · 受迫振动与共振',
     params: {
       mode: 'forced-resonance',
@@ -65,5 +65,17 @@ export const shmResonancePresets: readonly PresetSpec<ShmResonanceParams>[] = [
       driveAccelAmp: 0.8,
       driveOmega: 3.065
     }
+  },
+  {
+    id:'zero-angle-equilibrium', name:'零初角 · 稳定平衡',
+    description:'没有人为最小摆角；静止平衡、零能量及退化参考圆。',
+    curriculumNotes:'选择性必修一 · 平衡位置',
+    params:{mode:'pendulum-compare',lengthL:1,gravityG:9.8,massM:1,initialAngleDeg:0,dampingGamma:0,driveAccelAmp:0,driveOmega:3}
+  },
+  {
+    id:'undamped-resonance', name:'无阻尼 · 线性共振奇点',
+    description:'ωd=ω₀=3 rad/s；非零驱动下线性理论无有限周期特解，真实非线性摆仍独立积分。',
+    curriculumNotes:'选择性必修一 · 模型适用范围',
+    params:{mode:'forced-resonance',lengthL:1,gravityG:9,massM:1,initialAngleDeg:0,dampingGamma:0,driveAccelAmp:0.8,driveOmega:3}
   }
 ];
