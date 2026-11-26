@@ -5,7 +5,7 @@ export const mechanicsErrorPresets: readonly PresetSpec<MechanicsErrorParams>[] 
   {
     id: 'af-under-compensated-f-intercept',
     name: '未平衡摩擦力（横轴正截距 F₀ = f - Mgsinθ）',
-    description: '水平轨道（θ=0）存在阻力 f=0.06N，外力须先克服静阻力才产生加速度，a-F 图线右移交正 F 轴',
+    description: '水平轨道（θ=0）存在阻力 f=0.06N，纸带已沿正方向运动，合力不足时减速；a-F 图线在正 F 轴过零',
     curriculumNotes: '必修第一册 第四章第 2 节 · 探究 a 与 F、m 关系的高考误差诊断',
     params: {
       scenario: 'under-compensated',

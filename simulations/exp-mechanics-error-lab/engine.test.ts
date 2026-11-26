@@ -2,6 +2,7 @@ import { resolvePluginParams, type SimulationPluginV2 } from '@physforge/sim-sdk
 import { describe, expect, it } from 'vitest';
 import { expMechanicsErrorLabPlugin } from './plugin.js';
 import { mechanicsErrorPresets } from './presets.js';
+import { afGeometry, graphItems, tapeGeometry } from './geometry.js';
 import {
   computeTrueCartAcceleration,
   createInitialState,
@@ -102,5 +103,46 @@ describe('F08 independent mechanics-error regressions (pre-fix)', () => {
       expect(point.y).toBeGreaterThanOrEqual(diagram.viewBox.minY);
       expect(point.y).toBeLessThanOrEqual(diagram.viewBox.maxY);
     }
+  });
+});
+
+describe('H57 F08 signed sampling and shared geometry',()=>{
+  it('keeps the tape moving forward while measuring a negative signed acceleration',()=>{
+    const p={...getPreset(0),cartMassKg:.1,hangerMassKg:.01,frictionForceN:.3,readingNoiseMm:0};
+    const s=solveMechanicsErrorAnalysis(p);
+    expect(s.aTrueMps2).toBeCloseTo((.098-.3)/.11,10);
+    expect(s.aTrueMps2).toBeLessThan(0);
+    expect(s.aDiffMeasuredMps2).toBeCloseTo(s.aTrueMps2,10);
+    for(let i=1;i<s.tapeDots.length;i++){
+      expect(s.tapeDots[i]!.timeS-s.tapeDots[i-1]!.timeS).toBeCloseTo(.1,12);
+      expect(s.tapeDots[i]!.posCm).toBeGreaterThan(s.tapeDots[i-1]!.posCm);
+    }
+    expect(s.analyticInterceptA).toBeCloseTo(-3,10);
+  });
+  it('keeps tape geometry affine, readings relative to ruler zero and differences invariant',()=>{
+    const p={...getPreset(2),cartMassKg:.1,hangerMassKg:.5,readingNoiseMm:0};
+    const s=createInitialState(p),a=tapeGeometry(s,{...p,rulerOffsetCm:-5}),b=tapeGeometry(s,{...p,rulerOffsetCm:20});
+    expect(a.scale).toBe(b.scale);
+    expect(a.dots.map(d=>d.x)).toEqual(b.dots.map(d=>d.x));
+    expect(b.zeroX-a.zeroX).toBeCloseTo(25*a.scale,12);
+    expect(b.offsetAtX(b.zeroX)).toBeCloseTo(20,12);
+    for(const d of b.dots)expect(d.x).toBeCloseTo(b.zeroX+d.reading*b.scale,12);
+    expect(a.dots[6]!.reading-a.dots[0]!.reading).toBeCloseTo(b.dots[6]!.reading-b.dots[0]!.reading,12);
+    expect(b.ticks.every(t=>t.x>=-1.7500001&&t.x<=1.7500001)).toBe(true);
+  });
+  it('shares the exact measured/analytic coordinates with export, with honest zero axes',()=>{
+    const p={...getPreset(0),cartMassKg:.1,frictionForceN:.3,readingNoiseMm:0};
+    const s=createInitialState(p),g=afGeometry(s,p);
+    expect(g.aMin).toBeLessThan(0);
+    expect(g.map(0,0).x).toBeCloseTo(g.bounds.left,12);
+    expect(g.map(0,0).y).toBeGreaterThan(g.bounds.bottom);
+    const items=graphItems(s,p),plugin=expMechanicsErrorLabPlugin as SimulationPluginV2<typeof p,typeof s>;
+    expect(plugin.exportDiagramIR!(s,p).primitives).toEqual(items.map(i=>i.primitive));
+    expect(g.data.theory[0]!.a).toBeCloseTo(-3,10);
+    expect(g.data.measured.map(q=>g.map(q.f,q.a)).every(q=>q.y>=g.bounds.bottom-1e-10&&q.y<=g.bounds.top+1e-10)).toBe(true);
+  });
+  it('rejects missing, malformed and out-of-domain CSV samples instead of silently mapping them to zero',()=>{
+    const p={...getPreset(0),phyphoxOverlayCsv:'F,a\n0.2;0.3\n;2\n1;;2\n1;Infinity\n-1;2\n3;101'};
+    expect(solveMechanicsErrorAnalysis(p).csvOverlayPoints).toEqual([{fAppN:.2,a:.3}]);
   });
 });
