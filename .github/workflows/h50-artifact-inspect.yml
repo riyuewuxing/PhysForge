@@ -1,0 +1,60 @@
+name: H50 artifact readback (isolated, do not merge)
+on:
+  push:
+    branches: [audit/h50-artifact-readback]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Verify public simulation screenshot evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c 'import PIL' || { python3 -m venv "$RUNNER_TEMP/review-env"; source "$RUNNER_TEMP/review-env/bin/activate"; timeout 60s pip install --quiet pillow; }
+          export REVIEW_ROOT="$RUNNER_TEMP/h50-review"
+          mkdir -p "$REVIEW_ROOT"
+          curl --fail --silent --show-error --location --max-time 90 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/15116271028/zip" -o "$REVIEW_ROOT/f05.zip"
+          curl --fail --silent --show-error --location --max-time 90 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/15115161451/zip" -o "$REVIEW_ROOT/f04.zip"
+          python3 - <<'PY'
+          import os, zipfile, hashlib, io, base64, pathlib, json
+          from PIL import Image, ImageOps, ImageDraw
+          root=pathlib.Path(os.environ['REVIEW_ROOT'])
+          tasks=[
+            ('f05','0007517d83917a3afd2b8bb06b039f8fc0147c4ac7668c0bde9be916def2c683','H49_F05'),
+            ('f04','80de185e18e0a311664b3c8b1aca7456fd5c3eb43b63b54b6e0e42ace70a31c5','H48_F04')
+          ]
+          for label,want,prefix in tasks:
+            file=root/(label+'.zip')
+            got=hashlib.sha256(file.read_bytes()).hexdigest()
+            if got!=want: raise RuntimeError('digest mismatch '+label)
+            with zipfile.ZipFile(file) as z:
+              if z.testzip() is not None: raise RuntimeError('CRC mismatch '+label)
+              pngs=[n for n in z.namelist() if n.endswith('.png')]
+              for n in pngs:
+                with Image.open(io.BytesIO(z.read(n))) as im: im.verify()
+              targets=[n for n in pngs if pathlib.Path(n).name.startswith(prefix)]
+              if not targets: raise RuntimeError('no target PNG '+label)
+              print('H50_ARTIFACT '+json.dumps(dict(label=label,sha256=got,entries=len(z.namelist()),pngs=len(pngs),targets=targets),ensure_ascii=True),flush=True)
+              for i in range(0,len(targets),4):
+                chunk=targets[i:i+4]
+                sheet=Image.new('RGB',(1600,530*((len(chunk)+1)//2)),'white')
+                draw=ImageDraw.Draw(sheet)
+                for j,n in enumerate(chunk):
+                  with Image.open(io.BytesIO(z.read(n))) as im:
+                    pic=ImageOps.contain(im.convert('RGB'),(800,500))
+                    x=(j%2)*800; y=(j//2)*530
+                    sheet.paste(pic,(x+(800-pic.width)//2,y))
+                    draw.text((x+8,y+505),pathlib.Path(n).name,fill='black')
+                out=io.BytesIO();sheet.save(out,'JPEG',quality=84,optimize=True)
+                enc=base64.b64encode(out.getvalue()).decode('ascii')
+                key=label+'-'+str(i//4)
+                for k in range(0,len(enc),3000):
+                  print('H50_IMAGE '+key+' '+str(k//3000)+' '+enc[k:k+3000],flush=True)
+              print('H50_COMPLETE '+label,flush=True)
+          PY
