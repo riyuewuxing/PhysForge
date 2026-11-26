@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from urllib.parse import urlencode
 import zipfile
 
 from PIL import Image
@@ -167,21 +168,46 @@ def gh_download(repo, run, name, dest):
                     "--name", name, "--dir", str(dest)], check=True, timeout=120)
 
 
+def exact_parent_runs(args):
+    """Search independent indexes; accept only exact parent SHA and audit workflow."""
+    root = f"repos/{args.repo}/actions"
+    primary = root + "/workflows/v31-polish-audit.yml/runs?" + urlencode(
+        {"head_sha": args.head, "status": "success", "per_page": 10})
+    queries = [primary]
+    if args.base_branch:
+        # The SHA-filtered index can omit a completed visual run. The branch
+        # index is discovery only: every candidate is still SHA/path checked.
+        queries.append(root + "/runs?" + urlencode(
+            {"branch": args.base_branch, "per_page": 100}))
+    seen = set()
+    for query in queries:
+        try:
+            runs = gh_json(query)["workflow_runs"]
+        except (subprocess.SubprocessError, OSError, ValueError, KeyError) as exc:
+            print("Baseline index unavailable:", str(exc), file=sys.stderr)
+            continue
+        print("Baseline index candidates:", len(runs))
+        for run in runs:
+            if (run.get("head_sha") != args.head
+                    or run.get("conclusion") != "success"
+                    or run.get("path", "").split("@", 1)[0] != ".github/workflows/v31-polish-audit.yml"
+                    or run.get("id") in seen or not run.get("id")):
+                continue
+            seen.add(run["id"])
+            yield run
+
+
 def resolve_base(args):
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
     # The base is the exact PR parent SHA, never a latest-run guess.
     try:
-        runs = gh_json(f"repos/{args.repo}/actions/workflows/v31-polish-audit.yml/runs"
-                       f"?head_sha={args.head}&status=success&per_page=10")["workflow_runs"]
-        for run in runs:
-            if run.get("head_sha") != args.head or run.get("conclusion") != "success":
-                continue
+        for run in exact_parent_runs(args):
             arts = gh_json(f"repos/{args.repo}/actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
             small = next((a for a in arts if not a["expired"] and
                           a["name"] == f"v31-polish-review-manifest-{args.phase}"), None)
             if small:
-                dest = out / "_previous_manifest"
+                dest = out / "_previous_manifest" / str(run["id"])
                 gh_download(args.repo, run["id"], small["name"], dest)
                 existing = read_baseline(dest / "manifest.json", args.head, args.phase)
                 if existing:
@@ -192,7 +218,7 @@ def resolve_base(args):
                         a["name"] == f"v31-polish-visual-{args.phase}"), None)
             if raw:
                 # Legacy recovery is runner-only; the Chat receives only target originals.
-                dest = out / "_legacy_raw"
+                dest = out / "_legacy_raw" / str(run["id"])
                 gh_download(args.repo, run["id"], raw["name"], dest)
                 m = pack(dest, out, args.head, args.phase, args.prefixes, targets_only=True,
                          source={"run_id": run["id"], "artifact_id": raw["id"],
@@ -214,6 +240,7 @@ def main():
     p.add_argument("--prefixes", default="")
     p.add_argument("--baseline", type=Path)
     p.add_argument("--base-sha")
+    p.add_argument("--base-branch", default="")
     p.add_argument("--repo")
     p.add_argument("--resolve-base", action="store_true")
     a = p.parse_args()

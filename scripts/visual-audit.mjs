@@ -1332,7 +1332,22 @@ async function auditF10Rolling(page,offline,select){
    await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible',timeout:5000});
    const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,file=path.join(OUT_DIR,prefix+name+'.svg');await svg.saveAs(file);
    const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!labels.every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F10 incorrect mode SVG '+name);
-   await preview.screenshot({path:path.join(OUT_DIR,prefix+name+'_svg.png')});await page.getByTestId('btn-close-export-studio').click();out[name+'Export']={bytes:Buffer.byteLength(bytes)};
+   await preview.screenshot({path:path.join(OUT_DIR,prefix+name+'_svg.png')});
+   const fit=await preview.evaluate(box=>{
+     const svg=box.querySelector('svg');if(!svg)return {ok:false,reason:'no svg'};
+     const r=svg.getBoundingClientRect(),vb=svg.viewBox.baseVal;
+     let left=0,top=0,right=window.innerWidth,bottom=window.innerHeight;
+     for(let a=svg.parentElement;a;a=a.parentElement){
+       const style=getComputedStyle(a),b=a.getBoundingClientRect(),x=b.left+a.clientLeft,y=b.top+a.clientTop;
+       if(/hidden|auto|scroll|clip/.test(style.overflowX)){left=Math.max(left,x);right=Math.min(right,x+a.clientWidth);}
+       if(/hidden|auto|scroll|clip/.test(style.overflowY)){top=Math.max(top,y);bottom=Math.min(bottom,y+a.clientHeight);}
+     }
+     const ratio=vb.width/vb.height,aspectError=Math.abs(r.width/r.height/ratio-1);
+     return {ok:r.width>0&&r.height>0&&r.left>=left-1&&r.top>=top-1&&r.right<=right+1&&r.bottom<=bottom+1&&aspectError<.01,
+             width:r.width,height:r.height,aspectError,rect:[r.left,r.top,r.right,r.bottom],visible:[left,top,right,bottom]};
+   });
+   if(!fit.ok)throw Error('F10 SVG preview clipped or distorted '+name+' '+JSON.stringify(fit));
+   await page.getByTestId('btn-close-export-studio').click();out[name+'Export']={bytes:Buffer.byteLength(bytes),fit};
  };
  const flatIds=['rolling-slip','rolling-friction','rolling-transition','rolling-momentum','rolling-heat'];
  const raceIds=['rolling-inertia','rolling-incline','rolling-static','rolling-energy'];

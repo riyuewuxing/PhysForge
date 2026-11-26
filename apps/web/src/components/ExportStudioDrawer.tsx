@@ -258,8 +258,14 @@ export const ExportStudioDrawer: React.FC<ExportStudioDrawerProps> = ({
               <div
                 data-testid="svg-preview-box"
                 className="rounded-xl border bg-white p-3 flex items-center justify-center overflow-auto"
-                dangerouslySetInnerHTML={{ __html: svgOutput }}
-              />
+              >
+                {/* Fit the complete intrinsic viewBox within the modal, without changing downloaded SVG bytes. */}
+                <div
+                  className="min-w-0 [&>svg]:block [&>svg]:w-full [&>svg]:h-auto"
+                  style={{ width: `min(100%, ${diagramIr.width}px, ${55 * diagramIr.width / diagramIr.height}vh)` }}
+                  dangerouslySetInnerHTML={{ __html: svgOutput }}
+                />
+              </div>
             </div>
           )}
 

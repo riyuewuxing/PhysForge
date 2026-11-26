@@ -1,12 +1,14 @@
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from PIL import Image
 
-from visual_review_pack import pack, read_baseline
+from visual_review_pack import exact_parent_runs, pack, read_baseline, resolve_base
 
 
 class ReviewPackTests(unittest.TestCase):
@@ -62,6 +64,45 @@ class ReviewPackTests(unittest.TestCase):
             self.assertEqual(m["selected_count"], 1)
             self.assertTrue(m["errors"])
             self.assertIsNone(read_baseline(root / "out/manifest.json", "head", "offline"))
+
+    def test_branch_index_recovers_exact_parent_without_guessing(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "out"
+            args = SimpleNamespace(repo="owner/repo", head="parent",
+                                   base_branch="polish/parent", phase="online",
+                                   prefixes=[], out=out)
+            path = ".github/workflows/v31-polish-audit.yml"
+            def run(i, sha="parent", workflow=path, conclusion="success"):
+                return dict(id=i, head_sha=sha, path=workflow, conclusion=conclusion)
+            def index(query):
+                if "head_sha=" in query:
+                    return {"workflow_runs": []}
+                if "branch=" in query:
+                    self.assertIn("polish%2Fparent", query)
+                    return {"workflow_runs": [run(1, "newer"), run(2, workflow=".github/workflows/ci.yml"),
+                                              run(3, conclusion="failure"), run(4)]}
+                self.assertIn("/runs/4/artifacts", query)
+                return {"artifacts": [{"id": 7, "expired": False,
+                                       "name": "v31-polish-review-manifest-online"}]}
+            def download(repo, run_id, name, dest):
+                self.assertEqual((repo, run_id, name),
+                                 ("owner/repo", 4, "v31-polish-review-manifest-online"))
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "manifest.json").write_text(json.dumps(dict(
+                    schema=1, head_sha="parent", phase="online",
+                    images=[dict(path="a.png", sha256="a"*64)], errors=[])))
+            with patch("visual_review_pack.gh_json", side_effect=index), \
+                    patch("visual_review_pack.gh_download", side_effect=download) as dl:
+                self.assertEqual(resolve_base(args), 0)
+                self.assertIsNotNone(read_baseline(out / "manifest.json", "parent", "online"))
+                self.assertEqual(dl.call_count, 1)
+
+    def test_no_exact_parent_does_not_use_branch_latest(self):
+        args = SimpleNamespace(repo="owner/repo", head="parent", base_branch="polish/parent")
+        with patch("visual_review_pack.gh_json", return_value={"workflow_runs": [
+            dict(id=7, head_sha="newer", conclusion="success",
+                 path=".github/workflows/v31-polish-audit.yml")]}):
+            self.assertEqual(list(exact_parent_runs(args)), [])
 
     def test_slot_and_size_overflow_not_silent(self):
         with tempfile.TemporaryDirectory() as td:
