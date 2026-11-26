@@ -1021,7 +1021,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const points=[{x:s.pos.x-origin.x,y:s.pos.y-origin.y},{x:s.planetPos.x-origin.x,y:s.planetPos.y-origin.y},
         ...s.trail.map(q=>({x:relative?q.x-q.px:q.x,y:relative?q.y-q.py:q.y}))];
       if(pm.mode==='rendezvous')points.push({x:-1,y:-1},{x:1,y:1});
-      for(const h of v2.getControlHandles?.(drawState,pm)??[])points.push({x:h.position.x-origin.x,y:h.position.y-origin.y});
+      for(const h of (p as SimulationPluginV2<ParamRecord,unknown>).getControlHandles?.(drawState,pm)??[])points.push({x:h.position.x-origin.x,y:h.position.y-origin.y});
       const minX=Math.min(...points.map(q=>q.x)),maxX=Math.max(...points.map(q=>q.x)),minY=Math.min(...points.map(q=>q.y)),maxY=Math.max(...points.map(q=>q.y));
       const effective=computeEffectiveViewport(v,drawState).effectiveVp;
       const first=worldToScreen(minX+origin.x,maxY+origin.y,effective),last=worldToScreen(maxX+origin.x,minY+origin.y,effective);
