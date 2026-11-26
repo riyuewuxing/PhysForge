@@ -719,6 +719,68 @@ async function syncW02(page,offline){
   else if(Math.abs(parseFloat(mean)-s.centerScreenIntensity)>.000006)throw Error('W02 stale screen readout');
   return s;
 }
+
+const o01Cases=[
+  ['air-wedge-flat-fringes',{mode:'thin-film-wedge',defectMode:'flat',wedgeAngleDeg:.012}],
+  ['air-wedge-concave-defect',{mode:'thin-film-wedge',defectMode:'pit'}],
+  ['wedge-convex-defect',{mode:'thin-film-wedge',defectMode:'bump'}],
+  ['wedge-zero-angle',{mode:'thin-film-wedge',wedgeAngleDeg:0,centerIntensity:0}],
+  ['newtons-rings-standard',{mode:'newtons-rings',halfWaveLoss:true,centerIntensity:0}],
+  ['newton-bright-center',{mode:'newtons-rings',halfWaveLoss:false,centerIntensity:1}],
+  ['grating-missing-order-3',{mode:'single-slit-grating',slitCountN:6,firstMissingOrder:3}],
+  ['grating-rational-missing',{mode:'single-slit-grating',wavelengthNm:500,firstMissingOrder:5,missingOrderCount:2,gratingMaxOrder:10}],
+  ['grating-single-slit',{mode:'single-slit-grating',slitCountN:1,centerIntensity:1}],
+  ['grating-overlap-invalid',{mode:'single-slit-grating',slitWidthMicron:8,gratingPitchMicron:4,gratingValid:0}]
+];
+function checkO01(s){
+  if(s.t!==0||s.outerTime!==0)throw Error('O01 fictitious time '+JSON.stringify(s));
+  const near=(a,b,tol=1e-10)=>Number.isFinite(a)&&Math.abs(a-b)<=tol;
+  if(s.mode==='thin-film-wedge'){
+    if(s.wedgeAngleDeg===0){if('wedgeFringeSpacingMm'in s)throw Error('O01 fictitious spacing');}
+    else if(!near(s.wedgeFringeSpacingMm,s.wavelengthNm*1e-6/(2*s.refractiveIndexN2*Math.tan(s.wedgeAngleDeg*Math.PI/180))))throw Error('O01 wedge spacing');
+  }else if(s.mode==='newtons-rings'){
+    const h=s.wavelengthNm*1e-9/((s.halfWaveLoss?2:4)*s.refractiveIndexN2);
+    if(!near(s.newtonFirstDarkMm,1000*Math.sqrt(h*(2*s.lensRadiusR-h)))||s.centerIntensity!==(s.halfWaveLoss?0:1))throw Error('O01 ring geometry');
+  }else if(s.mode==='single-slit-grating'){
+    if(s.gratingValid===0||s.slitCountN===1){
+      if('missingOrderRatio'in s||'gratingMaxOrder'in s||'firstMissingOrder'in s)throw Error('O01 fabricated grating order');
+      if(s.gratingValid===0&&'centerIntensity'in s)throw Error('O01 fabricated invalid optical field');
+    }else{
+      const max=Math.floor(s.gratingPitchMicron/(s.wavelengthNm*1e-3)+1e-12),orders=[];
+      for(let k=1;k<=max;k++){const m=k*s.slitWidthMicron/s.gratingPitchMicron;if(m>=.5&&Math.abs(m-Math.round(m))<1e-10)orders.push(k);}
+      if(s.gratingMaxOrder!==max||s.missingOrderCount!==orders.length||s.firstMissingOrder!==orders[0])throw Error('O01 grating order mismatch');
+    }
+  }
+  return s;
+}
+async function syncO01(page,offline,expected){
+  const canvasId=offline?'sf-canvas':'simulation-canvas',prefix=offline?'sf-o01':'o01';
+  await page.waitForFunction(({canvasId,expected})=>{const s=JSON.parse(document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.waveOpticsRendered||'null');return s&&s.outerTime===0&&Object.entries(expected).every(([k,v])=>s[k]===v);},{canvasId,expected},{timeout:5000});
+  const s=checkO01(JSON.parse(await page.getByTestId(canvasId).getAttribute('data-wave-optics-rendered')));
+  const expectedMetric=s.mode==='thin-film-wedge'?'wedgeFringeSpacingMm':s.mode==='newtons-rings'?'newtonFirstDarkMm':s.gratingValid===1?(s.slitCountN===1?'centerIntensity':'missingOrderRatio'):null;
+  await page.getByTestId(prefix+'-status').waitFor({state:'visible'});
+  if(expectedMetric){
+    const readout=await page.getByTestId(prefix+'-'+expectedMetric).innerText();
+    if(s[expectedMetric]===undefined?readout.trim()!=='—':Math.abs(parseFloat(readout)-s[expectedMetric])>0.000006)throw Error('O01 stale readout '+readout);
+  }
+  const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  if(!await play.isDisabled())throw Error('O01 static play enabled');
+  if(!offline&&(await page.getByTestId('floating-scope-dock').count()||await page.getByTestId('btn-expand-oscilloscope').count()))throw Error('O01 false time scope');
+  return s;
+}
+async function auditO01(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','optics-wave-interference');await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='optics-wave-interference');
+  const report={};
+  for(const [id,expected] of o01Cases){
+    await selectPreset(page,id,true);report[id]=await syncO01(page,false,expected);
+    if(expected.mode!=='thin-film-wedge'&&await page.getByTestId('param-slider-wedgeAngleDeg').count())throw Error('O01 irrelevant wedge control');
+    if(expected.slitCountN===1&&await page.getByTestId('param-slider-gratingPitchMicron').count())throw Error('O01 irrelevant grating pitch');
+    await page.screenshot({path:path.join(OUT_DIR,'H42_O01_'+id+'.png')});
+  }
+  return report;
+}
+
 async function auditW02(page,origin){
   const url=new URL(origin);url.searchParams.set('model','wave-2d-ripple-fdtd');await page.goto(url.toString(),{waitUntil:'networkidle'});
   await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='wave-2d-ripple-fdtd');
@@ -3262,6 +3324,7 @@ async function main() {
     const e10MagneticReport=await auditE10Magnetic(page,origin);
     const w01Report=await auditW01(page,origin);
     const w02Report=await auditW02(page,origin);
+    const o01Report=await auditO01(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3275,8 +3338,8 @@ async function main() {
     const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
     const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
     if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    Object.assign(combined,{w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    Object.assign(combined,{o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
     console.log('VISUAL_AUDIT_ONLINE: PASS');
     await context.close();
     }
@@ -3935,8 +3998,24 @@ async function main() {
       if(w02Errors.length||w02Network.length)throw Error('W02 offline errors '+JSON.stringify({w02Errors,w02Network}));
       Object.assign(w02OfflineReport,{errors:w02Errors,network:w02Network});
     }finally{await w02Context.close();}
-    Object.assign(combined,{w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+
+    const o01File=path.join(OUT_DIR,'H42_O01_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','optics-wave-interference','--preset','air-wedge-flat-fringes','--out',o01File],{stdio:'inherit'});
+    const o01Context=await browser.newContext({viewport:VIEWPORT,offline:true}),o01Page=await o01Context.newPage(),o01Errors=[],o01Network=[],o01OfflineReport={};
+    o01Page.on('pageerror',e=>o01Errors.push(e.message));o01Page.on('console',m=>{if(m.type()==='error')o01Errors.push(m.text());});o01Page.on('request',r=>{if(/^https?:/.test(r.url()))o01Network.push(r.url());});
+    try{
+      await o01Page.goto(pathToFileURL(o01File).href);
+      for(const [id,expected] of o01Cases){
+        if(id!=='air-wedge-flat-fringes')await o01Page.locator('[data-preset-id="'+id+'"]').click();
+        o01OfflineReport[id]=await syncO01(o01Page,true,expected);
+        await o01Page.screenshot({path:path.join(OUT_DIR,'H42_O01_offline_'+id+'.png')});
+      }
+      if(o01Errors.length||o01Network.length)throw Error('O01 offline errors '+JSON.stringify({o01Errors,o01Network}));
+      Object.assign(o01OfflineReport,{errors:o01Errors,network:o01Network});
+    }finally{await o01Context.close();}
+
+    Object.assign(combined,{o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
     console.log('VISUAL_AUDIT_OFFLINE: PASS');
     }
     console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));

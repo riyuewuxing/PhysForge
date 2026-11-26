@@ -416,11 +416,11 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
         : [...s.activeLayers, layerId]
     })),
 
-  setPlaying: (playing) => set((s) => ({ isPlaying: playing, scrubTime: playing ? null : s.scrubTime,
+  setPlaying: (playing) => set((s) => ({ isPlaying: s.loadedPlugin.meta.id==='optics-wave-interference'?false:playing, scrubTime: playing ? null : s.scrubTime,
     autoFreezeBadge: playing ? null : s.autoFreezeBadge })),
   togglePlaying: () =>
     set((s) => ({
-      isPlaying: !s.isPlaying,
+      isPlaying: s.loadedPlugin.meta.id==='optics-wave-interference'?false:!s.isPlaying,
       scrubTime: !s.isPlaying ? null : s.scrubTime,
       autoFreezeBadge: !s.isPlaying ? null : s.autoFreezeBadge
     })),
@@ -525,7 +525,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       isPlaying: false,
       scrubTime: null,
-      stepOnceNonce: s.stepOnceNonce + 1
+      stepOnceNonce: s.loadedPlugin.meta.id==='optics-wave-interference'?s.stepOnceNonce:s.stepOnceNonce + 1
     })),
   setScrubTime: (t) => set({ scrubTime: t }),
   setTelemetry: (telemetry) => set({ telemetry })

@@ -8,6 +8,7 @@ import {
   evalFraunhoferGratingIntensity,
   evalNewtonRingIntensity,
   evalThinFilmIntensity,
+  evalWedgeThicknessMeters,
   stepWaveOptics,
   type WaveOpticsParams
 } from './engine.js';
@@ -22,15 +23,15 @@ describe('optics-wave-interference wedge, Newton rings & missing order (O01)', (
     const { wedgeSpacingMm } = computeKeyOpticsMetrics(p);
     // Exact dark fringe positions occur when 2*d = m*lambda (due to half-wave shift at bottom)
     expect(evalThinFilmIntensity(0, p)).toBeLessThan(1e-12);
-    expect(evalThinFilmIntensity(wedgeSpacingMm, p)).toBeLessThan(1e-12);
-    expect(evalThinFilmIntensity(0.5 * wedgeSpacingMm, p)).toBeGreaterThan(1 - 1e-12);
+    expect(evalThinFilmIntensity(wedgeSpacingMm!, p)).toBeLessThan(1e-12);
+    expect(evalThinFilmIntensity(0.5 * wedgeSpacingMm!, p)).toBeGreaterThan(1 - 1e-12);
   });
 
   it('matches Newton rings dark fringe radii r_k = sqrt(k * R * lambda) within < 1e-4', () => {
     const p = getPreset(2);
     const { newtonR1Mm } = computeKeyOpticsMetrics(p);
     for (const k of [1, 2, 3]) {
-      const rk = newtonR1Mm * Math.sqrt(k);
+      const rk = newtonR1Mm! * Math.sqrt(k);
       expect(evalNewtonRingIntensity(rk, p)).toBeLessThan(1e-4);
     }
   });
@@ -100,5 +101,28 @@ describe('H42 independent optical domain and phase regressions', () => {
   it('static monochromatic intensity has no fabricated evolution time', () => {
     const p=getPreset(0);
     expect(stepWaveOptics(createInitialState(p),p,2).nextState.t).toBe(0);
+  });
+});
+
+describe('shared physical field invariants',()=>{
+  it('local lower-surface defects have opposite gap perturbations and vanish transversely',()=>{
+    const p=getPreset(0),h=evalWedgeThicknessMeters(10,p)!;
+    expect(evalWedgeThicknessMeters(10,{...p,defectMode:'bump'})!).toBeCloseTo(h-.4e-6,14);
+    expect(evalWedgeThicknessMeters(10,{...p,defectMode:'pit'})!).toBeCloseTo(h+.4e-6,14);
+    expect(evalWedgeThicknessMeters(10,{...p,defectMode:'pit'},20)).toBeCloseTo(h,14);
+  });
+  it('reflection phases are complementary across the two-beam field',()=>{
+    const p=getPreset(1);
+    for(let x=0;x<=20;x+=.125)expect(evalThinFilmIntensity(x,p)!+evalThinFilmIntensity(x,{...p,halfWaveLoss:!p.halfWaveLoss})!).toBeCloseTo(1,13);
+  });
+  it('multi-slit removable limit agrees with explicit coherent phasor sum',()=>{
+    const p=getPreset(3),lambda=p.wavelengthNm*1e-3;
+    for(const q of [0,.001,.04,.12,lambda/p.gratingPitchMicron,lambda/p.gratingPitchMicron+1e-10,-.2,1]){
+      let re=0,im=0;
+      for(let j=0;j<p.slitCountN;j++){const phase=2*Math.PI*j*p.gratingPitchMicron*q/lambda;re+=Math.cos(phase);im+=Math.sin(phase);}
+      const beta=Math.PI*p.slitWidthMicron*q/lambda;
+      const env=beta===0?1:(Math.sin(beta)/beta)**2;
+      expect(evalFraunhoferGratingIntensity(q,p)).toBeCloseTo(env*(re*re+im*im)/p.slitCountN**2,12);
+    }
   });
 });

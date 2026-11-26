@@ -327,7 +327,7 @@ const ClassroomApp: React.FC = () => {
             {(plugin.meta.id==='builder-optics-ray'?OPTICS_TITLES[String(store.params.sceneMode)]:undefined) ?? WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title.replace(/\s*\([A-Z]\d+\)$/, '')}
           </div>
           <div className="font-mono text-[11px] tabular-nums text-slate-400">
-            {plugin.meta.id==='em-transformer-grid'?'稳态有效值 · 调参比较':`t = ${store.telemetry.t.toFixed(2)} s`}
+            {plugin.meta.id==='optics-wave-interference'?'静态归一化光强 · 调参比较':plugin.meta.id==='em-transformer-grid'?'稳态有效值 · 调参比较':`t = ${store.telemetry.t.toFixed(2)} s`}
           </div>
         </div>
 
@@ -335,15 +335,15 @@ const ClassroomApp: React.FC = () => {
           <button
             type="button"
             data-testid="btn-play-pause"
-            disabled={plugin.meta.id==='em-transformer-grid'} onClick={store.togglePlaying}
+            disabled={plugin.meta.id==='em-transformer-grid'||plugin.meta.id==='optics-wave-interference'} onClick={store.togglePlaying}
             aria-label={store.isPlaying ? '暂停' : '运行'}
             className="grid h-7 w-7 place-items-center rounded-full bg-sky-400 text-slate-950 shadow-[0_0_20px_rgba(56,189,248,0.7)] transition hover:bg-sky-300 cursor-pointer"
           >
             {store.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
           </button>
-          <button type="button" data-testid="btn-step" disabled={plugin.meta.id==='em-transformer-grid'} onClick={store.triggerStepOnce} className="h-7 rounded-full px-2.5 text-[11px] text-slate-300 hover:bg-white/10 cursor-pointer">前移</button>
+          <button type="button" data-testid="btn-step" disabled={plugin.meta.id==='em-transformer-grid'||plugin.meta.id==='optics-wave-interference'} onClick={store.triggerStepOnce} className="h-7 rounded-full px-2.5 text-[11px] text-slate-300 hover:bg-white/10 cursor-pointer">前移</button>
           <button type="button" data-testid="btn-reset" onClick={store.triggerReset} className="h-7 rounded-full px-2.5 text-[11px] text-slate-300 hover:bg-white/10 cursor-pointer">重置</button>
-          <select aria-label="播放倍速" value={store.playbackSpeed} onChange={(e) => store.setPlaybackSpeed(Number(e.target.value))} className="h-7 rounded-full bg-transparent px-1.5 font-mono text-[11px] text-slate-300 outline-none cursor-pointer">
+          <select aria-label="播放倍速" disabled={plugin.meta.id==='optics-wave-interference'} value={store.playbackSpeed} onChange={(e) => store.setPlaybackSpeed(Number(e.target.value))} className="h-7 rounded-full bg-transparent px-1.5 font-mono text-[11px] text-slate-300 outline-none cursor-pointer">
             {SPEED_OPTIONS.map((speed) => <option key={speed} value={speed}>{speed.toFixed(1)}x</option>)}
           </select>
         </div>
@@ -367,7 +367,7 @@ const ClassroomApp: React.FC = () => {
           <button
             type="button"
             data-testid="menu-btn-play-pause"
-            disabled={plugin.meta.id==='em-transformer-grid'} onClick={store.togglePlaying}
+            disabled={plugin.meta.id==='em-transformer-grid'||plugin.meta.id==='optics-wave-interference'} onClick={store.togglePlaying}
             className="pf-touch-target inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sky-500 text-slate-950 font-bold hover:bg-sky-400 transition cursor-pointer"
           >
             {store.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
@@ -377,7 +377,7 @@ const ClassroomApp: React.FC = () => {
           <button
             type="button"
             data-testid="menu-btn-step"
-            disabled={plugin.meta.id==='em-transformer-grid'} onClick={store.triggerStepOnce}
+            disabled={plugin.meta.id==='em-transformer-grid'||plugin.meta.id==='optics-wave-interference'} onClick={store.triggerStepOnce}
             className="pf-touch-target inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border text-sm cursor-pointer"
             style={{ borderColor: 'var(--pf-border)' }}
           >
@@ -777,7 +777,7 @@ const ClassroomApp: React.FC = () => {
                 </div>
               )}
               <div data-testid="fullscreen-controls" className="absolute bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/15 bg-slate-950/80 p-2 text-slate-100 shadow-2xl backdrop-blur-2xl">
-                <button type="button" data-testid="btn-play-pause" disabled={plugin.meta.id==='em-transformer-grid'} onClick={store.togglePlaying} aria-label={store.isPlaying ? '暂停' : '运行'} className="grid h-9 w-9 place-items-center rounded-full bg-sky-400 text-slate-950 hover:bg-sky-300">
+                <button type="button" data-testid="btn-play-pause" disabled={plugin.meta.id==='em-transformer-grid'||plugin.meta.id==='optics-wave-interference'} onClick={store.togglePlaying} aria-label={store.isPlaying ? '暂停' : '运行'} className="grid h-9 w-9 place-items-center rounded-full bg-sky-400 text-slate-950 hover:bg-sky-300">
                   {store.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
                 </button>
                 <button type="button" data-testid="btn-reset" onClick={resetPresentation} className="grid h-9 w-9 place-items-center rounded-full text-slate-200 hover:bg-white/10" aria-label="复位" title="复位"><RotateCcw className="h-4 w-4" /></button>
