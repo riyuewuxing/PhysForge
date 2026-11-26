@@ -65,5 +65,18 @@ export const acGeneratorPresets: readonly PresetSpec<AcGeneratorParams>[] = [
       dutyCycleD: 0.5,
       dcOffsetV: 10
     }
+  },
+  {
+    id: 'full-wave-rectifier-rms',
+    name: '理想全波整流 · 负载电压非负',
+    description: '比较源电动势与负载电压，说明整流不改变一个参考周期的平方积分。',
+    curriculumNotes: '选择性必修二 · 理想整流',
+    params: { waveform:'full-wave', turnsN:10, magneticB:.5, coilAreaS:.2, freqHz:2, loadR:10, dutyCycleD:.5, dcOffsetV:0 }
+  },{
+    id: 'sawtooth-wave-rms',
+    name: '锯齿波 · 周期端点跳变',
+    description: '独立教学波形，积分 u² 得有效值 Um/√3，端点跳变不改变积分。',
+    curriculumNotes: '选择性必修二 · 非正弦波有效值',
+    params: { waveform:'sawtooth', turnsN:10, magneticB:.5, coilAreaS:.2, freqHz:2, loadR:10, dutyCycleD:.5, dcOffsetV:0 }
   }
 ];

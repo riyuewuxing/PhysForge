@@ -1,4 +1,3 @@
-import { stepRK4 } from '@physforge/physics-core';
 import type { InvariantReport, PhysicsEvent, StepResult } from '@physforge/sim-sdk';
 
 export type AcWaveformType =
@@ -24,7 +23,13 @@ export interface AcGeneratorState {
   readonly t: number;
   readonly angleRad: number;
   readonly fluxWb: number;
+  /** Generator sinusoid amplitude E_m (not the DC-shifted load peak). */
   readonly uPeakV: number;
+  readonly sourceEmfV: number;
+  readonly loadPeakAbsV: number;
+  readonly currentA: number;
+  readonly fluxLinkageWbTurn: number;
+  readonly referencePhase: number;
   readonly uInstV: number;
   readonly uRmsV: number;
   readonly pInstW: number;
@@ -101,97 +106,92 @@ export function computeRmsSimpson(uPeak: number, params: AcGeneratorParams): num
   return Math.sqrt(Math.max(0, integralSq));
 }
 
-export function createInitialState(params: AcGeneratorParams): AcGeneratorState {
-  const omega = 2 * Math.PI * Math.max(0, params.freqHz);
-  const uPeak = params.turnsN * params.magneticB * params.coilAreaS * omega;
-  const uRms = computeRmsSimpson(uPeak, params);
-  const uInst = evalWaveformVoltage(0, uPeak, params);
-  const R = Math.max(0.1, params.loadR);
-  return {
-    t: 0,
-    angleRad: 0,
-    fluxWb: params.magneticB * params.coilAreaS,
-    uPeakV: uPeak,
-    uInstV: uInst,
-    uRmsV: uRms,
-    pInstW: (uInst * uInst) / R,
-    pAvgW: (uRms * uRms) / R,
-    jouleHeatJ: 0,
-    atNeutralPlane: true,
-    events: []
-  };
+/** Exact primitive of u² in dimensionless phase x ∈ [0,1].
+ * Distinct from the Simpson RMS oracle; no endpoint sampling across a jump.
+ */
+function squarePrimitive(x: number, a: number, p: AcGeneratorParams): number {
+  const sine2 = (v:number) => v/2 - Math.sin(4*Math.PI*v)/(8*Math.PI);
+  switch (p.waveform) {
+    case 'sine': case 'full-wave': return a*a*sine2(x);
+    case 'half-wave': return a*a*sine2(Math.min(x,.5));
+    case 'duty-square': return a*a*Math.min(x,Math.max(0,Math.min(1,p.dutyCycleD)));
+    case 'sawtooth': return a*a*(4*x*x*x/3-2*x*x+x);
+    case 'dc-plus-sine':
+      return p.dcOffsetV*p.dcOffsetV*x + a*a*sine2(x) +
+        p.dcOffsetV*a*(2*Math.sin(Math.PI*x)**2)/Math.PI;
+  }
 }
 
-export function stepAcGeneratorRms(
-  state: AcGeneratorState,
-  params: AcGeneratorParams,
-  dt: number
-): StepResult<AcGeneratorState> {
-  if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
-  if (dt === 0) return { nextState: state, events: [] };
-
-  const fHz = Math.max(0, params.freqHz);
-  const omega = 2 * Math.PI * fHz;
-  const uPeak = params.turnsN * params.magneticB * params.coilAreaS * omega;
-  const uRms = computeRmsSimpson(uPeak, params);
-  const R = Math.max(0.1, params.loadR);
-
-  const heatRes = stepRK4([state.jouleHeatJ], state.t, dt, (tau, _y) => {
-    const phase = fHz * tau;
-    const u = evalWaveformVoltage(phase, uPeak, params);
-    return [(u * u) / R];
-  });
-
-  const nt = state.t + dt;
-  const angle = omega * nt;
-  const uInst = evalWaveformVoltage(fHz * nt, uPeak, params);
-  const sinMag = Math.abs(Math.sin(angle));
-
-  return {
-    nextState: {
-      ...state,
-      t: nt,
-      angleRad: angle,
-      fluxWb: params.magneticB * params.coilAreaS * Math.cos(angle),
-      uPeakV: uPeak,
-      uInstV: uInst,
-      uRmsV: uRms,
-      pInstW: (uInst * uInst) / R,
-      pAvgW: (uRms * uRms) / R,
-      jouleHeatJ: heatRes[0]!,
-      atNeutralPlane: sinMag < 0.08
-    },
-    events: []
-  };
+/** Exact heat for a fixed-parameter segment, including multiple complete cycles. */
+export function integrateLoadHeat(start: number, dt: number, a: number, p: AcGeneratorParams): number {
+  const f=Math.max(0,p.freqHz), R=Math.max(.1,p.loadR);
+  if(dt===0)return 0;
+  if(f===0)return evalWaveformVoltage(0,a,p)**2*dt/R;
+  const x=start*f-Math.floor(start*f), length=dt*f;
+  const first=Math.min(length,1-x);
+  const rem=Math.max(0,length-first), cycles=Math.floor(rem), tail=rem-cycles;
+  const sum=squarePrimitive(x+first,a,p)-squarePrimitive(x,a,p) +
+    cycles*squarePrimitive(1,a,p)+squarePrimitive(tail,a,p);
+  return Math.max(0,sum)/(R*f);
 }
 
-export function computeObservables(state: AcGeneratorState): Record<string, number> {
-  return {
-    t: state.t,
-    fluxWb: state.fluxWb,
-    uInstV: state.uInstV,
-    uRmsV: state.uRmsV,
-    uPeakV: state.uPeakV,
-    pInstW: state.pInstW,
-    pAvgW: state.pAvgW,
-    jouleHeatJ: state.jouleHeatJ
-  };
+export function analyticalRms(a:number,p:AcGeneratorParams):number {
+  switch(p.waveform){
+    case 'sine':case 'full-wave':return Math.abs(a)/Math.SQRT2;
+    case 'half-wave':return Math.abs(a)/2;
+    case 'duty-square':return Math.abs(a)*Math.sqrt(Math.max(0,Math.min(1,p.dutyCycleD)));
+    case 'sawtooth':return Math.abs(a)/Math.sqrt(3);
+    case 'dc-plus-sine':return Math.hypot(p.dcOffsetV,a/Math.SQRT2);
+  }
+}
+export function isGeneratorLoad(p:AcGeneratorParams):boolean{
+  return p.waveform==='sine'||p.waveform==='half-wave'||p.waveform==='full-wave';
+}
+export function sourceCurrent(state:AcGeneratorState,p:AcGeneratorParams):number{
+  if(!isGeneratorLoad(p))return 0;
+  return p.waveform==='full-wave'?Math.sign(state.sourceEmfV)*state.currentA:state.currentA;
 }
 
-export function checkInvariants(
-  _state: AcGeneratorState,
-  _initial: AcGeneratorState,
-  params: AcGeneratorParams
-): InvariantReport[] {
-  const omega = 2 * Math.PI * Math.max(0, params.freqHz);
-  const uPeak = params.turnsN * params.magneticB * params.coilAreaS * omega;
-  const uRms = computeRmsSimpson(uPeak, params);
-  return [
-    {
-      name: '交流有效值积分稳定与非负性',
-      measuredError: 0,
-      tolerance: 1e-6,
-      passed: Number.isFinite(uRms) && uRms >= 0
-    }
-  ];
+function sample(t:number,heat:number,p:AcGeneratorParams,uRms:number):AcGeneratorState{
+  const f=Math.max(0,p.freqHz),omega=2*Math.PI*f, phase=t*f-Math.floor(t*f),
+    angle=omega*t, phi=p.magneticB*p.coilAreaS*Math.cos(2*Math.PI*phase),
+    a=p.turnsN*p.magneticB*p.coilAreaS*omega, e=a*Math.sin(2*Math.PI*phase),
+    u=evalWaveformVoltage(phase,a,p),R=Math.max(.1,p.loadR);
+  const loadPeak=p.waveform==='dc-plus-sine'?Math.abs(p.dcOffsetV)+Math.abs(a):
+    p.waveform==='duty-square'&&p.dutyCycleD<=0?0:Math.abs(a);
+  return {t,angleRad:angle,referencePhase:phase,fluxWb:phi,fluxLinkageWbTurn:p.turnsN*phi,
+    sourceEmfV:e,uPeakV:a,loadPeakAbsV:loadPeak,currentA:u/R,uInstV:u,uRmsV:uRms,
+    pInstW:u*u/R,pAvgW:uRms*uRms/R,jouleHeatJ:heat,
+    atNeutralPlane:Math.abs(Math.sin(2*Math.PI*phase))<.08,events:[]};
+}
+
+export function createInitialState(params:AcGeneratorParams):AcGeneratorState {
+  const a=params.turnsN*params.magneticB*params.coilAreaS*2*Math.PI*Math.max(0,params.freqHz);
+  return sample(0,0,params,computeRmsSimpson(a,params));
+}
+
+export function stepAcGeneratorRms(state:AcGeneratorState,params:AcGeneratorParams,dt:number):StepResult<AcGeneratorState>{
+  if(!Number.isFinite(dt)||dt<0)throw new Error(`Invalid dt: ${dt}`);
+  if(dt===0)return {nextState:state,events:[]};
+  const a=params.turnsN*params.magneticB*params.coilAreaS*2*Math.PI*Math.max(0,params.freqHz);
+  const heat=state.jouleHeatJ+integrateLoadHeat(state.t,dt,a,params);
+  return {nextState:sample(state.t+dt,heat,params,computeRmsSimpson(a,params)),events:[]};
+}
+
+export function computeObservables(s:AcGeneratorState):Record<string,number>{
+  return {t:s.t,fluxWb:s.fluxWb,fluxLinkageWbTurn:s.fluxLinkageWbTurn,sourceEmfV:s.sourceEmfV,
+    uInstV:s.uInstV,uRmsV:s.uRmsV,uPeakV:s.uPeakV,loadPeakAbsV:s.loadPeakAbsV,currentA:s.currentA,
+    pInstW:s.pInstW,pAvgW:s.pAvgW,jouleHeatJ:s.jouleHeatJ,referencePhase:s.referencePhase};
+}
+
+export function checkInvariants(s:AcGeneratorState,initial:AcGeneratorState,p:AcGeneratorParams):InvariantReport[]{
+  const a=p.turnsN*p.magneticB*p.coilAreaS*2*Math.PI*Math.max(0,p.freqHz),
+    rms=analyticalRms(a,p),R=Math.max(.1,p.loadR),
+    q=integrateLoadHeat(initial.t,s.t-initial.t,a,p);
+  const rel=(actual:number,expected:number)=>Math.abs(actual-expected)/Math.max(1e-12,Math.abs(expected));
+  const report=(name:string,error:number):InvariantReport=>({name,measuredError:error,tolerance:1e-6,passed:Number.isFinite(error)&&error<=1e-6});
+  return [report('分段 Simpson 与独立解析有效值',rel(s.uRmsV,rms)),
+    report('累计焦耳热与整段解析积分',rel(s.jouleHeatJ-initial.jouleHeatJ,q)),
+    report('电阻瞬时功率 u²/R',rel(s.pInstW,s.uInstV*s.uInstV/R)),
+    report('平均热功率 Urms²/R',rel(s.pAvgW,rms*rms/R))];
 }

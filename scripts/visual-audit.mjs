@@ -562,6 +562,45 @@ async function auditM03Constraints(page,origin){
 
 
 // M11 uses the actual rendered frame, not independently synthesized telemetry.
+// E07 independent analytical oracles, evaluated at the actual rendered time.
+function checkE07(s,mode){
+  const a=4*Math.PI,R=10,f=2,t=s.t,x=f*t,phase=x-Math.floor(x),w=2*Math.PI*f;
+  let u,rms,Q;
+  if(mode==='sine'){u=a*Math.sin(w*t);rms=a/Math.sqrt(2);Q=a*a/R*(t/2-Math.sin(2*w*t)/(4*w));}
+  else if(mode==='full-wave'){u=Math.abs(a*Math.sin(w*t));rms=a/Math.sqrt(2);Q=a*a/R*(t/2-Math.sin(2*w*t)/(4*w));}
+  else if(mode==='sawtooth'){u=a*(2*phase-1);rms=a/Math.sqrt(3);Q=a*a/(R*f)*(Math.floor(x)/3+4*phase**3/3-2*phase**2+phase);}
+  else if(mode==='duty-square'){u=phase<.25?a:0;rms=a*.5;Q=a*a/(R*f)*(Math.floor(x)*.25+Math.min(phase,.25));}
+  else if(mode==='half-wave'){const z=Math.min(phase,.5);u=Math.max(0,a*Math.sin(w*t));rms=a/2;Q=a*a/(R*f)*(Math.floor(x)/4+z/2-Math.sin(4*Math.PI*z)/(8*Math.PI));}
+  else if(mode==='dc-plus-sine'){u=10+a*Math.sin(w*t);rms=Math.hypot(10,a/Math.sqrt(2));Q=(100*t+20*a*(1-Math.cos(w*t))/w+a*a*(t/2-Math.sin(2*w*t)/(4*w)))/R;}
+  else throw Error('E07 unknown mode '+mode);
+  for(const [key,expected] of Object.entries({uInstV:u,uRmsV:rms,jouleHeatJ:Q,pAvgW:rms*rms/R,pInstW:u*u/R,sourceEmfV:a*Math.sin(w*t)})){
+    if(!Number.isFinite(s[key])||Math.abs(s[key]-expected)>1e-6)throw Error('E07 '+mode+' '+key+' '+JSON.stringify({actual:s[key],expected,t}));
+  }
+}
+async function auditE07Generator(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','em-ac-generator-rms');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-ac-generator-rms');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),read=async()=>JSON.parse(await canvas.getAttribute('data-generator-rendered'));
+  const report={};
+  for(const [id,mode] of [['sine-ac-neutral-plane','sine'],['half-wave-rectifier-rms','half-wave'],['full-wave-rectifier-rms','full-wave'],['duty-square-wave-rms','duty-square'],['sawtooth-wave-rms','sawtooth'],['dc-ac-superposition','dc-plus-sine']]){
+    await selectPreset(page,id,true);
+    await page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.generatorRendered||'null');return s?.waveform===mode&&s.t===0;},mode);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey==='uInstV'&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey==='uRmsV');
+    const initial=await read();checkE07(initial,mode);
+    await page.waitForFunction(()=>document.querySelector('[data-testid="viewport-zoom-badge"]')?.textContent?.trim()==='100%',null,{timeout:5000});
+    if(mode!=='duty-square'&&await page.getByTestId('param-slider-dutyCycleD').count())throw Error('E07 inactive duty control');
+    await page.getByTestId('generator-scope-empty').waitFor({state:'visible'});
+    if(mode==='sine')await page.screenshot({path:path.join(OUT_DIR,'H36_E07_neutral_plane.png')});
+    await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.generatorRendered||'null')?.t>.72,null,{timeout:18000});await play.click();
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.generatorRendered||'null'),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT),t=Number(document.querySelector('[data-testid="generator-readouts"]')?.dataset.sampleTime);return s&&Math.abs(s.t-p)<1e-10&&Math.abs(s.t-t)<1e-10;},null,{timeout:5000});
+    const final=await read();checkE07(final,mode);report[mode]={initial,final};
+    await page.screenshot({path:path.join(OUT_DIR,'H36_E07_'+mode+'.png')});
+  }
+  console.log('H36 E07 online '+JSON.stringify(report));return report;
+}
+
 async function auditE06Eddy(page,origin){
   const url=new URL(origin);url.searchParams.set('model','em-eddy-vortex-field');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -582,6 +621,7 @@ async function auditE06Eddy(page,origin){
   };
   const photo=async name=>page.screenshot({path:path.join(OUT_DIR,'H35_E06_'+name+'.png')});
   const initial=await select('betatron-vortex-acceleration','betatron-vortex','bCurrent','eVortexMag');
+    await page.waitForFunction(()=>document.querySelector('[data-testid="viewport-zoom-badge"]')?.textContent?.trim()==='100%',null,{timeout:5000});
   check(initial.Ey,-.675,'initial E_y');check(initial.Ex,0,'initial E_x');
   check(initial.specificKineticEnergy,.18,'initial K/m');check(initial.bLocal,1,'inside B');
   if('solidAngleDeg'in initial||await page.getByTestId('param-slider-solidDampingGamma').count())throw Error('E06 inactive damping control');
@@ -2802,6 +2842,7 @@ async function main() {
     const e03AcScopeReport=await auditE03AcScope(page,origin);
     const e05WireframeReport=await auditE05Wireframe(page,origin);
     const e06EddyReport=await auditE06Eddy(page,origin);
+    const e07GeneratorReport=await auditE07Generator(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3360,7 +3401,26 @@ async function main() {
       if(e06Errors.length||e06Network.length)throw Error('E06 offline errors '+JSON.stringify({e06Errors,e06Network}));
       Object.assign(e06OfflineReport,{neutral,damp,errors:e06Errors,network:e06Network});
     }finally{await e06Context.close();}
-    const summary = { e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const e07File=path.join(OUT_DIR,'H36_E07_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','em-ac-generator-rms','--preset','duty-square-wave-rms','--out',e07File],{stdio:'inherit'});
+    const e07Context=await browser.newContext({viewport:VIEWPORT,offline:true}),e07Page=await e07Context.newPage(),e07Errors=[],e07Network=[],e07OfflineReport={};
+    e07Page.on('pageerror',e=>e07Errors.push(e.message));e07Page.on('console',m=>{if(m.type()==='error')e07Errors.push(m.text());});e07Page.on('request',r=>{if(/^https?:/.test(r.url()))e07Network.push(r.url());});
+    try{
+      await e07Page.goto(pathToFileURL(e07File).href);
+      const canvas=e07Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-generator-rendered'));
+      for(const [id,mode] of [['duty-square-wave-rms','duty-square'],['dc-ac-superposition','dc-plus-sine']]){
+        if(mode!=='duty-square')await e07Page.locator('[data-preset-id="'+id+'"]').click();
+        await e07Page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.generatorRendered||'null');return s?.waveform===mode&&s.t===0;},mode);
+        checkE07(await read(),mode);
+        await e07Page.getByTestId('sf-play-pause').click();await e07Page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.generatorRendered||'null')?.t>.72);await e07Page.getByTestId('sf-play-pause').click();
+        await e07Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.generatorRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+        const s=await read();checkE07(s,mode);e07OfflineReport[mode]=s;
+        await e07Page.screenshot({path:path.join(OUT_DIR,'H36_E07_offline_'+mode+'.png')});
+      }
+      if(e07Errors.length||e07Network.length)throw Error('E07 offline errors '+JSON.stringify({e07Errors,e07Network}));
+      Object.assign(e07OfflineReport,{errors:e07Errors,network:e07Network});
+    }finally{await e07Context.close();}
+    const summary = { e07GeneratorReport,e07OfflineReport,e06EddyReport,e06OfflineReport,e05WireframeReport,e05OfflineReport,e03AcScopeReport,e03OfflineReport,e02CapacitorReport,e02OfflineReport,e01ElectrostaticReport,e01OfflineReport,m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
