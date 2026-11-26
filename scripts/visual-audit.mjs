@@ -567,6 +567,8 @@ function checkE07(s,mode){
   const a=4*Math.PI,R=10,f=2,t=s.t,x=f*t,phase=x-Math.floor(x),w=2*Math.PI*f;
   let u,rms,Q;
   if(mode==='sine'){u=a*Math.sin(w*t);rms=a/Math.sqrt(2);Q=a*a/R*(t/2-Math.sin(2*w*t)/(4*w));}
+  else if(mode==='full-wave'){u=Math.abs(a*Math.sin(w*t));rms=a/Math.sqrt(2);Q=a*a/R*(t/2-Math.sin(2*w*t)/(4*w));}
+  else if(mode==='sawtooth'){u=a*(2*phase-1);rms=a/Math.sqrt(3);Q=a*a/(R*f)*(Math.floor(x)/3+4*phase**3/3-2*phase**2+phase);}
   else if(mode==='duty-square'){u=phase<.25?a:0;rms=a*.5;Q=a*a/(R*f)*(Math.floor(x)*.25+Math.min(phase,.25));}
   else if(mode==='half-wave'){const z=Math.min(phase,.5);u=Math.max(0,a*Math.sin(w*t));rms=a/2;Q=a*a/(R*f)*(Math.floor(x)/4+z/2-Math.sin(4*Math.PI*z)/(8*Math.PI));}
   else if(mode==='dc-plus-sine'){u=10+a*Math.sin(w*t);rms=Math.hypot(10,a/Math.sqrt(2));Q=(100*t+20*a*(1-Math.cos(w*t))/w+a*a*(t/2-Math.sin(2*w*t)/(4*w)))/R;}
@@ -581,7 +583,7 @@ async function auditE07Generator(page,origin){
   await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='em-ac-generator-rms');
   const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]'),read=async()=>JSON.parse(await canvas.getAttribute('data-generator-rendered'));
   const report={};
-  for(const [id,mode] of [['sine-ac-neutral-plane','sine'],['half-wave-rectifier-rms','half-wave'],['duty-square-wave-rms','duty-square'],['dc-ac-superposition','dc-plus-sine']]){
+  for(const [id,mode] of [['sine-ac-neutral-plane','sine'],['half-wave-rectifier-rms','half-wave'],['full-wave-rectifier-rms','full-wave'],['duty-square-wave-rms','duty-square'],['sawtooth-wave-rms','sawtooth'],['dc-ac-superposition','dc-plus-sine']]){
     await selectPreset(page,id,true);
     await page.waitForFunction(mode=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.generatorRendered||'null');return s?.waveform===mode&&s.t===0;},mode);
     const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
@@ -591,7 +593,7 @@ async function auditE07Generator(page,origin){
     await page.getByTestId('generator-scope-empty').waitFor({state:'visible'});
     if(mode==='sine')await page.screenshot({path:path.join(OUT_DIR,'H36_E07_neutral_plane.png')});
     await play.click();await page.waitForFunction(()=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.generatorRendered||'null')?.t>.72,null,{timeout:18000});await play.click();
-    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.generatorRendered||'null'),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.generatorRendered||'null'),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT),t=Number(document.querySelector('[data-testid="generator-readouts"]')?.dataset.sampleTime);return s&&Math.abs(s.t-p)<1e-10&&Math.abs(s.t-t)<1e-10;},null,{timeout:5000});
     const final=await read();checkE07(final,mode);report[mode]={initial,final};
     await page.screenshot({path:path.join(OUT_DIR,'H36_E07_'+mode+'.png')});
   }
