@@ -2,11 +2,14 @@ import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { thermoPistonGasLawsPlugin } from './plugin.js';
 import { thermoGasPresets } from './presets.js';
+import { makeThermoApparatus, makeThermoPlot } from './sceneGeometry.js';
 import {
   P_ATM,
   R_GAS,
   computeDetachCriticalTempK,
   computeObservables,
+  computePumpStages,
+  solveMercuryTiltState,
   computeMultiStrokePressure,
   createInitialState,
   stepThermoGasLaws,
@@ -125,5 +128,59 @@ describe('H44 independent gas mass, contact and work regressions',()=>{
     const s=createInitialState(p);
     expect(s.mode).toBe('floating');
     expect(s.detachTempK).toBeNull();expect(s.events).toEqual([]);
+  });
+});
+
+describe('F01 geometry, equilibrium and exact boundary cases',()=>{
+  it('uses one exact boundary event at equality, and reverses on the subsequent cooling step',()=>{
+    const p=getPreset(0),tc=120925*.005/(.25*R_GAS),heat={...p,targetTempK:tc};
+    const start=createInitialState(heat),at=stepThermoGasLaws(start,heat,10);
+    expect(at.events).toHaveLength(1);expect(at.events[0]!.time).toBeCloseTo((tc-260)/60,10);
+    expect(at.nextState.mode).toBe('floating');
+    const still=stepThermoGasLaws(at.nextState,heat,1);expect(still.events).toEqual([]);
+    const back=stepThermoGasLaws(still.nextState,{...p,targetTempK:220},.1);
+    expect(back.events).toHaveLength(1);expect(back.events[0]!.time).toBeCloseTo(still.nextState.t,10);
+    expect(back.nextState.mode).toBe('pinned');expect(computeObservables(back.nextState).workByGasJ).toBeCloseTo(0,10);
+  });
+  it('keeps overflow solution continuous at the first spill boundary',()=>{
+    const p={...getPreset(1),tubeLengthCm:45,mercuryCm:30};
+    const theta=Math.asin((13/15-1)*76/30)*180/Math.PI;
+    const a=solveMercuryTiltState({...p,tubeTiltDeg:theta+1e-5}),b=solveMercuryTiltState({...p,tubeTiltDeg:theta-1e-5});
+    expect(a.overflowed).toBe(false);expect(b.overflowed).toBe(true);
+    expect(Math.abs(a.airCm-b.airCm)).toBeLessThan(1e-4);
+    expect(Math.abs(a.mercCm-b.mercCm)).toBeLessThan(1e-4);
+  });
+  it('preserves gas and mercury geometric length fractions and sums every force to zero',()=>{
+    for(const p of [getPreset(0),{...getPreset(0),initialTempK:420},{...getPreset(1),tubeLengthCm:45,mercuryCm:30,tubeTiltDeg:-90},{...getPreset(1),tubeTiltDeg:30}]){
+      const s=createInitialState(p),g=makeThermoApparatus(s,p);
+      const forces=thermoPistonGasLawsPlugin.getForceVectors!(s,p);
+      expect(forces.length).toBeGreaterThanOrEqual(3);
+      expect(forces.reduce((sum,v)=>sum+v.force.x,0)).toBeCloseTo(0,8);
+      expect(forces.reduce((sum,v)=>sum+v.force.y,0)).toBeCloseTo(0,8);
+      for(const f of forces)expect(f.origin).toEqual(g.forceOrigin);
+      if(g.tube){
+        const t=g.tube,d=(a:{x:number;y:number},b:{x:number;y:number})=>Math.hypot(a.x-b.x,a.y-b.y);
+        expect(d(t.closed,t.airEnd)/t.length).toBeCloseTo(s.airColumnCm/p.tubeLengthCm,12);
+        expect(d(t.airEnd,t.mercuryEnd)/t.length).toBeCloseTo(s.mercuryColumnCm/p.tubeLengthCm,12);
+      }else expect(g.cylinder!.gasY).toBeGreaterThanOrEqual(g.cylinder!.pinY-1e-12);
+    }
+  });
+  it('uses real discrete pump stage amounts and does not clamp high pressure or volume at plot edges',()=>{
+    const p={...getPreset(2),tankVolumeL:2,pumpDeltaVL:5,pumpStrokesK:10,pumpDirection:'inject' as const};
+    const stages=computePumpStages(p),s=createInitialState(p),plot=makeThermoPlot(s,p);
+    expect(stages).toHaveLength(11);
+    for(const q of stages.slice(1))expect(q.deltaMolesN).toBeCloseTo(P_ATM*.005/(R_GAS*p.targetTempK),12);
+    expect(plot.kind).toBe('discrete-strokes');expect(plot.raw).toHaveLength(11);
+    expect(plot.yMax).toBeGreaterThan(s.pressurePa/1000);expect(plot.xMax).toBeGreaterThan(10);
+    const large={...getPreset(0),molesN:.6,initialTempK:600,targetTempK:600,pistonMassKg:0,pinVolumeL:3};
+    const q=createInitialState(large),g=makeThermoPlot(q,large);
+    expect(g.xMax).toBeGreaterThan(q.volumeM3*1000);
+  });
+  it('exports the actual apparatus and appropriate state axes for all three modes',()=>{
+    for(const p of [getPreset(0),getPreset(1),getPreset(2)]){
+      const s=createInitialState(p),a=makeThermoApparatus(s,p),g=makeThermoPlot(s,p),ir=thermoPistonGasLawsPlugin.exportDiagramIR!(s,p);
+      expect(ir.primitives).toEqual([...a.primitives,...g.primitives]);
+      expect(ir.primitives.some(v=>v.kind==='text'&&v.text===g.xLabel)).toBe(true);
+    }
   });
 });
