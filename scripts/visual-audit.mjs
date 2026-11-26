@@ -589,6 +589,7 @@ async function auditE07Generator(page,origin){
     const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
     await page.waitForFunction(()=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey==='uInstV'&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey==='uRmsV');
     const initial=await read();checkE07(initial,mode);
+    await page.waitForFunction(()=>document.querySelector('[data-testid="viewport-zoom-badge"]')?.textContent?.trim()==='100%',null,{timeout:5000});
     if(mode!=='duty-square'&&await page.getByTestId('param-slider-dutyCycleD').count())throw Error('E07 inactive duty control');
     await page.getByTestId('generator-scope-empty').waitFor({state:'visible'});
     if(mode==='sine')await page.screenshot({path:path.join(OUT_DIR,'H36_E07_neutral_plane.png')});
@@ -620,6 +621,7 @@ async function auditE06Eddy(page,origin){
   };
   const photo=async name=>page.screenshot({path:path.join(OUT_DIR,'H35_E06_'+name+'.png')});
   const initial=await select('betatron-vortex-acceleration','betatron-vortex','bCurrent','eVortexMag');
+    await page.waitForFunction(()=>document.querySelector('[data-testid="viewport-zoom-badge"]')?.textContent?.trim()==='100%',null,{timeout:5000});
   check(initial.Ey,-.675,'initial E_y');check(initial.Ex,0,'initial E_x');
   check(initial.specificKineticEnergy,.18,'initial K/m');check(initial.bLocal,1,'inside B');
   if('solidAngleDeg'in initial||await page.getByTestId('param-slider-solidDampingGamma').count())throw Error('E06 inactive damping control');

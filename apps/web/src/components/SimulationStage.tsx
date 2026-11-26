@@ -824,7 +824,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const safe=acSafeRef.current!.safe;
       if(fresh||!model.acScopeBoundsFit(ss,pp,v,safe)){
         const next=model.fitAcScopeViewport(ss,pp,v,safe);
-        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
+        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));}
       }
     }
     const wireAutomatic=p.meta.id==='em-wireframe-rotation'&&!userTransformedViewRef.current&&
@@ -844,7 +844,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const safe=wireSafeRef.current!.safe;
       if(fresh||!model.wireBoundsFit(ss,pp,v,safe)){
         const next=model.fitWireViewport(ss,pp,v,safe);
-        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
+        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));}
       }
     }
     const eddyAutomatic=p.meta.id==='em-eddy-vortex-field'&&!userTransformedViewRef.current&&
@@ -864,7 +864,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const safe=eddySafeRef.current!.safe;
       if(fresh||!model.eddyBoundsFit(ss,pp,v,safe)){
         const next=model.fitEddyViewport(ss,pp,v,safe);
-        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
+        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));}
       }
     }
     const generatorAutomatic=p.meta.id==='em-ac-generator-rms'&&!userTransformedViewRef.current&&
@@ -884,7 +884,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const safe=generatorSafeRef.current!.safe;
       if(fresh||!model.generatorBoundsFit(pp,v,safe)){
         const next=model.fitGeneratorViewport(pp,v,safe);
-        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
+        if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));}
       }
     }
     const baseVp = viewportRef.current;
