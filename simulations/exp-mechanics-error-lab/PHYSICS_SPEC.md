@@ -18,3 +18,6 @@ $$a_{\text{true}}(m) = \frac{m g + M g\sin\theta - f}{M + m}$$
 - A measured curve drawn for any supported parameter combination must lie inside its exported DiagramIR viewBox, with its real data unchanged. No clipping or saturating numerical values to force fit.
 - Negative net force requires a clearly stated motion/friction assumption. No signed-motion or static-friction policy is changed by these red-only tests; resolve that separate ambiguity in the candidate specification before implementation.
 - User-supplied experimental data and built-in illustrative data must not be conflated. No new external empirical data are supplied with these tests.
+
+## 4. Incremental positive-force candidate (unverified)
+The sweep and tape use the same equation in every scenario; heavy-hanger only selects the mass range. Zero mass is allowed in the analytic helper. The ideal zero-bias preset is appended to preserve the three existing preset indices. This candidate does not yet change the existing nonnegative acceleration clipping or its tape semantics, which require separate physical review. Export geometry and the fourth red test are not yet repaired.

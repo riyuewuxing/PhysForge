@@ -49,5 +49,16 @@ export const mechanicsErrorPresets: readonly PresetSpec<MechanicsErrorParams>[] 
       seed: 20261122,
       phyphoxOverlayCsv: ''
     }
+  },
+  {
+    id: 'af-ideal-compensated-origin',
+    name: '恰当平衡阻力（小钩码近似过原点）',
+    description: '无残余阻力的理想对照，有限钩码质量仍产生精确的分母修正。',
+    curriculumNotes: '区分过原点与严格线性：m≪M 才可近似 a=F/M。',
+    params: {
+      scenario: 'ideal-compensated', cartMassKg: 0.4, hangerMassKg: 0.04,
+      trackTiltDeg: 0, frictionForceN: 0, readingNoiseMm: 0, seed: 20261122,
+      phyphoxOverlayCsv: ''
+    }
   }
 ];

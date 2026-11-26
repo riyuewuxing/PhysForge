@@ -54,7 +54,7 @@ export function computeTrueCartAcceleration(
   frictionN: number
 ): number {
   const M = Math.max(0.05, cartM);
-  const m = Math.max(0.001, hangerM);
+  const m = Math.max(0, hangerM);
   const sinTh = Math.sin(degToRad(tiltDeg));
   const net = m * CLASSROOM_GRAVITY + M * CLASSROOM_GRAVITY * sinTh - frictionN;
   return Math.max(0, net / (M + m));
@@ -97,7 +97,7 @@ function parseOverlayCsv(csvText = ''): { fAppN: number; a: number }[] {
 
 export function solveMechanicsErrorAnalysis(params: MechanicsErrorParams): Omit<MechanicsErrorState, 't'> {
   const M = Math.max(0.05, params.cartMassKg);
-  const mActive = Math.max(0.005, params.hangerMassKg);
+  const mActive = Math.max(0, params.hangerMassKg);
   const aTrue = computeTrueCartAcceleration(M, mActive, params.trackTiltDeg, params.frictionForceN);
   const { dots, aDiff } = generateTickerAndDiffAccel(aTrue, Math.max(0, params.readingNoiseMm), params.seed);
 
@@ -108,10 +108,7 @@ export function solveMechanicsErrorAnalysis(params: MechanicsErrorParams): Omit<
 
   const afCurve: AfSweepPoint[] = masses.map((mi, idx) => {
     const fApp = mi * CLASSROOM_GRAVITY;
-    const aAna =
-      params.scenario === 'heavy-hanger-bend'
-        ? fApp / (M + fApp / CLASSROOM_GRAVITY)
-        : computeTrueCartAcceleration(M, mi, params.trackTiltDeg, params.frictionForceN);
+    const aAna = computeTrueCartAcceleration(M, mi, params.trackTiltDeg, params.frictionForceN);
     const { aDiff: aMeas } = generateTickerAndDiffAccel(aAna, Math.max(0, params.readingNoiseMm), params.seed + idx * 17);
     return { fAppN: fApp, aMeasured: aMeas, aAnalytic: aAna };
   });
