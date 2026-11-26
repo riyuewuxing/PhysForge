@@ -246,6 +246,7 @@ export function computeObservables(state: GravityAssistRendezvousState,params?:G
       ...(state.chaserPhaseLagAfterPeriod===null?{}:{phaseLagFirstPeriodRad:state.chaserPhaseLagAfterPeriod})
     }:{}),
     t: state.t,
+    posX:state.pos.x,posY:state.pos.y,bodyX:state.planetPos.x,bodyY:state.planetPos.y,
     helioSpeed: Math.hypot(state.vel.x, state.vel.y),
     deltaHelioEnergy: state.helioEnergyCurrent - state.helioEnergyInitial,
     planetFrameSpeedRelErr: state.planetFrameSpeedRelErr,

@@ -59,8 +59,7 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     version: '2.0.0'
   },
   defaultView: {
-    scale: params=>params.mode==='rendezvous'?.78:.60,
-    offsetRatioX:(params,view)=>params.mode==='rendezvous'?0:-(params.planetOrbitRadius-1.6)*.24*Math.min(view.width,view.height)*.60/view.width
+    scale:(params,view)=>params.mode==='rendezvous'?.78:Math.min(.60,.40*view.width/(.24*Math.min(view.width,view.height)*params.planetOrbitRadius))
   },
   paramSchema,
   presets: gravityAssistPresets,
