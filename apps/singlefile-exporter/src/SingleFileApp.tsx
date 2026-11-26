@@ -682,13 +682,14 @@ export const SingleFileApp: React.FC = () => {
         }} : {}),
         axes: [
           { stroke: textColor, grid: { stroke: gridColor }, ...(measuredScope ? {
-            values: (_u: uPlot, splits: number[]) => splits.map(v => Number(v.toPrecision(4)) + (thermalCycleSlice?'*':'s'))
+            values: (_u: uPlot, splits: number[]) => splits.map(v => Number(v.toPrecision(4)) + (thermalCycleSlice?'*':'s')),
+            ...(atomicSlice?{label:'演示时间（非物理飞行时间）',labelSize:13}:{})
           } : {}) },
           { stroke: measuredScope ? paint(specA?.color ?? '#38bdf8') : textColor, grid: { stroke: gridColor } },
           ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false}}]:[])
         ],
         series: [
-          { label: thermalCycleSlice?'约化时间 t*':equilibriumSlice?'演示时间 (s)':'t (s)' },
+          { label: thermalCycleSlice?'约化时间 t*':equilibriumSlice||atomicSlice?'演示时间 (s)':'t (s)' },
           { label: specA?.label ?? 'A', stroke: paint(specA?.color ?? '#38bdf8'), width: 2 },
           { label: specB?.label ?? 'B', stroke: paint(specB?.color ?? '#f472b6'), width: 2,...(split?{scale:'y2'}:{}) }
         ],
@@ -1083,6 +1084,7 @@ export const SingleFileApp: React.FC = () => {
               <div key={field.key} className="text-xs space-y-1">
                 <span>{field.label}</span>
                 <select
+                  data-testid={atomicSlice?'sf-param-'+field.key:undefined}
                   value={typeof val === 'string' ? val : field.defaultValue}
                   onChange={(e) => {
                     setParams(
