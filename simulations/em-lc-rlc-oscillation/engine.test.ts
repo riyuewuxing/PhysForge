@@ -69,19 +69,19 @@ describe('E09 independent physical oracles and truthful observation boundaries',
   it('does not silently add resistance to a lossless off-resonance driven circuit',()=>{
     const p={...getPreset(1),resistanceR:0,driveOmega:4},z=computeImpedanceSummary(p);
     expect(z.zMag).toBeCloseTo(Math.abs(4*p.inductanceH-1/(4*p.capacitanceF)),12);
-    expect(Reflect.get(z,'responseKind')).toBe(2);
-    expect(Reflect.get(z,'referenceCurrentPeak')).toBeCloseTo(p.driveVoltAmpUm/z.zMag,12);
+    expect(z.responseKind).toBe(2);
+    expect(z.referenceCurrentPeak).toBeCloseTo(p.driveVoltAmpUm/z.zMag,12);
   });
   it('lossless exact resonance has no finite periodic current amplitude and follows the secular solution',()=>{
     const p={...getPreset(1),resistanceR:0,driveOmega:computeLcNaturalOmega(getPreset(1))},w=p.driveOmega,t=1.137;
     const z=computeImpedanceSummary(p),s=run(p,t),A=p.driveVoltAmpUm/(2*p.inductanceH*w);
     expect(z.zMag).toBeLessThan(1e-12);
-    expect(Reflect.get(z,'responseKind')).toBe(3);
-    expect(Reflect.get(z,'referenceCurrentPeak')).toBeUndefined();
+    expect(z.responseKind).toBe(3);
+    expect(z.referenceCurrentPeak).toBeUndefined();
     expect(s.chargeQ).toBeCloseTo(A*t*Math.sin(w*t),6);
     expect(s.currentI).toBeCloseTo(A*(Math.sin(w*t)+w*t*Math.cos(w*t)),6);
-    expect(Reflect.get(s,'jouleHeatJ')).toBe(0);
-    expect(Reflect.get(s,'sourceWorkJ')).toBeCloseTo(s.energyElectricJ+s.energyMagneticJ,6);
+    expect(s.jouleHeatJ).toBe(0);
+    expect(s.sourceWorkJ).toBeCloseTo(s.energyElectricJ+s.energyMagneticJ,6);
   });
   it('integrates heat independently in a damped circuit and matches the analytical trajectory',()=>{
     const p=getPreset(2),t=1.137,s=run(p,t),a=p.resistanceR/(2*p.inductanceH),w0=1/Math.sqrt(p.inductanceH*p.capacitanceF),w=Math.sqrt(w0*w0-a*a);
@@ -89,8 +89,8 @@ describe('E09 independent physical oracles and truthful observation boundaries',
     const i=-p.initialChargeC*Math.exp(-a*t)*w0*w0/w*Math.sin(w*t);
     expect(s.chargeQ).toBeCloseTo(q,6);expect(s.currentI).toBeCloseTo(i,6);
     const heat=p.initialChargeC**2/(2*p.capacitanceF)-q*q/(2*p.capacitanceF)-p.inductanceH*i*i/2;
-    expect(Reflect.get(s,'jouleHeatJ')).toBeCloseTo(heat,6);
-    expect(Reflect.get(s,'sourceWorkJ')).toBe(0);
+    expect(s.jouleHeatJ).toBeCloseTo(heat,6);
+    expect(s.sourceWorkJ).toBe(0);
     expect(checkInvariants(s,createInitialState(p),p).every(r=>r.passed)).toBe(true);
   });
   it('distinguishes critical and overdamped free decay without inventing a measured period',()=>{
@@ -101,7 +101,7 @@ describe('E09 independent physical oracles and truthful observation boundaries',
       const i=beta===0?-p.initialChargeC*w0*w0*t*Math.exp(-a*t):-p.initialChargeC*w0*w0/beta*Math.exp(-a*t)*Math.sinh(beta*t);
       expect(s.chargeQ).toBeCloseTo(q,6);expect(s.currentI).toBeCloseTo(i,6);
       expect(s.measuredPeriod).toBeNull();expect(computeObservables(s).measuredPeriod).toBeUndefined();
-      expect(Reflect.get(s,'dampingRegime')).toBe(R===2?2:3);
+      expect(s.dampingRegime).toBe(R===2?2:3);
     }
   });
   it('a corrupted damped or driven stored energy cannot pass a zero-error finite-number audit',()=>{
@@ -115,9 +115,32 @@ describe('E09 independent physical oracles and truthful observation boundaries',
   });
   it('includes actual driven energy and a signed work ledger, not just a bounded theoretical amplitude',()=>{
     const p={...getPreset(1),driveOmega:5.1,resistanceR:1.2},s=run(p,.823);
-    const Q=Reflect.get(s,'jouleHeatJ'),W=Reflect.get(s,'sourceWorkJ');
+    const Q=s.jouleHeatJ,W=s.sourceWorkJ;
     expect(Q).toBeGreaterThan(0);
     expect(W).toBeCloseTo(s.energyElectricJ+s.energyMagneticJ+Q,6);
     expect(computeObservables(s).energyResidualJ).toBeCloseTo(0,6);
+  });
+});
+
+describe('E09 exact independent driven and boundary checks',()=>{
+  it('matches lossless off-resonance superposition rather than treating the particular solution as the actual trajectory',()=>{
+    const p={...getPreset(1),resistanceR:0,driveOmega:4},w0=computeLcNaturalOmega(p),w=p.driveOmega,A=p.driveVoltAmpUm/(p.inductanceH*(w0*w0-w*w)),t=.932;
+    let s=createInitialState(p);for(let j=0;j<100;j++)s=stepLcRlcOscillation(s,p,t/100).nextState;
+    expect(s.chargeQ).toBeCloseTo(A*(Math.cos(w*t)-Math.cos(w0*t)),6);
+    expect(s.currentI).toBeCloseTo(A*(-w*Math.sin(w*t)+w0*Math.sin(w0*t)),6);
+    expect(s.reference.steadyCurrentPeak).toBeUndefined();expect(s.reference.responseKind).toBe(2);
+  });
+  it('resonance with zero drive is degenerate but does not grow or publish an undefined phase',()=>{
+    const p={...getPreset(1),resistanceR:0,driveVoltAmpUm:0,driveOmega:computeLcNaturalOmega(getPreset(1))};
+    const s=stepLcRlcOscillation(createInitialState(p),p,.5).nextState,o=computeObservables(s);
+    expect(s.reference.responseKind).toBe(4);expect(o.referenceCurrentPeak).toBeUndefined();expect(o.referencePhaseRad).toBeUndefined();
+    expect(s.chargeQ).toBe(0);expect(s.currentI).toBe(0);expect(s.sourceWorkJ).toBe(0);
+  });
+  it('damped driven source work is independently accumulated, including negative instantaneous power',()=>{
+    const p={...getPreset(1),resistanceR:.8,driveOmega:4},initial=createInitialState(p);
+    let s=initial,negative=false,previousQ=0;
+    for(let j=0;j<500;j++){s=stepLcRlcOscillation(s,p,.004).nextState;negative ||= s.drivePowerW<0;expect(s.jouleHeatJ).toBeGreaterThanOrEqual(previousQ);previousQ=s.jouleHeatJ;}
+    expect(negative).toBe(true);expect(s.energyResidualJ).toBeCloseTo(0,6);
+    expect(checkInvariants(s,initial,p).every(r=>r.passed)).toBe(true);
   });
 });
