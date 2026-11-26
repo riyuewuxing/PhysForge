@@ -25,8 +25,8 @@ export const emLaunchRegenPresets: readonly PresetSpec<EmLaunchRegenParams>[] = 
   },
   {
     id: 'ev-pure-em-regen-brake',
-    name: '新能源电动汽车纯电磁再生制动（总距动量定理对照）',
-    description: '闭合回收回路，利用纯电磁阻尼完成减速停驻，实时对比能量回收率并校验 x = M v₀ R / (B²L²)',
+    name: '新能源汽车纯电磁阻尼（渐近位移对照）',
+    description: '闭合等效回路，速度渐近趋零；比较初始动能向等效负载及内阻的转移，纯电磁极限位移不是有限停车距离',
     curriculumNotes: '选择性必修二 & 必修二 · 新能源汽车动能回收系统物理模型',
     params: {
       mode: 'regen-brake',
@@ -47,7 +47,7 @@ export const emLaunchRegenPresets: readonly PresetSpec<EmLaunchRegenParams>[] = 
   {
     id: 'ev-blended-regen-mech',
     name: '低速混合制动（再生发电 + 机械摩擦片补足制动）',
-    description: '叠加机械摩擦片保持高减速度，直观展示热损耗分流对总回收率的影响',
+    description: '机械损耗与电磁阻尼共同减速，分别展示等效负载能量和损耗，不直接套用纯电磁极限公式',
     curriculumNotes: '选择性必修二 · 多能流耦合与汽车工程折中优化',
     params: {
       mode: 'regen-brake',

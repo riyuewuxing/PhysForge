@@ -1270,6 +1270,57 @@ async function auditF04Cases(page,offline,select){
  return out;
 }
 
+async function auditF06Braking(page,offline,select){
+ const out={},prefix=offline?'H52_F06_offline_':'H52_F06_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
+ const play=offline?page.getByTestId('sf-play-pause'):page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+ const input=key=>page.getByTestId((offline?'sf-param-':'param-slider-')+key);
+ const sync=async expected=>{
+   await page.waitForFunction(({canvasId,expected})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.regenRendered;return raw&&Object.entries(expected).every(([k,v])=>JSON.parse(raw)[k]===v);},{canvasId,expected},{timeout:10000});
+   const r=JSON.parse(await canvas.getAttribute('data-regen-rendered'));
+   if(!Number.isFinite(r.t)||Math.abs(r.outerTime-r.t)>1e-8)throw Error('F06 rendered clock mismatch');
+   const sum=r.energyKineticKj+r.energyRegenKj+r.energyJouleKj+r.energyDragMechKj;
+   if(!Number.isFinite(sum)||Math.abs(sum-r.energyInitialKj)>1e-7||r.ledgerResidualJ>=1e-6||r.v<0)throw Error('F06 energy budget '+JSON.stringify(r));
+   return r;
+ };
+ const verifyPanel=async r=>{
+   const id=offline?'sf-f06-readouts':'f06-readouts',panel=page.getByTestId(id);
+   await page.waitForFunction(({id,t})=>Math.abs(Number(document.querySelector('[data-testid="'+id+'"]')?.getAttribute('data-sample-time'))-t)<1e-8,{id,t:r.t});
+   for(const k of ['v','x','currentA','energyInitialKj','energyKineticKj','energyRegenKj','energyJouleKj','energyDragMechKj','ledgerResidualJ']){
+     const val=page.getByTestId((offline?'sf-f06-':'f06-')+k);
+     const want=k==='ledgerResidualJ'?r[k].toExponential(3):r[k].toFixed(3);
+     const actual=(await val.textContent())?.trim();if(!actual?.startsWith(want))throw Error('F06 readout '+k+' expected '+want+' got '+actual);
+   }
+ };
+ const save=async(name,r)=>{await verifyPanel(r);out[name]=r;await page.screenshot({path:path.join(OUT_DIR,prefix+name+'.png')});};
+ const run=async target=>{
+   await play.click();
+   await page.waitForFunction(({canvasId,target})=>{const raw=document.querySelector('[data-testid="'+canvasId+'"]')?.dataset.regenRendered;return raw&&JSON.parse(raw).outerTime>=target;},{canvasId,target},{timeout:15000});
+   await play.click();
+   await page.waitForFunction(offline=>{const p=offline?document.querySelector('[data-testid="sf-play-pause"]'):document.querySelector('[data-testid="topbar"] [data-testid="btn-play-pause"]');return offline?p?.textContent?.includes('运行'):p?.getAttribute('aria-label')==='运行';},offline);
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   return sync({mode:'regen-brake'});
+ };
+ await select('ev-pure-em-regen-brake');
+ const pure=await sync({mode:'regen-brake',t:0});
+ if(!(pure.currentA>0)||pure.energyKineticKj!==pure.energyInitialKj||pure.energyRegenKj!==0||await input('capVoltageV').count()||await input('driveCurrentA').count())throw Error('F06 initial/mode isolation');
+ await save('pure_initial',pure);
+ const pr=await run(1);if(!(pr.v<pure.v&&pr.x>0&&pr.energyRegenKj>0&&pr.energyJouleKj>0&&Math.abs(pr.energyDragMechKj)<1e-10))throw Error('F06 pure trajectory');
+ await save('pure_paused',pr);
+ if(offline){const scope=page.getByTestId('sf-uplot');await page.waitForFunction(()=>{const d=document.querySelector('[data-testid="sf-uplot"]')?.dataset;return d?.scopeTimeType==='elapsed'&&d.scopeUnits==='separate'&&Number(d.sampleCount)>1&&Number(d.scopeMax)>0;});out.elapsedScope={timeType:await scope.getAttribute('data-scope-time-type'),units:await scope.getAttribute('data-scope-units')};}
+ await input('loadResOhm').fill('0');
+ const z=await sync({mode:'regen-brake',loadResOhm:0,t:0});await save('zero_load_initial',z);
+ const zr=await run(.25);if(zr.energyRegenKj!==0||!(zr.energyJouleKj>0))throw Error('F06 zero load must not claim transfer');await save('zero_load_paused',zr);
+ await select('ev-blended-regen-mech');const mi=await sync({mode:'regen-brake',t:0});await save('mixed_initial',mi);
+ const mr=await run(.75);if(!(mr.v<mi.v&&mr.energyDragMechKj>0&&mr.energyRegenKj>0))throw Error('F06 mixed losses');await save('mixed_paused',mr);
+ if(!offline){
+   await page.getByTestId('btn-export-studio').click();const preview=page.getByTestId('svg-preview-box');await preview.waitFor({state:'visible'});
+   const d=page.waitForEvent('download');await page.getByTestId('btn-download-svg').click();const svg=await d,file=path.join(OUT_DIR,prefix+'braking.svg');await svg.saveAs(file);
+   const bytes=fs.readFileSync(file,'utf8');if(!bytes.includes('<svg')||!['F_em','F_loss','箭头仅示方向','等效负载','内阻热','机械损耗',mr.t.toFixed(3)+' s'].every(label=>bytes.includes(label))||/NaN|Infinity/.test(bytes))throw Error('F06 export mismatch');
+   await preview.screenshot({path:path.join(OUT_DIR,prefix+'braking_svg.png')});await page.getByTestId('btn-close-export-studio').click();out.export={bytes:Buffer.byteLength(bytes)};
+ }
+ return out;
+}
+
 async function auditF05Cases(page,offline,select){
  const out={},prefix=offline?'H49_F05_offline_':'H49_F05_',canvasId=offline?'sf-canvas':'simulation-canvas',canvas=page.getByTestId(canvasId);
  const input=key=>page.getByTestId((offline?'sf-param-':'param-slider-')+key);
@@ -3903,6 +3954,9 @@ async function main() {
     const f05Url=new URL(origin);f05Url.searchParams.set('model','modern-nuclear-recoil-decay');await page.goto(f05Url.toString(),{waitUntil:'networkidle'});
     await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='modern-nuclear-recoil-decay');
     const f05Report=await auditF05Cases(page,false,id=>selectPreset(page,id,true));
+    const f06Url=new URL(origin);f06Url.searchParams.set('model','stse-em-launch-regen-brake');await page.goto(f06Url.toString(),{waitUntil:'networkidle'});
+    await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='stse-em-launch-regen-brake');
+    const f06Report=await auditF06Braking(page,false,id=>selectPreset(page,id,true));
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -3916,8 +3970,8 @@ async function main() {
     const interactionIssues = waveCInteractionReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));
     const auditErrors = [...layoutIssues, ...coordinateIssues, ...interactionIssues, ...consoleErrors, ...pageErrors, ...failedResponses, ...externalRequests];
     if (auditErrors.length > 0) throw new Error(`VISUAL_AUDIT_FAILED:\n${auditErrors.join('\n')}`);
-    Object.assign(combined,{f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
+    Object.assign(combined,{f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-online.json'),JSON.stringify({phase:'online',f06Report,f05Report,f04Report,f03Report,f02Report,f01Report,o01Report,w02Report,w01Report,e10MagneticReport,e09LcReport,e08TransformerReport,e07GeneratorReport,e06EddyReport,e05WireframeReport,e03AcScopeReport,e02CapacitorReport,e01ElectrostaticReport,m11ShmReport,m09CollisionReport,m08SpringReport,m07TurntableReport,m06VerticalReport,m05ContactReport,m04ProjectileReport,m03ConstraintReport,m02EquilibriumReport,m01ChaseReport,b5OdeReport,b4AnalyticReport,m10PhysicsReport,s01PhysicsReport,report,waveBCoordinateReport,waveCInteractionReport,v3MorphReport,v3StoryFormulaReport,v3DeviceReport,b1PhysicsReport,consoleErrors,pageErrors,failedResponses,externalRequests},null,2));
     console.log('VISUAL_AUDIT_ONLINE: PASS');
     await context.close();
     }
@@ -4659,8 +4713,18 @@ async function main() {
       if(f05Errors.length||f05Network.length)throw Error('F05 offline errors '+JSON.stringify({f05Errors,f05Network}));
       Object.assign(f05OfflineReport,{errors:f05Errors,network:f05Network});
     }finally{await f05Context.close();}
-    Object.assign(combined,{f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
-    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
+    const f06File=path.join(OUT_DIR,'H52_F06_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','stse-em-launch-regen-brake','--preset','ev-pure-em-regen-brake','--out',f06File],{stdio:'inherit'});
+    const f06Context=await browser.newContext({viewport:VIEWPORT,offline:true}),f06Page=await f06Context.newPage(),f06Errors=[],f06Network=[];let f06OfflineReport;
+    f06Page.on('pageerror',e=>f06Errors.push(e.message));f06Page.on('console',m=>{if(m.type()==='error')f06Errors.push(m.text());});f06Page.on('request',r=>{if(/^https?:/.test(r.url()))f06Network.push(r.url());});
+    try{
+      await f06Page.goto(pathToFileURL(f06File).href);
+      f06OfflineReport=await auditF06Braking(f06Page,true,id=>f06Page.getByTestId('sf-f06-presets').selectOption(id));
+      if(f06Errors.length||f06Network.length)throw Error('F06 offline errors '+JSON.stringify({f06Errors,f06Network}));
+      Object.assign(f06OfflineReport,{errors:f06Errors,network:f06Network});
+    }finally{await f06Context.close();}
+    Object.assign(combined,{f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport});
+    fs.writeFileSync(path.join(OUT_DIR,'summary-offline.json'),JSON.stringify({phase:'offline',f06OfflineReport,f05OfflineReport,f04OfflineReport,f03OfflineReport,f02OfflineReport,f01OfflineReport,o01OfflineReport,w02OfflineReport,w01OfflineReport,e10OfflineReport,e09OfflineReport,e08OfflineReport,e07OfflineReport,e06OfflineReport,e05OfflineReport,e03OfflineReport,e02OfflineReport,e01OfflineReport,m11OfflineReport,m09OfflineReport,m08OfflineReport,m07OfflineReport,m06OfflineReport,m05OfflineReport,m04OfflineReport,m03OfflineReport,m02OfflineReport,m01OfflineReport,b5OfflineReport,b4OfflineReport,b3OfflineReport,b2OfflineReport},null,2));
     console.log('VISUAL_AUDIT_OFFLINE: PASS');
     }
     console.log(JSON.stringify({...combined,screenshots:OUT_DIR},null,2));
