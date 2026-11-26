@@ -561,6 +561,61 @@ async function auditM03Constraints(page,origin){
 
 
 
+// M11 uses the actual rendered frame, not independently synthesized telemetry.
+async function auditM11Shm(page,origin){
+  const url=new URL(origin);url.searchParams.set('model','mech-shm-resonance');
+  await page.goto(url.toString(),{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id')==='mech-shm-resonance');
+  const canvas=page.getByTestId('simulation-canvas'),play=page.locator('[data-testid="topbar"] [data-testid="btn-play-pause"]');
+  const read=async()=>JSON.parse(await canvas.getAttribute('data-shm-rendered'));
+  const check=(v,x,label,tol=1e-7)=>{if(!Number.isFinite(v)||Math.abs(v-x)>tol)throw Error('M11 '+label+' '+JSON.stringify({v,x}));};
+  const select=async(id,mode,angle,first,second)=>{
+    await selectPreset(page,id,true);
+    await page.waitForFunction(([m,a])=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.shmRendered||'null');return s?.mode===m&&s.initialAngleDeg===a&&s.t===0;},[mode,angle]);
+    const expand=page.getByTestId('btn-expand-oscilloscope');if(await expand.isVisible())await expand.click();
+    await page.waitForFunction(([a,b])=>document.querySelector('[data-testid="scope-channel-a"]')?.dataset.channelKey===a&&document.querySelector('[data-testid="scope-channel-b"]')?.dataset.channelKey===b,[first,second]);
+    return read();
+  };
+  const runTo=async(t)=>{
+    await play.click();await page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.shmRendered||'null')?.t>t,t,{timeout:15000});await play.click();
+    await page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="simulation-canvas"]')?.dataset.shmRendered||'null'),t=Number(document.querySelector('[data-testid="shm-readouts"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="uplot-container"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+    return read();
+  };
+  const phase=s=>{const A=s.lengthL*s.initialAngleDeg*Math.PI/180,w=Math.sqrt(s.gravityG/s.lengthL);check(s.referenceCircleRadius,A,'radius');check(s.referenceCircleX,A*Math.cos(w*s.t),'phase X');check(s.referenceCircleY,A*Math.sin(w*s.t),'phase Y');check(s.energyResidual,0,'energy');};
+  const small0=await select('small-angle-pendulum-reference','pendulum-compare',2,'thetaRad','thetaLinearRad');
+  await page.getByTestId('shm-scope-empty').waitFor({state:'visible'});
+  if(await page.getByTestId('param-slider-driveOmega').count()||await page.getByTestId('param-slider-dampingGamma').count())throw Error('M11 comparison fields');
+  const small=await runTo(.45);phase(small);
+  await page.screenshot({path:path.join(OUT_DIR,'H29_M11_small.png')});
+  const large0=await select('large-angle-nonisochronous','pendulum-compare',60,'thetaRad','thetaLinearRad');
+  const large=await runTo(1.5);phase(large);
+  if(Math.abs(large.thetaRad-large.thetaLinearRad)<.01)throw Error('M11 nonlinear vs linear states not distinguishable');
+  await page.screenshot({path:path.join(OUT_DIR,'H29_M11_large_phase.png')});
+  const damped0=await select('damped-phase-spiral','damped-free',45,'mechanicalEnergy','heatLostJ');
+  const damped=await runTo(.9);check(damped.mechanicalEnergy+damped.heatLostJ,damped0.mechanicalEnergy,'damped balance');check(damped.driveWorkJ,0,'unforced work');
+  if(!(damped.heatLostJ>0)||'referenceCircleX' in damped)throw Error('M11 damped energy or circle');
+  await page.screenshot({path:path.join(OUT_DIR,'H29_M11_damped.png')});
+  const forced0=await select('forced-resonance-peak','forced-resonance',2,'mechanicalEnergy','driveWorkJ');
+  if(!await page.getByTestId('param-slider-driveOmega').count())throw Error('M11 drive field');
+  const forced=await runTo(1);check(forced.mechanicalEnergy+forced.heatLostJ-forced.driveWorkJ,forced0.mechanicalEnergy,'driven balance');
+  check(forced.linearResponseAmplitude,forced.driveAccelAmp/Math.hypot(forced.w0**2-forced.driveOmega**2,2*forced.dampingGamma*forced.driveOmega),'linear response');
+  if(!(forced.heatLostJ>0))throw Error('M11 forced dissipation');
+  await page.screenshot({path:path.join(OUT_DIR,'H29_M11_forced.png')});
+  await select('zero-angle-equilibrium','pendulum-compare',0,'thetaRad','thetaLinearRad');
+  const zero=await runTo(.35);phase(zero);check(zero.thetaRad,0,'equilibrium');check(zero.omega,0,'zero velocity');check(zero.measuredPeriod,0,'no crossings');
+  await page.screenshot({path:path.join(OUT_DIR,'H29_M11_zero.png')});
+  await select('undamped-resonance','forced-resonance',0,'mechanicalEnergy','driveWorkJ');
+  const undamped=await runTo(.7);check(undamped.linearResponseDefined,0,'singularity');check(undamped.heatLostJ,0,'zero dissipation');check(undamped.mechanicalEnergy-undamped.driveWorkJ,0,'undamped work');
+  if('linearResponseAmplitude' in undamped)throw Error('M11 fabricated singular amplitude');
+  await page.getByTestId('shm-unbounded').waitFor({state:'visible'});
+  const theme=await page.evaluate(()=>document.documentElement.getAttribute('data-theme'));
+  if(theme!=='projector'){if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();await page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');}
+  if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();
+  await page.screenshot({path:path.join(OUT_DIR,'H29_M11_undamped_paper.png')});
+  if(theme!=='projector'){if(!await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();await page.getByTestId('btn-theme').click();if(await page.getByTestId('tools-menu').isVisible())await page.getByTestId('btn-tools-menu').click();}
+  const report={small0,small,large0,large,damped0,damped,forced0,forced,zero,undamped};console.log('H29 M11 online '+JSON.stringify(report));return report;
+}
+
 async function auditM09Collision(page,origin){
   const url=new URL(origin);url.searchParams.set('model','mech-collision-recoil');
   await page.goto(url.toString(),{waitUntil:'networkidle'});
@@ -2370,6 +2425,7 @@ async function main() {
     const m07TurntableReport=await auditM07Turntable(page,origin);
     const m08SpringReport=await auditM08Spring(page,origin);
     const m09CollisionReport=await auditM09Collision(page,origin);
+    const m11ShmReport=await auditM11Shm(page,origin);
     const waveBCoordinateReport = await runWaveBCoordinateAudit(page, origin);
     const waveCInteractionReport = await runWaveCInteractionAudit(page, origin);
     const v3MorphReport = await auditV3Morph(page, origin, name => page.screenshot({ path: path.join(OUT_DIR, 'V3_' + name + '.png') }));
@@ -2778,7 +2834,35 @@ async function main() {
       Object.assign(m09OfflineReport,{hit,exit,errors:m09Errors,network:m09Network});
     }finally{await m09Context.close();}
 
-    const summary = { m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
+    const m11File=path.join(OUT_DIR,'H29_M11_offline.html');
+    execFileSync(process.execPath,[path.resolve(SCRIPT_DIR,'../apps/singlefile-exporter/export.mjs'),'--model','mech-shm-resonance','--preset','large-angle-nonisochronous','--out',m11File],{stdio:'inherit'});
+    const m11Context=await browser.newContext({viewport:VIEWPORT,offline:true}),m11Page=await m11Context.newPage(),m11Errors=[],m11Network=[],m11OfflineReport={};
+    m11Page.on('pageerror',e=>m11Errors.push(e.message));m11Page.on('console',m=>{if(m.type()==='error')m11Errors.push(m.text());});m11Page.on('request',r=>{if(/^https?:/.test(r.url()))m11Network.push(r.url());});
+    try{
+      await m11Page.goto(pathToFileURL(m11File).href);
+      const canvas=m11Page.getByTestId('sf-canvas'),read=async()=>JSON.parse(await canvas.getAttribute('data-shm-rendered'));
+      const run=async(t)=>{
+        await m11Page.getByTestId('sf-play-pause').click();
+        await m11Page.waitForFunction(t=>JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.shmRendered||'null')?.t>t,t,{timeout:15000});
+        await m11Page.getByTestId('sf-play-pause').click();
+        await m11Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.shmRendered||'null'),t=Number(document.querySelector('[data-testid="sf-summary-clock"]')?.dataset.sampleTime),p=Number(document.querySelector('[data-testid="sf-uplot"]')?.dataset.lastSampleT);return s&&Math.abs(s.t-t)<1e-10&&Math.abs(s.t-p)<1e-10;},null,{timeout:5000});
+        return read();
+      };
+      await m11Page.getByTestId('sf-scope-empty').waitFor({state:'visible'});
+      const large=await run(.7),A=large.lengthL*large.initialAngleDeg*Math.PI/180,w=Math.sqrt(large.gravityG/large.lengthL);
+      if(Math.abs(large.referenceCircleX-A*Math.cos(w*large.t))>1e-7||Math.abs(large.referenceCircleY-A*Math.sin(w*large.t))>1e-7||large.energyResidual>1e-7)throw Error('M11 offline phase '+JSON.stringify(large));
+      await m11Page.screenshot({path:path.join(OUT_DIR,'H29_M11_offline_large.png')});
+      await m11Page.locator('[data-preset-id="forced-resonance-peak"]').click();
+      await m11Page.waitForFunction(()=>{const s=JSON.parse(document.querySelector('[data-testid="sf-canvas"]')?.dataset.shmRendered||'null');return s?.mode==='forced-resonance'&&s.t===0&&document.querySelector('[data-testid="sf-scope-channel-b"]')?.value==='driveWorkJ';});
+      const forced0=await read(),forced=await run(.8);
+      if(Math.abs(forced.mechanicalEnergy+forced.heatLostJ-forced.driveWorkJ-forced0.mechanicalEnergy)>1e-7||!(forced.heatLostJ>0))throw Error('M11 offline balance '+JSON.stringify(forced));
+      await m11Page.getByRole('button',{name:'黑板深蓝'}).click();await m11Page.waitForFunction(()=>document.documentElement.getAttribute('data-theme')==='projector');
+      await m11Page.screenshot({path:path.join(OUT_DIR,'H29_M11_offline_forced_paper.png')});
+      if(m11Errors.length||m11Network.length)throw Error('M11 offline errors '+JSON.stringify({m11Errors,m11Network}));
+      Object.assign(m11OfflineReport,{large,forced,errors:m11Errors,network:m11Network});
+    }finally{await m11Context.close();}
+
+    const summary = { m11ShmReport,m11OfflineReport,m09CollisionReport,m09OfflineReport,m08SpringReport,m08OfflineReport,m07TurntableReport,m07OfflineReport,m06VerticalReport,m06OfflineReport,m05ContactReport,m05OfflineReport,m04ProjectileReport,m04OfflineReport,m03ConstraintReport,m03OfflineReport,m02EquilibriumReport,m02OfflineReport,m01ChaseReport,m01OfflineReport,b5OdeReport,b5OfflineReport,b4OfflineReport,b4AnalyticReport,b3OfflineReport,b2OfflineReport,m10PhysicsReport,s01PhysicsReport,report, waveBCoordinateReport, waveCInteractionReport, v3MorphReport, v3StoryFormulaReport, v3DeviceReport, b1PhysicsReport, consoleErrors, pageErrors, failedResponses, externalRequests, screenshots: OUT_DIR };
     console.log(JSON.stringify(summary, null, 2));
     const layoutIssues = report.flatMap((item) => item.layout.issues.map((issue) => `[${item.model}] ${issue}`));
     const coordinateIssues = waveBCoordinateReport.flatMap((item) => item.issues.map((issue) => `[${item.model}] ${issue}`));

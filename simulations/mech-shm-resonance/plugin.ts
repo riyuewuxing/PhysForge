@@ -1,5 +1,5 @@
 import { degToRad, radToDeg } from '@physforge/physics-core';
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ForceVectorItem, type ParamFieldSpec, type TelemetryChannelSpec } from '@physforge/sim-sdk';
 import { shmResonancePresets } from './presets.js';
 import {
   angularDriveAt,
@@ -37,6 +37,15 @@ const paramSchema: readonly ParamFieldSpec<ShmResonanceParams>[] = [
   { key: 'driveOmega', kind: 'number', label: '驱动角频率 ωd', unit: 'rad/s', min: 0.5, max: 8, step: 0.05, defaultValue: 3.06 }
 ];
 
+const shmChannels: readonly TelemetryChannelSpec[] = [
+    { key: 'thetaRad', label: '摆角 θ (x轴相图)', unit: 'rad', color: '#38bdf8' },
+    { key: 'omega', label: '角速度 ω (y轴相图)', unit: 'rad/s', color: '#4ade80' },
+    { key: 'thetaLinearRad', label: '简谐幽灵摆 θ_lin', unit: 'rad', color: '#f472b6' },
+    { key: 'mechanicalEnergy', label: '机械能 E', unit: 'J', color: '#fbbf24' },
+    { key: 'heatLostJ', label: '累计耗散 Q', unit: 'J', color: '#fb923c' },
+    { key: 'driveWorkJ', label: '外驱有符号功 W', unit: 'J', color: '#a78bfa' }
+  ];
+
 export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams, ShmResonanceState>({
   meta: {
     id: 'mech-shm-resonance',
@@ -47,16 +56,17 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
     version: '2.0.0'
   },
   defaultView: {
-    scale: p => Math.min(1, (p.mode==='forced-resonance'?0.85:1.3)/p.lengthL),
+    scale: p => Math.min(1, (p.mode==='forced-resonance'?0.85:1.1)/p.lengthL),
     offsetRatioX: -0.01,
     offsetRatioY: p => p.mode==='forced-resonance' ? -0.04 : -0.29
   },
   paramSchema,
-  getParamFields: p => paramSchema.filter(f =>
-    f.key!=='dampingGamma' && f.key!=='driveAccelAmp' && f.key!=='driveOmega' ||
-    f.key==='dampingGamma' && p.mode!=='pendulum-compare' ||
-    (f.key==='driveAccelAmp' || f.key==='driveOmega') && p.mode==='forced-resonance'
-  ),
+  getParamFields: p => {
+    const keys=p.mode==='pendulum-compare'?['mode','initialAngleDeg','lengthL','gravityG','massM']:
+      p.mode==='damped-free'?['mode','initialAngleDeg','dampingGamma','lengthL','gravityG','massM']:
+      ['mode','driveOmega','driveAccelAmp','dampingGamma','initialAngleDeg','lengthL','gravityG','massM'];
+    return keys.flatMap(key=>paramSchema.filter(f=>f.key===key));
+  },
   presets: shmResonancePresets,
   engine: {
     createInitialState,
@@ -69,14 +79,13 @@ export const mechShmResonancePlugin = defineSimulationPlugin<ShmResonanceParams,
     { id: 'referenceCircle', label: '参考圆投影联动', defaultVisible: true },
     { id: 'resonanceCurve', label: '线性理论幅频响应', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'thetaRad', label: '摆角 θ (x轴相图)', unit: 'rad', color: '#38bdf8' },
-    { key: 'omega', label: '角速度 ω (y轴相图)', unit: 'rad/s', color: '#4ade80' },
-    { key: 'thetaLinearRad', label: '简谐幽灵摆 θ_lin', unit: 'rad', color: '#f472b6' },
-    { key: 'mechanicalEnergy', label: '机械能 E', unit: 'J', color: '#fbbf24' },
-    { key: 'heatLostJ', label: '累计耗散 Q', unit: 'J', color: '#fb923c' },
-    { key: 'driveWorkJ', label: '外驱有符号功 W', unit: 'J', color: '#a78bfa' }
-  ],
+  telemetryChannels: shmChannels,
+  getTelemetryChannels: p => {
+    const keys = p.mode==='pendulum-compare' ? ['thetaRad','thetaLinearRad','omega','mechanicalEnergy'] :
+      p.mode==='damped-free' ? ['mechanicalEnergy','heatLostJ','thetaRad','omega','thetaLinearRad'] :
+        ['mechanicalEnergy','driveWorkJ','heatLostJ','thetaRad','omega','thetaLinearRad'];
+    return keys.flatMap(key=>shmChannels.filter(c=>c.key===key));
+  },
   getForceVectors: (state, params) => {
     const L = params.lengthL;
     const bx = L * Math.sin(state.theta);

@@ -214,6 +214,7 @@ export function computeObservables(
   const tension = m * params.gravityG * Math.cos(state.theta) + m * L * state.omega * state.omega;
   const circle = computeReferenceCircle(state, params);
   const inertia = m*L*L;
+  const response=params.mode==='forced-resonance'?computeLinearResponseAmplitude(params,params.driveOmega):null;
   return {
     t: state.t,
     thetaRad: state.theta,
@@ -231,6 +232,7 @@ export function computeObservables(
     drivePowerW: inertia*angularDriveAt(params,state.t)*state.omega,
     tensionN: tension,
     ...(circle ? { referenceCircleX: circle.x, referenceCircleY: circle.y, referenceCircleRadius: circle.radius } : {}),
+    ...(params.mode==='forced-resonance'?{linearResponseDefined:response===null?0:1,...(response===null?{}:{linearResponseAmplitude:response})}:{}),
     measuredPeriod: state.measuredPeriod ?? 0,
     w0: computeNaturalOmega(params)
   };

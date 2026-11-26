@@ -65,5 +65,17 @@ export const shmResonancePresets: readonly PresetSpec<ShmResonanceParams>[] = [
       driveAccelAmp: 0.8,
       driveOmega: 3.065
     }
+  },
+  {
+    id:'zero-angle-equilibrium', name:'零初角 · 稳定平衡',
+    description:'没有人为最小摆角；静止平衡、零能量及退化参考圆。',
+    curriculumNotes:'选择性必修一 · 平衡位置',
+    params:{mode:'pendulum-compare',lengthL:1,gravityG:9.8,massM:1,initialAngleDeg:0,dampingGamma:0,driveAccelAmp:0,driveOmega:3}
+  },
+  {
+    id:'undamped-resonance', name:'无阻尼 · 线性共振奇点',
+    description:'ωd=ω₀=3 rad/s；非零驱动下线性理论无有限周期特解，真实非线性摆仍独立积分。',
+    curriculumNotes:'选择性必修一 · 模型适用范围',
+    params:{mode:'forced-resonance',lengthL:1,gravityG:9,massM:1,initialAngleDeg:0,dampingGamma:0,driveAccelAmp:0.8,driveOmega:3}
   }
 ];
