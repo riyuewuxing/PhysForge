@@ -1,4 +1,4 @@
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { gravityAssistPresets } from './presets.js';
 import {
   checkInvariants,
@@ -17,7 +17,7 @@ const paramSchema: readonly ParamFieldSpec<GravityAssistRendezvousParams>[] = [
     defaultValue: 'gravity-assist',
     options: [
       { value: 'gravity-assist', label: '深空引力弹弓掠飞' },
-      { value: 'rendezvous', label: '空间站交会对接变轨' }
+      { value: 'rendezvous', label: '圆轨周期与相位比较' }
     ]
   },
   {
@@ -26,8 +26,8 @@ const paramSchema: readonly ParamFieldSpec<GravityAssistRendezvousParams>[] = [
     label: '掠飞方位（相对行星运动）',
     defaultValue: 'trailing',
     options: [
-      { value: 'trailing', label: '绕行星尾后侧（加速）' },
-      { value: 'leading', label: '绕行星前侧（减速）' }
+      { value: 'trailing', label: '后侧初始偏置' },
+      { value: 'leading', label: '前侧初始偏置' }
     ]
   },
   { key: 'muPlanet', kind: 'number', label: '行星引力参数 μ_p', defaultValue: 0.16, min: 0.05, max: 0.4, step: 0.02 },
@@ -58,7 +58,10 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     difficulty: '压轴专题',
     version: '2.0.0'
   },
-  defaultView: { scale: (params) => params.mode === 'rendezvous' ? 0.5 : 1.417 },
+  defaultView: {
+    scale: params=>params.mode==='rendezvous'?.78:.60,
+    offsetRatioX:(params,view)=>params.mode==='rendezvous'?0:-(params.planetOrbitRadius-1.6)*.24*Math.min(view.width,view.height)*.60/view.width
+  },
   paramSchema,
   presets: gravityAssistPresets,
   getParamFields:p=>paramSchema.filter(f=>(p.mode==='gravity-assist'?['mode','flybySide','muPlanet','planetOrbitRadius','impactParam']:['mode','rendezvousBurn','deltaVFraction']).includes(f.key)),
@@ -101,7 +104,7 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
   referenceFrames: [
     {
       id: 'heliocentric',
-      label: '太阳系（惯性系）',
+      label: '局部/中心体惯性系',
       description: '掠飞为局部惯性近似；交会为中心体惯性系。',
       getOrigin: () => ({ x: 0, y: 0 }),
       getVelocity: () => ({ x: 0, y: 0 })
@@ -128,105 +131,59 @@ export const stseGravityAssistRendezvousPlugin = defineSimulationPlugin<
     importScene: (dsl) => dsl.params as Partial<GravityAssistRendezvousParams>
   },
   exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'circle', cx: 0, cy: 0, r: 1.0, dashed: true },
-      { kind: 'trajectory', points: state.trail.slice(-50).map((p) => ({ x: params.mode === 'gravity-assist' ? p.x - p.px : p.x, y: params.mode === 'gravity-assist' ? p.y - p.py : p.y })), strokeWidth: 1.5 }
+    const relative=params.mode==='gravity-assist';
+    const trace=state.trail.map(q=>({x:relative?q.x-q.px:q.x,y:relative?q.y-q.py:q.y}));
+    const body=relative?{x:0,y:0}:state.planetPos;
+    const craft=relative?{x:state.pos.x-state.planetPos.x,y:state.pos.y-state.planetPos.y}:state.pos;
+    const points=[...trace,body,craft,{x:0,y:0}];
+    const minX=Math.min(...points.map(q=>q.x),relative?0:-1)-.5,maxX=Math.max(...points.map(q=>q.x),relative?0:1)+.5;
+    const minY=Math.min(...points.map(q=>q.y),relative?0:-1)-.55,maxY=Math.max(...points.map(q=>q.y),relative?0:1)+.55;
+    const primitives:DiagramPrimitive[]=[
+      ...(!relative?[{kind:'circle' as const,cx:0,cy:0,r:1,dashed:true},{kind:'circle' as const,cx:0,cy:0,r:.07,fill:true}]:[]),
+      {kind:'trajectory',points:trace,strokeWidth:1.5},
+      {kind:'circle',cx:body.x,cy:body.y,r:.065,fill:true},
+      {kind:'circle',cx:craft.x,cy:craft.y,r:.045},
+      {kind:'text',x:body.x,y:body.y+.12,text:relative?'行星（符号）':'目标舱'},
+      {kind:'text',x:craft.x,y:craft.y-.14,text:relative?'探测器':'追踪舱'},
+      {kind:'text',x:(minX+maxX)/2,y:maxY-.18,text:relative?'行星平移系 · 局部二体近似':'中心体惯性系 · 归一化相位比较',align:'middle'},
+      {kind:'text',x:(minX+maxX)/2,y:minY+.16,text:relative?'t* = '+state.t.toFixed(3)+'；历史样本逐时刻变换':'t* = '+state.t.toFixed(3)+'；目标领先角 '+(state.targetAngleRad-state.chaserAngleRad).toFixed(3)+' rad',align:'middle'}
     ];
-    return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.6, minY: -1.8, maxX: 2.6, maxY: 1.8 },
-      title: params.mode === 'gravity-assist' ? '引力弹弓双曲线掠飞配图' : '空间站交会椭圆变轨配图',
-      primitives
-    };
+    return {width:760,height:480,viewBox:{minX,minY,maxX,maxY},title:relative?'局部二体掠飞：行星平移系':'圆轨周期与相位比较',primitives};
   },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    if (!activeLayers.has('orbit')) return;
-    const m = createWorldMapper(viewport);
-    const center = m.toScreen(0, 0);
+  renderCanvas: (ctx,state,params,viewport,activeLayers)=>{
+    if(!activeLayers.has('orbit'))return;
+    const m=createWorldMapper(viewport),paper=viewport.theme==='projector',ink=paper?'#1e293b':'#e2e8f0';
+    const muted=paper?'#64748b':'#94a3b8',traceColor=paper?'#0369a1':'#38bdf8',targetColor=paper?'#15803d':'#4ade80';
+    const relative=params.mode==='gravity-assist'&&viewport.observationFrameId==='planet-frame';
+    const labels:CanvasLabel[]=[];
     ctx.save();
-
-    if (params.mode === 'rendezvous') {
-      ctx.strokeStyle = 'rgba(148,163,184,0.45)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, m.len(1), 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.fillStyle = '#fbbf24';
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, m.len(0.1), 0, Math.PI * 2);
-      ctx.fill();
-
-      if (state.trail.length > 1) {
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        state.trail.forEach((pt, idx) => {
-          const point = m.toScreen(pt.x, pt.y);
-          if (idx === 0) ctx.moveTo(point.x, point.y);
-          else ctx.lineTo(point.x, point.y);
-        });
-        ctx.stroke();
-      }
-
-      ctx.fillStyle = '#4ade80';
-      const planet = m.toScreen(state.planetPos.x, state.planetPos.y);
-      ctx.fillRect(planet.x - m.len(0.05), planet.y - m.len(0.05), m.len(0.1), m.len(0.1));
-      ctx.fillStyle = '#38bdf8';
-      ctx.beginPath();
-      const chaser = m.toScreen(state.pos.x, state.pos.y);
-      ctx.arc(chaser.x, chaser.y, m.len(0.05), 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 13px ui-sans-serif, system-ui';
-      ctx.fillText(
-        `${params.rendezvousBurn === 'prograde-boost' ? '正向增速：轨道周期更长' : '逆向减速：轨道周期更短（不代表已对接）'} | Δθ=${(state.chaserAngleRad - state.targetAngleRad).toFixed(3)} rad`,
-        20,
-        30
-      );
-      ctx.restore();
-      return;
+    if(params.mode==='rendezvous'){
+      const c=m.toScreen(0,0);
+      ctx.strokeStyle=muted;ctx.lineWidth=1.5;ctx.setLineDash([5,4]);ctx.beginPath();ctx.arc(c.x,c.y,m.len(1),0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle=paper?'#b45309':'#fbbf24';ctx.beginPath();ctx.arc(c.x,c.y,Math.max(4,m.len(.07)),0,Math.PI*2);ctx.fill();
+      labels.push({id:'central',x:c.x,y:c.y+17,text:'中心体（符号）',color:muted,font:'12px ui-sans-serif, system-ui'});
     }
-
-    // Planet marker
-    ctx.fillStyle = '#f59e0b';
-    ctx.beginPath();
-    const planet = m.toScreen(state.planetPos.x, state.planetPos.y);
-    ctx.arc(planet.x, planet.y, m.len(0.06), 0, Math.PI * 2);
-    ctx.fill();
-
-    // Spacecraft trail
-    if (state.trail.length > 1) {
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2.4;
-      ctx.beginPath();
-      state.trail.forEach((pt, idx) => {
-        const px = pt.x;
-        const py = pt.y;
-        const point = m.toScreen(px, py);
-        if (idx === 0) ctx.moveTo(point.x, point.y);
-        else ctx.lineTo(point.x, point.y);
-      });
-      ctx.stroke();
-    }
-
-    ctx.fillStyle = '#4ade80';
-    ctx.beginPath();
-    const spacecraft = m.toScreen(state.pos.x, state.pos.y);
-    ctx.arc(spacecraft.x, spacecraft.y, m.len(0.05), 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 13px ui-sans-serif, system-ui';
-    const dE = state.helioEnergyCurrent - state.helioEnergyInitial;
-    ctx.fillText(
-      `局部惯性系比动能变化 ΔEk = ${dE >= 0 ? '+' : ''}${dE.toFixed(4)} | 同初始半径等效速率残差 ${state.planetFrameSpeedRelErr.toExponential(2)}`,
-      20,
-      30
+    ctx.strokeStyle=traceColor;ctx.lineWidth=2;ctx.beginPath();
+    state.trail.forEach((q,i)=>{
+      // The host translates by the CURRENT origin. Add that origin back after
+      // transforming each historical point by its OWN historical planet location.
+      const pt=relative?m.toScreen(q.x-q.px+state.planetPos.x,q.y-q.py+state.planetPos.y):m.toScreen(q.x,q.y);
+      if(i===0)ctx.moveTo(pt.x,pt.y);else ctx.lineTo(pt.x,pt.y);
+    });ctx.stroke();
+    const body=m.toScreen(state.planetPos.x,state.planetPos.y),craft=m.toScreen(state.pos.x,state.pos.y);
+    ctx.fillStyle=params.mode==='rendezvous'?targetColor:(paper?'#b45309':'#f59e0b');
+    ctx.beginPath();ctx.arc(body.x,body.y,Math.max(4,m.len(.065)),0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle=traceColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(craft.x,craft.y,Math.max(3,m.len(.045)),0,Math.PI*2);ctx.stroke();
+    labels.push(
+      {id:'body',x:body.x,y:body.y-18,text:params.mode==='rendezvous'?'目标舱':'行星（符号）',color:ink,font:'13px ui-sans-serif, system-ui'},
+      {id:'craft',x:craft.x,y:craft.y+18,text:params.mode==='rendezvous'?'追踪舱':'探测器',color:traceColor,font:'13px ui-sans-serif, system-ui'}
     );
-    ctx.restore();
+    // Headers are screen anchors, not world-space data.
+    const title=params.mode==='rendezvous'?'中心体惯性系 · 归一化相位比较（非对接）':relative?'行星平移系 · 局部二体近似':'局部惯性系 · 匀速平移行星、忽略太阳引力';
+    const line=params.mode==='rendezvous'?'目标领先角 '+(state.targetAngleRad-state.chaserAngleRad).toFixed(3)+' rad': '比动能变化 '+(state.helioEnergyCurrent-state.helioEnergyInitial).toFixed(4)+'；等效速率残差 '+state.planetFrameSpeedRelErr.toExponential(2);
+    ctx.fillStyle=ink;ctx.font='bold 14px ui-sans-serif, system-ui';ctx.textAlign='center';ctx.fillText(title,viewport.width*.5,49);
+    ctx.fillStyle=muted;ctx.font='12px ui-sans-serif, system-ui';ctx.fillText('t* = '+state.t.toFixed(3)+' | '+line,viewport.width*.5,68);
+    resolveAndDrawLabels(ctx,labels,viewport.width,viewport.height);ctx.restore();
   },
   formatFormulas: (state, params) => params.mode==='gravity-assist'?[
     {id:'slingshot-rendezvous',label:'局部二体近似 · 参考系速度变换',latex:'\\mathbf{v}_{\\rm local}=\\mathbf{V}_{p}+\\mathbf{v}_{\\rm rel}',substitutedLatex:'\\Delta K_{\\rm local}='+ (state.helioEnergyCurrent-state.helioEnergyInitial).toFixed(4)},

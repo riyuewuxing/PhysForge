@@ -1015,7 +1015,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     if (drawState !== null) {
       const layerSet = readDisplayedLayers();
-      p.renderCanvas(ctx, drawState, pm, { ...vp, theme: currentTheme }, layerSet);
+      p.renderCanvas(ctx, drawState, pm, { ...vp, theme: currentTheme, ...(p.meta.id==='stse-gravity-assist-rendezvous'?{observationFrameId:latestRef.current.activeFrameId}:{}) }, layerSet);
 
       // 壳层统一 Strobe 频闪打点叠加
       if (strobe && !masked && snapshotsRef.current.length > 2) {
@@ -1123,7 +1123,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         const scale=p.meta.id==='em-capacitor-millikan'?(p as unknown as CapacitorStagePlugin).displayLengthPerM:1;
         const text=p.meta.id==='em-capacitor-millikan'?
           '随动参考系 · 相对板间中面 y='+(frameOrigin.y/scale*1000).toFixed(3)+' mm（水平位置仅示意）':
-          `随动参考系锁定: (${frameOrigin.x.toFixed(2)}, ${frameOrigin.y.toFixed(2)}) m`;
+          p.meta.id==='stse-gravity-assist-rendezvous'?`观察参考系 · 归一化坐标 (${frameOrigin.x.toFixed(2)}, ${frameOrigin.y.toFixed(2)})`:`随动参考系锁定: (${frameOrigin.x.toFixed(2)}, ${frameOrigin.y.toFixed(2)}) m`;
         const hasAutoFbdBadge = !latestRef.current.presentationMode && latestRef.current.autoFbdEnabled && !latestRef.current.poeMasked && fbdCountRef.current > 0;
         const badgeY = latestRef.current.presentationMode ? vp.height - 20 : (hasAutoFbdBadge ? 56 : 24);
         ctx.save();

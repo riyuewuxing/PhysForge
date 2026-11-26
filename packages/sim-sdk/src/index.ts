@@ -126,6 +126,8 @@ export interface TelemetryChannelSpec {
 export interface Viewport {
   /** Optional presentation palette, never a physics-engine parameter. */
   theme?: 'chalkboard' | 'projector';
+  /** Optional observation-frame identity for plugins with frame-dependent history. */
+  observationFrameId?: string;
   width: number;
   height: number;
   dpr: number;
