@@ -1,7 +1,9 @@
-import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { rutherfordBohrPresets } from './presets.js';
+import {atomicGeometry,ATOMIC_BOUNDS,IMPACT_RAIL_X,PROBE_RAIL,atomicPoint} from './sceneGeometry.js';
 import {
-  bohrEnergyEv,
+  NUCLEAR_SCALE,
+  solveBohrTransitions,
   checkInvariants,
   computeObservables,
   createInitialState,
@@ -24,11 +26,11 @@ const paramSchema: readonly ParamFieldSpec<RutherfordBohrParams>[] = [
   { key: 'alphaEnergyMev', kind: 'number', label: 'α 粒子初动能 K_α', unit: 'MeV', defaultValue: 5.0, min: 1.0, max: 12.0, step: 0.5 },
   { key: 'targetZ', kind: 'number', label: '靶核质子数 Z₂（Au=79）', defaultValue: 79, min: 13, max: 92, step: 1 },
   { key: 'impactParamFm', kind: 'number', label: '瞄准距离 b', unit: 'fm', defaultValue: 25, min: -80, max: 80, step: 5 },
-  { key: 'excitedLevelN', kind: 'number', label: '最高激发态主量子数 n', defaultValue: 6, min: 2, max: 7, step: 1 },
+  { key: 'excitedLevelN', kind: 'number', label: '最高激发态主量子数 n', defaultValue: 6, min: 2, max: 8, step: 1 },
   {
     key: 'populationMode',
     kind: 'select',
-    label: '发光粒子群体',
+    label: '发光初态群体（独立于探针）',
     defaultValue: 'ensemble',
     options: [
       { label: '一群氢原子 (C_n^2 条)', value: 'ensemble' },
@@ -41,11 +43,11 @@ const paramSchema: readonly ParamFieldSpec<RutherfordBohrParams>[] = [
     label: '基态激发探针类型',
     defaultValue: 'photon',
     options: [
-      { label: '单色光子 (须严格共振 ΔE)', value: 'photon' },
+      { label: '单色光子（输入容差 ±0.005 eV）', value: 'photon' },
       { label: '入射电子 (E ≥ ΔE 即可激发)', value: 'electron' }
     ]
   },
-  { key: 'probeEnergyEv', kind: 'number', label: '探针入射能量 E_probe', unit: 'eV', defaultValue: 12.09, min: 5.0, max: 15.0, step: 0.05 }
+  { key: 'probeEnergyEv', kind: 'number', label: '探针入射能量 E_probe', unit: 'eV', defaultValue: 12.09, min: 5.0, max: 15.0, step: 0.01 }
 ];
 
 export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrParams, RutherfordBohrState>({
@@ -58,228 +60,75 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
     version: '2.0.0'
   },
   paramSchema,
-  presets: rutherfordBohrPresets,
-  engine: {
-    createInitialState,
-    step: stepRutherfordBohr,
-    computeObservables,
-    checkInvariants
+  presets:rutherfordBohrPresets,
+  getParamFields:p=>paramSchema.filter(f=>(p.mode==='rutherford'?['mode','alphaEnergyMev','targetZ','impactParamFm']:['mode','excitedLevelN','populationMode','probeKind','probeEnergyEv']).includes(f.key)),
+  timeSemantics:p=>p.mode==='bohr'?'static-analytic':'evolving',
+  engine:{createInitialState,step:stepRutherfordBohr,computeObservables,checkInvariants},
+  layers:[{id:'main',label:'真实轨迹 / 能级与光谱',defaultVisible:true}],
+  telemetryChannels:[{key:'currentDistanceFm',label:'当前核距 r',unit:'fm',color:'#38bdf8'},{key:'speedMillionMps',label:'α 粒子速率',unit:'10⁶ m/s',color:'#fbbf24'},{key:'forceN',label:'库仑力大小',unit:'N',color:'#fb7185'}],
+  getTelemetryChannels:p=>{
+    const channel=(key:string,label:string,unit:string,color='#38bdf8')=>({key,label,unit,color});
+    if(p.mode==='rutherford')return [channel('currentDistanceFm','当前核距 r','fm'),channel('speedMillionMps','α 粒子速率','10⁶ m/s','#fbbf24'),channel('forceN','库仑力大小','N','#fb7185'),channel('sampleTime22','实际经过核尺度时间','10⁻²² s'),channel('analyticalAngleDeg','解析散射角','°'),channel('rutherfordAngleDeg','远区数值散射角','°'),channel('minDistanceFm','解析最近距离','fm'),channel('numericalClosestFm','数值最近距离','fm')];
+    const b=solveBohrTransitions(p);
+    return [channel('bohrLinesCount','实际选中谱线','条'),channel('totalCombinationLines','群体上限','条'),channel('maxSingleAtomLines','单原子上限','条'),
+      ...(b.reachedLevel!==undefined?[channel('reachedLevel','探针终态 n','')]:[]),
+      ...(b.residualElectronEv!==undefined?[channel('residualElectronEv','电子剩余动能','eV')]:[]),
+      ...(b.ionizationExcessEv!==undefined?[channel('ionizationExcessEv','电离总余能','eV')]:[]),
+      ...(b.transmittedPhotonEv!==undefined?[channel('transmittedPhotonEv','未吸收光子能量','eV')]:[]),
+      ...(b.absorbedEnergyEv!==undefined?[channel('absorbedEnergyEv','吸收能级差','eV')]:[]),
+      ...(b.resonanceMismatchEv!==undefined?[channel('resonanceMismatchEv','输入舍入差','eV')]:[])];
   },
-  layers: [
-    { id: 'main', label: '核式散射双曲线 / 玻尔能级光谱', defaultVisible: true }
-  ],
-  telemetryChannels: [
-    { key: 'rutherfordAngleDeg', label: '散射偏转角 θ', unit: '°', color: '#38bdf8' },
-    { key: 'minDistanceFm', label: '最近核距 r_min', unit: 'fm', color: '#f59e0b' },
-    { key: 'hAlphaNm', label: '巴耳末 Hα 波长', unit: 'nm', color: '#ef4444' },
-    { key: 'residualElectronEv', label: '探针剩余动能', unit: 'eV', color: '#4ade80' }
-  ],
-  sceneSerializer: {
-    exportScene: (_s, params) => ({
-      schemaVersion: '2.0',
-      modelId: 'modern-rutherford-bohr',
-      title: '卢瑟福 α 散射与玻尔氢原子',
-      params
-    }),
-    importScene: (dsl) => dsl.params as Partial<RutherfordBohrParams>
+  sceneSerializer:{
+    exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'modern-rutherford-bohr',title:'卢瑟福散射与氢原子能级',params}),
+    importScene:dsl=>dsl.params as Partial<RutherfordBohrParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [];
-    if (params.mode === 'rutherford') {
-      primitives.push({ kind: 'fieldMarker', x: 0, y: 0, symbol: 'plus', radius: 6 });
-      const pts = state.rutherford.trajectoryFm
-        .filter((_, idx) => idx % 3 === 0)
-        .map((p) => ({ x: p.x / 60, y: p.y / 60 }));
-      if (pts.length > 1) primitives.push({ kind: 'trajectory', points: pts, strokeWidth: 2 });
-    } else {
-      for (let n = 1; n <= Math.min(6, params.excitedLevelN); n++) {
-        const y = -1.2 + (1 + bohrEnergyEv(n) / 13.6) * 2.2;
-        primitives.push(
-          { kind: 'line', x1: -1.6, y1: y, x2: 1.6, y2: y, strokeWidth: 1.4 },
-          { kind: 'text', x: 1.75, y, text: `n=${n}`, align: 'start' }
-        );
-      }
-    }
-    return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -3.2, minY: -2.0, maxX: 3.2, maxY: 2.0 },
-      title: params.mode === 'rutherford' ? 'α 粒子散射双曲线轨迹配图' : '氢原子能级跃迁配图',
-      primitives
+  exportDiagramIR:(s,p)=>({width:1060,height:690,viewBox:ATOMIC_BOUNDS,title:s.mode==='rutherford'?'真实核尺度散射轨迹与数值账本':'氢原子能级与实际选中谱线',primitives:atomicGeometry(s,p).marks.map(m=>m.primitive)}),
+  renderCanvas:(ctx,s,p,viewport,layers)=>{
+    if(!layers.has('main'))return;
+    const m=createWorldMapper(viewport),paper=viewport.theme==='projector';
+    const palette=paper?{ink:'#0f172a',grid:'#94a3b8',path:'#0369a1',sample:'#be123c',nucleus:'#92400e',force:'#be123c',velocity:'#166534',energy:'#075985',uv:'#7e22ce',ir:'#9a3412',visible:'#0369a1',alert:'#be123c'}:
+      {ink:'#e2e8f0',grid:'#64748b',path:'#38bdf8',sample:'#fb7185',nucleus:'#fbbf24',force:'#fb7185',velocity:'#4ade80',energy:'#67e8f9',uv:'#c084fc',ir:'#fb923c',visible:'#38bdf8',alert:'#fb7185'};
+    const labels:CanvasLabel[]=[];ctx.save();
+    const drawLine=(x1:number,y1:number,x2:number,y2:number,w:number)=>{
+      ctx.lineWidth=w;ctx.beginPath();ctx.moveTo(m.toX(x1),m.toY(y1));ctx.lineTo(m.toX(x2),m.toY(y2));ctx.stroke();
     };
-  },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const m = createWorldMapper(viewport);
-    if (!activeLayers.has('main')) return;
-    ctx.save();
-    const labels: CanvasLabel[] = [];
-
-    if (params.mode === 'rutherford') {
-      for (const guideB of [-65, -40, 40, 65]) {
-        ctx.strokeStyle = 'rgba(56,189,248,0.2)';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([4, 4]);
-        const start = m.toScreen(-160 / 65, guideB / 65);
-        const end = m.toScreen(0, guideB / 65);
-        ctx.beginPath();
-        ctx.moveTo(start.x, start.y);
-        ctx.lineTo(end.x, end.y);
-        ctx.stroke();
+    atomicGeometry(s,p).marks.forEach(({primitive:v,tone,hex},i)=>{
+      const color=hex&&tone==='visible'?hex:palette[tone];ctx.strokeStyle=color;ctx.fillStyle=color;
+      if(v.kind==='text'){
+        const q=m.toScreen(v.x,v.y);ctx.font='12px sans-serif';const w=ctx.measureText(v.text).width;
+        labels.push({id:'atomic-'+i,x:q.x+(v.align==='start'?w/2:v.align==='end'?-w/2:0),y:q.y,text:v.text,color,font:'12px sans-serif'});
+      }else if(v.kind==='line'){
+        ctx.setLineDash(v.dashed?[4,4]:[]);drawLine(v.x1,v.y1,v.x2,v.y2,tone==='grid'?1:1.7);ctx.setLineDash([]);
+      }else if(v.kind==='arrow'){
+        const a=m.toScreen(v.x1,v.y1),b=m.toScreen(v.x2,v.y2),l=Math.hypot(b.x-a.x,b.y-a.y),theta=Math.atan2(b.y-a.y,b.x-a.x);
+        if(l>0){drawLine(v.x1,v.y1,v.x2,v.y2,1.8);const tip=Math.min(7,l*.34);ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-tip*Math.cos(theta-.5),b.y-tip*Math.sin(theta-.5));ctx.lineTo(b.x-tip*Math.cos(theta+.5),b.y-tip*Math.sin(theta+.5));ctx.closePath();ctx.fill();}
+      }else if(v.kind==='circle'){
+        const q=m.toScreen(v.cx,v.cy);ctx.beginPath();ctx.arc(q.x,q.y,m.len(v.r),0,Math.PI*2);ctx.lineWidth=1.3;if(v.fill)ctx.fill();else ctx.stroke();
+      }else if(v.kind==='trajectory'||v.kind==='polyline'){
+        ctx.beginPath();ctx.lineWidth=2.8;v.points.forEach((q,j)=>{const a=m.toScreen(q.x,q.y);if(j===0)ctx.moveTo(a.x,a.y);else ctx.lineTo(a.x,a.y);});ctx.stroke();
       }
-      ctx.setLineDash([]);
-
-      ctx.fillStyle = '#f59e0b';
-      ctx.beginPath();
-      const target = m.toScreen(0, 0);
-      ctx.arc(target.x, target.y, m.len(0.045), 0, 2 * Math.PI);
-      ctx.fill();
-      const targetLabel = m.toScreen(0.07, -0.02);
-      labels.push({ id: 'rutherford-target-label', ...targetLabel, text: `Z=${params.targetZ}`, color: '#e2e8f0', font: 'bold 12px ui-sans-serif, system-ui' });
-
-      const pts = state.rutherford.trajectoryFm;
-      if (pts.length > 1) {
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        for (let i = 0; i < pts.length; i++) {
-          const point = m.toScreen(pts[i]!.x / 65, pts[i]!.y / 65);
-          const px = point.x;
-          const py = point.y;
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-
-        const idx = Math.min(pts.length - 1, Math.floor(state.animCursor * pts.length));
-        const curPt = pts[idx]!;
-        ctx.fillStyle = '#f43f5e';
-        ctx.beginPath();
-        const point = m.toScreen(curPt.x / 65, curPt.y / 65);
-        ctx.arc(point.x, point.y, m.len(0.028), 0, 2 * Math.PI);
-        ctx.fill();
-      }
-
-      labels.push({ id: 'rutherford-summary', ...m.toScreen(0.3, 1.55), text: `RK45 偏转角 θ = ${state.rutherford.simulatedAngleDeg.toFixed(3)}° (解析 ${state.rutherford.analyticalAngleDeg.toFixed(3)}°) | 最近距离 ${state.rutherford.minDistanceFm.toFixed(2)} fm`, color: '#e2e8f0', font: 'bold 14px ui-sans-serif, system-ui' });
-      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
-      ctx.restore();
-      return;
-    }
-
-    const leftX = -1.8;
-    const rightX = -0.1;
-    const topY = 1.15;
-    const botY = -1.15;
-    const yOfEv = (e: number) => botY + ((e + 13.6) / 13.6) * (topY - botY);
-
-    ctx.lineWidth = 2;
-    ctx.font = 'bold 12px ui-sans-serif, system-ui';
-    for (let n = 1; n <= 6; n++) {
-      const e = bohrEnergyEv(n);
-      const y = m.toY(yOfEv(e));
-      ctx.strokeStyle = n <= params.excitedLevelN ? '#38bdf8' : 'rgba(148,163,184,0.35)';
-      ctx.beginPath();
-      ctx.moveTo(m.toX(leftX), y);
-      ctx.lineTo(m.toX(rightX), y);
-      ctx.stroke();
-      labels.push({ id: `bohr-level-${n}`, x: m.toX(rightX + 0.05), y: y + 4, text: `n=${n} (${e.toFixed(2)} eV)`, color: '#e2e8f0', font: 'bold 12px ui-sans-serif, system-ui' });
-    }
-
-    const visibleLines = state.bohr.spectralLines.filter((l) => l.lowerN === 2);
-    visibleLines.forEach((line, i) => {
-      const x = leftX + 0.22 + i * 0.2;
-      const y1 = yOfEv(bohrEnergyEv(line.upperN));
-      const y2 = yOfEv(bohrEnergyEv(line.lowerN));
-      ctx.strokeStyle = line.hex;
-      ctx.lineWidth = 2.6;
-      ctx.beginPath();
-      ctx.moveTo(m.toX(x), m.toY(yOfEv(bohrEnergyEv(line.upperN))));
-      ctx.lineTo(m.toX(x), m.toY(yOfEv(bohrEnergyEv(line.lowerN))));
-      ctx.stroke();
-      labels.push({ id: `bohr-wavelength-${i}`, x: m.toX(x - 0.12), y: m.toY((yOfEv(bohrEnergyEv(line.upperN)) + yOfEv(bohrEnergyEv(line.lowerN))) / 2), text: `${line.wavelengthNm.toFixed(1)}nm`, color: line.hex, font: '11px ui-sans-serif, system-ui' });
     });
-
-    const specX = 0.35;
-    const specW = 1.7;
-    const specTop = m.toScreen(specX, 0.95);
-    const specBottom = m.toScreen(specX + specW, 0.5);
-    ctx.fillStyle = '#020617';
-    ctx.fillRect(specTop.x, specTop.y, specBottom.x - specTop.x, specBottom.y - specTop.y);
-    visibleLines.forEach((l) => {
-      const frac = Math.max(0, Math.min(1, (l.wavelengthNm - 380) / 320));
-      ctx.fillStyle = l.hex;
-      const x = m.toX(specX + frac * specW);
-      ctx.fillRect(x, specTop.y, m.len(0.018), specBottom.y - specTop.y);
-    });
-
-    labels.push({ id: 'bohr-excitation-summary', ...m.toScreen(1.15, 0.28), text:
-      `激发态 n=${params.excitedLevelN} (${params.populationMode === 'ensemble' ? `一群原子 C_n^2=${state.bohr.totalCombinationLines} 条` : `单原子至多 ${state.bohr.maxSingleAtomLines} 条`}) · ${state.bohr.excitationAccepted
-        ? `探针激发成功：跃迁至 ${state.bohr.ionized ? '电离连续态' : `n=${state.bohr.reachedLevel}`}，剩余动能 ${state.bohr.residualElectronEv.toFixed(2)} eV`
-        : `光子能量 ${params.probeEnergyEv.toFixed(2)} eV 不匹配任何能级差 ΔE`}`,
-      color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
-    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
-    ctx.restore();
+    resolveAndDrawLabels(ctx,labels,viewport.width,viewport.height);ctx.restore();
   },
-  getControlHandles: (_state, params) => {
-    if (params.mode === 'rutherford') {
-      return [{
-        id: 'impact-param-b',
-        label: `b=${params.impactParamFm.toFixed(0)} fm`,
-        position: { x: -160 / 65, y: params.impactParamFm / 65 },
-        origin: { x: -160 / 65, y: 0 },
-        handleKind: 'point',
-        color: '#38bdf8',
-        onDrag: (world) => ({ impactParamFm: Math.max(-80, Math.min(80, Math.round((world.y * 65) / 5) * 5)) })
-      }];
-    }
-    return [{
-      id: 'probe-energy',
-      label: `E=${params.probeEnergyEv.toFixed(2)} eV`,
-      position: { x: 0.35 + ((params.probeEnergyEv - 5) / 10) * 1.7, y: 0.72 },
-      handleKind: 'point',
-      color: '#fbbf24',
-      onDrag: (world) => ({ probeEnergyEv: Number(Math.max(5, Math.min(15, Math.round((5 + ((world.x - 0.35) / 1.7) * 10) * 20) / 20)).toFixed(2)) })
-    }];
+  getControlHandles:(_s,p)=>p.mode==='rutherford'?[{id:'impact-param-b',label:'b='+p.impactParamFm.toFixed(0)+' fm',position:{x:IMPACT_RAIL_X,y:p.impactParamFm/65},origin:{x:IMPACT_RAIL_X,y:0},handleKind:'point',color:'#38bdf8',
+    onDrag:world=>({impactParamFm:Math.max(-80,Math.min(80,Math.round(world.y*65/5)*5))})}]:
+    [{id:'probe-energy',label:'E='+p.probeEnergyEv.toFixed(2)+' eV',position:{x:PROBE_RAIL.x+(p.probeEnergyEv-PROBE_RAIL.min)/(PROBE_RAIL.max-PROBE_RAIL.min)*PROBE_RAIL.w,y:PROBE_RAIL.y},handleKind:'point',color:'#fbbf24',
+      onDrag:world=>({probeEnergyEv:Math.max(PROBE_RAIL.min,Math.min(PROBE_RAIL.max,Math.round((PROBE_RAIL.min+(world.x-PROBE_RAIL.x)/PROBE_RAIL.w*(PROBE_RAIL.max-PROBE_RAIL.min))*100)/100))})}],
+  getForceVectors:s=>{
+    if(s.mode!=='rutherford')return [];
+    const p=s.sample,r=Math.hypot(p.x,p.y),mag=NUCLEAR_SCALE.forceUnit*s.rutherford.kappaDimless/(r*r);
+    return [{id:'coulomb-repulsion',label:'F库仑',origin:atomicPoint(s.rutherford,p),force:{x:mag*p.x/r,y:mag*p.y/r},color:'#fb7185',category:'electric',unit:'N'}];
   },
-  getForceVectors: (state, params) => {
-    if (params.mode !== 'rutherford') return [];
-    const points = state.rutherford.trajectoryFm;
-    const index = Math.min(points.length - 1, Math.floor(state.animCursor * points.length));
-    const point = points[index] ?? points[Math.floor(points.length / 2)] ?? { x: -40, y: params.impactParamFm };
-    const radius = Math.hypot(point.x, point.y);
-    if (radius < 1e-6) return [];
-    const magnitude = Math.min(40, (params.targetZ * 2) / Math.max(25, radius * radius));
-    return [{
-      id: 'coulomb-repulsion',
-      label: 'F库仑',
-      origin: { x: point.x / 65, y: point.y / 65 },
-      force: { x: (point.x / radius) * magnitude, y: (point.y / radius) * magnitude },
-      color: '#fb7185',
-      category: 'electric',
-      unit: '相对量 (∝1/r²)'
-    }];
-  },
-  referenceFrames: [{
-    id: 'alpha-particle',
-    label: 'α 入射粒子随动参考系',
-    getOrigin: (state, params) => {
-      if (params.mode !== 'rutherford') return { x: 0, y: 0 };
-      const points = state.rutherford.trajectoryFm;
-      const index = Math.min(points.length - 1, Math.floor(state.animCursor * points.length));
-      const point = points[index];
-      return point ? { x: point.x / 65, y: point.y / 65 } : { x: 0, y: 0 };
+  referenceFrames:[{id:'alpha-particle',label:'α 粒子随动参考系',getOrigin:s=>s.mode==='rutherford'?atomicPoint(s.rutherford,s.sample):{x:0,y:0}}],
+  formatFormulas:(s,p)=>{
+    if(s.mode==='rutherford'){
+      const r=s.rutherford;
+      return [{id:'rutherford-bohr',label:'固定重靶核、经典点库仑近似',latex:'a=\\frac{k_e Z_1Z_2e^2}{2K_\\alpha},\\quad\\theta=2\\operatorname{atan2}(a,|b|)',substitutedLatex:'\\theta='+r.analyticalAngleDeg.toFixed(4)+'^\\circ'},
+      {id:'rutherford-distance',label:'最近距离与真实数值轨迹',latex:'r_{\\min}=a+\\sqrt{a^2+b^2},\\quad E=K+U',substitutedLatex:'r_{\\min}='+r.minDistanceFm.toFixed(4)+'\\,\\mathrm{fm}'}];
     }
-  }],
-  formatFormulas: (state, params) => [
-    {
-      id: 'rutherford-bohr',
-      label: params.mode === 'rutherford' ? '卢瑟福散射角与库仑偏转' : '玻尔能级与跃迁波长',
-      latex: params.mode === 'rutherford' ? '\\tan\\frac{\\theta}{2}=\\frac{k Z_1 Z_2 e^2}{2 K_\\alpha b}' : 'E_n=-\\frac{13.6}{n^2}\\text{ eV}',
-      substitutedLatex:
-        params.mode === 'rutherford'
-          ? `\\theta=${state.rutherford.simulatedAngleDeg.toFixed(3)}^\\circ,\\; r_{\\min}=${state.rutherford.minDistanceFm.toFixed(2)}\\text{ fm}`
-          : `n=${params.excitedLevelN},\\; C_n^2=${state.bohr.totalCombinationLines}`
-    }
-  ]
+    const b=s.bohr;
+    return [{id:'rutherford-bohr',label:'氢原子 n-only 能级（模型，不是电子路径）',latex:'E_n=-13.6/n^2\\,\\mathrm{eV},\\quad\\lambda=hc/\\Delta E',substitutedLatex:'n='+p.excitedLevelN+',\\quad N_{\\rm shown}='+b.spectralLines.length},
+      {id:'bohr-population',label:p.populationMode==='ensemble'?'多原子全部可选 n 对':'一个原子的最大条数级联示例',latex:p.populationMode==='ensemble'?'N_{\\rm max}=n(n-1)/2':'N_{\\rm max}=n-1',substitutedLatex:'N_{\\rm max}='+ (p.populationMode==='ensemble'?b.totalCombinationLines:b.maxSingleAtomLines)}];
+  }
 });
-
 export default modernRutherfordBohrPlugin;

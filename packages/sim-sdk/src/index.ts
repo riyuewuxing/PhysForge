@@ -332,7 +332,7 @@ export interface SimulationPlugin<TParams extends ParamRecord, TState> {
   presets: readonly PresetSpec<TParams>[];
   engine: SimulationEngine<TParams, TState>;
   /** Explicit opt-in for static analytic comparisons; omitted means time-evolving. */
-  timeSemantics?: 'static-analytic';
+  timeSemantics?: 'static-analytic' | ((params:TParams)=>'static-analytic'|'evolving');
   layers: readonly LayerSpec[];
   telemetryChannels: readonly TelemetryChannelSpec[];
   /** Mode-only presentation override; persisted parameter schema remains authoritative. */
