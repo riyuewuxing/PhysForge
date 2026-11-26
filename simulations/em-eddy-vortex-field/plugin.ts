@@ -123,7 +123,7 @@ export const emEddyVortexFieldPlugin=Object.assign(defineSimulationPlugin<EddyVo
       for(const side of [-1,1]){
         const th=side<0?s.solidTheta:s.slottedTheta,b=bob(side,th,L),px=side*1.4*L;
         primitives.push({kind:'line',x1:px,y1:.5*L,x2:b.x,y2:b.y,strokeWidth:2},
-          
+
           {kind:'text',x:px,y:.83*L,text:side<0?'整块铜板':'开槽铜板',align:'middle'});
         if(side<0)primitives.push({kind:'rect',x:b.x-.22*L,y:b.y-.15*L,width:.44*L,height:.3*L});
         else{
