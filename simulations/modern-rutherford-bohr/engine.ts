@@ -68,8 +68,8 @@ export interface BohrAnalysisResult {
   readonly spectralLines:readonly BohrLine[];
 }
 export type RutherfordBohrState =
-  | {readonly mode:'rutherford';readonly t:number;readonly rutherford:RutherfordTrajectoryResult;readonly bohr:null;readonly animCursor:number;readonly sample:RutherfordSample}
-  | {readonly mode:'bohr';readonly t:0;readonly rutherford:null;readonly bohr:BohrAnalysisResult;readonly animCursor:0;readonly sample:null};
+  | {readonly mode:'rutherford';readonly inputKey:string;readonly t:number;readonly rutherford:RutherfordTrajectoryResult;readonly bohr:null;readonly animCursor:number;readonly sample:RutherfordSample}
+  | {readonly mode:'bohr';readonly inputKey:string;readonly t:0;readonly rutherford:null;readonly bohr:BohrAnalysisResult;readonly animCursor:0;readonly sample:null};
 export const RUTHERFORD_DEMO_DURATION_S=3;
 export const PHOTON_INPUT_TOLERANCE_EV=.005;
 
@@ -193,14 +193,15 @@ export function solveBohrTransitions(p:RutherfordBohrParams):BohrAnalysisResult{
   }
   return {...base,excitationAccepted:false,ionized:false,reachedLevel:1,residualElectronEv:eProbe};
 }
+function inputKey(p:RutherfordBohrParams):string{return JSON.stringify(p.mode==='rutherford'?[p.mode,p.alphaEnergyMev,p.targetZ,p.impactParamFm]:[p.mode,p.excitedLevelN,p.populationMode,p.probeKind,p.probeEnergyEv]);}
 export function createInitialState(p:RutherfordBohrParams):RutherfordBohrState{
-  if(p.mode==='bohr')return {mode:'bohr',t:0,rutherford:null,bohr:solveBohrTransitions(p),animCursor:0,sample:null};
+  if(p.mode==='bohr')return {mode:'bohr',inputKey:inputKey(p),t:0,rutherford:null,bohr:solveBohrTransitions(p),animCursor:0,sample:null};
   const r=solveRutherfordScattering(p.alphaEnergyMev,p.targetZ,p.impactParamFm);
-  return {mode:'rutherford',t:0,rutherford:r,bohr:null,animCursor:0,sample:r.trajectoryFm[0]!};
+  return {mode:'rutherford',inputKey:inputKey(p),t:0,rutherford:r,bohr:null,animCursor:0,sample:r.trajectoryFm[0]!};
 }
 export function stepRutherfordBohr(s:RutherfordBohrState,p:RutherfordBohrParams,dt:number):StepResult<RutherfordBohrState>{
   if(!Number.isFinite(dt)||dt<0)throw Error('Invalid dt: '+dt);
-  if(p.mode!==s.mode)return {nextState:createInitialState(p),events:[],advancedTime:0,halt:true};
+  if(s.inputKey!==inputKey(p))return {nextState:createInitialState(p),events:[],advancedTime:0,halt:true};
   if(s.mode==='bohr')return {nextState:s,events:[],advancedTime:0,halt:true};
   if(dt===0)return {nextState:s,events:[]};
   // t is demonstration seconds, explicitly mapped to elapsed nuclear time.
@@ -213,7 +214,7 @@ export function computeObservables(s:RutherfordBohrState):Record<string,number>{
     const r=s.rutherford,p=s.sample,radius=Math.hypot(p.x,p.y),force=NUCLEAR_SCALE.forceUnit*r.kappaDimless/(radius*radius);
     return {t:s.t,rutherfordAngleDeg:r.simulatedAngleDeg,analyticalAngleDeg:r.analyticalAngleDeg,minDistanceFm:r.minDistanceFm,numericalClosestFm:r.numericalClosestFm,
       angleErrorRad:r.angleErrorRad,energyDriftRel:r.energyDriftRel,angularMomentumDriftRel:r.angularMomentumDriftRel,maxPositionErrorFm:r.maxPositionErrorFm,
-      sampleXfm:p.x,sampleYfm:p.y,sampleTime22:p.time22,timeOfFlight22:r.timeOfFlight22,currentDistanceFm:radius,speedMps:NUCLEAR_SCALE.velocityUnit*Math.hypot(p.vx,p.vy),forceN:force};
+      sampleXfm:p.x,sampleYfm:p.y,sampleTime22:p.time22,timeOfFlight22:r.timeOfFlight22,currentDistanceFm:radius,speedMps:NUCLEAR_SCALE.velocityUnit*Math.hypot(p.vx,p.vy),speedMillionMps:NUCLEAR_SCALE.velocityUnit*Math.hypot(p.vx,p.vy)/1e6,forceN:force};
   }
   const b=s.bohr,ha=b.spectralLines.find(l=>l.upperN===3&&l.lowerN===2);
   return {t:0,bohrLinesCount:b.spectralLines.length,totalCombinationLines:b.totalCombinationLines,maxSingleAtomLines:b.maxSingleAtomLines,

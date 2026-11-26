@@ -48,7 +48,7 @@ describe('modern-rutherford-bohr physics invariants (N02)', () => {
     const electronRes = solveBohrTransitions(getPreset(2));
     expect(electronRes.excitationAccepted).toBe(true);
     expect(electronRes.reachedLevel).toBe(3);
-    expect(Math.abs(electronRes.residualElectronEv - (12.5 - 12.08888888888889))).toBeLessThan(1e-6);
+    expect(Math.abs(electronRes.residualElectronEv! - (12.5 - 12.08888888888889))).toBeLessThan(1e-6);
   });
 
   it('handles zero impact parameter and dt=0 cleanly without NaN', () => {
@@ -154,5 +154,33 @@ describe('F04 prepared actual-time trajectory and no hidden recomputation',()=>{
     const bohr=getPreset(1),sb=createInitialState(bohr);
     expect(stepRutherfordBohr(sb,bohr,2)).toMatchObject({nextState:sb,advancedTime:0,halt:true});
     expect(sb.rutherford).toBeNull();
+  });
+});
+
+describe('F04 mixed time semantics and parameter reset contracts',()=>{
+  it('certifies both evolving scattering and static Bohr via the same headless API',async()=>{
+    const {auditSceneHeadless}=await import('../../packages/ai-copilot/src/refiner.js');
+    for(const p of [getPreset(0),getPreset(1),getPreset(2)]){
+      const r=await auditSceneHeadless({schemaVersion:'2.0',modelId:'modern-rutherford-bohr',params:p},{steps:20,dt:.02});
+      expect(r.errors).toEqual([]);expect(r.passed).toBe(true);
+      expect(r.finalObservables.t).toBeCloseTo(p.mode==='bohr'?0:.4,12);
+      expect(r.invariants.length).toBeGreaterThan(0);
+    }
+  });
+  it('never reuses an obsolete same-mode trajectory or spectrum after parameter changes',()=>{
+    const p=getPreset(0),s=createInitialState(p),q={...p,impactParamFm:0};
+    const res=stepRutherfordBohr(s,q,.1);expect(res.advancedTime).toBe(0);
+    expect(res.nextState).toEqual(createInitialState(q));
+    const b=getPreset(1),sb=createInitialState(b),c={...b,populationMode:'single-atom' as const};
+    expect(stepRutherfordBohr(sb,c,.1).nextState).toEqual(createInitialState(c));
+  });
+  it('maintains the original strict tolerances across the UI energy/charge/impact extremes and mirror symmetry',()=>{
+    for(const K of [1,5,12])for(const Z of [13,79,92])for(const b of [0,5,25,80]){
+      const r=solveRutherfordScattering(K,Z,b),mirror=solveRutherfordScattering(K,Z,-b);
+      expect(r.angleErrorRad).toBeLessThan(1e-4);expect(r.energyDriftRel).toBeLessThan(1e-6);
+      expect(r.maxPositionErrorFm).toBeLessThan(1e-5);
+      expect(Math.abs(r.minDistanceFm-r.numericalClosestFm)).toBeLessThan(1e-5);
+      expect(r.trajectoryFm.every((q,i)=>Math.abs(q.x-mirror.trajectoryFm[i]!.x)<1e-7&&Math.abs(q.y+mirror.trajectoryFm[i]!.y)<1e-7)).toBe(true);
+    }
   });
 });

@@ -3,6 +3,7 @@ import { rutherfordBohrPresets } from './presets.js';
 import {atomicGeometry,ATOMIC_BOUNDS,IMPACT_RAIL_X,PROBE_RAIL,atomicPoint} from './sceneGeometry.js';
 import {
   NUCLEAR_SCALE,
+  solveBohrTransitions,
   checkInvariants,
   computeObservables,
   createInitialState,
@@ -61,10 +62,22 @@ export const modernRutherfordBohrPlugin = defineSimulationPlugin<RutherfordBohrP
   paramSchema,
   presets:rutherfordBohrPresets,
   getParamFields:p=>paramSchema.filter(f=>(p.mode==='rutherford'?['mode','alphaEnergyMev','targetZ','impactParamFm']:['mode','excitedLevelN','populationMode','probeKind','probeEnergyEv']).includes(f.key)),
+  timeSemantics:p=>p.mode==='bohr'?'static-analytic':'evolving',
   engine:{createInitialState,step:stepRutherfordBohr,computeObservables,checkInvariants},
   layers:[{id:'main',label:'真实轨迹 / 能级与光谱',defaultVisible:true}],
-  telemetryChannels:[{key:'currentDistanceFm',label:'当前核距 r',unit:'fm',color:'#38bdf8'},{key:'speedMps',label:'α 粒子速率',unit:'m/s',color:'#fbbf24'},{key:'forceN',label:'库仑力大小',unit:'N',color:'#fb7185'}],
-  getTelemetryChannels:p=>p.mode==='rutherford'?[{key:'currentDistanceFm',label:'当前核距 r',unit:'fm',color:'#38bdf8'},{key:'speedMps',label:'α 粒子速率',unit:'m/s',color:'#fbbf24'},{key:'forceN',label:'库仑力大小',unit:'N',color:'#fb7185'}]:[],
+  telemetryChannels:[{key:'currentDistanceFm',label:'当前核距 r',unit:'fm',color:'#38bdf8'},{key:'speedMillionMps',label:'α 粒子速率',unit:'10⁶ m/s',color:'#fbbf24'},{key:'forceN',label:'库仑力大小',unit:'N',color:'#fb7185'}],
+  getTelemetryChannels:p=>{
+    const channel=(key:string,label:string,unit:string,color='#38bdf8')=>({key,label,unit,color});
+    if(p.mode==='rutherford')return [channel('currentDistanceFm','当前核距 r','fm'),channel('speedMillionMps','α 粒子速率','10⁶ m/s','#fbbf24'),channel('forceN','库仑力大小','N','#fb7185'),channel('sampleTime22','实际经过核尺度时间','10⁻²² s'),channel('analyticalAngleDeg','解析散射角','°'),channel('rutherfordAngleDeg','远区数值散射角','°'),channel('minDistanceFm','解析最近距离','fm'),channel('numericalClosestFm','数值最近距离','fm')];
+    const b=solveBohrTransitions(p);
+    return [channel('bohrLinesCount','实际选中谱线','条'),channel('totalCombinationLines','群体上限','条'),channel('maxSingleAtomLines','单原子上限','条'),
+      ...(b.reachedLevel!==undefined?[channel('reachedLevel','探针终态 n','')]:[]),
+      ...(b.residualElectronEv!==undefined?[channel('residualElectronEv','电子剩余动能','eV')]:[]),
+      ...(b.ionizationExcessEv!==undefined?[channel('ionizationExcessEv','电离总余能','eV')]:[]),
+      ...(b.transmittedPhotonEv!==undefined?[channel('transmittedPhotonEv','未吸收光子能量','eV')]:[]),
+      ...(b.absorbedEnergyEv!==undefined?[channel('absorbedEnergyEv','吸收能级差','eV')]:[]),
+      ...(b.resonanceMismatchEv!==undefined?[channel('resonanceMismatchEv','输入舍入差','eV')]:[])];
+  },
   sceneSerializer:{
     exportScene:(_s,params)=>({schemaVersion:'2.0',modelId:'modern-rutherford-bohr',title:'卢瑟福散射与氢原子能级',params}),
     importScene:dsl=>dsl.params as Partial<RutherfordBohrParams>

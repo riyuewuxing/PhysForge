@@ -102,7 +102,7 @@ export async function auditSceneHeadless(
 
   const steps = Math.max(1, options.steps ?? 40);
   const dt = options.dt ?? 0.02;
-  const staticAnalytic = plugin.timeSemantics === 'static-analytic';
+  const staticAnalytic = (typeof plugin.timeSemantics==='function'?plugin.timeSemantics(resolvedParams):plugin.timeSemantics) === 'static-analytic';
   try {
     if (staticAnalytic) {
       // Static experiments still exercise their solver and invariants. Only
