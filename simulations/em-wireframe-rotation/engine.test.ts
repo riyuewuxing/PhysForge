@@ -4,6 +4,7 @@ import { emWireframeRotationPlugin } from './plugin.js';
 import { wireframePresets } from './presets.js';
 import {
   checkInvariants,
+  computeObservables,
   computeFluxAndCuttingFactor,
   createInitialState,
   stepWireframeRotation,
@@ -44,5 +45,89 @@ describe('em-wireframe-rotation cutting & energy conservation (E05)', () => {
     const zeroB: WireframeParams = { ...getPreset(0), magneticB: 0 };
     const s0 = createInitialState(zeroB);
     expect(stepWireframeRotation(s0, zeroB, 0).nextState).toEqual(s0);
+  });
+});
+
+describe('E05 independent flux, derivative and driven rotation references',()=>{
+  const base:WireframeParams={...getPreset(0),magneticB:2,loopSizeL:1,zoneHeightH:2,fieldProfile:'single-zone',loopShape:'square'};
+  it('matches fractional rectangular overlap rather than a midpoint staircase',()=>{
+    for(const yc of [.1234,.23456,-.12345]){
+      const q=computeFluxAndCuttingFactor(yc,base);
+      expect(q.fluxWb).toBeCloseTo(2*(.5-yc),12);
+      expect(q.dPhiDy).toBeCloseTo(-2,12);
+      const h=1e-5;
+      expect((computeFluxAndCuttingFactor(yc+h,base).fluxWb-computeFluxAndCuttingFactor(yc-h,base).fluxWb)/(2*h)).toBeCloseTo(-2,8);
+    }
+  });
+  it('uses the correct triangular base-down geometry and its exact partial area',()=>{
+    const p={...base,loopShape:'triangle' as const};
+    for(const yc of [.1234,-.2134]){
+      const u=-yc,area=.5*u-.5*u*u+.375;
+      const q=computeFluxAndCuttingFactor(yc,p);
+      expect(q.fluxWb).toBeCloseTo(2*area,12);
+      expect(q.dPhiDy).toBeCloseTo(-2*(.5-u),12);
+    }
+  });
+  it('uses the exact circular segment area and chord derivative',()=>{
+    const p={...base,loopShape:'circle' as const},r=.5;
+    for(const yc of [.1234,-.2134]){
+      const u=-yc,root=Math.sqrt(r*r-u*u);
+      const area=u*root+r*r*(Math.asin(u/r)+Math.PI/2);
+      const q=computeFluxAndCuttingFactor(yc,p);
+      expect(q.fluxWb).toBeCloseTo(2*area,12);
+      expect(q.dPhiDy).toBeCloseTo(-4*root,12);
+    }
+  });
+  it('includes the first area moment in a fully immersed gradient field',()=>{
+    const p={...base,loopShape:'triangle' as const,fieldProfile:'linear-gradient' as const},yc=-1.3;
+    const q=computeFluxAndCuttingFactor(yc,p);
+    expect(q.fluxWb).toBeCloseTo(2*.5*(1-(yc-1/6)/4),12);
+    expect(q.dPhiDy).toBeCloseTo(-.25,12);
+  });
+  it('distinguishes stationary disk flux, signed electromagnetic torque and drive work',()=>{
+    const p={...getPreset(3),magneticB:2,loopSizeL:1,omegaRadS:3,resistanceR:2};
+    const a=createInitialState(p),b=stepWireframeRotation(a,p,2).nextState;
+    const o=computeObservables(b,p);
+    expect(o.fluxWb).toBeCloseTo(2*Math.PI,12);
+    expect(o.emfV).toBeCloseTo(3,12);
+    expect(o.currentA).toBeCloseTo(1.5,12);
+    expect(o.emTorqueNm).toBeCloseTo(-1.5,12);
+    expect(o.drivePowerW).toBeCloseTo(4.5,12);
+    expect(o.driveWorkJ).toBeCloseTo(9,12);
+    expect(o.jouleHeatJ).toBeCloseTo(9,12);
+    expect(computeObservables(a,p).emTorqueNm).toBeCloseTo(-1.5,12);
+    const reverse={...p,omegaRadS:-3};
+    const r=computeObservables(stepWireframeRotation(createInitialState(reverse),reverse,2).nextState,reverse);
+    expect(r.emfV).toBeCloseTo(-3,12);
+    expect(r.emTorqueNm).toBeCloseTo(1.5,12);
+    expect(r.driveWorkJ).toBeCloseTo(9,12);
+  });
+});
+
+describe('E05 exact discontinuity and monotonic motion',()=>{
+  it('captures all entry and exit edges with true contact positions and no artificial force reversal',()=>{
+    const p:WireframeParams={...getPreset(0),loopShape:'square',fieldProfile:'dual-opposite',loopSizeL:.8,zoneHeightH:1,magneticB:.8,gravityEnabled:true};
+    const init=createInitialState(p),coarse=stepWireframeRotation(init,p,2).nextState;
+    let fine=init;for(let i=0;i<200;i++)fine=stepWireframeRotation(fine,p,.01).nextState;
+    expect(coarse.centerY).toBeCloseTo(fine.centerY,8);
+    expect(coarse.vy).toBeCloseTo(fine.vy,8);
+    expect(coarse.jouleHeatJ).toBeCloseTo(fine.jouleHeatJ,7);
+    const ys=[.4,-.4,-.6,-1.4,-1.6,-2.4];
+    expect(coarse.events).toHaveLength(ys.length);
+    for(let i=0;i<ys.length;i++){
+      expect(coarse.events[i]!.position!.y).toBeCloseTo(ys[i]!,12);
+      expect(coarse.events[i]!.metrics!.velocityMps).toBeLessThan(0);
+      expect(coarse.events[i]!.time).toBeCloseTo(fine.events[i]!.time,8);
+    }
+    expect(checkInvariants(coarse,init,p).every(r=>r.passed)).toBe(true);
+  });
+  it('with no gravity, induction can slow but cannot reverse a downward loop',()=>{
+    const p:WireframeParams={...getPreset(0),loopShape:'square',fieldProfile:'single-zone',loopSizeL:1,zoneHeightH:2,magneticB:3,resistanceR:.2,massM:.1,gravityEnabled:false,initialVy:1};
+    const init=createInitialState(p),s=stepWireframeRotation(init,p,10).nextState;
+    expect(s.vy).toBeLessThanOrEqual(0);
+    expect(s.centerY).toBeLessThanOrEqual(.5);
+    expect(s.centerY).toBeGreaterThan(.49);
+    expect(s.jouleHeatJ).toBeCloseTo(.05,9);
+    expect(checkInvariants(s,init,p).every(r=>r.passed)).toBe(true);
   });
 });

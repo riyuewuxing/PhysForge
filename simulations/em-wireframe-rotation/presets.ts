@@ -4,8 +4,8 @@ import type { WireframeParams } from './engine.js';
 export const wireframePresets: readonly PresetSpec<WireframeParams>[] = [
   {
     id: 'dual-opposite-field-2x-emf',
-    name: '反向双区域磁场穿越（交界电动势严格 2.000 倍）',
-    description: '线框下边跨入 -B 区而上边尚在 +B 区时双边同向叠加切割，感应电动势翻倍、安培力陡增 4 倍',
+    name: '反向双区域磁场穿越（同速切割因子 2 倍）',
+    description: '线框下边跨入 -B 区而上边尚在 +B 区时双边同向叠加切割，同速度比较切割因子与电动势翻倍、磁阻力增至4倍；实际速度由动力学决定',
     curriculumNotes: '选择性必修二 第二章 · 多区域磁场线框切割',
     params: {
       mode: 'wireframe-gravity-fall',
@@ -23,7 +23,7 @@ export const wireframePresets: readonly PresetSpec<WireframeParams>[] = [
   },
   {
     id: 'triangle-loop-linear-emf',
-    name: '正三角形线框自由落入匀强磁场',
+    name: '底边向下三角形线框落入匀强磁场',
     description: '有效切割宽度随落入深度线性变化，观察 Φ-t 与 E-t 四联示波变化规律',
     curriculumNotes: '选择性必修二 · 异形闭合线框',
     params: {
@@ -77,5 +77,13 @@ export const wireframePresets: readonly PresetSpec<WireframeParams>[] = [
       omegaRadS: 5.0,
       gravityEnabled: false
     }
-  }
+  },
+  {id:'wireframe-offgrid-flux',name:'矩形线框 · 精确部分重叠磁通',description:'连续面积积分，不按网格近似。',curriculumNotes:'选择性必修二 · 磁通变化',
+    params:{mode:'wireframe-gravity-fall',loopShape:'square',fieldProfile:'single-zone',magneticB:2,loopSizeL:1,zoneHeightH:2,massM:1,resistanceR:2,initialVy:1,gravityEnabled:false}},
+  {id:'disk-driven-power',name:'圆盘恒速驱动 · 功率与力矩',description:'B=2T，L=1m，ω=3rad/s，R=2Ω。真实盘面磁通2πWb，电动势3V，制动力矩−1.5N·m。',curriculumNotes:'选择性必修二 · 法拉第圆盘',
+    params:{mode:'faraday-disk',magneticB:2,loopSizeL:1,omegaRadS:3,resistanceR:2}},
+  {id:'disk-reverse-drive',name:'反向转动 · 电动势与力矩反向',description:'反向角速度时电流反向，驱动功率不变。',curriculumNotes:'选择性必修二 · 符号与能量',
+    params:{mode:'faraday-disk',magneticB:2,loopSizeL:1,omegaRadS:-3,resistanceR:2}},
+  {id:'circle-gradient-flux',name:'圆形线框 · 梯度磁场',description:'解析圆弓面积与一阶矩，比较有向磁通梯度。',curriculumNotes:'选择性必修二 · 非匀强磁场',
+    params:{mode:'wireframe-gravity-fall',loopShape:'circle',fieldProfile:'linear-gradient',magneticB:1,loopSizeL:.8,zoneHeightH:1,massM:1,resistanceR:2,initialVy:1,gravityEnabled:true}}
 ];
