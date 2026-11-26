@@ -6,6 +6,11 @@ import {
   E_CHARGE,
   H_PLANCK,
   computePhotocurrentMa,
+  computeObservables,
+  HC_EV_NM,
+  C_LIGHT,
+  M_ELECTRON,
+  COMPTON_WAVELENGTH_NM,
   createInitialState,
   solveComptonScattering,
   solvePhotoelectric,
@@ -89,5 +94,66 @@ describe('modern-photoelectric-compton physics invariants (N01)', () => {
     expect(st.photoelectric.currentMa).toBe(0);
     const same = stepPhotoelectricCompton(st, p, 0).nextState;
     expect(same.t).toBe(0);
+  });
+});
+
+describe('H46 F03 independent photon/photocurrent and recoil boundary regressions',()=>{
+  it('has a legal shutter-closed setting with identically zero photocurrent, not a hidden minimum flux',()=>{
+    const p={...getPreset(0),intensityRel:0};
+    const resolved=resolvePluginParams(modernPhotoelectricComptonPlugin.paramSchema,p);
+    expect(resolved.intensityRel).toBe(0);
+    const s=solvePhotoelectric(p);
+    expect(s.thresholdPassed).toBe(true); // energetically permitted, not observed
+    expect(s.saturationCurrentMa).toBe(0);
+    expect(s.currentMa).toBe(0);
+    expect(computePhotocurrentMa(6,s,0)).toBe(0);
+  });
+  it('does not report a stopping-voltage measurement below threshold or in darkness',()=>{
+    for(const p of [getPreset(1),{...getPreset(0),intensityRel:0}]){
+      const s=createInitialState(p),o=computeObservables(s);
+      expect(o).not.toHaveProperty('stoppingVoltageV');
+      expect(o.currentMa).toBe(0);
+    }
+  });
+  it('keeps the exact threshold distinct from positive escape energy without floating-point leakage',()=>{
+    const p={...getPreset(0),cathodeMetal:'custom' as const,customWorkFunctionEv:HC_EV_NM/405,wavelengthNm:405,anodeVoltageV:6};
+    const s=solvePhotoelectric(p);
+    expect(s.thresholdPassed).toBe(false);
+    expect(s.currentMa).toBe(0);
+    expect(s.maxKineticEv).toBe(0);
+  });
+  it('retains the physically positive forward-angle wavelength shift even when 1-cos(theta) loses precision',()=>{
+    for(const deg of [1e-6,1e-5,1e-4]){
+      const theta=deg*Math.PI/180,lam=.2,c=solveComptonScattering(lam,deg);
+      const want=2*COMPTON_WAVELENGTH_NM*Math.sin(theta/2)**2;
+      expect(c.deltaLambdaNm).toBeGreaterThan(0);
+      expect(c.deltaLambdaNm/want).toBeCloseTo(1,12);
+      expect(c.electronKineticKev).toBeGreaterThan(0);
+      const K=HC_EV_NM/1000*want/(lam*(lam+want));
+      expect(c.electronKineticKev/K).toBeCloseTo(1,11);
+      expect(c.pElectron).toBeGreaterThan(0);
+      expect(c.pElectron*c.pElectron*C_LIGHT*C_LIGHT/(K*E_CHARGE*1000*(K*E_CHARGE*1000+2*M_ELECTRON*C_LIGHT*C_LIGHT))).toBeCloseTo(1,10);
+      expect(c.pyResidualRel).toBeLessThan(1e-12);
+      expect(c.pxResidualRel).toBeLessThan(1e-12);
+    }
+  });
+  it('allows forward scattering and does not assign an angle to an exactly zero recoil momentum',()=>{
+    const p={...getPreset(2),scatterAngleDeg:0};
+    expect(resolvePluginParams(modernPhotoelectricComptonPlugin.paramSchema,p).scatterAngleDeg).toBe(0);
+    const s=createInitialState(p);
+    expect(s.compton.deltaLambdaNm).toBe(0);
+    expect(s.compton.electronKineticKev).toBe(0);
+    expect(s.compton.pElectron).toBe(0);
+    expect(computeObservables(s)).not.toHaveProperty('recoilAngleDeg');
+  });
+  it('does not mix unrelated experiment readings or advance a fabricated physical time',()=>{
+    for(const p of [getPreset(0),getPreset(2)]){
+      const s=createInitialState(p),step=stepPhotoelectricCompton(s,p,1);
+      expect(step.nextState.t).toBe(0);
+      expect(step.advancedTime).toBe(0);
+      const o=computeObservables(s);
+      if(p.mode==='photoelectric')expect(o).not.toHaveProperty('deltaLambdaPm');
+      else expect(o).not.toHaveProperty('photonEnergyEv');
+    }
   });
 });
