@@ -1,0 +1,65 @@
+name: H69 deterministic 3D material comparison
+on:
+  pull_request:
+    branches: ['audit/h69-e10-green']
+permissions:
+  contents: read
+jobs:
+  screenshot:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h69-3d-compare')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: baseline
+            sha: 1927c102f75f1108f296f69edbdd1feadfe43811
+          - name: candidate
+            sha: 51bc58a463eb281fbac9fea0139e55ed217e884d
+    name: Real 3D screenshots (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          cp audit/scripts/h69_3d_compare.mjs source/scripts/h69_3d_compare.mjs
+          sha256sum source/scripts/h69_3d_compare.mjs
+        env:
+          EXPECTED_SOURCE: ${{ matrix.sha }}
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h69_3d_compare.mjs
+        working-directory: source
+        timeout-minutes: 4
+        env:
+          EXPECTED_SOURCE: ${{ matrix.sha }}
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h69-3d-${{ matrix.name }}
+          path: source/evidence/h69-3d/
+          if-no-files-found: error
+          retention-days: 7
