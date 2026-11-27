@@ -1,5 +1,6 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { opticalScene, SLIT_SCREEN, type OpticalMark } from './sceneGeometry.js';
+import { TIR_WINDOW,drawTirMediumWindow,drawTirHeroRay,drawTirHitRing,resolveOpticsSliceCamera } from './visualStyle.js';
 import { degToRad } from '@physforge/physics-core';
 import {
   createWorldMapper,
@@ -21,7 +22,6 @@ type Point = { x: number; y: number };
 type Segment = { a: Point; b: Point };
 type LabelBox = Point & { w: number; h: number };
 type OpticalLabel = Point & { text: string; color: string; font: string };
-const TIR_WINDOW = { halfWidth: 2.55, halfHeight: 2.42 };
 
 function intersectsLabel(s: Segment, box: LabelBox): boolean {
   let lo=0,hi=1;
@@ -87,19 +87,7 @@ function renderTirInterface(ctx:CanvasRenderingContext2D,state:OpticsState,param
   const left=m.toX(-TIR_WINDOW.halfWidth),right=m.toX(TIR_WINDOW.halfWidth),top=m.toY(TIR_WINDOW.halfHeight),bottom=m.toY(-TIR_WINDOW.halfHeight);
   ctx.save();
   if(layers.has('medium')) {
-    const upper=ctx.createLinearGradient(0,top,0,p.y);
-    upper.addColorStop(0,paper?'rgba(56,189,248,.045)':'rgba(70,139,188,.055)');
-    upper.addColorStop(.48,paper?'rgba(56,189,248,.15)':'rgba(81,156,203,.21)');
-    upper.addColorStop(1,paper?'rgba(56,189,248,.21)':'rgba(110,185,228,.31)');
-    ctx.fillStyle=upper;
-    ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(right,top);ctx.lineTo(right,p.y);ctx.lineTo(left,p.y);ctx.closePath();ctx.fill();
-    const lower=ctx.createLinearGradient(0,p.y,0,bottom);
-    lower.addColorStop(0,paper?'rgba(100,116,139,.075)':'rgba(112,138,167,.10)');lower.addColorStop(1,'rgba(100,116,139,0)');
-    ctx.fillStyle=lower;
-    ctx.beginPath();ctx.moveTo(left,p.y);ctx.lineTo(right,p.y);ctx.lineTo(right,bottom);ctx.lineTo(left,bottom);ctx.closePath();ctx.fill();
-    ctx.strokeStyle=paper?'#64748b':'rgba(164,218,248,.73)';ctx.lineWidth=1.5;
-    if(!paper){ctx.shadowColor='#78c9ec';ctx.shadowBlur=7;}
-    ctx.beginPath();ctx.moveTo(left,p.y);ctx.lineTo(right,p.y);ctx.stroke();ctx.shadowBlur=0;
+    drawTirMediumWindow(ctx,left,right,top,bottom,p,paper);
     obstacles.push({a:{x:left,y:p.y},b:{x:right,y:p.y}});
     add('介质 1 (n₁ = '+params.n1.toFixed(2)+')',textColor,right-120*scale,p.y-25*scale);
     add('介质 2 (n₂ = '+params.n2.toFixed(2)+')',textColor,right-120*scale,p.y+25*scale);
@@ -124,14 +112,13 @@ function renderTirInterface(ctx:CanvasRenderingContext2D,state:OpticsState,param
       if(ray.intensity<=1e-12)continue;
       const a=m.toScreen(ray.from.x,ray.from.y),b=m.toScreen(ray.to.x,ray.to.y),incident=ray.label==='入射光',transmit=ray.label==='折射光';
       const color=incident?warm:transmit?cool:reflected;
-      drawInterfaceRay(ctx,a,b,color,ray.intensity,incident,paper,scale);
+      drawTirHeroRay(ctx,a,b,color,ray.intensity,incident,transmit,paper,scale);
       if(ray.label) {
         const end=incident?a:b,dx=end.x-p.x,dy=end.y-p.y,len=Math.hypot(dx,dy)||1,sign=incident?-1:transmit?-1:1;
         add(ray.label,color,p.x+dx*.72+sign*(-dy/len)*44*scale,p.y+dy*.72+sign*(dx/len)*44*scale);
       }
     }
-    ctx.strokeStyle=warm;ctx.lineWidth=2.5;ctx.fillStyle=paper?'#fff':'#14191f';if(!paper){ctx.shadowColor=warm;ctx.shadowBlur=15;}
-    ctx.beginPath();ctx.arc(p.x,p.y,10*scale,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
+    drawTirHitRing(ctx,p,warm,paper,scale);
   }
   drawInterfaceLabels(ctx,labels,obstacles,viewport);ctx.restore();
 }
@@ -808,6 +795,6 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
     if(params.sceneMode==='tir-interface')renderTirInterface(ctx,state,params,viewport,layers);
     else renderOpticalScene(ctx,state,params,viewport,layers);
   }
-}), { liveFormulas });
+}), { liveFormulas,resolveOpticsSliceCamera });
 
 export default opticsRayStudioPlugin;
