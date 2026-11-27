@@ -18,17 +18,17 @@ export function coriolisFrames(s:State,p:Params){
   // Equal physical scale in the two panels; reference rings expand only as a
   // display window. No finite disk boundary or collision is part of this model.
   const r=Math.max(1,Math.ceil(2*(Math.max(q.r,q.labR,...s.coriolisTrail.map(z=>Math.max(Math.hypot(z.lx,z.ly),Math.hypot(z.rx,z.ry))))+.12))/2);
-  const d=r+.26;
+  const d=r+Math.max(.26,.10*r);
   return {r,left:pt(-d,0),right:pt(d,0),lab:pt(-d+s.labPos.x,s.labPos.y),rot:pt(d+q.x,q.y)};
 }
 export function advancedBounds(s:State,p:Params):DiagramIR['viewBox']{
   if(p.mode==='double-pendulum'){
     const r=p.l1M+p.l2M;
-    return {minX:-r-.30,minY:-r-.50,maxX:2.65*r+.30,maxY:r+.58};
+    return {minX:-r-.30,minY:-r-.50,maxX:2.65*r+.30,maxY:r+.70};
   }
   if(p.mode==='normal-modes')return {minX:-3.1,minY:-1.96,maxX:3.1,maxY:1.76};
-  const {r}=coriolisFrames(s,p);
-  return {minX:-2*r-.65,minY:-r-.52,maxX:2*r+.65,maxY:r+.62};
+  const {r,right}=coriolisFrames(s,p),pad=Math.max(.39,.09*r),u=Math.max(.18,.05*r);
+  return {minX:-right.x-r-pad,minY:-r-3*u,maxX:right.x+r+pad,maxY:r+3.5*u};
 }
 export function advancedViewBounds(s:State,p:Params,v:Viewport){
   const b=advancedBounds(s,p),m=createWorldMapper(v),a=m.toScreen(b.minX,b.maxY),z=m.toScreen(b.maxX,b.minY);
@@ -50,7 +50,8 @@ export function advancedItems(s:State,p:Params):Item[]{
   const bounds=advancedBounds(s,p);
   if(p.mode==='double-pendulum'){
     const r=p.l1M+p.l2M,pivot=pt(0,0),main=pendulumBobs(s.dpState,p),shadow=pendulumBobs(s.dpShadow,p);
-    label((bounds.minX+bounds.maxX)/2,r+.40,'双摆 · 绝对角相对铅直向下 · 相邻初角差 10⁻⁴ rad');
+    label((bounds.minX+bounds.maxX)/2,r+.48,'双摆 · 绝对角相对铅直向下 · 相邻初角差 10⁻⁴ rad');
+    label(0,r+.22,'主摆实线 · 邻近摆虚线','muted');
     for(const [b,role,dashed] of [[shadow,'shadow',true],[main,'main',false]] as const){
       line(pivot,b[0],role,dashed);line(b[0],b[1],role,dashed);
       circle(b[0],.045*Math.sqrt(p.m1Kg),role,true);circle(b[1],.045*Math.sqrt(p.m2Kg),role,true);
@@ -91,8 +92,8 @@ export function advancedItems(s:State,p:Params):Item[]{
     label(0,-1.58,'E同相='+fmt(q.Es)+' J · E反相='+fmt(q.Ea)+' J · E总='+fmt(q.E)+' J','green');
     label(0,-1.79,'ω₁='+fmt(q.w1)+' rad/s；ω₂='+fmt(q.w2)+' rad/s','muted');
   }else{
-    const sc=coriolisFrames(s,p),q=coriolisQuantities(s,p),r=sc.r;
-    label(0,r+.44,'无界旋转坐标平面 · 参考圆不是物理边界');
+    const sc=coriolisFrames(s,p),q=coriolisQuantities(s,p),r=sc.r,u=Math.max(.18,.05*r);
+    label(0,r+2.6*u,'无界旋转坐标平面 · 参考圆不是物理边界');
     for(const [center,head,trail,title,role] of [
       [sc.left,sc.lab,s.coriolisTrail.map(z=>pt(sc.left.x+z.lx,z.ly)),'地面惯性系','green'],
       [sc.right,sc.rot,s.coriolisTrail.map(z=>pt(sc.right.x+z.rx,z.ry)),'旋转坐标系','main']
@@ -102,10 +103,10 @@ export function advancedItems(s:State,p:Params):Item[]{
       line(pt(center.x,-r),pt(center.x,r),'muted',true);
       trajectory(trail,role);
       circle(head,Math.max(.035,r*.025),role,true);
-      label(center.x,r+.15,title,role);
-      label(center.x,-r-.16,'r='+fmt(Math.hypot(head.x-center.x,head.y-center.y))+' m','muted');
+      label(center.x,r+.9*u,title,role);
+      label(center.x,-r-.9*u,'r='+fmt(Math.hypot(head.x-center.x,head.y-center.y))+' m','muted');
     }
-    label(0,-r-.35,'同一长度比例 · 参考圆半径 '+fmt(r)+' m · 双系位置偏差 '+q.positionError.toExponential(2)+' m','ink');
+    label(0,-r-2.1*u,'同一长度比例 · 参考圆半径 '+fmt(r)+' m · 双系位置偏差 '+q.positionError.toExponential(2)+' m','ink');
   }
   return out;
 }

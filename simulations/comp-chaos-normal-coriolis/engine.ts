@@ -159,23 +159,31 @@ export function stepChaosNormalCoriolis(
     for(let j=0;j<n;j++){
       const t=state.t+j*h,before=dpState,after=advance(before,t,h);
       const turn=2*Math.PI;
-      for(let k=Math.floor(before[0]/turn)+1;k<=Math.floor(after[0]/turn);k++){
-        const target=k*turn;
-        const hit=bisectEvent(before,t,h,(y,sub)=>advance(y,t,sub),y=>y[0]-target,{timeTolerance:1e-8});
-        if(hit&&hit.state[2]>0){
-          const y=hit.state;
-          const point={t:hit.time,th1:y[0],th2:principalAngle(y[1]),w1:y[2],w2:y[3],bracketWidth:hit.bracketWidth};
-          if(!poincarePts.length||point.t-poincarePts[poincarePts.length-1]!.t>1e-7){
-            poincarePts=[...poincarePts.slice(-119),point];
-            events.push({id:'poincare-'+point.t.toFixed(8),time:point.t,label:'θ₁=2πk，ω₁>0',metrics:{theta2:point.th2,omega2:point.w2}});
+      // A section can be crossed upward and back downward within one search
+      // bracket. Isolate a bracketed extremum of theta1 before testing roots.
+      const cut=before[2]*after[2]<0?bisectEvent(before,t,h,(y,sub)=>advance(y,t,sub),y=>y[2],{timeTolerance:1e-9}):null;
+      const segments=cut&&cut.timeOffset>0&&cut.timeOffset<h?
+        [{a:before,b:cut.state,t0:t,dt:cut.timeOffset},{a:cut.state,b:after,t0:cut.time,dt:h-cut.timeOffset}]:
+        [{a:before,b:after,t0:t,dt:h}];
+      for(const part of segments){
+        for(let k=Math.floor(part.a[0]/turn)+1;k<=Math.floor(part.b[0]/turn);k++){
+          const target=k*turn;
+          const hit=bisectEvent(part.a,part.t0,part.dt,(y,sub)=>advance(y,part.t0,sub),y=>y[0]-target,{timeTolerance:1e-8});
+          if(hit&&hit.state[2]>0){
+            const y=hit.state;
+            const point={t:hit.time,th1:y[0],th2:principalAngle(y[1]),w1:y[2],w2:y[3],bracketWidth:hit.bracketWidth};
+            if(!poincarePts.length||point.t-poincarePts[poincarePts.length-1]!.t>1e-7){
+              poincarePts=[...poincarePts.slice(-119),point];
+              events.push({id:'poincare-'+point.t.toFixed(8),time:point.t,label:'θ₁=2πk，ω₁>0',metrics:{theta2:point.th2,omega2:point.w2}});
+            }
           }
         }
       }
       dpState=after;
+      dpShadow=advance(dpShadow,t,h);
       dpCurE=doublePendulumEnergy(dpState,params);
       dpMaxRelDrift=Math.max(dpMaxRelDrift,Math.abs(dpCurE-state.dpInitialEnergy)/dpEnergyScale(state.dpInitialEnergy,params));
     }
-    dpShadow=advance(state.dpShadow,state.t,dt);
   }
 
   // 2. Normal modes Verlet

@@ -97,7 +97,7 @@ const rippleSlice=targetPlugin.paramSchema.some(f=>f.key==='wavelengthCells');
 const mechanicsErrorSlice=targetPlugin.paramSchema.some(f=>f.key==='rulerOffsetCm')&&targetPlugin.paramSchema.some(f=>f.key==='hangerMassKg')&&targetPlugin.paramSchema.some(f=>f.key==='readingNoiseMm');
 const electricalErrorSlice=targetPlugin.paramSchema.some(f=>f.key==='targetVernierMm')&&targetPlugin.paramSchema.some(f=>f.key==='rheostatTapFrac')&&targetPlugin.paramSchema.some(f=>f.key==='halfBiasSupplyV');
 const rollingSlice=targetPlugin.paramSchema.some(f=>f.key==='omega0Radps')&&targetPlugin.paramSchema.some(f=>f.key==='shape')&&targetPlugin.paramSchema.some(f=>f.key==='muK');
-const advancedSlice=targetPlugin.meta.id==='comp-chaos-normal-coriolis';
+const advancedSlice=targetPlugin.paramSchema.some(f=>f.key==='theta1Deg')&&targetPlugin.paramSchema.some(f=>f.key==='normalExcite')&&targetPlugin.paramSchema.some(f=>f.key==='diskOmegaRadps');
 const baseMeasuredScope=advancedSlice||rollingSlice||electricalErrorSlice||mechanicsErrorSlice||circuitSlice||mechanicsSlice||odeSlice||chaseSlice||equilibriumSlice||constrainedSlice||projectileSlice||contactSlice||verticalSlice||turntableSlice||springSlice||collisionSlice||shmSlice||electroSlice||capacitorSlice||acSlice||wireSlice||eddySlice||generatorSlice||lcSlice||magneticSlice||waveSlice||rippleSlice||thermoSlice||thermalCycleSlice||atomicSlice||nuclearSlice||orbitCompareSlice;
 const MECHANICS_FIELDS:Record<string,string[]>={
   'elastic-collision':['scenario','gravity','massRatio','restitution','friction'],

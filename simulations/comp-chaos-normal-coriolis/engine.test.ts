@@ -163,6 +163,21 @@ describe('H62 physical boundaries and exact event evidence',()=>{
     expect(times).toEqual(s.poincarePts.map(z=>z.t));
     for(let j=1;j<times.length;j++)expect(times[j]!).toBeGreaterThan(times[j-1]!);
   });
+  it('detects an upward crossing even when the angle starts and ends below the same section in one outer step',()=>{
+    const p={...getPreset(0),m1Kg:1,m2Kg:1,l1M:1,l2M:1};
+    const base=createInitialState(p),y=[-1e-6,-Math.PI/4,.005,0] as const;
+    const a={...base,dpState:y,dpShadow:y};
+    const coarse=stepChaosNormalCoriolis(a,p,.01).nextState;
+    let fine=a as ReturnType<typeof createInitialState>;
+    for(let i=0;i<500;i++)fine=stepChaosNormalCoriolis(fine,p,.00002).nextState;
+    expect(coarse.dpState[0]).toBeLessThan(0);
+    expect(coarse.poincarePts).toHaveLength(1);
+    expect(fine.poincarePts).toHaveLength(1);
+    const c=coarse.poincarePts[0]!,f=fine.poincarePts[0]!;
+    expect(c.t).toBeGreaterThan(0);expect(c.t).toBeLessThan(.002);
+    expect(Math.abs(c.t-f.t)).toBeLessThan(2e-7);
+    expect(c.w1).toBeGreaterThan(0);expect(c.bracketWidth).toBeLessThanOrEqual(1e-8);
+  });
   it('conserves independently decomposed mode energies at the stiffest legal parameters',()=>{
     const p={...getPreset(1),m1Kg:.5,springKw:60,springKc:40,normalExcite:'single-beat' as const},a=createInitialState(p);let s=a;
     for(let i=0;i<1000;i++){s=stepChaosNormalCoriolis(s,p,.01).nextState;

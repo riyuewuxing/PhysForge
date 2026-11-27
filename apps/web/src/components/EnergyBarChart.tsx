@@ -88,6 +88,8 @@ export const EnergyBarChart: React.FC<EnergyBarChartProps> = ({ observables, inv
         <div className="text-xs" style={{ color: 'var(--pf-text-muted)' }}>
           {observables.angularMomentumContact!==undefined&&observables.requiredStaticMu!==undefined
             ? '平动、转动及有符号势能请见模型图解与公式；此通用柱状图不合并有符号势能。'
+            : observables.dpDivergenceRad!==undefined?'双摆为有符号势能模型；机械能及漂移请见专项公式与读数。'
+            : observables.coriolisDeviation!==undefined&&observables.coriolisVelocityError!==undefined?'旋转坐标系对照；惯性系无外力自由滑行。'
             : '当前波动模型以振幅与相位耦合观测量为主'}
         </div>
       )}
