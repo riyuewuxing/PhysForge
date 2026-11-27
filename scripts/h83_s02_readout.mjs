@@ -111,10 +111,11 @@ async function layoutCase(base,width){
    for(const [device,prefix] of Object.entries(devicePrefixes)){
     const select=page.locator('#param-device');
     if(!await select.isVisible()){
-     const option=page.locator('select:has(option[value="mass-spectrometer"])').first();
-     if(!await option.isVisible())throw Error('S02 device selector hidden');
-     await option.selectOption(device);
-    }else await select.selectOption(device);
+     await page.locator('summary').filter({hasText:'更多参数与图层'}).click();
+    }
+    await select.waitFor({state:'visible'});
+    await select.selectOption(device);
+    check(await select.inputValue()===device,width+'/'+theme+'/'+device+': actual selector value');
     await page.evaluate(()=>{window.__s02Readouts={};});
     await page.getByTestId('btn-fullscreen-speech').click();
     await page.getByTestId('fullscreen-formula').waitFor({state:'visible'});
