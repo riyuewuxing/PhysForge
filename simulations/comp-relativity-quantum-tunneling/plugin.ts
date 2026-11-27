@@ -141,7 +141,7 @@ export const compRelativityQuantumTunnelingPlugin = Object.assign(defineSimulati
       {event:relativityEventPoint(p),lorentz:solveLorentzInterval(p.lorentzBeta,p.eventX,p.eventCt),turn:{x:5*p.lorentzBeta,ct:5},reunion:{x:0,ct:10}})});
   },
   getControlHandles:(s,p)=>{
-    if(p.mode==='minkowski-relativity')return [{id:'spacetime-event',label:'E',position:relativityEventPoint(p),handleKind:'point',color:'#4ade80',onDrag:world=>{
+    if(p.mode==='minkowski-relativity')return [{id:'spacetime-event',label:'拖动事件 E',position:relativityEventPoint(p),handleKind:'point',showWhenIdle:false,color:'#4ade80',onDrag:world=>{
       const o=relativityEventPoint({...p,eventX:0,eventCt:0}),x=(world.x-o.x)/.225,y=(world.y-o.y)/.225;
       return {eventX:Math.max(-6,Math.min(6,Math.round(x*2)/2)),eventCt:Math.max(-6,Math.min(8,Math.round(y*2)/2))};
     }}];

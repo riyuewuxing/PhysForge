@@ -1506,7 +1506,10 @@ async function auditF12Relativity(page,offline,select){
   await absent(['lorentzBeta','eventX','eventCt']);await channels('reflectionProb','transmissionProb');
   await formulas(['tdse-equation','tdse-density','tdse-regions','tdse-energy','tdse-cayley']);await save('tdse_initial',initial);
   const evolved=await runTo(4,'tdse-tunneling');if(Math.abs(evolved.peakDensity-initial.peakDensity)<1e-5)throw Error('F12 wave did not evolve');
-  await save('tdse_evolved',evolved);await exported('tdse',['概率密度','占据概率','有限盒反射边界']);
+  await save('tdse_evolved',evolved);
+  const scattered=await runTo(15,'tdse-tunneling');
+  if(!(scattered.obs.transmissionProb>.005&&scattered.obs.transmissionProb<.95&&scattered.obs.maxBoundaryProb<.01))throw Error('F12 right-region signal / finite-box edge '+JSON.stringify(scattered.obs));
+  await save('tdse_scattered',scattered);await exported('tdse',['概率密度','占据概率','有限盒反射边界']);
   await select('tdse-double-barrier-resonance');await sync('tdse-tunneling',{potentialShape:'double-barrier'},true);
   await save('tdse_double',await runTo(1,'tdse-tunneling',{potentialShape:'double-barrier'}));
   await option('potentialShape','potential-well');await sync('tdse-tunneling',{potentialShape:'potential-well'},true);

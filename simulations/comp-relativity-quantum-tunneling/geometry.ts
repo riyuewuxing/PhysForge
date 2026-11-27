@@ -112,7 +112,7 @@ export function relativityItems(s:State,p:Params):RelativityItem[]{
       for(const z of [px,pc]){const c=visibleProjection(E,z);line(sx(E.x,E.y),sx(c.point.x,c.point.y),'main',true);if(c.inside)dot(sx(z.x,z.y),.026,'main',false);else clipped=true;}
     }
     line(sx(E.x,0),sx(E.x,E.y),'muted',true);line(sx(0,E.y),sx(E.x,E.y),'muted',true);
-    dot(O,.028,'ink');dot(sx(E.x,E.y),.055,'green');text(X0+E.x*SR_SCALE+.08,E.y*SR_SCALE+.11,'E','green','start');
+    dot(O,.028,'ink');dot(sx(E.x,E.y),.055,'green');text(X0+E.x*SR_SCALE-.10,E.y*SR_SCALE+.11,'E','green','end');
     text(X0,-2.17,'E=('+fmt(T.x)+', '+fmt(T.y)+')  →  E′=('+fmt(lor.xPrime)+', '+fmt(lor.ctPrime)+')','ink');
     text(X0,-2.36,causal+' · s²='+fmt(s2)+' · 跨系误差 '+lor.err.toExponential(2),'green');
     text(X0,-2.53,clipped?'部分 S′ 投影超出显示窗，数值仍为精确变换':'光锥斜率 ±1 · 虚线为等坐标投影/不变曲线','muted');
@@ -125,10 +125,10 @@ export function relativityItems(s:State,p:Params):RelativityItem[]{
     dot(start,.042,'ink');dot(end,.042,'ink');dot(turn,.047,'main');
     text(start.x-.08,start.y-.14,'O','ink','end');text(end.x+.10,end.y+.10,'B','ink','start');
     text(turn.x+(beta>=0?.10:-.10),turn.y+.08,'A（折返）','main',beta>=0?'start':'end');
-    text(C,1.72,'留守（实线） 远行（虚线）','ink');
-    text(C,1.52,'β='+fmt(beta,2)+' · γ='+fmt(lor.gamma,4));
-    text(C,1.32,'留守 cτ='+fmt(s.twinStayProperTime,3)+' · 远行 cτ='+fmt(s.twinTravelerProperTime,3),'green');
-    text(C,1.13,'瞬时反向，忽略加速段；c=1 约化单位','muted');
+    text(C,1.98,'留守（实线） 远行（虚线）','ink');
+    text(C,1.78,'β='+fmt(beta,2)+' · γ='+fmt(lor.gamma,4));
+    text(C,1.58,'留守 cτ='+fmt(s.twinStayProperTime,3)+' · 远行 cτ='+fmt(s.twinTravelerProperTime,3),'green');
+    text(C,1.38,'瞬时反向，忽略加速段；c=1 约化单位','muted');
     text(C,-1.84,'O(0,0) · A('+fmt(5*beta,2)+',5) · B(0,10)','ink');
     text(C,-2.07,'每段惯性运动长度/时间单位相同','muted');
     text(C,-2.30,'两条世界线比较的是相同出发/重逢事件','muted');

@@ -116,6 +116,24 @@ describe('F12 independently specified scattering and Lorentz evidence (prepared 
       }
     }
   });
+  it('keeps one idle event label and separates the twin legend from its time axis',()=>{
+    const p=getPreset(2),s=createInitialState(p),plugin=compRelativityQuantumTunnelingPlugin;
+    const d=plugin.exportDiagramIR!(s,p),h=plugin.getControlHandles!(s,p).find(v=>v.id==='spacetime-event');
+    expect(h?.showWhenIdle).toBe(false);
+    const labels=d.primitives.flatMap(v=>v.kind==='text'?[v]:[]);
+    expect(labels.filter(v=>v.text==='E')).toHaveLength(1);
+    const axis=labels.find(v=>v.text==='ct'&&v.x>0),note=labels.find(v=>v.text.startsWith('瞬时反向'));
+    expect(axis).toBeDefined();expect(note).toBeDefined();expect(note!.y-axis!.y).toBeGreaterThan(.25);
+    expect(h?.onDrag(h.position)).toMatchObject({eventX:p.eventX,eventCt:p.eventCt});
+  });
+  it('retains measurable right-region probability before finite-box edge interaction',()=>{
+    const p=getPreset(0),initial=createInitialState(p);
+    let s=initial;for(let i=0;i<375;i++)s=stepRelativityQuantum(s,p,.04).nextState;
+    expect(s.transmissionProb).toBeGreaterThan(.005);
+    expect(s.transmissionProb).toBeLessThan(.95);
+    expect(s.maxBoundaryProb).toBeLessThan(.01);
+    expect(s.totalNorm).toBeCloseTo(1,10);expect(energy(s)).toBeCloseTo(energy(initial),9);
+  });
   it('exports all four spacetime axes, null rays and the actual event rather than a generic empty cone',()=>{
     const p={...getPreset(2),lorentzBeta:-.65,eventX:2.5,eventCt:4.5},s=createInitialState(p);
     const d=compRelativityQuantumTunnelingPlugin.exportDiagramIR!(s,p);
