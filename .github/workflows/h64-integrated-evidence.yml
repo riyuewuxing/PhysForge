@@ -1,0 +1,77 @@
+name: H64 integrated evidence supplements
+on:
+  push:
+    branches: ['audit/v31-h64-integrated-evidence']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  flagship-originals:
+    name: Recover four exact 609e5df flagship originals
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_REPO: ${{ github.repository }}
+      SOURCE_HEAD: '609e5df582e352e71fd88eb6617c27dc6436a783'
+      SOURCE_RUN: '45944407525'
+      PHASE: online
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check Pillow==11.3.0
+        timeout-minutes: 2
+      - run: python scripts/h64_extract_evidence.py
+        timeout-minutes: 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h64-four-flagship-originals
+          path: |
+            evidence/manifest.json
+            evidence/review-*.zip
+            evidence/report/
+          if-no-files-found: error
+          retention-days: 7
+  offline-supplement:
+    name: Offline supplement ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [builder-composite-em-field, em-induction-double-rod, stse-em-devices-suite, stse-tokamak-magnetic-mirror, astro-orbital-mechanics]
+    env:
+      SOURCE_HEAD: '37bc70b5bdeb1088bcd0c866d149cfb34e876da5'
+      MODEL: ${{ matrix.model }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify exact underlying product tree
+        run: |
+          test "$(git rev-parse HEAD^)" = "$SOURCE_HEAD"
+          git diff --name-only "$SOURCE_HEAD" HEAD | sort > /tmp/actual
+          printf '%s\n' .github/workflows/h64-integrated-evidence.yml scripts/h64_extract_evidence.py scripts/h64_offline_supplement.mjs | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/h64_offline_supplement.mjs
+        timeout-minutes: 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h64-offline-${{ matrix.model }}
+          path: |
+            evidence/offline/*.png
+            evidence/offline/report.json
+          if-no-files-found: error
+          retention-days: 7
