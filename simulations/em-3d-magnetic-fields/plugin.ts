@@ -234,6 +234,24 @@ export function magneticProjectionBounds(s:Magnetic3dState,p:Magnetic3dParams){
   const pad=.18*Math.max(1,p.radiusR);return {minX:minX-pad,maxX:maxX+pad,minY:minY-pad,maxY:maxY+pad};
 }
 
+/** Standalone side projection uses its own real canvas, not the web inspector.
+ * Fit the initial, actual field/conductor/vector geometry once per preset or resize.
+ * The uniform-field reference stays stable at Bz=0; it is camera extent only,
+ * never drawn as a fictitious field. Ordinary integration does not refit. */
+export function magneticSliceInitialBounds(p:Magnetic3dParams){
+  const b=magneticProjectionBounds(createInitialState(p),p);
+  return p.geometryType==='uniform-helix'
+    ? {minX:Math.min(-2.38,b.minX),maxX:Math.max(2.38,b.maxX),minY:Math.min(-1.2,b.minY),maxY:Math.max(1.2,b.maxY)}
+    : b;
+}
+export function resolveMagneticSliceCamera(p:Magnetic3dParams,width:number,height:number){
+  const w=Math.max(1,width),h=Math.max(1,height),b=magneticSliceInitialBounds(p);
+  const ppm=Math.min(Math.max(1,w-80)/(b.maxX-b.minX),Math.max(1,h-64)/(b.maxY-b.minY));
+  const scale=Math.max(.0001,Math.min(20,ppm/(.24*Math.min(w,h))));
+  const actualPpm=.24*Math.min(w,h)*scale;
+  return {scale,offsetX:w*.05-(b.minX+b.maxX)*actualPpm/2,offsetY:(b.minY+b.maxY)*actualPpm/2};
+}
+
 const magneticChannels:readonly TelemetryChannelSpec[]=[
   {key:'vx',label:'有向速度 vx',unit:'m/s',color:'#38bdf8'},
   {key:'vy',label:'有向速度 vy',unit:'m/s',color:'#f472b6'},
@@ -390,7 +408,7 @@ export const em3dMagneticFieldsPlugin = Object.assign(defineSimulationPlugin<Mag
     }, currentField];
     return [currentField];
   }
-}), { storyDecks: magnetic3dStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
+}), { storyDecks: magnetic3dStoryDecks, liveFormulas, resolveMagneticSliceCamera, spatial3D: { flattenPlane: 'xy' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6,
   default3DAzimuthRad: 0.46, default3DPolarRad: 1.30 } });
 
 export default em3dMagneticFieldsPlugin;

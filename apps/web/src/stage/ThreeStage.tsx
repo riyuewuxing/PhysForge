@@ -7,7 +7,7 @@ import { getPixelsPerMeter, isSimulationPluginV3, type ParamRecord, type Simulat
 import { DynamicTubeTrail } from './dynamicTubeTrail.js';
 import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraDirection, separateScreenLabelBoxes } from './cameraMorphController.js';
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
-import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop } from './spatialMaterials.js';
+import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop, e10ConductorRadius, e10CopperMaterial, e10FluxCoreMaterial, e10FluxHaloMaterial, e10GridLineGeometry } from './spatialMaterials.js';
 import { fitFusionSpatialFrame,projectFusionFrame } from './fusionFraming.js';
 import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
 import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
@@ -205,9 +205,10 @@ function createRadialGrid(magnetic = false): THREE.Group {
     const material = new THREE.LineBasicMaterial({
       color: 0x64748b,
       transparent: true,
-      opacity: (magnetic ? 0.055 : 0.035) + (magnetic ? 0.09 : 0.065) * Math.exp(-Math.abs(z) * 0.2)
+      opacity: (magnetic ? 0.055 : 0.035) + (magnetic ? 0.09 : 0.065) * Math.exp(-Math.abs(z) * 0.2),
+      ...(magnetic?{vertexColors:true,depthWrite:false}:{})
     });
-    grid.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
+    grid.add(new THREE.Line(magnetic?e10GridLineGeometry(points[0]!,points[1]!):new THREE.BufferGeometry().setFromPoints(points), material));
   }
   for (let index = -14; index <= 14; index++) {
     const x = index * 0.5;
@@ -218,9 +219,10 @@ function createRadialGrid(magnetic = false): THREE.Group {
     const material = new THREE.LineBasicMaterial({
       color: 0x475569,
       transparent: true,
-      opacity: magnetic ? 0.13 : 0.075
+      opacity: magnetic ? 0.13 : 0.075,
+      ...(magnetic?{vertexColors:true,depthWrite:false}:{})
     });
-    grid.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
+    grid.add(new THREE.Line(magnetic?e10GridLineGeometry(points[0]!,points[1]!):new THREE.BufferGeometry().setFromPoints(points), material));
   }
   return grid;
 }
@@ -662,10 +664,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               const closed = isTokamak3d || (isMag3d && ['single-loop','helmholtz-coil','finite-solenoid'].includes(magneticParams.geometryType));
               if (closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
-              const radius = isMag3d ? (!closed ? .07:Math.min(0.062,0.071*Math.max(.2,magneticParams.radiusR))) : .043;
+              const radius = isMag3d ? e10ConductorRadius(magneticParams.geometryType,magneticParams.radiusR,magneticParams.solenoidTurns) : .043;
               const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), radius, isMag3d ? 14 : 10, closed);
-              const copper=coilCopperMaterial();
-              if(isMag3d){copper.color.set(0xc28b61);copper.envMapIntensity=1.15;copper.roughness=.21;}
+              const copper=isMag3d?e10CopperMaterial():coilCopperMaterial();
               staticGroup.add(new THREE.Mesh(tubeGeo,copper));
               // Signed conventional current markers along real conductor tangents.
               if(isMag3d&&magneticParams.currentI!==0&&(!closed||renderedConductorCount%Math.max(1,Math.ceil(paths.length/4))===0)){
@@ -707,19 +708,19 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               if (isMag3d && closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
               const divisions=Math.min(512,Math.max(32,points.length));
-              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.006:.009, 5, closed);
+              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.005:.009, 5, closed);
               applyFluxEndpointFade(geometry,closed);
-              staticGroup.add(new THREE.Mesh(geometry,coilFluxCoreMaterial(true)));
+              staticGroup.add(new THREE.Mesh(geometry,isMag3d?e10FluxCoreMaterial(true):coilFluxCoreMaterial(true)));
               if (isMag3d||isTokamak3d) {
-                const haloGeometry = new THREE.TubeGeometry(curve, divisions, 0.024, 5, closed);
+                const haloGeometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.018:.024, 5, closed);
                 applyFluxEndpointFade(haloGeometry,closed);
-                staticGroup.add(new THREE.Mesh(haloGeometry, coilFluxHaloMaterial()));
+                staticGroup.add(new THREE.Mesh(haloGeometry, isMag3d?e10FluxHaloMaterial():coilFluxHaloMaterial()));
                 // Tangent of an actual ordered field sample, not a decorative direction.
                 if (renderedFieldCount % (isTokamak3d?2:4) === 0) {
                   const index = Math.max(1, Math.floor(points.length / 2));
                   const start = points[index-1]!, delta = points[index]!.clone().sub(start);
                   if (delta.lengthSq() > 1e-10) {
-                    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085, 8), coilFluxCoreMaterial());
+                    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085, 8), isMag3d?e10FluxCoreMaterial():coilFluxCoreMaterial());
                     cone.position.copy(start).lerp(points[index]!, 0.5);
                     cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), delta.normalize());
                     staticGroup.add(cone);

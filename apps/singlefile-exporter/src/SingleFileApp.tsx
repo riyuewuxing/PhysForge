@@ -7,6 +7,8 @@ import type {ThermoCycleMdState} from '../../../simulations/thermo-cycles-kineti
 import type {ThermoGasState} from '../../../simulations/thermo-piston-gas-laws/engine.js';
 import type {OpticsParams} from '../../../simulations/optics-ray-studio/engine.js';
 type OpticsSlicePlugin=typeof import('../../../simulations/optics-ray-studio/plugin.js').opticsRayStudioPlugin;
+import type {Magnetic3dParams} from '../../../simulations/em-3d-magnetic-fields/engine.js';
+type MagneticSlicePlugin=typeof import('../../../simulations/em-3d-magnetic-fields/plugin.js').em3dMagneticFieldsPlugin;
 import type {CircuitParams} from '../../../simulations/circuit-dc-capacitor-mna/engine.js';
 type CircuitSlicePlugin=typeof import('../../../simulations/circuit-dc-capacitor-mna/plugin.js').circuitDcCapacitorMnaPlugin;
 import type { KinematicsChaseState,KinematicsChaseParams } from '../../../simulations/mech-kinematics-chase/engine.js';
@@ -72,6 +74,7 @@ const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind=
 function resolveSliceCamera(params:ParamRecord,width:number,height:number){
   if(circuitSlice)return (targetPlugin as unknown as CircuitSlicePlugin).resolveCircuitSliceCamera(params as CircuitParams,width,height);
   if(opticalSlice)return (targetPlugin as unknown as OpticsSlicePlugin).resolveOpticsSliceCamera(params as OpticsParams,width,height);
+  if(magneticSlice)return (targetPlugin as unknown as MagneticSlicePlugin).resolveMagneticSliceCamera(params as Magnetic3dParams,width,height);
   return resolveInitialCameraTransform(targetPlugin as SimulationPluginV2<ParamRecord,unknown>,params,width,height);
 }
 const mechanicsSlice=targetPlugin.paramSchema.some(f=>f.key==='scenario'&&f.kind==='select'&&f.options.some(o=>o.value==='atwood-constrained'));
