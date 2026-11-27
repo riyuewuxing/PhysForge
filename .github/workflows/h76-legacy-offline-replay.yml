@@ -1,0 +1,47 @@
+name: H76 exact-source legacy offline replay
+on:
+  pull_request:
+    branches: ['polish/v31-h76-e04-story']
+permissions:
+  contents: read
+jobs:
+  legacy-scope:
+    if: github.event.pull_request.head.ref == 'audit/h76-legacy-offline-replay'
+    name: Offline browser ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [builder-composite-em-field, em-induction-double-rod, stse-em-devices-suite, stse-tokamak-magnetic-mirror, astro-orbital-mechanics]
+    env:
+      SOURCE_HEAD: 339b24912a7cd91c7d337465ff3bf1cebed6e89a
+      MODEL: ${{ matrix.model }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 339b24912a7cd91c7d337465ff3bf1cebed6e89a
+      - run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          test "$(git hash-object scripts/h64_legacy_scope_audit.mjs)" = "16e6558021fa2c89d0afb88ca5ab2e625ea37301"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/h64_legacy_scope_audit.mjs
+        timeout-minutes: 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h76-offline-${{ matrix.model }}
+          path: |
+            evidence/scope/*.png
+            evidence/scope/*.html
+            evidence/scope/report.json
+          if-no-files-found: error
+          retention-days: 7
