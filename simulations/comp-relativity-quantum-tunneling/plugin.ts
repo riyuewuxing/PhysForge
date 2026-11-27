@@ -1,9 +1,10 @@
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type ParamFieldSpec,type TelemetryChannelSpec } from '@physforge/sim-sdk';
+import {relativityItems,relativityDiagram,relativityBounds,relativityViewBounds,fitRelativityViewport,relativityEventPoint,potentialHandle} from './geometry.js';
 import { relativityQuantumPresets } from './presets.js';
 import {
   TDSE_DX,
   TDSE_GRID_N,
-  TDSE_X_MIN,
+  potentialSupport,
   checkInvariants,
   computeObservables,
   createInitialState,
@@ -30,21 +31,49 @@ const paramSchema: readonly ParamFieldSpec<RelativityQuantumParams>[] = [
     label: '量子势场形状 V(x)',
     defaultValue: 'single-barrier',
     options: [
-      { value: 'single-barrier', label: '单矩形势垒 (V₀ > E₀)' },
-      { value: 'double-barrier', label: '双势垒共振腔' },
+      { value: 'single-barrier', label: '单矩形势垒' },
+      { value: 'double-barrier', label: '双势垒干涉腔' },
       { value: 'potential-well', label: '负方势阱 (-V₀)' }
     ]
   },
   { key: 'barrierHeightV0', kind: 'number', label: '势垒高度 |V₀|', defaultValue: 2.45, min: 0.5, max: 5.0, step: 0.1 },
-  { key: 'barrierWidth', kind: 'number', label: '势垒厚度 w', defaultValue: 1.4, min: 0.6, max: 4.0, step: 0.2 },
+  { key: 'barrierWidth', kind: 'number', label: '势场宽度参数 w', defaultValue: 1.4, min: 0.6, max: 4.0, step: 0.2 },
   { key: 'waveMomentumK0', kind: 'number', label: '波包中心波矢 k₀', defaultValue: 2.0, min: 1.0, max: 3.5, step: 0.1 },
   { key: 'packetSigma', kind: 'number', label: '高斯波包宽度 σ', defaultValue: 3.2, min: 1.5, max: 6.0, step: 0.2 },
-  { key: 'lorentzBeta', kind: 'number', label: '参考系速率 β = v/c', defaultValue: 0.6, min: -0.95, max: 0.95, step: 0.05 },
+  { key: 'lorentzBeta', kind: 'number', label: '有向相对速度 β = v/c', defaultValue: 0.6, min: -0.95, max: 0.95, step: 0.05 },
   { key: 'eventX', kind: 'number', label: '时空事件坐标 x', defaultValue: 3.0, min: -6.0, max: 6.0, step: 0.5 },
   { key: 'eventCt', kind: 'number', label: '时空事件时间 ct', defaultValue: 5.0, min: -6.0, max: 8.0, step: 0.5 }
 ];
 
-export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
+const channels:readonly TelemetryChannelSpec[]=[
+  {key:'reflectionProb',label:'左区占据概率 P_L',unit:'',color:'#fbbf24'},
+  {key:'transmissionProb',label:'右区占据概率 P_R',unit:'',color:'#4ade80'},
+  {key:'middleProb',label:'中区占据概率 P_M',unit:'',color:'#38bdf8'},
+  {key:'totalNorm',label:'总概率',unit:'',color:'#a78bfa'},
+  {key:'normDrift',label:'概率归一化漂移',unit:'',color:'#f472b6'},
+  {key:'energyExpectation',label:'离散能量期望',unit:'E*',color:'#38bdf8'},
+  {key:'energyDrift',label:'能量期望绝对漂移',unit:'E*',color:'#fbbf24'},
+  {key:'boundaryProb',label:'边缘占据概率',unit:'',color:'#fb7185'},
+  {key:'maxBoundaryProb',label:'边缘占据历史峰值',unit:'',color:'#fb7185'},
+  {key:'gammaFactor',label:'洛伦兹因子 γ',unit:'',color:'#38bdf8'},
+  {key:'eventXPrime',label:'事件 x′',unit:'L*',color:'#38bdf8'},
+  {key:'eventCtPrime',label:'事件 ct′',unit:'L*',color:'#fbbf24'},
+  {key:'intervalS2',label:'间隔 s²',unit:'L*²',color:'#4ade80'},
+  {key:'intervalPrimeS2',label:'间隔 s′²',unit:'L*²',color:'#38bdf8'},
+  {key:'intervalError',label:'间隔绝对误差',unit:'L*²',color:'#f472b6'},
+  {key:'twinStayProperTime',label:'留守 cτ',unit:'L*',color:'#4ade80'},
+  {key:'twinTravelerProperTime',label:'远行 cτ',unit:'L*',color:'#38bdf8'}
+];
+const fields:Record<RelativityQuantumParams['mode'],readonly string[]>={
+  'tdse-tunneling':['mode','potentialShape','barrierHeightV0','barrierWidth','waveMomentumK0','packetSigma'],
+  'minkowski-relativity':['mode','lorentzBeta','eventX','eventCt']
+};
+const keys:Record<RelativityQuantumParams['mode'],readonly string[]>={
+  'tdse-tunneling':['reflectionProb','transmissionProb','middleProb','totalNorm','normDrift','energyExpectation','energyDrift','boundaryProb','maxBoundaryProb'],
+  'minkowski-relativity':['gammaFactor','eventXPrime','eventCtPrime','intervalS2','intervalPrimeS2','intervalError','twinStayProperTime','twinTravelerProperTime']
+};
+const sci=(v:number)=>{if(v===0)return '0';const [m,e]=v.toExponential(3).split('e');return m+'\\times 10^{'+Number(e)+'}';};
+export const compRelativityQuantumTunnelingPlugin = Object.assign(defineSimulationPlugin<
   RelativityQuantumParams,
   RelativityQuantumState
 >({
@@ -57,6 +86,7 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
     version: '2.0.0'
   },
   paramSchema,
+  timeSemantics:p=>p.mode==='minkowski-relativity'?'static-analytic':'evolving',
   presets: relativityQuantumPresets,
   engine: {
     createInitialState,
@@ -67,12 +97,14 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
   layers: [
     { id: 'main', label: '概率密度分布 / 时空光锥图', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'reflectionProb', label: '反射率 R(t)', unit: '', color: '#f59e0b' },
-    { key: 'transmissionProb', label: '透射率 T(t)', unit: '', color: '#4ade80' },
-    { key: 'normDrift', label: '总概率归一化漂移', unit: '', color: '#38bdf8' },
-    { key: 'gammaFactor', label: '洛伦兹因子 γ', unit: '', color: '#a855f7' }
-  ],
+  telemetryChannels:channels,
+  getParamFields:p=>paramSchema.filter(f=>fields[p.mode].includes(f.key)),
+  getTelemetryChannels:p=>channels.filter(c=>keys[p.mode].includes(c.key)),
+  defaultView:{
+    scale:(p,v)=>{const b=relativityBounds(p),base=Math.max(1,.24*Math.min(v.width,v.height)),w=v.width-(v.width>=900?300:0);return Math.max(.035,Math.min((w-48)/(b.maxX-b.minX)/base,(v.height-210)/(b.maxY-b.minY)/base));},
+    offsetRatioX:(p,v)=>{const b=relativityBounds(p),w=v.width-(v.width>=900?300:0),ppm=Math.max(.035*.24*Math.min(v.width,v.height),Math.min((w-48)/(b.maxX-b.minX),(v.height-210)/(b.maxY-b.minY)));return (w/2-.45*v.width-(b.minX+b.maxX)*ppm/2)/Math.max(1,v.width);},
+    offsetRatioY:-.075
+  },
   sceneSerializer: {
     exportScene: (_s, params) => ({
       schemaVersion: '2.0',
@@ -82,225 +114,58 @@ export const compRelativityQuantumTunnelingPlugin = defineSimulationPlugin<
     }),
     importScene: (dsl) => dsl.params as Partial<RelativityQuantumParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [];
-    if (params.mode === 'tdse-tunneling') {
-      const pts: { x: number; y: number }[] = [];
-      for (let j = 0; j < TDSE_GRID_N; j += 8) {
-        const x = TDSE_X_MIN + j * TDSE_DX;
-        const dens = state.psiRe[j]! * state.psiRe[j]! + state.psiIm[j]! * state.psiIm[j]!;
-        pts.push({ x: x * 0.04, y: -0.9 + dens * 8.0 });
-      }
-      primitives.push({ kind: 'line', x1: -2.0, y1: -0.9, x2: 2.0, y2: -0.9 });
-      primitives.push({ kind: 'polyline', points: pts });
-    } else {
-      primitives.push(
-        { kind: 'line', x1: -1.6, y1: -1.6, x2: 1.6, y2: 1.6, dashed: true },
-        { kind: 'line', x1: -1.6, y1: 1.6, x2: 1.6, y2: -1.6, dashed: true },
-        { kind: 'arrow', x1: 0, y1: -1.6, x2: 0, y2: 1.6, label: 'ct' },
-        { kind: 'arrow', x1: -1.6, y1: 0, x2: 1.6, y2: 0, label: 'x' }
-      );
-    }
-    return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.2, minY: -1.7, maxX: 2.2, maxY: 1.7 },
-      title: params.mode === 'tdse-tunneling' ? '一维量子势垒隧穿波包配图' : '闵可夫斯基光锥时空图',
-      primitives
-    };
-  },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const m = createWorldMapper(viewport);
-    if (!activeLayers.has('main')) return;
-    ctx.save();
-
-    if (params.mode === 'minkowski-relativity') {
-      const sc = 0.22;
-      const point = (x: number, ct: number) => m.toScreen(x * sc, ct * sc);
-      // Light cone |x| = ct
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
-      ctx.setLineDash([5, 4]);
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      const coneA = point(-8, -8);
-      const coneB = point(8, 8);
-      const coneC = point(-8, 8);
-      const coneD = point(8, -8);
-      ctx.moveTo(coneA.x, coneA.y);
-      ctx.lineTo(coneB.x, coneB.y);
-      ctx.moveTo(coneC.x, coneC.y);
-      ctx.lineTo(coneD.x, coneD.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Axes x, ct
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      const xAxisA = point(-8, 0);
-      const xAxisB = point(8, 0);
-      const ctAxisA = point(0, -7);
-      const ctAxisB = point(0, 8);
-      ctx.moveTo(xAxisA.x, xAxisA.y);
-      ctx.lineTo(xAxisB.x, xAxisB.y);
-      ctx.moveTo(ctAxisA.x, ctAxisA.y);
-      ctx.lineTo(ctAxisB.x, ctAxisB.y);
-      ctx.stroke();
-
-      // Lorentz sheared axes x', ct'
-      const beta = params.lorentzBeta;
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      const xpA = point(-7, -7 * beta);
-      const xpB = point(7, 7 * beta);
-      const ctpA = point(-7 * beta, -7);
-      const ctpB = point(7 * beta, 7);
-      ctx.moveTo(xpA.x, xpA.y);
-      ctx.lineTo(xpB.x, xpB.y);
-      ctx.moveTo(ctpA.x, ctpA.y);
-      ctx.lineTo(ctpB.x, ctpB.y);
-      ctx.stroke();
-
-      // Event point & invariant hyperbola
-      const lor = solveLorentzInterval(beta, params.eventX, params.eventCt);
-      ctx.fillStyle = '#4ade80';
-      ctx.beginPath();
-      const event = point(params.eventX, params.eventCt);
-      ctx.arc(event.x, event.y, m.len(0.028), 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 13px ui-sans-serif, system-ui';
-      ctx.fillText(
-        `β=${beta.toFixed(2)} | γ=${lor.gamma.toFixed(3)} | (x',ct')=(${lor.xPrime.toFixed(2)}, ${lor.ctPrime.toFixed(2)}) | Δs² 误差=${lor.err.toExponential(1)}`,
-        20,
-        28
-      );
-      ctx.fillText(
-        `双生子固有时：留守 τ=${state.twinStayProperTime.toFixed(1)} vs 远行 τ'=${state.twinTravelerProperTime.toFixed(2)}`,
-        20,
-        52
-      );
-      ctx.restore();
-      return;
-    }
-
-    // TDSE 512-grid wavefunction |psi(x)|^2 and potential barrier V(x)
-    const xMin = -2.3;
-    const xMax = 2.3;
-    const baseYWorld = -0.9;
-    const toX = (j: number) => xMin + (j / (TDSE_GRID_N - 1)) * (xMax - xMin);
-    const toScreen = (j: number, y: number) => m.toScreen(toX(j), y);
-
-    // Draw Potential V(x)
-    ctx.fillStyle = 'rgba(251, 191, 36, 0.22)';
-    ctx.beginPath();
-    const firstBase = m.toScreen(xMin, baseYWorld);
-    ctx.moveTo(firstBase.x, firstBase.y);
-    for (let j = 0; j < TDSE_GRID_N; j++) {
-      const pt = toScreen(j, baseYWorld + Math.max(-0.6, Math.min(0.6, state.potential[j]! * 0.12)));
-      ctx.lineTo(pt.x, pt.y);
-    }
-    const lastBase = m.toScreen(xMax, baseYWorld);
-    ctx.lineTo(lastBase.x, lastBase.y);
-    ctx.closePath();
-    ctx.fill();
-
-    // Draw |psi|^2 probability density + real part oscillation
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    for (let j = 0; j < TDSE_GRID_N; j++) {
-      const dens = state.psiRe[j]! * state.psiRe[j]! + state.psiIm[j]! * state.psiIm[j]!;
-      const pt = toScreen(j, baseYWorld + Math.min(1.3, dens * 0.8));
-      if (j === 0) ctx.moveTo(pt.x, pt.y);
-      else ctx.lineTo(pt.x, pt.y);
-    }
-    ctx.stroke();
-
-    ctx.strokeStyle = 'rgba(168, 85, 247, 0.55)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (let j = 0; j < TDSE_GRID_N; j++) {
-      const pt = toScreen(j, baseYWorld + 0.38 + state.psiRe[j]! * 0.18);
-      if (j === 0) ctx.moveTo(pt.x, pt.y);
-      else ctx.lineTo(pt.x, pt.y);
-    }
-    ctx.stroke();
-
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 13px ui-sans-serif, system-ui';
-    ctx.fillText(
-      `E₀=${(0.5 * params.waveMomentumK0 * params.waveMomentumK0).toFixed(2)} vs V₀=${params.barrierHeightV0.toFixed(2)} | R=${(state.reflectionProb * 100).toFixed(1)}% | T=${(state.transmissionProb * 100).toFixed(1)}% | ∑|ψ|²Δx=${state.totalNorm.toFixed(8)}`,
-      20,
-      28
-    );
-    ctx.restore();
-  },
-  getControlHandles: (state, params) => {
-    if (params.mode === 'minkowski-relativity') {
-      return [
-        {
-          id: 'spacetime-event',
-          label: `(x=${params.eventX.toFixed(1)}, ct=${params.eventCt.toFixed(1)})`,
-          position: { x: params.eventX * 0.22, y: params.eventCt * 0.22 },
-          handleKind: 'point',
-          color: '#4ade80',
-          onDrag: (world) => ({
-            eventX: Number(Math.max(-6, Math.min(6, Math.round((world.x / 0.22) * 2) / 2)).toFixed(1)),
-            eventCt: Number(Math.max(-6, Math.min(8, Math.round((world.y / 0.22) * 2) / 2)).toFixed(1))
-          })
+  exportDiagramIR:relativityDiagram,
+  renderCanvas:(ctx,s,p,vp,layers)=>{
+    if(!layers.has('main'))return;
+    const m=createWorldMapper(vp),paper=vp.theme==='projector';
+    const colors=paper?{ink:'#172033',muted:'#64748b',main:'#0369a1',imag:'#6d28d9',green:'#166534',warm:'#92400e'}:{ink:'#e2e8f0',muted:'#94a3b8',main:'#38bdf8',imag:'#c4b5fd',green:'#4ade80',warm:'#fbbf24'};
+    const trace=(points:readonly {x:number;y:number}[])=>{if(points.length<2)return;ctx.beginPath();points.forEach((p,i)=>{const q=m.toScreen(p.x,p.y);if(i)ctx.lineTo(q.x,q.y);else ctx.moveTo(q.x,q.y);});ctx.stroke();};
+    ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+    for(const {role,primitive:d} of relativityItems(s,p)){
+      ctx.strokeStyle=colors[role];ctx.fillStyle=colors[role];ctx.lineWidth=role==='muted'?1:1.8;
+      ctx.setLineDash('dashed' in d&&d.dashed?[4,4]:[]);
+      if(d.kind==='line'||d.kind==='arrow'){
+        trace([{x:d.x1,y:d.y1},{x:d.x2,y:d.y2}]);
+        if(d.kind==='arrow'){
+          const x=m.toScreen(d.x1,d.y1),y=m.toScreen(d.x2,d.y2),angle=Math.atan2(y.y-x.y,y.x-x.x);
+          ctx.beginPath();ctx.moveTo(y.x,y.y);ctx.lineTo(y.x-8*Math.cos(angle-.42),y.y-8*Math.sin(angle-.42));ctx.moveTo(y.x,y.y);ctx.lineTo(y.x-8*Math.cos(angle+.42),y.y-8*Math.sin(angle+.42));ctx.stroke();
         }
-      ];
+      }else if(d.kind==='trajectory'||d.kind==='polyline')trace(d.points);
+      else if(d.kind==='circle'){const q=m.toScreen(d.cx,d.cy);ctx.beginPath();ctx.arc(q.x,q.y,Math.max(1.5,m.len(d.r)),0,Math.PI*2);if(d.fill)ctx.fill();else ctx.stroke();}
+      else if(d.kind==='rect'){const q=m.toScreen(d.x,d.y+d.height);ctx.strokeRect(q.x,q.y,m.len(d.width),m.len(d.height));}
+      else if(d.kind==='text'){const q=m.toScreen(d.x,d.y);ctx.font='500 '+Math.max(10,Math.min(14,m.len(.10)))+'px system-ui,sans-serif';ctx.textAlign=d.align==='start'?'left':d.align==='end'?'right':'center';ctx.textBaseline='middle';ctx.fillText(d.text,q.x,q.y);}
     }
-
-    let peakIndex = 0;
-    for (let index = 1; index < state.potential.length; index += 1) {
-      if (Math.abs(state.potential[index]!) > Math.abs(state.potential[peakIndex]!)) peakIndex = index;
-    }
-    const x = -2.3 + (peakIndex / (TDSE_GRID_N - 1)) * 4.6;
-    const potential = state.potential[peakIndex]!;
-    const potentialOffset = Math.max(-0.6, Math.min(0.6, potential * 0.12));
-    return [
-      {
-        id: 'potential-height',
-        label: `|V₀|=${params.barrierHeightV0.toFixed(1)}`,
-        position: { x, y: -0.9 + potentialOffset },
-        handleKind: 'point',
-        color: '#fbbf24',
-        onDrag: (world) => ({
-          barrierHeightV0: Number(Math.max(0.5, Math.min(5, Math.round((Math.abs((world.y + 0.9) / 0.12)) * 10) / 10)).toFixed(1))
-        })
-      }
-    ];
+    ctx.restore();
+    if(ctx.canvas?.dataset)ctx.canvas.dataset.relativityQuantumRendered=JSON.stringify({t:s.t,mode:p.mode,params:p,bounds:relativityViewBounds(p,vp),obs:computeObservables(s),
+      ...(p.mode==='tdse-tunneling'?{support:potentialSupport(s.potential),N:TDSE_GRID_N,dx:TDSE_DX,energy:s.energyExpectation,initialEnergy:s.initialEnergy,peakDensity:Math.max(...Array.from(s.psiRe,(v,j)=>v*v+s.psiIm[j]!**2))}:
+      {event:relativityEventPoint(p),lorentz:solveLorentzInterval(p.lorentzBeta,p.eventX,p.eventCt),turn:{x:5*p.lorentzBeta,ct:5},reunion:{x:0,ct:10}})});
   },
-  referenceFrames: [
-    {
-      id: 'lorentz-boost-s-prime',
-      label: '高速运动飞船 S′ 系 (v = βc)',
-      getOrigin: (state, params) => params.mode === 'minkowski-relativity'
-        ? { x: params.lorentzBeta * state.t * 0.22, y: state.t * 0.22 }
-        : { x: 0, y: 0 },
-      getVelocity: (_state, params) => params.mode === 'minkowski-relativity'
-        ? { x: params.lorentzBeta * 0.22, y: 0.22 }
-        : { x: 0, y: 0 }
-    }
-  ],
-  formatFormulas: (state, params) => [
-    {
-      id: 'relativity-tdse',
-      label: params.mode === 'tdse-tunneling' ? '含时薛定谔方程 Crank-Nicolson' : '洛伦兹时空不变量 Δs²',
-      latex:
-        params.mode === 'tdse-tunneling'
-          ? 'i\\hbar\\frac{\\partial\\psi}{\\partial t}=\\left(-\\frac{\\hbar^2}{2m}\\frac{\\partial^2}{\\partial x^2}+V(x)\\right)\\psi'
-          : '\\Delta s^2=(ct)^2-x^2=(ct\')^2-x\'^2',
-      substitutedLatex:
-        params.mode === 'tdse-tunneling'
-          ? `R=${state.reflectionProb.toFixed(3)},\\; T=${state.transmissionProb.toFixed(3)},\\; |\\|\\psi\\|-1|=${state.normDrift.toExponential(1)}`
-          : `\\gamma=${state.gammaFactor.toFixed(3)},\\; |\\Delta s^2-\\Delta s\'^2|=${state.intervalError.toExponential(1)}`
-    }
-  ]
-});
-
+  getControlHandles:(s,p)=>{
+    if(p.mode==='minkowski-relativity')return [{id:'spacetime-event',label:'E',position:relativityEventPoint(p),handleKind:'point',color:'#4ade80',onDrag:world=>{
+      const o=relativityEventPoint({...p,eventX:0,eventCt:0}),x=(world.x-o.x)/.225,y=(world.y-o.y)/.225;
+      return {eventX:Math.max(-6,Math.min(6,Math.round(x*2)/2)),eventCt:Math.max(-6,Math.min(8,Math.round(y*2)/2))};
+    }}];
+    if(s.t>1e-12)return [];
+    const h=potentialHandle(s,p);
+    return [{id:'potential-height',label:'|V₀|='+p.barrierHeightV0.toFixed(1),position:h.point,handleKind:'point',color:'#fbbf24',onDrag:world=>({barrierHeightV0:h.onHeight(world.y)})}];
+  },
+  // Generic Galilean translation frames cannot represent Lorentz boosts.
+  referenceFrames:[],
+  formatFormulas:(s,p)=>{
+    if(p.mode==='tdse-tunneling')return [
+      {id:'tdse-equation',label:'约化单位 ℏ=m=1 的含时薛定谔方程',latex:'i\\partial_t\\psi=(-\\tfrac12\\partial_x^2+V)\\psi'},
+      {id:'tdse-density',label:'概率密度与归一化（离散求和）',latex:'\\rho=|\\psi|^2,\\quad N=\\sum_j\\rho_j\\Delta x',substitutedLatex:'N='+s.totalNorm.toFixed(9)},
+      {id:'tdse-regions',label:'左、中、右区占据概率；非瞬时反射率/透射率',latex:'P_L+P_M+P_R=N',substitutedLatex:'\\begin{aligned}P_L&='+s.reflectionProb.toFixed(5)+'\\\\P_M&='+s.middleProb.toFixed(5)+'\\\\P_R&='+s.transmissionProb.toFixed(5)+'\\end{aligned}'},
+      {id:'tdse-energy',label:'中心动能与离散 Hamiltonian 期望（波包有展宽）',latex:'E_0=k_0^2/2,\\quad\\langle H_d\\rangle=\\psi^\\dagger H_d\\psi\\Delta x',substitutedLatex:'\\begin{aligned}E_0&='+(.5*p.waveMomentumK0**2).toFixed(4)+'\\\\\\langle H_d\\rangle&='+s.energyExpectation.toFixed(5)+'\\end{aligned}'},
+      {id:'tdse-cayley',label:'Crank–Nicolson 离散幺正步进',latex:'\\begin{aligned}(I+\\tfrac{i h}{2}H_d)\\psi^{n+1}\\\\=(I-\\tfrac{i h}{2}H_d)\\psi^n\\end{aligned}',substitutedLatex:'\\delta N='+sci(s.normDrift)}
+    ];
+    const q=solveLorentzInterval(p.lorentzBeta,p.eventX,p.eventCt);
+    return [
+      {id:'lorentz-gamma',label:'有向 β 与洛伦兹因子',latex:'\\beta=v/c,\\quad\\gamma=(1-\\beta^2)^{-1/2}',substitutedLatex:'\\gamma='+q.gamma.toFixed(5)},
+      {id:'lorentz-event',label:'同一事件的两个参考系坐标',latex:"\\begin{aligned}x'&=\\gamma(x-\\beta ct)\\\\ct'&=\\gamma(ct-\\beta x)\\end{aligned}",substitutedLatex:"\\begin{aligned}x'&="+q.xPrime.toFixed(5)+"\\\\ct'&="+q.ctPrime.toFixed(5)+"\\end{aligned}"},
+      {id:'lorentz-interval',label:'不变间隔（x 与 ct 使用相同长度单位）',latex:"\\begin{aligned}s^2&=(ct)^2-x^2\\\\&=(ct')^2-(x')^2\\end{aligned}",substitutedLatex:'s^2='+q.s2.toFixed(5)+',\\quad\\delta='+sci(q.err)},
+      {id:'lorentz-twin',label:'同一出发与重逢；理想瞬时折返',latex:'c\\tau=\\int\\sqrt{1-\\beta(t)^2}\\,d(ct)',substitutedLatex:"\\begin{aligned}c\\tau_{stay}&="+s.twinStayProperTime.toFixed(4)+"\\\\c\\tau_{trip}&="+s.twinTravelerProperTime.toFixed(4)+"\\end{aligned}"}
+    ];
+  }
+}),{fitRelativityViewport,relativityViewBounds});
 export default compRelativityQuantumTunnelingPlugin;
