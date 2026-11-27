@@ -38,18 +38,22 @@ export function drawTirMediumWindow(ctx:CanvasRenderingContext2D,left:number,rig
   const w=right-left;
   ctx.save();
   const upper=ctx.createLinearGradient(0,top,0,hit.y);
-  upper.addColorStop(0,paper?'rgba(56,189,248,.035)':'rgba(58,122,168,.025)');
-  upper.addColorStop(.35,paper?'rgba(56,189,248,.08)':'rgba(68,135,184,.085)');
-  upper.addColorStop(.77,paper?'rgba(56,189,248,.16)':'rgba(94,166,215,.23)');
-  upper.addColorStop(1,paper?'rgba(56,189,248,.20)':'rgba(126,193,235,.32)');
+  // A short feather at the top keeps this a viewing window, not a
+  // second optical interface. The rest reads as continuous glass rather
+  // than a dark empty half-plane; projector contrast remains unchanged.
+  upper.addColorStop(0,paper?'rgba(56,189,248,.035)':'rgba(58,122,168,.035)');
+  upper.addColorStop(.12,paper?'rgba(56,189,248,.05)':'rgba(80,150,201,.17)');
+  upper.addColorStop(.42,paper?'rgba(56,189,248,.10)':'rgba(91,164,211,.25)');
+  upper.addColorStop(.77,paper?'rgba(56,189,248,.16)':'rgba(108,181,229,.30)');
+  upper.addColorStop(1,paper?'rgba(56,189,248,.20)':'rgba(133,201,241,.36)');
   ctx.fillStyle=upper;
   ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(right,top);ctx.lineTo(right,hit.y);ctx.lineTo(left,hit.y);ctx.closePath();ctx.fill();
   // A soft local specular wash provides glass-like depth without extra walls.
   if(!paper){
     // Reuse the exact same world-space polygon for the second material layer.
     const wash=ctx.createRadialGradient(hit.x,hit.y,0,hit.x,hit.y,Math.max(w*.54,hit.y-top));
-    wash.addColorStop(0,'rgba(106,174,216,.19)');
-    wash.addColorStop(.48,'rgba(72,139,184,.07)');wash.addColorStop(1,'rgba(72,139,184,0)');
+    wash.addColorStop(0,'rgba(151,213,245,.13)');
+    wash.addColorStop(.48,'rgba(106,176,221,.055)');wash.addColorStop(1,'rgba(72,139,184,0)');
     ctx.fillStyle=wash;ctx.fill();
   }
   const lower=ctx.createLinearGradient(0,hit.y,0,bottom);
@@ -109,4 +113,10 @@ export function drawTirHitRing(ctx:CanvasRenderingContext2D,p:Point,warm:string,
   if(!paper){ctx.shadowColor=warm;ctx.shadowBlur=13*scale;}
   ctx.beginPath();ctx.arc(p.x,p.y,10*scale,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
   ctx.restore();
+}
+
+/** Present the actual solver critical angle in the collapsed formula card.
+ * Undefined is not zero; no critical angle exists for n1 <= n2. */
+export function tirCriticalEquation(criticalAngleDeg:number|null):string{
+  return criticalAngleDeg===null?'n_1\\le n_2:\\ \\text{无临界角}':`C=\\arcsin\\frac{n_2}{n_1}=${criticalAngleDeg.toFixed(1)}^\\circ`;
 }

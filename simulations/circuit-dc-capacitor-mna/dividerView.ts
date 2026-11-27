@@ -1,6 +1,6 @@
 import { createWorldMapper, type DiagramPrimitive, type DiagramIR, type Viewport } from '@physforge/sim-sdk';
 import { DIVIDER_RESISTANCE, dividerLowerResistance, sampleDividerLampIvCurve, type CircuitParams, type CircuitState } from './engine.js';
-import {drawLampGlass,drawCircuitMeterFace,drawWiperContact} from './visualStyle.js';
+import {drawLampGlass,drawLampCross,drawCircuitMeterFace,drawWiperContact} from './visualStyle.js';
 
 type Point = { x: number; y: number };
 const pt=(x:number,y:number):Point=>({x,y});
@@ -145,10 +145,11 @@ export function renderDivider(ctx:CanvasRenderingContext2D,state:CircuitState,pa
     meter(g.a,A_R,state.branchCurrent2,'A',tap);
     meter(g.v,V_R,lamp,'V',paper?'#475569':'#a3c2d1');
   }else trace([pt(X_A-A_R,Y_LAMP),pt(X_A+A_R,Y_LAMP)],tap);
-  // Lamp is a two-terminal symbol with visible filament. Glow is power driven,
-  // not a fixed animation or an alleged absolute photometric brightness.
-  const q=s(g.lamp),rr=len(L_R),light=drawLampGlass(ctx,q,rr,state.outputPower,paper);
-  trace([pt(X_LAMP-L_R,Y_LAMP),pt(X_LAMP-.07,Y_LAMP),pt(X_LAMP-.04,Y_LAMP+.07),pt(X_LAMP+.01,Y_LAMP-.065),pt(X_LAMP+.06,Y_LAMP+.05),pt(X_LAMP+.09,Y_LAMP),pt(X_LAMP+L_R,Y_LAMP)],light>0?warm:ink,light>0?warm:ink,Math.max(1.5,wireWidth*.48));
+  // Standard two-terminal lamp symbol, distinct from the adjacent resistor
+  // zigzag. The connected leads already terminate on the original ring.
+  const q=s(g.lamp),rr=len(L_R);
+  drawLampGlass(ctx,q,rr,state.outputPower,paper);
+  drawLampCross(ctx,q,rr,state.outputPower,paper);
   // Junctions mark only actual connections, not nearby labels.
   drawWiperContact(ctx,s(g.wiper),Math.max(3,len(.050)),tap,paper);
   for(const p of [g.sliderBottom])node(p,low);

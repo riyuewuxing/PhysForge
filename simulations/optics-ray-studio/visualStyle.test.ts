@@ -3,7 +3,7 @@ import { createWorldMapper,resolvePluginParams } from '@physforge/sim-sdk';
 import { opticsRayStudioPlugin } from './plugin.js';
 import { createInitialState,type OpticsParams } from './engine.js';
 import { opticalScene } from './sceneGeometry.js';
-import { heroBeamStyle,resolveOpticsSliceCamera,TIR_WINDOW } from './visualStyle.js';
+import { heroBeamStyle,resolveOpticsSliceCamera,TIR_WINDOW,tirCriticalEquation } from './visualStyle.js';
 
 describe('B3 hero presentation geometry',()=>{
   it('does not reserve the inspector twice in a standalone optical slice',()=>{
@@ -50,6 +50,18 @@ describe('B3 hero presentation geometry',()=>{
         expect(high[key]).toBeGreaterThan(low[key]);
       expect(high.coreAlpha).toBeLessThanOrEqual(1);
       expect(heroBeamStyle(2,1,paper)).toEqual(heroBeamStyle(1,1,paper));
+    }
+  });
+});
+
+describe('H73 B3 live critical-angle formula',()=>{
+  it('displays the actual critical angle without requiring expanded numeric readouts',()=>{
+    for(const [n1,n2] of [[1.5,1],[1.6,1.4],[2,1],[1.5,1.5],[1,1.5]]){
+      const p=resolvePluginParams<OpticsParams>(opticsRayStudioPlugin.paramSchema,{sceneMode:'tir-interface',incidentAngleDeg:35,n1,n2,animateSweep:false});
+      const s=createInitialState(p),f=opticsRayStudioPlugin.formatFormulas?.(s,p)[0];
+      expect(f?.latex).toContain(tirCriticalEquation(s.criticalAngleDeg));
+      if(n1>n2){expect(s.criticalAngleDeg).toBeCloseTo(Math.asin(n2/n1)*180/Math.PI,10);expect(f?.latex).toContain(s.criticalAngleDeg!.toFixed(1)+'^\\circ');}
+      else{expect(s.criticalAngleDeg).toBeNull();expect(f?.latex).toContain('无临界角');expect(f?.latex).not.toContain('C=0');}
     }
   });
 });
