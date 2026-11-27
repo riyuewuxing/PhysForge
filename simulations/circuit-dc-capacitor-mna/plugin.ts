@@ -407,6 +407,12 @@ const liveFormulas: readonly LiveFormulaSpec[] = [
     }
   }
 ];
+/** Standalone workbench has an independent sidebar and measured canvas. */
+export function resolveCircuitSliceCamera(params:CircuitParams,width:number,height:number){
+  const camera=params.topology==='divider-lamp'?dividerDefaultCamera(width,height,false):topologyCamera(width,height,false);
+  return {scale:camera.scale,offsetX:camera.offsetRatioX*width,offsetY:camera.offsetRatioY*height};
+}
+
 export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<CircuitParams, CircuitState>({
   meta: {
     id: 'builder-circuit-mna',
@@ -628,6 +634,6 @@ export const circuitDcCapacitorMnaPlugin = Object.assign(defineSimulationPlugin<
     if(params.topology==='divider-lamp'){renderDivider(ctx,state,params,viewport,activeLayers);return;}
     renderTopology(ctx,state,params,viewport,activeLayers);
   }
-}), { liveFormulas });
+}), { liveFormulas,resolveCircuitSliceCamera });
 
 export default circuitDcCapacitorMnaPlugin;

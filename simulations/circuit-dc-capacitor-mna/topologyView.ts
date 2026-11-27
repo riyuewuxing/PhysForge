@@ -1,6 +1,7 @@
 import { createWorldMapper, type DiagramPrimitive, type DiagramIR, type Viewport } from '@physforge/sim-sdk';
 import type { CircuitParams, CircuitState } from './engine.js';
 import { dividerPotentialColor } from './dividerView.js';
+import {drawLampGlass} from './visualStyle.js';
 
 type Point={x:number;y:number};
 type Kind='wire'|'resistor'|'battery'|'capacitor'|'lamp'|'diode';
@@ -11,8 +12,8 @@ const f=(v:number)=>v.toFixed(2);
 export function sliderRange(params:CircuitParams):[number,number]{
   return params.topology==='rc-bridge-charge'?[.20,.91]:[-.7,.7];
 }
-export function topologyCamera(width:number,height:number){
-  const base=Math.max(1,Math.min(width,height)*.24),usable=width-(width>=900?300:0);
+export function topologyCamera(width:number,height:number,reserveInspector=true){
+  const base=Math.max(1,Math.min(width,height)*.24),usable=width-(reserveInspector&&width>=900?300:0);
   const scale=Math.max(.1,Math.min(1.12,(usable-36)/(4.9*base),(height-135)/(3.65*base)));
   return {scale,offsetRatioX:usable/(2*Math.max(1,width))-.45,offsetRatioY:-.035};
 }
@@ -172,10 +173,8 @@ export function renderTopology(ctx:CanvasRenderingContext2D,s:CircuitState,q:Cir
   if(layers.has('schematic')){
     for(const e of edges){
       const a=symbol(e),ca=color(e.na),cb=color(e.nb);
-      if(e.kind==='lamp'&&!paper){
-        const z=screen(p((e.a.x+e.b.x)/2,(e.a.y+e.b.y)/2)),rr=m.len(.45),power=Math.min(1,Math.sqrt(Math.max(0,s.outputPower)/8));
-        const g=ctx.createRadialGradient(z.x,z.y,0,z.x,z.y,rr);g.addColorStop(0,'rgba(255,184,80,'+(.35*power)+')');g.addColorStop(1,'rgba(255,184,80,0)');
-        ctx.fillStyle=g;ctx.beginPath();ctx.arc(z.x,z.y,rr,0,Math.PI*2);ctx.fill();
+      if(e.kind==='lamp'){
+        for(const r of a.rings)drawLampGlass(ctx,screen(r.center),m.len(r.r),invalid?0:s.outputPower,paper);
       }
       for(const st of a.strokes){
         let paint:string|CanvasGradient=color(st.net);
@@ -184,7 +183,7 @@ export function renderTopology(ctx:CanvasRenderingContext2D,s:CircuitState,q:Cir
         ctx.shadowColor=st.net<0?ca:color(st.net);ctx.shadowBlur=paper?0:8;
         trace(st.points,paint,width,st.closed);ctx.shadowBlur=0;
       }
-      for(const r of a.rings){const z=screen(r.center);ctx.beginPath();ctx.arc(z.x,z.y,m.len(r.r),0,Math.PI*2);ctx.strokeStyle=ink;ctx.lineWidth=width;ctx.stroke();}
+      if(e.kind!=='lamp')for(const r of a.rings){const z=screen(r.center);ctx.beginPath();ctx.arc(z.x,z.y,m.len(r.r),0,Math.PI*2);ctx.strokeStyle=ink;ctx.lineWidth=width;ctx.stroke();}
       if(e.label&&e.labelAt)label(e.labelAt,e.label);
       // One bounded arrow per sufficiently long ideal wire. State time,
       // not wall clock, controls phase; no arrows across capacitor gaps.

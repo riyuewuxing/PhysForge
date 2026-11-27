@@ -2220,10 +2220,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               {(plugin.meta.id === 'builder-circuit-mna' || plugin.meta.id === 'circuit-dc-capacitor-mna') && (
                 <div data-testid="b2-component-toolbar" className="mr-1 flex items-center gap-0.5 border-r border-white/10 pr-1">
                   {[
-                    { topology: 'closed-power', label: 'R', title: '闭合电路', testId: 'b2-topology-closed-power' },
-                    { topology: 'rc-transient', label: 'C', title: 'RC 暂态', testId: 'b2-topology-rc-transient' },
-                    { topology: 'divider-lamp', label: '灯', title: '分压测小灯泡', testId: 'b2-topology-divider-lamp' },
-                    { topology: 'rc-bridge-charge', label: '桥', title: '含容电桥', testId: 'b2-topology-rc-bridge-charge' }
+                    { topology: 'closed-power', title: '闭合电路', testId: 'b2-topology-closed-power', glyph: 'M2 12h3l2-5 4 10 4-10 2 5h5' },
+                    { topology: 'rc-transient', title: 'RC 暂态', testId: 'b2-topology-rc-transient', glyph: 'M2 12h7m0-7v14m6-14v14m0-7h7' },
+                    { topology: 'divider-lamp', title: '分压测小灯泡', testId: 'b2-topology-divider-lamp', glyph: 'M2 12h3m14 0h3M5 12a7 7 0 1 0 14 0 7 7 0 1 0-14 0m3-4 8 8m0-8-8 8' },
+                    { topology: 'rc-bridge-charge', title: '含容电桥', testId: 'b2-topology-rc-bridge-charge', glyph: 'M12 2 22 12 12 22 2 12Zm-10 10h7m0-4v8m6-8v8m0-4h7' }
                   ].map((tool) => (
                     <button
                       key={tool.topology}
@@ -2235,7 +2235,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                       onClick={() => onUpdateParamsBatch({ topology: tool.topology }, `切换电路：${tool.title}`)}
                       className={`grid h-9 min-w-9 place-items-center rounded-lg border px-2 text-[11px] font-semibold transition cursor-pointer ${params.topology === tool.topology ? 'border-sky-400/70 bg-sky-400/15 text-sky-200' : 'border-transparent text-slate-300 hover:bg-white/10'}`}
                     >
-                      {tool.label}
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d={tool.glyph} /></svg>
                     </button>
                   ))}
                 </div>
