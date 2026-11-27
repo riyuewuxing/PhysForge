@@ -9,6 +9,7 @@ import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraD
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop, e10ConductorRadius, e10CopperMaterial, e10FluxCoreMaterial, e10FluxHaloMaterial, e10GridLineGeometry } from './spatialMaterials.js';
 import { fitFusionSpatialFrame,projectFusionFrame } from './fusionFraming.js';
+import { E10ParticleProjection,e10FluxRole } from './e10SceneFocus.js';
 import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
 import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
@@ -308,7 +309,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
     const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
     const initialMagneticParams = isMag3d ? (getFrameParams?.() ?? params) as Magnetic3dParams : null;
-    let framedMagneticGeometry = initialMagneticParams?.geometryType;
+    const magneticFrameKey=(p:Magnetic3dParams)=>JSON.stringify([p.geometryType,p.geometryType==='uniform-helix'?null:p.radiusR]);
+    let framedMagneticGeometry = initialMagneticParams?magneticFrameKey(initialMagneticParams):'';
     const orbitParams=isOrbitStage?(getFrameParams?.()??params) as AstroOrbitalParams:null;
     const framedSpec = spatial && initialMagneticParams ? { ...spatial, defaultVisibleHeight: magnetic3dDefaultVisibleHeight(initialMagneticParams,width/height) } : spatial&&orbitParams?{...spatial,defaultVisibleHeight:orbitParams.mode==='hohmann-transfer'?Math.max(5.8,2*orbitParams.r2OverR1+1.2):orbitParams.mode==='binary-lagrange'?5.8:5.9}:spatial;
     const morph = framedSpec ? new CameraMorphController(framedSpec, width, height) : null;
@@ -408,6 +410,14 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const marker = new THREE.Mesh(sphereGeo, sphereMat);
     const particleGlow = isMag3d||isTokamak3d ? createParticleGlow() : null;
     if (particleGlow) marker.add(particleGlow.sprite);
+    const magneticOccluders:THREE.Mesh[]=[];
+    const e10Projection=isMag3d?new E10ParticleProjection():null;
+    const e10Ring=isMag3d?document.createElement('div'):null;
+    if(e10Ring){
+      e10Ring.dataset.testid='e10-occlusion-ring';e10Ring.setAttribute('aria-hidden','true');
+      Object.assign(e10Ring.style,{position:'absolute',left:'0',top:'0',display:'none',pointerEvents:'none',border:'1.5px dashed #ffe3a1',borderRadius:'50%',boxSizing:'border-box',zIndex:'1',boxShadow:'0 0 5px #e9b55b44'});
+      container.appendChild(e10Ring);
+    }
     scene.add(marker);
     if (planarDriver) marker.visible = false;
 
@@ -462,7 +472,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     let b1AutoFit=initialB1AutoFit,b1FramingKey='',b1FramedAt=-Infinity,b1RenderCount=0;
     let b1LastPolicy=b1PolicyRef.current;
     const lockB1Camera=()=>{b1AutoFit=false;};
-    if(isBoundedStage||isTokamak3d)controls.addEventListener('start',lockB1Camera);
+    if(isBoundedStage||isTokamak3d||isMag3d)controls.addEventListener('start',lockB1Camera);
+    let magneticWireFitKey='',magneticWirePoints:THREE.Vector3[]=[];
+    let lastWireGeometryKey='';
 
     const velocityLabelAnchor = new THREE.Vector3();
     const forceLabelAnchor = new THREE.Vector3();
@@ -545,9 +557,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
         if (isMag3d) {
           const magneticParams = curParams as Magnetic3dParams;
-          if (framedMagneticGeometry !== magneticParams.geometryType) {
-            framedMagneticGeometry = magneticParams.geometryType;
-            if (morph && morph.getMorphT() === 0 && !morph.isAnimating) {
+          const frameKey=magneticFrameKey(magneticParams);
+          if (framedMagneticGeometry !== frameKey) {
+            framedMagneticGeometry = frameKey;
+            if (b1AutoFit && b1PolicyRef.current.allowed && morph && morph.getMorphT() === 0 && !morph.isAnimating) {
               morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
               const aspect=(container.clientWidth || width)/(container.clientHeight || height);
               controls.target.set(0,0,0);
@@ -649,6 +662,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         if (configSignature !== lastConfigSig) {
           lastConfigSig = configSignature;
           disposeGroupChildren(staticGroup);
+          magneticOccluders.length=0;
 
           if (isMag3d) grid.position.y = -1.2 * Math.max(0.2, (curParams as Magnetic3dParams).radiusR);
           let renderedConductorCount = 0,renderedCurrentArrowCount=0,renderedCurrentDirection=0;
@@ -667,7 +681,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               const radius = isMag3d ? e10ConductorRadius(magneticParams.geometryType,magneticParams.radiusR,magneticParams.solenoidTurns) : .043;
               const tubeGeo = new THREE.TubeGeometry(curve, Math.max(64, group.length), radius, isMag3d ? 14 : 10, closed);
               const copper=isMag3d?e10CopperMaterial():coilCopperMaterial();
-              staticGroup.add(new THREE.Mesh(tubeGeo,copper));
+              const conductor=new THREE.Mesh(tubeGeo,copper);
+              if(isMag3d){conductor.name='e10-conductor';tubeGeo.computeBoundingBox();magneticOccluders.push(conductor);}
+              staticGroup.add(conductor);
               // Signed conventional current markers along real conductor tangents.
               if(isMag3d&&magneticParams.currentI!==0&&(!closed||renderedConductorCount%Math.max(1,Math.ceil(paths.length/4))===0)){
                 for(const fraction of (closed?[.22]:[.25,.75])){
@@ -684,6 +700,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
                   const cap=new THREE.Mesh(new THREE.CircleGeometry(radius,16),copper.clone());
                   cap.position.copy(end);
                   cap.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),end.clone().sub(adjacent).normalize());
+                  cap.name='e10-conductor-cap';cap.geometry.computeBoundingBox();magneticOccluders.push(cap);
                   staticGroup.add(cap);
                 }
               }
@@ -696,7 +713,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             chamber.name = 'tokamak-vacuum-chamber';
             staticGroup.add(chamber);
           }
-          let renderedFieldCount = 0;
+          let renderedFieldCount = 0,meridianCount=0,contextCount=0;
           if (layers.has('fieldLines3d')) {
             const lines = isMag3d
               ? getMagneticDisplayFieldLines(curParams as Magnetic3dParams)
@@ -704,23 +721,27 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             for (const line of lines) {
               if (line.length < 2) continue;
               const points = line.map(project);
+              const role=isMag3d?e10FluxRole((curParams as Magnetic3dParams).geometryType,line):'meridian';
+              if(isMag3d){if(role==='meridian')meridianCount++;else contextCount++;}
               const closed=isMag3d&&points[0]!.distanceTo(points[points.length-1]!)<.06;
               if (isMag3d && closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
               const divisions=Math.min(512,Math.max(32,points.length));
               const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.005:.009, 5, closed);
               applyFluxEndpointFade(geometry,closed);
-              staticGroup.add(new THREE.Mesh(geometry,isMag3d?e10FluxCoreMaterial(true):coilFluxCoreMaterial(true)));
+              const fluxCore=new THREE.Mesh(geometry,isMag3d?e10FluxCoreMaterial(true,role):coilFluxCoreMaterial(true));
+              if(isMag3d)fluxCore.name='e10-field-'+role;
+              staticGroup.add(fluxCore);
               if (isMag3d||isTokamak3d) {
                 const haloGeometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.018:.024, 5, closed);
                 applyFluxEndpointFade(haloGeometry,closed);
-                staticGroup.add(new THREE.Mesh(haloGeometry, isMag3d?e10FluxHaloMaterial():coilFluxHaloMaterial()));
+                staticGroup.add(new THREE.Mesh(haloGeometry, isMag3d?e10FluxHaloMaterial(role):coilFluxHaloMaterial()));
                 // Tangent of an actual ordered field sample, not a decorative direction.
                 if (renderedFieldCount % (isTokamak3d?2:4) === 0) {
                   const index = Math.max(1, Math.floor(points.length / 2));
                   const start = points[index-1]!, delta = points[index]!.clone().sub(start);
                   if (delta.lengthSq() > 1e-10) {
-                    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085, 8), isMag3d?e10FluxCoreMaterial():coilFluxCoreMaterial());
+                    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085, 8), isMag3d?e10FluxCoreMaterial(false,role):coilFluxCoreMaterial());
                     cone.position.copy(start).lerp(points[index]!, 0.5);
                     cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), delta.normalize());
                     staticGroup.add(cone);
@@ -733,7 +754,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if(isMag3d||isTokamak3d){
             container.dataset.fieldLineCount = String(renderedFieldCount);
             container.dataset.conductorCount = String(renderedConductorCount);
-            if(isMag3d){container.dataset.currentArrowCount=String(renderedCurrentArrowCount);container.dataset.currentArrowDirection=String(renderedCurrentDirection);}
+            if(isMag3d){container.dataset.currentArrowCount=String(renderedCurrentArrowCount);container.dataset.currentArrowDirection=String(renderedCurrentDirection);container.dataset.e10MeridianCount=String(meridianCount);container.dataset.e10ContextCount=String(contextCount);staticGroup.updateMatrixWorld(true);}
           }
         }
 
@@ -770,7 +791,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
-        if(isBoundedStage||isTokamak3d)controls.removeEventListener('start',lockB1Camera);
+        if(isBoundedStage||isTokamak3d||isMag3d)controls.removeEventListener('start',lockB1Camera);
+        e10Ring?.remove();
         planarDriver?.dispose();
         clearDeviceLabels();
         disposeGroupChildren(staticGroup);
@@ -818,7 +840,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if (morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
-          if(isBoundedStage||isTokamak3d)b1AutoFit=false;
+          if(isBoundedStage||isTokamak3d||isMag3d)b1AutoFit=false;
           morph.startKeyframe(command.view, now, command.durationMs);
           if (storyCameraCommandRef) storyCameraCommandRef.current = null;
           lastMorphTarget = target;
@@ -848,8 +870,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       }
 
       const b1Policy=b1PolicyRef.current;
-      if(isBoundedStage||isTokamak3d){
-        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';b1FramedAt=-Infinity;dirty=true;}
+      if(isBoundedStage||isTokamak3d||isMag3d){
+        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';magneticWireFitKey='';b1FramedAt=-Infinity;dirty=true;}
         if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
         b1LastPolicy=b1Policy;
       }
@@ -863,12 +885,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       };
       // B1's tube buffers are computed for a rendered frame, not every rAF
       // callback that the adaptive frame guard is about to discard.
-      if(changed&&!isBoundedStage&&!isTokamak3d)syncLatest();
-      if(changed&&(isBoundedStage||isTokamak3d))dirty=true;
+      if(changed&&!isBoundedStage&&!isTokamak3d&&!isMag3d)syncLatest();
+      if(changed&&(isBoundedStage||isTokamak3d||isMag3d))dirty=true;
       if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) return;
 
       const renderStart = performance.now();
-      if(changed&&(isBoundedStage||isTokamak3d))syncLatest();
+      if(changed&&(isBoundedStage||isTokamak3d||isMag3d))syncLatest();
       const b1=isBoundedStage&&latestState!==null&&latestState!==undefined?latestState as BoundedMagneticState:null;
       const bp=frameParams as BoundedMagneticParams;
       const rw=renderer.domElement.clientWidth||width,rh=renderer.domElement.clientHeight||height;
@@ -904,10 +926,42 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           }
         }
       }
+      if(isMag3d&&latestState&&morph&&morph.getMorphT()===0&&!morph.isAnimating){
+        const p=frameParams as Magnetic3dParams;
+        const wire=p.geometryType==='straight-wire'||p.geometryType==='parallel-wires';
+        if(wire){
+          // Fit real static geometry, never follow the physical trajectory.
+          const geometryKey=JSON.stringify([magneticFrameKey(p),p.currentI===0]);
+          if(lastWireGeometryKey!==geometryKey){
+            lastWireGeometryKey=geometryKey;
+            magneticWirePoints=buildMagneticConductorPaths(p).flatMap(path=>path.flatMap(seg=>[mapMagneticPoint(seg.a),mapMagneticPoint(seg.b)]));
+            for(const line of getMagneticDisplayFieldLines(p))for(const q of line)magneticWirePoints.push(mapMagneticPoint(q));
+          }
+          const key=JSON.stringify([geometryKey,rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed]);
+          const safe=fusionSafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
+          if(b1AutoFit&&b1Policy.allowed&&key!==magneticWireFitKey&&magneticWirePoints.length){
+            morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
+            fitFusionSpatialFrame(morph,magneticWirePoints,rw,rh,safe);
+            controls.target.copy(morph.getOrbitTarget());controls.update();magneticWireFitKey=key;
+          }
+          container.dataset.e10WireBounds=JSON.stringify({bounds:projectFusionFrame(magneticWirePoints,morph.getActiveCamera(),rw,rh),safe});
+        }else{magneticWireFitKey='';lastWireGeometryKey='';magneticWirePoints=[];delete container.dataset.e10WireBounds;}
+      }
       if (isMag3d || isDeviceStage) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
       }
       const renderCamera = morph?.getActiveCamera() ?? camera;
+      if(isMag3d&&e10Ring&&e10Projection&&latestState){
+        const p=e10Projection.read(marker.position,marker.scale.x,renderCamera,magneticOccluders,rw,rh);
+        const show=p.visible&&p.occluded&&(morph?.getMorphT()??0)<.999;
+        e10Ring.style.display=show?'block':'none';
+        if(show){
+          e10Ring.style.width=e10Ring.style.height=2*p.radiusPx+'px';
+          e10Ring.style.transform='translate3d('+p.x+'px,'+p.y+'px,0) translate(-50%,-50%)';
+        }
+        container.dataset.e10ParticleProjection=JSON.stringify(p);
+        container.dataset.e10AutoFit=String(b1AutoFit&&b1Policy.allowed);
+      }
       if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget,renderCamera,isBoundedStage,isTokamak3d?(frameParams as TokamakMirrorParams).mode:undefined);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
@@ -1048,7 +1102,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           <span className="text-slate-400">方向示意 · 非比例</span>
         </div>
       )}
-      <div aria-hidden="true" data-testid="three-axis-widget" className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-lg border border-white/10 bg-slate-950/70 p-1 shadow-lg backdrop-blur">
+      {plugin.meta.id==='em-3d-magnetic-fields'&&<div data-testid="e10-focus-legend" className={`pointer-events-none absolute ${presentationMode?'bottom-[45px] left-3':'left-3 top-[46px]'} z-10 max-w-[350px] rounded-md bg-slate-950/70 px-2 py-1 text-[10px] text-slate-300`}>{params.geometryType==='finite-solenoid'&&activeLayers.has('fieldLines3d')?'亮线：z-y 观察剖面 · 淡线：其他空间采样（非场强） · ':''}虚线环：粒子中心被导体遮挡</div>}
+       <div aria-hidden="true" data-testid="three-axis-widget" className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-lg border border-white/10 bg-slate-950/70 p-1 shadow-lg backdrop-blur">
         {(plugin.meta.id === 'em-3d-magnetic-fields'||plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror') ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
           <circle cx="30" cy="30" r="1.8" fill="#cbd5e1" />
           {magneticAxisColors.map(axis => <g key={axis.name} data-physical-axis={axis.name}>
