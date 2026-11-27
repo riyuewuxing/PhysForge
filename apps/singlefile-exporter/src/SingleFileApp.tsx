@@ -14,6 +14,8 @@ type CircuitSlicePlugin=typeof import('../../../simulations/circuit-dc-capacitor
 import type { KinematicsChaseState,KinematicsChaseParams } from '../../../simulations/mech-kinematics-chase/engine.js';
 type ChaseSlicePlugin=typeof import('../../../simulations/mech-kinematics-chase/plugin.js').mechKinematicsChasePlugin;
 import type { BlockConveyorState,BlockConveyorParams } from '../../../simulations/mech-block-conveyor/engine.js';
+import type {InductionParams,InductionState} from '../../../simulations/em-induction-double-rod/engine.js';
+type InductionSlicePlugin=typeof import('../../../simulations/em-induction-double-rod/plugin.js').emInductionDoubleRodPlugin;
 type ContactSlicePlugin=typeof import('../../../simulations/mech-block-conveyor/plugin.js').mechBlockConveyorPlugin;
 import type { VerticalCircularParams,VerticalCircularState } from '../../../simulations/mech-vertical-circular/engine.js';
 type VerticalSlicePlugin=typeof import('../../../simulations/mech-vertical-circular/plugin.js').mechVerticalCircularPlugin;
@@ -337,6 +339,11 @@ export const SingleFileApp: React.FC = () => {
         const next=model.chaseFitViewport(s,p,v,safe);if(next)viewportRef.current=next;
       }
     }
+    if(inductionScope&&drawState!==null){
+      const model=targetPlugin as unknown as InductionSlicePlugin,v=viewportRef.current,s=drawState as InductionState,p=pm as InductionParams;
+      const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
+      if(!model.inductionBoundsFit(s,p,v,safe)){const next=model.fitInductionViewport(s,p,v,safe);if(next)viewportRef.current=next;}
+    }
     if(contactSlice&&drawState!==null){
       const model=targetPlugin as unknown as ContactSlicePlugin,v=viewportRef.current,s=drawState as BlockConveyorState,p=pm as BlockConveyorParams;
       const safe={left:26,right:v.width-26,top:28,bottom:v.height-28};
@@ -461,6 +468,9 @@ export const SingleFileApp: React.FC = () => {
       if(opticalSlice&&frame)canvas.dataset.b3Rendered=JSON.stringify({t:frame.t,mode:pm.sceneMode,...frame.observables});
       if(circuitSlice&&frame)canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...frame.observables});
       if(chaseSlice&&frame){canvas.dataset.chaseRendered=JSON.stringify({t:frame.t,...frame.observables});canvas.dataset.chaseViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
+      if(inductionScope&&frame){const model=targetPlugin as unknown as InductionSlicePlugin,s=drawState as InductionState,p=pm as InductionParams;
+        canvas.dataset.inductionRendered=JSON.stringify({t:frame.t,rodMode:p.rodMode,x1:s.x1,x2:s.x2,v1:s.v1,v2:s.v2,current:s.current,railWidth:p.railWidth,railWidth2:p.railWidth2,magneticB:p.magneticB});
+        canvas.dataset.inductionView=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY,bounds:model.inductionScreenBounds(s,p,vp),safe:{left:26,right:vp.width-26,top:28,bottom:vp.height-28}});}
       if(contactSlice&&frame){canvas.dataset.contactRendered=JSON.stringify({t:frame.t,mode:pm.systemMode,...frame.observables});canvas.dataset.contactViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(verticalSlice&&frame){canvas.dataset.verticalRendered=JSON.stringify({t:frame.t,mode:pm.trackMode,...frame.observables});canvas.dataset.verticalViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}
       if(turntableSlice&&frame){canvas.dataset.turntableRendered=JSON.stringify({t:frame.t,mode:pm.mode,...frame.observables});canvas.dataset.turntableViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});}

@@ -1,4 +1,5 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
+import {inductionScreenBounds,inductionBoundsFit,fitInductionViewport} from './viewport.js';
 import { inductionStoryDecks } from './storyDecks.js';
 import { drawInductionRail,drawInductionRod,inductionArrowLength,inductionVisualPalette,inductionFieldLabel } from './visualStyle.js';
 import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints, inductionLoadDimensions } from './diagramGeometry.js';
@@ -722,6 +723,6 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
 
     resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
   }
-}), { storyDecks: inductionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6, default3DAzimuthRad: 0.65, default3DPolarRad: 0.9 } });
+}), { inductionScreenBounds,inductionBoundsFit,fitInductionViewport,storyDecks: inductionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6, default3DAzimuthRad: 0.65, default3DPolarRad: 0.9 } });
 
 export default emInductionDoubleRodPlugin;
