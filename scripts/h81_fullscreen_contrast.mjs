@@ -17,7 +17,7 @@ const server=http.createServer((req,res)=>{
  if(!f.startsWith(dist+path.sep)||!fs.existsSync(f)||!fs.statSync(f).isFile()){res.writeHead(404).end();return;}
  res.writeHead(200,{'content-type':mime[path.extname(f)]??'application/octet-stream'});fs.createReadStream(f).pipe(res);
 });
-const rgb=s=>s.match(/[\d.]+/g)?.slice(0,3).map(Number);
+const rgb=s=>s.match(/[\d.]+/g)?.slice(0,3).map(Number); // only CSS rgb() surface; title is converted by browser to sRGB below
 const lum=a=>a.map(v=>{const x=v/255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4;}).reduce((p,x,i)=>p+x*[.2126,.7152,.0722][i],0);
 const contrast=(a,b)=>{const v=[lum(a),lum(b)].sort((x,y)=>y-x);return (v[0]+.05)/(v[1]+.05);};
 let browser;
@@ -30,6 +30,8 @@ async function capture(page,name,paper,three){
   const card=document.querySelector('[data-testid="fullscreen-formula"]');
   const r=t.getBoundingClientRect(),s=stage.getBoundingClientRect();
   const rgbAt=[];
+  const colorProbe=document.createElement('canvas').getContext('2d',{willReadFrequently:true});
+  const asRGB=color=>{colorProbe.clearRect(0,0,1,1);colorProbe.fillStyle=color;colorProbe.fillRect(0,0,1,1);return [...colorProbe.getImageData(0,0,1,1).data].slice(0,3);};
   if(c?.dataset.testid==='simulation-canvas'){
    const ctx=c.getContext('2d'),cr=c.getBoundingClientRect();
    for(const [x,y] of [[r.left+2,r.top+2],[r.left+2,r.top+r.height/2],[r.left+2,r.bottom-2]]){
@@ -37,7 +39,7 @@ async function capture(page,name,paper,three){
     if(px>=0&&py>=0&&px<c.width&&py<c.height){const p=[...ctx.getImageData(px,py,1,1).data];if(p[3]===255)rgbAt.push(p.slice(0,3));}
    }
   }
-  return {theme:document.documentElement.dataset.theme,three:!!stage.querySelector('[data-testid="three-stage-container"] canvas'),has2d:!!stage.querySelector('[data-testid="simulation-canvas"]'),title:getComputedStyle(t.children[0]).color,subtitle:getComputedStyle(t.children[1]).color,filter:getComputedStyle(t).filter,bg:getComputedStyle(stage).backgroundColor,sample:rgbAt,text:t.innerText,rect:{left:r.left,right:r.right,top:r.top,bottom:r.bottom},stage:{left:s.left,right:s.right,top:s.top,bottom:s.bottom},formula:card?{text:card.innerText.slice(0,200),left:card.getBoundingClientRect().left}:null};
+  return {theme:document.documentElement.dataset.theme,three:!!stage.querySelector('[data-testid="three-stage-container"] canvas'),has2d:!!stage.querySelector('[data-testid="simulation-canvas"]'),title:getComputedStyle(t.children[0]).color,subtitle:getComputedStyle(t.children[1]).color,titleRGB:asRGB(getComputedStyle(t.children[0]).color),subtitleRGB:asRGB(getComputedStyle(t.children[1]).color),filter:getComputedStyle(t).filter,bg:getComputedStyle(stage).backgroundColor,sample:rgbAt,text:t.innerText,rect:{left:r.left,right:r.right,top:r.top,bottom:r.bottom},stage:{left:s.left,right:s.right,top:s.top,bottom:s.bottom},formula:card?{text:card.innerText.slice(0,200),left:card.getBoundingClientRect().left}:null};
  });
  report.cases.push({name,...d});
  check(d.theme===(paper?'projector':'chalkboard'),name+': wrong theme');
@@ -46,11 +48,12 @@ async function capture(page,name,paper,three){
  check(d.rect.left>=d.stage.left&&d.rect.right<=d.stage.right&&d.rect.top>=d.stage.top&&d.rect.bottom<=d.stage.bottom,name+': title outside stage');
  if(d.formula)check(d.rect.right<=d.formula.left,name+': title/formula overlap');
  const bg=three?[11,15,23]:rgb(d.bg);
- for(const [k,v] of [['title',d.title],['subtitle',d.subtitle]]){
-  const color=rgb(v);check(color?.length===3&&contrast(color,bg)>=4.5,name+': '+k+' contrast vs reference surface '+v+' / '+bg);
+ for(const [k,color] of [['title',d.titleRGB],['subtitle',d.subtitleRGB]]){
+  check(color?.length===3&&contrast(color,bg)>=4.5,name+': '+k+' contrast vs reference surface '+color+' / '+bg);
+  for(const actual of d.sample)check(contrast(color,actual)>=4.5,name+': '+k+' contrast vs actual 2D canvas sample '+actual);
  }
  if(paper&&!three){check(d.filter==='none',name+': paper shadow');check(d.title==='rgb(15, 23, 42)'&&d.subtitle==='rgb(71, 85, 105)',name+': wrong paper color');}
- else{check(d.filter!=='none',name+': dark shadow lost');check(lum(rgb(d.title))>.6&&lum(rgb(d.subtitle))>.25,name+': dark-stage text not bright');}
+ else{check(d.filter!=='none',name+': dark shadow lost');check(lum(d.titleRGB)>.6&&lum(d.subtitleRGB)>.25,name+': dark-stage text not bright');}
  await page.screenshot({path:path.join(out,name+'.png')});
 }
 async function theme(page,target){
