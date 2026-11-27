@@ -46,7 +46,7 @@ describe('B3 hero presentation geometry',()=>{
     expect(heroBeamStyle(1,0,false)).toBeNull();
     for(const paper of [false,true]){
       const low=heroBeamStyle(.04,1,paper)!,high=heroBeamStyle(.9,1,paper)!;
-      for(const key of ['outerWidth','outerAlpha','middleWidth','middleAlpha','coreWidth','coreAlpha','highlightWidth','highlightAlpha'] as const)
+      for(const key of ['outerWidth','outerAlpha','transitionWidth','transitionAlpha','middleWidth','middleAlpha','innerWidth','innerAlpha','coreWidth','coreAlpha','highlightWidth','highlightAlpha'] as const)
         expect(high[key]).toBeGreaterThan(low[key]);
       expect(high.coreAlpha).toBeLessThanOrEqual(1);
       expect(heroBeamStyle(2,1,paper)).toEqual(heroBeamStyle(1,1,paper));

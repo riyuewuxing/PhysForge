@@ -23,8 +23,10 @@ export function resolveOpticsSliceCamera(params: OpticsParams, width: number, he
 export function heroBeamStyle(power:number,scale:number,paper:boolean) {
   if(!Number.isFinite(power)||power<=1e-12||!Number.isFinite(scale)||scale<=0)return null;
   const strength=Math.sqrt(Math.min(1,power));
-  return {outerWidth:(20+14*strength)*scale,outerAlpha:.025+.085*strength,
-    middleWidth:(9+6*strength)*scale,middleAlpha:.05+.14*strength,
+  return {outerWidth:(22+14*strength)*scale,outerAlpha:.006+.014*strength,
+    transitionWidth:(16+9*strength)*scale,transitionAlpha:.012+.021*strength,
+    middleWidth:(11+5*strength)*scale,middleAlpha:.02+.039*strength,
+    innerWidth:(7+4*strength)*scale,innerAlpha:.03+.05*strength,
     coreWidth:(3.3+2*strength)*scale,coreAlpha:paper?.55+.45*strength:.30+.70*strength,
     highlightWidth:(.8+1.2*strength)*scale,highlightAlpha:.15+.54*strength};
 }
@@ -76,10 +78,16 @@ export function drawTirHeroRay(ctx:CanvasRenderingContext2D,from:Point,to:Point,
   ctx.save();ctx.lineCap='round';ctx.strokeStyle=color;ctx.fillStyle=color;
   ctx.beginPath();ctx.moveTo(from.x,from.y);ctx.lineTo(to.x,to.y);
   if(!paper){
-    ctx.globalAlpha=style.outerAlpha;ctx.lineWidth=style.outerWidth;ctx.shadowColor=color;ctx.shadowBlur=25*scale;ctx.stroke();
-    ctx.shadowBlur=0;ctx.globalAlpha=style.middleAlpha;ctx.lineWidth=style.middleWidth;ctx.stroke();
+    // Keep each broad halo faint: the bright, softly blurred core supplies
+    // the light, rather than an opaque-looking wide rectangular stripe.
+    ctx.globalAlpha=style.outerAlpha;ctx.lineWidth=style.outerWidth;ctx.shadowColor=color;ctx.shadowBlur=22*scale;ctx.stroke();
+    ctx.shadowBlur=0;ctx.globalAlpha=style.transitionAlpha;ctx.lineWidth=style.transitionWidth;ctx.stroke();
+    ctx.globalAlpha=style.middleAlpha;ctx.lineWidth=style.middleWidth;ctx.stroke();
+    ctx.globalAlpha=style.innerAlpha;ctx.lineWidth=style.innerWidth;ctx.stroke();
+    ctx.shadowBlur=13*scale;
   }
   ctx.globalAlpha=style.coreAlpha;ctx.lineWidth=style.coreWidth;ctx.stroke();
+  ctx.shadowBlur=0;
   if(!paper){
     ctx.strokeStyle=transmitted?'#e0fdff':'#fff6db';
     ctx.globalAlpha=style.highlightAlpha;ctx.lineWidth=style.highlightWidth;ctx.stroke();
