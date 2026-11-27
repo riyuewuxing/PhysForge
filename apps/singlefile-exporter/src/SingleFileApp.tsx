@@ -454,7 +454,8 @@ export const SingleFileApp: React.FC = () => {
         const observationFrameId=relative?'planet-frame':'ground';
         targetPlugin.renderCanvas(ctx,drawState,pm,{...vp,theme:th,observationFrameId,offsetX:vp.offsetX-origin.x*ppm,offsetY:vp.offsetY+origin.y*ppm},layerSet);
         if(frame)canvas.dataset.orbitCompareRendered=JSON.stringify({mode:pm.mode,flybySide:pm.flybySide,rendezvousBurn:pm.rendezvousBurn,outerTime:frame.t,observationFrame:observationFrameId,frameOrigin:origin,...obs});
-      }else targetPlugin.renderCanvas(ctx, drawState, pm, measuredScope||opticalSlice||transformerSlice||waveOpticsSlice||thermoSlice||quantumSlice||atomicSlice||(regenSlice&&pm.mode==='regen-brake')?{...vp,theme:th}:vp, layerSet);
+      }else if(inductionScope)targetPlugin.renderCanvas(ctx,drawState,pm,{...vp,theme:th,...{inductionLabelSafe:{left:26,right:vp.width-26,top:28,bottom:vp.height-28}}},layerSet);
+      else targetPlugin.renderCanvas(ctx, drawState, pm, measuredScope||opticalSlice||transformerSlice||waveOpticsSlice||thermoSlice||quantumSlice||atomicSlice||(regenSlice&&pm.mode==='regen-brake')?{...vp,theme:th}:vp, layerSet);
       if(regenSlice&&pm.mode==='regen-brake'&&frame)canvas.dataset.regenRendered=JSON.stringify({mode:pm.mode,v0Mps:pm.v0Mps,loadResOhm:pm.loadResOhm,mechBrakeN:pm.mechBrakeN,aeroDragCoeff:pm.aeroDragCoeff,outerTime:frame.t,...targetPlugin.engine.computeObservables(drawState,pm)});
       if(nuclearSlice&&frame)canvas.dataset.nuclearRendered=JSON.stringify({...pm,outerTime:frame.t,...targetPlugin.engine.computeObservables(drawState,pm)});
       if(atomicSlice&&frame)canvas.dataset.atomicRendered=JSON.stringify({...pm,outerTime:frame.t,...targetPlugin.engine.computeObservables(drawState,pm)});

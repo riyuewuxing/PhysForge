@@ -1140,7 +1140,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     if (drawState !== null) {
       const layerSet = readDisplayedLayers();
-      p.renderCanvas(ctx, drawState, pm, { ...vp, theme: currentTheme, ...(p.meta.id==='stse-gravity-assist-rendezvous'?{observationFrameId:latestRef.current.activeFrameId}:{}) }, layerSet);
+      p.renderCanvas(ctx, drawState, pm, { ...vp, theme: currentTheme, ...(p.meta.id==='stse-gravity-assist-rendezvous'?{observationFrameId:latestRef.current.activeFrameId}:{}), ...(inductionAutomatic?{inductionLabelSafe:inductionSafeRef.current?.safe}:{}) }, layerSet);
 
       // 壳层统一 Strobe 频闪打点叠加
       if (strobe && !masked && snapshotsRef.current.length > 2) {

@@ -1,5 +1,6 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
-import {inductionScreenBounds,inductionBoundsFit,fitInductionViewport} from './viewport.js';
+import {inductionScreenBounds,inductionBoundsFit,fitInductionViewport,type InductionSafeRect} from './viewport.js';
+import {drawInductionLabels,inductionSegmentBox,type InductionLabel} from './labelLayout.js';
 import { inductionStoryDecks } from './storyDecks.js';
 import { drawInductionRail,drawInductionRod,inductionArrowLength,inductionVisualPalette,inductionFieldLabel } from './visualStyle.js';
 import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints, inductionLoadDimensions } from './diagramGeometry.js';
@@ -8,7 +9,6 @@ import {
   createWorldMapper,
   defineSimulationPlugin,
   drawGlowVectorArrow,
-  resolveAndDrawLabels,
   type DiagramPrimitive,
   type ParamFieldSpec
 } from '@physforge/sim-sdk';
@@ -605,9 +605,16 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     const railBotY = m.toY(-g.l1/2);
     const projector=viewport.theme==='projector',palette=inductionVisualPalette(projector);
     const rodWidth=Math.max(10,Math.min(14,m.len(.06)));
-    const labels: Array<{ id: string; x: number; y: number; text: string; color: string; font?: string }> = [];
+    const labels: InductionLabel[] = [];
+    const obstacles: InductionSafeRect[]=[];
+    const avoid=(x1:number,y1:number,x2:number,y2:number,pad:number)=>obstacles.push(inductionSegmentBox(x1,y1,x2,y2,pad));
+    const arrow=(x1:number,y1:number,x2:number,y2:number,color:string,width:number,head:number)=>{
+      drawGlowVectorArrow(ctx,x1,y1,x2,y2,color,width,head);
+      avoid(x1,y1,x2,y2,Math.max(width/2,head*.35)+2);
+    };
 
     if (activeLayers.has('railsAndField')) {
+      for(const rail of g.rails)avoid(m.toX(rail.start.x),m.toY(rail.start.y),m.toX(rail.end.x),m.toY(rail.end.y),7);
       ctx.save();ctx.strokeStyle=palette.field;ctx.fillStyle=palette.field;ctx.globalAlpha=palette.fieldAlpha;ctx.lineWidth=1.4;ctx.lineCap='round';
       for(const p of inductionFieldPoints(params)){
         const q=m.toScreen(p.x,p.y);
@@ -634,6 +641,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
       if (params.rodMode === 'single') {
         const loadX=m.toX(g.x2),{halfGap,halfPlateWidth}=inductionLoadDimensions(g.l1);
         const upper=m.toY(halfGap),lower=m.toY(-halfGap),halfPlate=m.len(halfPlateWidth);
+        avoid(loadX,railTopY,loadX,railBotY,4);avoid(loadX-halfPlate,upper,loadX+halfPlate,lower,4);
         ctx.save();ctx.strokeStyle=palette.load;ctx.lineWidth=2.8;ctx.shadowColor=palette.load;ctx.shadowBlur=projector?0:9;
         ctx.beginPath();ctx.moveTo(loadX,railTopY);ctx.lineTo(loadX,upper);
         if(params.circuitLoad==='capacitor'||params.circuitLoad==='battery'){
@@ -649,15 +657,17 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
 
       if (params.rodMode === 'double') {
         const x2 = toX(state.x2);
+        avoid(x2-rodWidth/2,m.toY(g.l2/2)-12,x2+rodWidth/2,m.toY(-g.l2/2)+12,3);
         drawInductionRod(ctx, x2, m.toY(g.l2/2), m.toY(-g.l2/2), state.v2, palette.rod2, palette.rod2Core, rodWidth,projector);
         labels.push({ id: 'rod2-label', x: x2, y: m.toY(-g.l2/2) + 31, text: `杆2 v₂=${state.v2.toFixed(2)} m/s`, color: palette.rod2Label });
       }
       const x1 = toX(state.x1);
+      avoid(x1-rodWidth/2,railTopY-12,x1+rodWidth/2,railBotY+12,3);
       drawInductionRod(ctx, x1, railTopY, railBotY, state.v1, palette.rod, palette.rodCore, rodWidth,projector);
       if (Math.abs(state.v1) > 0.05 || params.rodMode === 'single') {
         const velocityLength = inductionArrowLength(state.v1,60,135);
         if (Math.abs(velocityLength) >= 6) {
-          drawGlowVectorArrow(ctx, x1, railMidY + 18, x1 + velocityLength, railMidY + 18, palette.velocity, 5, 17);
+          arrow(x1, railMidY + 18, x1 + velocityLength, railMidY + 18, palette.velocity, 5, 17);
           const velocityText = `${params.rodMode === 'double' ? 'v₁' : 'v'} = ${Math.abs(state.v1).toFixed(2)} m/s`;
           ctx.save(); ctx.font='600 14px system-ui, sans-serif';
           const labelWidth=ctx.measureText(velocityText).width; ctx.restore();
@@ -675,7 +685,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         if(length<16)continue;
         const scale=Math.sign(signedCurrent)*Math.min(70,length*0.65)/length;
         const cx=(a.x+b.x)/2,cy=(a.y+b.y)/2;
-        drawGlowVectorArrow(ctx,cx-dx*scale/2,cy-dy*scale/2,cx+dx*scale/2,cy+dy*scale/2,palette.current,3.6,12);
+        arrow(cx-dx*scale/2,cy-dy*scale/2,cx+dx*scale/2,cy+dy*scale/2,palette.current,3.6,12);
       }
       labels.push({id:'current-label',x:(m.toX(g.x1)+m.toX(g.x2))/2,y:m.toY(-Math.max(g.l1,g.l2)/2)+24,text:`I = ${Math.abs(state.current).toFixed(2)} A`,color:palette.currentLabel,font:'600 15px system-ui, sans-serif'});
     }
@@ -688,7 +698,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
       if (Math.abs(netForce) > 0.05) {
         const length = inductionArrowLength(netForce,35,145);
         const forceY = railMidY - 18;
-        drawGlowVectorArrow(ctx, x1 - 6 * Math.sign(length), forceY, x1 + length, forceY, palette.force, 5, 17);
+        arrow(x1 - 6 * Math.sign(length), forceY, x1 + length, forceY, palette.force, 5, 17);
         const forceLabel = `F安 = ${Math.abs(ampereForce).toFixed(2)} N`;
         const forceLabelFont = viewport.width>=1100?'600 17px system-ui, sans-serif':'600 15px system-ui, sans-serif';
         ctx.save();
@@ -710,18 +720,21 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         if (Math.abs(force2) > 0.05) {
           const length = inductionArrowLength(force2,35,145);
           const forceY = railMidY - 18;
-          drawGlowVectorArrow(ctx, x2 - 6 * Math.sign(length), forceY, x2 + length, forceY, palette.rod2, 5, 17);
+          arrow(x2 - 6 * Math.sign(length), forceY, x2 + length, forceY, palette.rod2, 5, 17);
           labels.push({ id: 'ampere-force-2', x: x2 + length * 0.5, y: forceY - 24, text: `F安₂ = ${Math.abs(force2).toFixed(2)} N`, color: palette.rod2Label });
         }
       }
       if (Math.abs(params.externalForce) > 0.05) {
         const length = inductionArrowLength(params.externalForce,24,120);
-        drawGlowVectorArrow(ctx, x1, railMidY + 37, x1 + length, railMidY + 37, palette.external, 3.5, 12);
+        arrow(x1, railMidY + 37, x1 + length, railMidY + 37, palette.external, 3.5, 12);
         labels.push({ id: 'external-force', x: x1 + length * 0.55, y: railMidY + 57, text: 'F外', color: palette.external });
       }
     }
 
-    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
+    const supplied=(viewport as typeof viewport&{inductionLabelSafe?:InductionSafeRect}).inductionLabelSafe;
+    const safe=supplied&&supplied.right>supplied.left&&supplied.bottom>supplied.top?supplied:
+      {left:8,right:viewport.width-8,top:8,bottom:viewport.height-8};
+    drawInductionLabels(ctx,labels,obstacles,safe);
   }
 }), { inductionScreenBounds,inductionBoundsFit,fitInductionViewport,storyDecks: inductionStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 4.8, sceneDepthRadius: 6, default3DAzimuthRad: 0.65, default3DPolarRad: 0.9 } });
 
