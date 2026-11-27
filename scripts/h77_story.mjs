@@ -170,11 +170,20 @@ try{
  const start3d=await read3d(),cb=await spatial.locator('canvas').boundingBox();
  const x=cb.x+(start3d.bounds.left+start3d.bounds.right)/2,y=cb.y+(start3d.bounds.top+start3d.bounds.bottom)/2;
  await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+65,y+30,{steps:8});await page.mouse.up();
- await page.waitForTimeout(800);const manual3d=await read3d();
+ // OrbitControls intentionally has damping. Sample convergence rather than
+ // treating residual inertia during the first 800ms as automatic camera takeover.
+ const delta=(a,b)=>['left','right','top','bottom'].reduce((sum,k)=>sum+Math.abs(a.bounds[k]-b.bounds[k]),0);
+ let manual3d=await read3d(),stable=0;const settleStart=Date.now();
+ while(Date.now()-settleStart<7000&&stable<3){
+   await page.waitForTimeout(200);const sample=await read3d();
+   check(!sample.automatic,'teacher 3D orbit lock lost while damping');
+   stable=delta(manual3d,sample)<.4?stable+1:0;manual3d=sample;
+ }
+ check(stable===3,'teacher orbit failed to settle within bounded watchdog');
  await page.waitForTimeout(500);const held3d=await read3d();
  check(!manual3d.automatic&&!held3d.automatic,'teacher 3D orbit did not lock auto framing');
  check(Math.abs(start3d.bounds.left-manual3d.bounds.left)+Math.abs(start3d.bounds.top-manual3d.bounds.top)>5,'teacher 3D orbit did not move visible geometry');
- check(Math.abs(held3d.bounds.left-manual3d.bounds.left)+Math.abs(held3d.bounds.top-manual3d.bounds.top)<3,'automatic fit reclaimed teacher orbit');
+ check(Math.abs(held3d.bounds.left-manual3d.bounds.left)+Math.abs(held3d.bounds.top-manual3d.bounds.top)<3,'settled teacher orbit was overridden');
  report.spatialGestures.push({start3d,manual3d,held3d});
  await page.screenshot({path:path.join(out,'beat1-manual-orbit.png')});
  await enterFlat(2);await inspect('beat2-running');await freeze(2);
@@ -200,6 +209,27 @@ try{
  await freeze(3);
  await openStory();await enterFlat(3);await freeze(3);
  await page.screenshot({path:path.join(out,'beat3-direct-freeze.png')});
+ // In the actual workbench, the independent FBD path must still work
+ // when the native force layer is disabled. All combinations use the same preset.
+ await page.goto(url+'&preset=double-rod-momentum-conservation',{waitUntil:'networkidle'});
+ await canvas.waitFor({state:'visible'});
+ await page.getByText('更多参数与图层',{exact:false}).first().click();
+ const layer=page.getByRole('checkbox',{name:'安培力与外力矢量'}),autoButton=page.getByTestId('btn-auto-fbd');
+ await layer.waitFor({state:'visible'});
+ const wbForces=()=>canvas.evaluate(()=>structuredClone(window.__h66E04Paint.filter(l=>/^F安/.test(l.text))));
+ await layer.uncheck();await page.waitForTimeout(150);
+ if((await wbForces()).length===0){await autoButton.click();await page.waitForTimeout(150);}
+ const fallback=await wbForces();
+ check(fallback.length===2&&fallback.every(l=>l.align==='left')&&fallback.some(l=>/^F安₁ =/.test(l.text))&&fallback.some(l=>/^F安₂ =/.test(l.text)),'independent FBD fallback not visible '+JSON.stringify(fallback));
+ await page.screenshot({path:path.join(out,'workbench-fbd-only.png')});
+ await autoButton.click();await page.waitForTimeout(150);const neither=await wbForces();
+ check(neither.length===0,'forces still shown with both switches off');
+ await layer.check();await page.waitForTimeout(150);const native=await wbForces();
+ check(native.length===2&&native.every(l=>l.align==='center'),'native force paint missing '+JSON.stringify(native));
+ await autoButton.click();await page.waitForTimeout(150);const bothWb=await wbForces();
+ check(JSON.stringify(native)===JSON.stringify(bothWb),'duplicate FBD in workbench');
+ report.forces.push({name:'four-workbench-layer-combinations',fallback,neither,native,bothWb});
+ await page.screenshot({path:path.join(out,'workbench-both.png')});
  check(report.errors.length===0,'browser errors');check(report.network.length===0,'external network');
 }catch(e){report.issues.push(String(e));if(page)await page.screenshot({path:path.join(out,'failure.png')}).catch(()=>{});}
 finally{
