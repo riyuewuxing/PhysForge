@@ -243,6 +243,8 @@ def main():
     p.add_argument("--base-branch", default="")
     p.add_argument("--repo")
     p.add_argument("--resolve-base", action="store_true")
+    p.add_argument("--require-baseline", action="store_true",
+                   help="For a stacked candidate, retry an unavailable exact parent and fail closed.")
     a = p.parse_args()
     a.prefixes = [x.strip() for x in a.prefixes.split(",") if x.strip()]
     if a.resolve_base:
@@ -250,8 +252,23 @@ def main():
     if not a.raw:
         p.error("--raw required")
     baseline = read_baseline(a.baseline, a.base_sha, a.phase)
+    # The eager base-review job may run before its parent finishes uploading
+    # the visual evidence. Retry only at review time, against the same SHA.
+    if baseline is None and a.require_baseline and a.repo and a.base_sha:
+        retry = a.out.parent / "exact-parent-retry"
+        result = resolve_base(argparse.Namespace(
+            out=retry, head=a.base_sha, repo=a.repo, phase=a.phase,
+            base_branch=a.base_branch, prefixes=a.prefixes))
+        if result == 0:
+            baseline = read_baseline(retry / "manifest.json", a.base_sha, a.phase)
     m = pack(a.raw, a.out, a.head, a.phase, a.prefixes, baseline, a.base_sha,
              source={"run_id": os.environ.get("GITHUB_RUN_ID")})
+    if a.require_baseline and baseline is None:
+        # Keep all current PNGs and a useful manifest even on failure, but
+        # never allow a required comparison that did not run to turn green.
+        m["errors"].append("required exact parent comparison unavailable")
+        dump(a.out / "manifest.json", m)
+        print(m["errors"][-1], file=sys.stderr)
     return int(bool(m["errors"]))
 
 
