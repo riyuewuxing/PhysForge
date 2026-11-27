@@ -49,6 +49,7 @@ try{
   await page.screenshot({path:path.join(out,pre+'-flat.png')});
   await toggle.click();await stage.waitFor({state:'visible'});await waitState(.4);await page.waitForFunction(()=>document.querySelector('[data-testid="three-stage-container"]')?.dataset.morphT==='0');
   const returned=await shot('after-morph');same(body,returned,pre+' morph');
+  assert(returned.dataset.e10AutoFit==='false'&&returned.caption.includes('手动视角')&&returned.buttons.every(b=>b.pressed==='false'),pre+' morph remount falsely claims automatic full domain');
   // Report actual ownership and mode after remount rather than assume it.
   await choose('domain');const restored=await shot('after-morph-domain');same(body,restored,pre+' explicit restore');
   assert(restored.dataset.e10AutoFit==='true'&&JSON.parse(restored.dataset.e10SolenoidBounds).fitOverlaps===0,pre+' explicit auto domain failed after morph');
