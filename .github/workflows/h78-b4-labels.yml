@@ -1,0 +1,55 @@
+name: H78 exact-source B4 cradle label paint
+on:
+  pull_request:
+    branches: ['polish/v31-h78-b4-labels']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h78-b4')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: bb8c01484e04e0600036944ad770dad738235f15
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "bb8c01484e04e0600036944ad770dad738235f15"
+          cp audit/scripts/h78_b4_labels.mjs source/scripts/
+          sha256sum source/scripts/h78_b4_labels.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h78_b4_labels.mjs
+        working-directory: source
+        timeout-minutes: 4
+        env:
+          SOURCE_HEAD: bb8c01484e04e0600036944ad770dad738235f15
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h78-b4-labels
+          path: |
+            source/evidence/h78-b4/*.png
+            source/evidence/h78-b4/report.json
+          if-no-files-found: error
+          retention-days: 7
