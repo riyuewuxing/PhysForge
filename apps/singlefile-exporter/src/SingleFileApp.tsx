@@ -708,7 +708,7 @@ export const SingleFileApp: React.FC = () => {
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15,23,42,0.12)' : 'rgba(148,163,184,0.16)';
     // Small physical residuals must not become several indistinguishable zero ticks.
-    const advancedAxis = (key: 'A'|'B') => advancedSlice ? {values: (_u: uPlot, splits: number[]) => {
+    const advancedAxis = (key: 'A'|'B') => advancedSlice ? {size:96,values: (_u: uPlot, splits: number[]) => {
       const labels=splits.map(v=>v===0?'0':Math.abs(v)<.001||Math.abs(v)>=1e5?v.toExponential(3):String(Number(v.toPrecision(5))));
       wrap.dataset['scopeYTicks'+key]=JSON.stringify({splits,labels});return labels;
     }} : {};
