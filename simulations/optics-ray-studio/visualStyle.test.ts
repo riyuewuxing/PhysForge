@@ -56,7 +56,7 @@ describe('B3 hero presentation geometry',()=>{
 
 describe('H73 B3 live critical-angle formula',()=>{
   it('displays the actual critical angle without requiring expanded numeric readouts',()=>{
-    for(const [n1,n2] of [[1.5,1],[1.6,1.4],[2,1],[1.5,1.5],[1,1.5]]){
+    for(const [n1,n2] of [[1.5,1],[1.6,1.4],[2,1],[1.5,1.5],[1,1.5]] as const){
       const p=resolvePluginParams<OpticsParams>(opticsRayStudioPlugin.paramSchema,{sceneMode:'tir-interface',incidentAngleDeg:35,n1,n2,animateSweep:false});
       const s=createInitialState(p),f=opticsRayStudioPlugin.formatFormulas?.(s,p)[0];
       expect(f?.latex).toContain(tirCriticalEquation(s.criticalAngleDeg));

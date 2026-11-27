@@ -41,7 +41,7 @@ describe('H73 B2 recognisable lamp mark',()=>{
   it('centers the two diagonals inside the existing ring, not on adjacent wires',()=>{
     const q={x:100,y:200},r=36,strokes=lampCrossStrokes(q,r);
     expect(strokes).toHaveLength(2);
-    for(const [a,b] of strokes){expect((a.x+b.x)/2).toBe(q.x);expect((a.y+b.y)/2).toBe(q.y);expect(Math.hypot(a.x-q.x,a.y-q.y)).toBeLessThan(r);expect(Math.hypot(b.x-q.x,b.y-q.y)).toBeLessThan(r);}
+    for(const [a,b] of strokes){expect((a.x+b.x)/2).toBeCloseTo(q.x,12);expect((a.y+b.y)/2).toBeCloseTo(q.y,12);expect(Math.hypot(a.x-q.x,a.y-q.y)).toBeLessThan(r);expect(Math.hypot(b.x-q.x,b.y-q.y)).toBeLessThan(r);}
     expect(lampCrossStrokes(q,0)).toEqual([]);
     expect(lampCrossStrokes(q,NaN)).toEqual([]);
   });
