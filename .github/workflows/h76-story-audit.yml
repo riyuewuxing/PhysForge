@@ -1,0 +1,60 @@
+name: H76 exact-source E04 story actual conductor paint
+on:
+  pull_request:
+    branches: ['polish/v31-h76-e04-story']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h76-story')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        width: [1024, 1440]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 339b24912a7cd91c7d337465ff3bf1cebed6e89a
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "339b24912a7cd91c7d337465ff3bf1cebed6e89a"
+          cp audit/scripts/h76_story.mjs source/scripts/
+          sha256sum source/scripts/h76_story.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h76_story.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          WIDTH: ${{ matrix.width }}
+          SOURCE_HEAD: 339b24912a7cd91c7d337465ff3bf1cebed6e89a
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h76-story-${{ matrix.width }}
+          path: |
+            source/evidence/h76-story/*.png
+            source/evidence/h76-story/report.json
+          if-no-files-found: error
+          retention-days: 7
