@@ -330,6 +330,17 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const storySpatialCommandRef = useRef<StorySpatialCommand | null>(null);
   const storyCameraTweenRef = useRef<{ from: StoryView2D; to: StoryView2D; start: number; duration: number } | null>(null);
   const storyCameraUiAtRef = useRef(-Infinity);
+  // E04's two running story beats explicitly follow the growing circuit
+  // extent after their authored transition. Subsequent teacher gestures
+  // still own the camera; another authored beat may reacquire it.
+  const inductionStoryFollowRef=useRef(false);
+  const inductionStoryMorphPendingRef=useRef(false);
+  const inductionStoryHudTopRef=useRef<number|null>(null);
+  const readInductionStoryHudTop=()=>{
+    const hud=document.querySelector('[data-testid="story-hud"]')?.getBoundingClientRect();
+    const box=canvasRef.current?.getBoundingClientRect();
+    return hud&&box&&hud.width>0&&hud.height>0?Math.floor(hud.top-box.top):null;
+  };
   const selectDisplayLayers = useMemo(() => createDisplayLayerSelector(), []);
   const threeLayers = selectDisplayLayers(activeLayers, poeMasked);
   const previouslyShowThreeRef = useRef(showThree);
@@ -468,7 +479,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const progress = tween.duration === 0 ? 1 : (now - tween.start) / tween.duration;
     const finished = progress >= 1;
     applyStoryCamera2D(finished ? tween.to : interpolateStoryView(tween.from, tween.to, progress), now, finished);
-    if (finished) storyCameraTweenRef.current = null;
+    if (finished) {
+      storyCameraTweenRef.current = null;
+      if(inductionStoryFollowRef.current)userTransformedViewRef.current=false;
+    }
     return true;
   };
   const completeFlatMorph = (aligned: Viewport,b1Automatic?:boolean) => {
@@ -477,7 +491,9 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     viewportRef.current = aligned;
     // A camera morph transfers ownership, not just its projection. A teacher's
     // orbit remains manual; an automatic camera remains automatic.
-    userTransformedViewRef.current=!(autoFrameStage&&b1Automatic===true);
+    const authoredInductionFit=inductionStage&&inductionStoryFollowRef.current&&inductionStoryMorphPendingRef.current;
+    inductionStoryMorphPendingRef.current=false;
+    userTransformedViewRef.current=!(autoFrameStage&&b1Automatic===true)&&!authoredInductionFit;
     if(autoFrameStage){
       b1FitKeyRef.current=b1FitKey(aligned);b1FitAtRef.current=performance.now();
     }
@@ -732,19 +748,23 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
       }
     }
+    const inductionStoryAutomatic=Boolean(requestedStoryDeckRef.current&&inductionStoryFollowRef.current);
     const inductionAutomatic=p.meta.id==='em-induction-double-rod'&&!userTransformedViewRef.current&&
-      !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
+      (!requestedStoryDeckRef.current||inductionStoryAutomatic)&&!storyCameraTweenRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
     if(inductionAutomatic&&drawState!==null){
       const model=p as unknown as InductionStagePlugin,cur=latestRef.current,v=viewportRef.current;
       const pp=pm as InductionParams,ss=drawState as InductionState;
-      const key=JSON.stringify([cur.resetNonce,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      const hudTop=inductionStoryAutomatic?readInductionStoryHudTop():null;
+      inductionStoryHudTopRef.current=hudTop;
+      const key=JSON.stringify([cur.resetNonce,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed,hudTop]);
       const fresh=inductionSafeRef.current?.key!==key;
       if(fresh){
         const box=canvas.getBoundingClientRect();
         const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
         const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
         const right=cur.presentationMode||cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-300):v.width-26;
-        const bottom=cur.presentationMode||!cur.oscilloscopeCollapsed?(dock&&dock.height>0?dock.top-box.top-14:v.height-180):v.height-76;
+        const controlBottom=cur.presentationMode||!cur.oscilloscopeCollapsed?(dock&&dock.height>0?dock.top-box.top-14:v.height-180):v.height-76;
+        const bottom=hudTop===null?controlBottom:Math.min(controlBottom,hudTop-14);
         inductionSafeRef.current={key,safe:{left:30,right,top:cur.presentationMode?90:28,bottom}};
       }
       const safe=inductionSafeRef.current!.safe;
@@ -1582,7 +1602,16 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             }
           }
         },
-        onBeatChanged: (index) => storyCallbacksRef.current.onStoryBeat?.(index),
+        onBeatChanged: (index,beat) => {
+          inductionStoryFollowRef.current=storyDeck.id==='e04-double-rod-energy'&&
+            (beat.id==='e04-common-speed'||beat.id==='e04-energy');
+          inductionStoryMorphPendingRef.current=inductionStoryFollowRef.current&&storySpatialCommandRef.current?.view.morphT===1;
+          if(inductionStoryFollowRef.current){
+            inductionSafeRef.current=null;
+            if(!inductionStoryMorphPendingRef.current&&!storyCameraTweenRef.current)userTransformedViewRef.current=false;
+          }
+          storyCallbacksRef.current.onStoryBeat?.(index);
+        },
         onAutoFreezeTriggered: (badge) => storyCallbacksRef.current.onStoryFreeze?.(badge)
       });
       storyRunnerRef.current = runner;
@@ -1604,6 +1633,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       storyRunnerRef.current = null;
       storyCameraTweenRef.current = null;
       storySpatialCommandRef.current = null;
+      inductionStoryFollowRef.current=false;inductionStoryMorphPendingRef.current=false;inductionStoryHudTopRef.current=null;
       storyOwnerRef.current = undefined;
       storyParamsRef.current = null;
       storyDirtyRef.current = false;
@@ -1759,7 +1789,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       };
       // A duplicate ResizeObserver notification is not a change of camera.
       // Preserve the exact B1 orthographic transfer when CSS size is unchanged.
-      if(!userTransformedViewRef.current&&(!['builder-composite-em-field','stse-tokamak-magnetic-mirror'].includes(latestRef.current.plugin.meta.id)||changedSize)){
+      if(!userTransformedViewRef.current&&(!['builder-composite-em-field','stse-tokamak-magnetic-mirror','em-induction-double-rod'].includes(latestRef.current.plugin.meta.id)||changedSize)){
         applyDefaultCameraView(width,height);
       }
       setOverlayViewport(viewportRef.current);
@@ -1801,6 +1831,10 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       }
       const { isPlaying: playing, playbackSpeed: speed, plugin: p, params: pm } = latestRef.current;
       if (!playing) {
+        // The freeze badge can enlarge the HUD after the physical clock stops.
+        // Refit only on an actual HUD-layout change, never restart physics.
+        if(p.meta.id==='em-induction-double-rod'&&inductionStoryFollowRef.current&&!userTransformedViewRef.current&&canvasRef.current&&
+          readInductionStoryHudTop()!==inductionStoryHudTopRef.current)renderFrameToCanvas();
         lastFrameMsRef.current = null;
         return;
       }
