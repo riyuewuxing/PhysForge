@@ -1430,9 +1430,13 @@ async function auditF12Relativity(page,offline,select){
     const r=await read(),p=r.params,b=r.bounds,box=await canvas.boundingBox();
     if(!box||!b||b.left<0||b.top<0||b.right>box.width+1||b.bottom>box.height+1)throw Error('F12 bounds outside canvas '+JSON.stringify({b,box}));
     if(!offline){
-      const panel=await page.getByTestId('right-control-panel').boundingBox(),dock=await page.getByTestId('floating-scope-dock').boundingBox();
-      if(panel&&box.x+b.right>panel.x-2)throw Error('F12 panel occlusion '+JSON.stringify({b,box,panel}));
-      if(mode==='tdse-tunneling'&&dock&&box.y+b.bottom>dock.y-2)throw Error('F12 scope occlusion '+JSON.stringify({b,box,dock}));
+      const panel=await page.getByTestId('right-control-panel').boundingBox({timeout:5000});
+      if(!panel||box.x+b.right>panel.x-2)throw Error('F12 panel missing/occlusion '+JSON.stringify({b,box,panel}));
+      const scope=page.getByTestId('floating-scope-dock');
+      if(mode==='tdse-tunneling'){
+        const dock=await scope.boundingBox({timeout:5000});
+        if(!dock||box.y+b.bottom>dock.y-2)throw Error('F12 scope missing/occlusion '+JSON.stringify({b,box,dock}));
+      }else if(await scope.count())throw Error('F12 static mode must not mount the time-series dock');
     }
     const o=r.obs;
     if(mode==='tdse-tunneling'){
@@ -1442,6 +1446,9 @@ async function auditF12Relativity(page,offline,select){
       const g=1/Math.sqrt(1-p.lorentzBeta**2),x=g*(p.eventX-p.lorentzBeta*p.eventCt),ct=g*(p.eventCt-p.lorentzBeta*p.eventX);
       if(!near(r.lorentz.xPrime,x)||!near(r.lorentz.ctPrime,ct)||!near(ct*ct-x*x,p.eventCt*p.eventCt-p.eventX*p.eventX)||!near(r.turn.x,5*p.lorentzBeta)||!near(r.turn.ct,5)||!near(r.reunion.x,0)||!near(r.reunion.ct,10)||r.t!==0)throw Error('F12 static Lorentz independent coordinates '+JSON.stringify(r));
       if(!await play.isDisabled())throw Error('F12 false static play');
+      const step=offline?page.getByRole('button',{name:'单步',exact:true}):page.locator('[data-testid="topbar"] [data-testid="btn-step"]');
+      if(!await step.isDisabled({timeout:5000}))throw Error('F12 false static single-step');
+      if(offline&&await page.getByTestId(scopeId).isVisible())throw Error('F12 offline static scope visible');
     }
     return r;
   };
@@ -3937,7 +3944,20 @@ async function main() {
   try {
     browser = await launchBrowser();
     const focus=process.env.PHYSFORGE_VISUAL_FOCUS??'';
-    if(focus&&focus!=='F11')throw Error('Unknown visual focus '+focus);
+    if(focus&&!['F11','F12'].includes(focus))throw Error('Unknown visual focus '+focus);
+    if(focus==='F12'){
+      if(phase!=='offline'){
+        const context=await browser.newContext({viewport:VIEWPORT,deviceScaleFactor:1,serviceWorkers:'block'}),page=await context.newPage();
+        page.on('console',m=>{if(m.type()==='error')consoleErrors.push(m.text());});page.on('pageerror',e=>pageErrors.push(e.message));
+        page.on('response',r=>{if(r.status()>=400)failedResponses.push(r.status()+' '+r.url());});
+        page.on('request',r=>{if(/^https?:/i.test(r.url())&&!r.url().startsWith(origin))externalRequests.push(r.url());});
+        try{combined.f12Report=await f12Online(page,origin);}finally{await context.close();}
+        if(consoleErrors.length||pageErrors.length||failedResponses.length||externalRequests.length)throw Error('F12 online errors '+JSON.stringify({consoleErrors,pageErrors,failedResponses,externalRequests}));
+      }
+      if(phase!=='online')combined.f12OfflineReport=await f12Offline(browser);
+      fs.writeFileSync(path.join(OUT_DIR,'summary-f12-focus.json'),JSON.stringify(combined,null,2));
+      console.log(JSON.stringify(combined,null,2));console.log('VISUAL_F12_FOCUS: PASS');return;
+    }
     if(focus==='F11'){
       if(phase!=='offline'){
         const context=await browser.newContext({viewport:VIEWPORT,deviceScaleFactor:1,serviceWorkers:'block'}),page=await context.newPage();
