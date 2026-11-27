@@ -1,0 +1,86 @@
+name: H73 exact-source optics and circuit material replay
+on:
+  pull_request:
+    branches: ['audit/h72-morph']
+permissions:
+  contents: read
+jobs:
+  visual:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h73-b3-b2')
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline]
+        source:
+          - name: baseline
+            sha: 2b23866a1122ffe443fc594360aabe1c8e233607
+            candidate: 'false'
+          - name: candidate
+            sha: 0f7fad02fd6e38e0b9311ea3708d87a18a07369e
+            candidate: 'true'
+    name: B3 and B2 actual paint (${{ matrix.source.name }}, ${{ matrix.phase }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.source.sha }}
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_HEAD"
+          cp audit/scripts/h73_b3.mjs audit/scripts/h73_b2.mjs source/scripts/
+          sha256sum source/scripts/h73_b3.mjs source/scripts/h73_b2.mjs
+        env:
+          SOURCE_HEAD: ${{ matrix.source.sha }}
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        if: matrix.phase == 'online'
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h73_b3.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: ${{ matrix.source.sha }}
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+          PHASE: ${{ matrix.phase }}
+          CANDIDATE: ${{ matrix.source.candidate }}
+      - run: node scripts/h73_b2.mjs
+        if: ${{ always() && !cancelled() }}
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: ${{ matrix.source.sha }}
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+          PHASE: ${{ matrix.phase }}
+          CANDIDATE: ${{ matrix.source.candidate }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h73-paint-${{ matrix.source.name }}-${{ matrix.phase }}
+          path: |
+            source/evidence/b3-gold/*.png
+            source/evidence/b3-gold/reference/*.png
+            source/evidence/b3-gold/report.json
+            source/evidence/b2-divider/*.png
+            source/evidence/b2-divider/reference/*.png
+            source/evidence/b2-divider/report.json
+          if-no-files-found: error
+          retention-days: 7
