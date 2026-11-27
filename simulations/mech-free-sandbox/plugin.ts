@@ -442,7 +442,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
           const x=atwood?p.sx+Math.sign(b.x)*(b.halfW*pxPerM+9):p.sx;
           const y=atwood?p.sy+5:p.sy-b.halfH*pxPerM-10;
           const text=b.label+(atwood?' vᵧ='+b.vy.toFixed(2):' vₓ='+b.vx.toFixed(2))+' m/s';
-          if(params.scenario==='newtons-cradle'){
+          if(params.scenario==='newtons-cradle'||params.scenario==='elastic-collision'){
             const top=p.sy-b.halfH*pxPerM,bottom=p.sy+b.halfH*pxPerM;
             if(p.sx>=0&&p.sx<=viewport.width&&bottom>=0&&top<=viewport.height){
               cradleLabels.push({id:b.id,text,color:paper?'#334155':b.color,x:p.sx,top,bottom,width:ctx.measureText(text).width});
