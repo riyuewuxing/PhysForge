@@ -1189,12 +1189,17 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       // V2 Auto-FBD 受力矢量与正交分解叠绘
       if (showFbd && !masked && v2.getForceVectors) {
         const vectors = v2.getForceVectors(drawState, pm, layerSet);
-        renderAutoFbdToCanvas(ctx, {
-          vectors,
-          viewport: vp,
-          frameOrigin: { x: 0, y: 0 },
-          showComponents: showFbdComp
-        });
+        // E04 already draws these same collinear forces with its local
+        // collision-aware labels. Keep the independent Auto-FBD control as
+        // a fallback when the model's own force layer is hidden, not a duplicate.
+        if(p.meta.id!=='em-induction-double-rod'||!layerSet.has('forceVectors')){
+          renderAutoFbdToCanvas(ctx, {
+            vectors,
+            viewport: vp,
+            frameOrigin: { x: 0, y: 0 },
+            showComponents: showFbdComp
+          });
+        }
         if (vectors.length !== fbdCountRef.current) {
           fbdCountRef.current = vectors.length;
           setFbdCount(vectors.length);
