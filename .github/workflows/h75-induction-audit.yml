@@ -1,0 +1,63 @@
+name: H75 exact-source E04 actual paint and camera
+on:
+  pull_request:
+    branches: ['polish/v31-h75-induction-fit']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h75-induction')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline]
+        width: [1024, 1440]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 0c969fb6576c2edf24145c26cd006d72b71ef31c
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "0c969fb6576c2edf24145c26cd006d72b71ef31c"
+          cp audit/scripts/h75_induction.mjs source/scripts/
+          sha256sum source/scripts/h75_induction.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        if: matrix.phase == 'online'
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h75_induction.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          PHASE: ${{ matrix.phase }}
+          WIDTH: ${{ matrix.width }}
+          SOURCE_HEAD: 0c969fb6576c2edf24145c26cd006d72b71ef31c
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h75-${{ matrix.phase }}-${{ matrix.width }}
+          path: |
+            source/evidence/h75-induction-fit/*.png
+            source/evidence/h75-induction-fit/report.json
+          if-no-files-found: error
+          retention-days: 7
