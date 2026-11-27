@@ -39,7 +39,8 @@ try{
   const rect=s.getBoundingClientRect().toJSON(),r=ring?.getBoundingClientRect().toJSON(),style=ring?getComputedStyle(ring):null;
   const panel=document.querySelector('[data-testid="right-control-panel"]')?.getBoundingClientRect().toJSON();
   const scope=document.querySelector('[data-testid="floating-scope-dock"]')?.getBoundingClientRect().toJSON();
-  return {dataset:{...s.dataset},rect,ring:r,ringVisible:!!r&&r.width>0&&r.height>0&&style.display!=='none',ringStyle:style?.borderTopStyle,ringWidth:style?.borderTopWidth,ringFilter:style?.filter,legend:legend?.textContent,legendSize:legend?getComputedStyle(legend).fontSize:null,panel,scope};
+  const formula=document.querySelector('[data-testid="fullscreen-formula"]')?.getBoundingClientRect().toJSON(),controls=document.querySelector('[data-testid="fullscreen-controls"]')?.getBoundingClientRect().toJSON();
+  return {formula,controls,dataset:{...s.dataset},rect,ring:r,ringVisible:!!r&&r.width>0&&r.height>0&&style.display!=='none',ringStyle:style?.borderTopStyle,ringWidth:style?.borderTopWidth,ringFilter:style?.filter,legend:legend?.textContent,legendSize:legend?getComputedStyle(legend).fontSize:null,panel,scope};
  });
  const waitState=async(t,n=10,I=null)=>page.waitForFunction(({t,n,I})=>{const d=document.querySelector('[data-testid="three-stage-container"]')?.dataset,m=JSON.parse(d?.magneticRendered||'null');return m?.geometryType==='finite-solenoid'&&Math.abs(m.t-t)<1e-8&&Number(d?.conductorCount)===n&&(I===null||m.currentI===I);},{t,n,I});
  const checkFrame=(d,name,automatic=true)=>{
@@ -53,6 +54,7 @@ try{
     assert(d.dataset.e10AutoFit==='true','automatic framing unexpectedly disabled '+name);
     if(d.panel&&d.panel.width>0)assert(q.right+12<=d.panel.left-d.rect.left,'scene overlaps inspector '+name);
     assert(b.samples>=b.bodySamples&&b.bodySamples>0,'invalid scene samples '+name);
+    assert(b.overlaps===0,'projected actual geometry overlaps a measured floating overlay '+name);
   }
   const q=JSON.parse(d.dataset.e10ParticleProjection||'null');
   if(q&&Number(d.dataset.morphT)===0){
@@ -65,6 +67,9 @@ try{
   }
   assert(parseFloat(d.legendSize)>=11,'legend too small '+name);
  };
+ // Coordinates are in CSS pixels. Compare mathematically meaningful numeric
+ // precision, not JSON serialization of floating roundoff (~2e-13 px in v1).
+ const sameRect=(a,b)=>['left','right','top','bottom'].every(k=>Math.abs(a[k]-b[k])<=1e-7)&&a.visible===b.visible;
  const shot=async(name,automatic=true)=>{
   await page.waitForTimeout(220);const d=await read();report.states[name]=d;checkFrame(d,name,automatic);await page.screenshot({path:path.join(out,name+'.png')});return d;
  };
@@ -84,7 +89,7 @@ try{
   }
   report[prefix+'OcclusionFrames']={visibleOccluded,visibleClear};
   const t040=await shot(prefix+'-t040');
-  if(candidate)assert(initial.dataset.e10SolenoidBounds===t040.dataset.e10SolenoidBounds,'automatic framing followed particle time '+prefix);
+  if(candidate){const a=JSON.parse(initial.dataset.e10SolenoidBounds),b=JSON.parse(t040.dataset.e10SolenoidBounds);assert(sameRect(a.bounds,b.bounds)&&sameRect(a.body,b.body)&&JSON.stringify(a.safe)===JSON.stringify(b.safe)&&a.samples===b.samples&&a.bodySamples===b.bodySamples,'automatic framing followed particle time '+prefix);}
   await page.getByTestId('btn-fullscreen-speech').click();await page.getByTestId('fullscreen-controls').waitFor({state:'visible'});await waitState(.4);
   if(candidate)await page.waitForFunction(()=>!!document.querySelector('[data-testid="three-stage-container"]')?.dataset.e10SolenoidBounds);
   const fullscreen=await shot(prefix+'-fullscreen-t040');
@@ -104,9 +109,11 @@ try{
   await page.getByTestId('btn-exit-fullscreen-speech').click();await waitState(.4);
   await page.getByTestId('preset-select').selectOption('helmholtz-uniform-core-3d',{force:true});await page.waitForFunction(()=>document.querySelector('[data-testid="three-stage-container"]')?.dataset.conductorCount==='2');
   await page.getByTestId('preset-select').selectOption('finite-solenoid-3d',{force:true});await waitState(0);
-  const current=page.getByTestId('param-slider-currentI');await current.focus();await current.press('Home');for(let i=0;i<10;i++)await current.press('ArrowRight');
+  const current=page.getByTestId('param-slider-currentI');await current.focus();await current.press('Home');for(let i=0;i<9;i++)await current.press('ArrowRight');
+  await waitState(0,10,-.5);const beforeZero=await shot(prefix+'-before-zero');await current.press('ArrowRight');
   await waitState(0,10,0);await page.waitForFunction(()=>document.querySelector('[data-testid="three-stage-container"]')?.dataset.fieldLineCount==='0');
   const zero=await shot(prefix+'-zero');assert(zero.dataset.renderedFieldArrow==='false'&&zero.dataset.renderedForceArrow==='false','zero current retained field/force arrows');
+  if(candidate){const a=JSON.parse(beforeZero.dataset.e10SolenoidBounds),b=JSON.parse(zero.dataset.e10SolenoidBounds);assert(sameRect(a.body,b.body),'current zero unexpectedly moved camera '+prefix);assert(b.samples===b.bodySamples,'zero current framing claims nonexistent field points');}
   await page.getByTestId('preset-select').selectOption('finite-solenoid-3d',{force:true});await waitState(0,10,2);
   const turns=page.getByTestId('param-slider-solenoidTurns'),radius=page.getByTestId('param-slider-radiusR');
   await turns.focus();await turns.press('End');await waitState(0,16,2);await radius.focus();await radius.press('End');

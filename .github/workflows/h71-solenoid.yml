@@ -17,7 +17,7 @@ jobs:
             sha: 7d4e0036ff76a904df13ba50573fde09b53bfee9
             candidate: 'false'
           - name: candidate
-            sha: 38ff0942389c9c543ceb2879ad52b35264f316b7
+            sha: 001391b55786c68d4553673e07f93feb64c65da7
             candidate: 'true'
     name: Solenoid exact-source replay (${{ matrix.name }})
     steps:
