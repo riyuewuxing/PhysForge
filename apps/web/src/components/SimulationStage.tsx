@@ -295,7 +295,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const fusionStage=plugin.meta.id==='stse-tokamak-magnetic-mirror';
   const autoFrameStage=b1Stage||fusionStage;
   const chaseStage=plugin.meta.id==='mech-kinematics-chase';
-  const cradleStage=plugin.meta.id==='builder-mechanics-lab'&&params.scenario==='newtons-cradle';
+  const cradleStage=plugin.meta.id==='builder-mechanics-lab'&&(params.scenario==='newtons-cradle'||params.scenario==='elastic-collision');
   const contactStage=plugin.meta.id==='mech-block-conveyor';
   const inductionStage=plugin.meta.id==='em-induction-double-rod';
   const verticalStage=plugin.meta.id==='mech-vertical-circular';
@@ -716,12 +716,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       }
     }
-    const cradleAutomatic=p.meta.id==='builder-mechanics-lab'&&pm.scenario==='newtons-cradle'&&
+    const cradleAutomatic=p.meta.id==='builder-mechanics-lab'&&(pm.scenario==='newtons-cradle'||pm.scenario==='elastic-collision')&&
       !userTransformedViewRef.current&&!requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
     if(cradleAutomatic&&drawState!==null){
       const cur=latestRef.current,v=viewportRef.current;
       const bodies=(drawState as SandboxState).bodies;
-      const key=JSON.stringify([v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed,cur.resetNonce]);
+      const key=JSON.stringify([pm.scenario,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed,cur.resetNonce]);
       const fresh=cradleSafeRef.current?.key!==key;
       if(fresh){
         const box=canvas.getBoundingClientRect();
