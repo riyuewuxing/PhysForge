@@ -1,0 +1,64 @@
+name: H74 exact-source E04 and E10 flagship audit
+on:
+  pull_request:
+    branches: ['polish/v31-h74-em-finish']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h74-em')
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline, e10]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 64d83aed009e8507cba1222cf0f782bccf1e40d4
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "64d83aed009e8507cba1222cf0f782bccf1e40d4"
+          cp audit/scripts/h74_e04.mjs audit/scripts/h74_e10.mjs source/scripts/
+          sha256sum source/scripts/h74_*.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        if: matrix.phase != 'offline'
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: |
+          if [ "$PHASE" = e10 ]; then node scripts/h74_e10.mjs; else node scripts/h74_e04.mjs; fi
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          PHASE: ${{ matrix.phase }}
+          SOURCE_HEAD: 64d83aed009e8507cba1222cf0f782bccf1e40d4
+          EXPECTED_SOURCE: 64d83aed009e8507cba1222cf0f782bccf1e40d4
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h74-${{ matrix.phase }}-evidence
+          path: |
+            source/evidence/**/*.png
+            source/evidence/**/report.json
+          if-no-files-found: error
+          retention-days: 7
