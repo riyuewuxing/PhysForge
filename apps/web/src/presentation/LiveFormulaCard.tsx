@@ -51,7 +51,7 @@ const FormulaTile: React.FC<Omit<Props, 'specs'> & { spec: LiveFormulaSpec }> = 
         if (!state.active || !state.binding) { node.hidden = true; return; }
         const binding = state.binding;
         const digits = Math.min(12, Math.max(0, binding.precision ?? 3));
-        text.textContent = `${binding.label}: ${formatLiveFormulaValue(state.value, digits)} ${binding.unit} · ${state.gearLabel}`;
+        text.textContent = `预览 · ${binding.label}: ${formatLiveFormulaValue(state.value, digits)} ${binding.unit} · ${state.gearLabel}`;
         const ratio = binding.max === binding.min ? 0 : (state.value - binding.min) / (binding.max - binding.min);
         fill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
         node.style.left = `${state.anchorX}px`;
@@ -74,7 +74,7 @@ const FormulaTile: React.FC<Omit<Props, 'specs'> & { spec: LiveFormulaSpec }> = 
 
 export const LiveFormulaCard: React.FC<Props> = ({ specs, ...props }) => <div className="space-y-2" data-testid="live-formula-card">
   {specs.map((spec) => <FormulaTile key={spec.id} spec={spec} {...props} />)}
-  <div className="text-[10px] text-slate-400">拖动带虚线的字母调参，垂直偏移或 Shift 精调，双击恢复默认。</div>
+  <div className="text-[10px] text-slate-400">拖动虚线字母预览参数，实时数值随仿真更新；松手提交最终值。垂直偏移或 Shift 精调，双击恢复默认。</div>
 </div>;
 
 export default LiveFormulaCard;
