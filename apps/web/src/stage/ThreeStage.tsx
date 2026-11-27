@@ -253,6 +253,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [e10Mode,setE10Mode]=useState<E10FrameMode>('domain');
+  const [e10Automatic,setE10Automatic]=useState(initialB1AutoFit&&b1AutoFitAllowed);
   const e10ModeRequest=useRef<{mode:E10FrameMode;nonce:number}>({mode:'domain',nonce:0});
   const selectE10Mode=(mode:E10FrameMode)=>{
     if(!b1AutoFitAllowed||morphTarget!==0)return;
@@ -484,6 +485,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     let lastMagneticSceneKey='',lastMagneticProjectionKey='';
     let lastMagneticShapeLayout='',magneticSceneSafe:E10ScreenRect|null=null,magneticSceneObstacles:E10ScreenRect[]=[];
     let lastE10ModeNonce=e10ModeRequest.current.nonce;
+    let lastE10Automatic=initialB1AutoFit&&b1PolicyRef.current.allowed;
     let magneticLayoutKey='',magneticLayoutAt=-Infinity;
     const measureE10Overlays=(presentation:boolean)=>{
       const box=container.getBoundingClientRect();
@@ -1057,7 +1059,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           e10Ring.style.transform='translate3d('+p.x+'px,'+p.y+'px,0) translate(-50%,-50%)';
         }
         container.dataset.e10ParticleProjection=JSON.stringify(p);
-        container.dataset.e10AutoFit=String(b1AutoFit&&b1Policy.allowed);
+        const automatic=b1AutoFit&&b1Policy.allowed;
+        container.dataset.e10AutoFit=String(automatic);
+        // Only ownership transitions enter React state; never publish rAF
+        // positions or per-step particle coordinates into the component.
+        if(lastE10Automatic!==automatic){lastE10Automatic=automatic;setE10Automatic(automatic);}
       }
       if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget,renderCamera,isBoundedStage,isTokamak3d?(frameParams as TokamakMirrorParams).mode:undefined);
       renderer.render(scene, renderCamera);
@@ -1194,7 +1200,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       {plugin.meta.id === 'astro-orbital-mechanics' && <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded bg-slate-950/80 p-2 text-[11px] text-slate-200">轨道使用归一化长度 · 天体尺寸为示意{params.mode === 'binary-lagrange' && activeLayers.has('corotatingView') ? ' · 共转系不绘制无逐点时刻的历史轨迹' : params.mode === 'hohmann-transfer' ? ' · 橙色标记为引擎记录的点火' : ''}</div>}
       <div data-testid={e10Solenoid?'e10-legend-stack':undefined} className={e10Solenoid?`pointer-events-none absolute left-3 ${presentationMode?'top-[80px]':'top-3'} z-10 flex max-w-[360px] flex-col items-start gap-1`:'contents'}>
       {vectorsVisible && (
-        <div data-testid="three-vector-legend" className={`pointer-events-none ${e10Solenoid?'relative':`absolute ${presentationMode?'bottom-3 left-3':'left-3 top-3'} z-10`} flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-white/10 bg-slate-950/75 px-3 py-2 text-[11px] text-slate-200 shadow-lg backdrop-blur`}>
+        <div data-testid="three-vector-legend" className={`pointer-events-none ${e10Solenoid?'relative':`absolute ${presentationMode?'bottom-3 left-3':'left-3 top-3'} z-10`} ${e10Solenoid?'flex flex-wrap items-center gap-x-3 gap-y-1':'flex items-center gap-3'} rounded-lg border border-white/10 bg-slate-950/75 px-3 py-2 text-[11px] text-slate-200 shadow-lg backdrop-blur`}>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-amber-300" />v 速度</span>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-rose-400" />aₗ 洛伦兹加速度</span>
           <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-sky-400" />B 磁场</span>
@@ -1203,8 +1209,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       )}
       {plugin.meta.id==='em-3d-magnetic-fields'&&<div data-testid="e10-focus-legend" className={`pointer-events-none ${e10Solenoid?'relative':`absolute ${presentationMode?'bottom-[45px] left-3':'left-3 top-[46px]'} z-10`} max-w-[360px] rounded-md border border-white/10 bg-slate-950/85 px-2 py-1 text-[11px] font-medium leading-relaxed text-slate-200`}>
         {params.geometryType==='finite-solenoid'&&<div className="mb-1 flex flex-wrap items-center gap-1.5" role="group" aria-label="螺线管取景">
-          {(['domain','body'] as const).map(mode=><button key={mode} type="button" data-testid={'e10-frame-'+mode} aria-pressed={e10Mode===mode} disabled={!b1AutoFitAllowed||morphTarget!==0} onClick={()=>selectE10Mode(mode)} className={`pointer-events-auto rounded border px-2 py-1 font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-300 disabled:opacity-40 ${e10Mode===mode?'border-sky-300/70 bg-sky-400/20 text-sky-100':'border-white/15 text-slate-300 hover:bg-white/10'}`}>{mode==='domain'?'全域磁场':'线圈特写'}</button>)}
-          <span data-testid="e10-frame-caption" className="text-slate-300">{e10Mode==='body'?'局部取景 · 外围场线可出画':'全域取景'}</span>
+          {(['domain','body'] as const).map(mode=><button key={mode} type="button" data-testid={'e10-frame-'+mode} aria-pressed={e10Automatic&&b1AutoFitAllowed&&e10Mode===mode} disabled={!b1AutoFitAllowed||morphTarget!==0} onClick={()=>selectE10Mode(mode)} className={`pointer-events-auto rounded border px-2 py-1 font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-300 disabled:opacity-40 ${e10Automatic&&b1AutoFitAllowed&&e10Mode===mode?'border-sky-300/70 bg-sky-400/20 text-sky-100':'border-white/15 text-slate-300 hover:bg-white/10'}`}>{mode==='domain'?'全域磁场':'线圈特写'}</button>)}
+          <span data-testid="e10-frame-caption" className="text-slate-300">{!b1AutoFitAllowed?'分镜 / 回放镜头':!e10Automatic?'手动视角 · 点击重取景':e10Mode==='body'?'局部取景 · 外围场线可出画':'全域取景'}</span>
         </div>}
         {params.geometryType==='finite-solenoid'&&activeLayers.has('fieldLines3d')?'亮线：z-y 观察剖面 · 淡线：其他空间采样（非场强） · ':''}虚线环：粒子中心被导体遮挡
       </div>}
