@@ -29,6 +29,8 @@ type CollisionStagePlugin=typeof import('../../../../simulations/mech-collision-
 import type { RigidRollingParams } from '../../../../simulations/comp-rigid-rolling-slip/engine.js';
 type RollingStagePlugin=typeof import('../../../../simulations/comp-rigid-rolling-slip/plugin.js').compRigidRollingSlipPlugin;
 import type { ChaosNormalCoriolisParams,ChaosNormalCoriolisState } from '../../../../simulations/comp-chaos-normal-coriolis/engine.js';
+import type {RelativityQuantumParams} from '../../../../simulations/comp-relativity-quantum-tunneling/engine.js';
+type RelativityStagePlugin=typeof import('../../../../simulations/comp-relativity-quantum-tunneling/plugin.js').compRelativityQuantumTunnelingPlugin;
 type AdvancedStagePlugin=typeof import('../../../../simulations/comp-chaos-normal-coriolis/plugin.js').compChaosNormalCoriolisPlugin;
 import {DISPLAY_LENGTH_PER_M} from '../../../../simulations/em-capacitor-millikan/engine.js';
 import {CRT_CM_PER_DRAW_UNIT} from '../../../../simulations/em-ac-field-oscilloscope/engine.js';
@@ -295,6 +297,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const springStage=plugin.meta.id==='mech-spring-separation';
   const collisionStage=plugin.meta.id==='mech-collision-recoil';
   const rollingStage=plugin.meta.id==='comp-rigid-rolling-slip';
+  const relativityStage=plugin.meta.id==='comp-relativity-quantum-tunneling',relativityStaticStage=relativityStage&&params.mode==='minkowski-relativity';
   const advancedStage=plugin.meta.id==='comp-chaos-normal-coriolis';
   const shmStage=plugin.meta.id==='mech-shm-resonance';
   const electroStage=plugin.meta.id==='em-electrostatic-field';
@@ -315,7 +318,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const quantumStaticStage=plugin.meta.id==='modern-photoelectric-compton';
   const atomicStage=plugin.meta.id==='modern-rutherford-bohr',atomicStaticStage=atomicStage&&params.mode==='bohr';
   const nuclearStage=plugin.meta.id==='modern-nuclear-recoil-decay',nuclearStaticStage=nuclearStage&&params.mode!=='half-life-mc';
-  const thermoStaticStage=(thermoStage&&params.mode!=='stop-pin-cylinder')||(thermalCycleStage&&params.mode!=='kinetic-md-box')||quantumStaticStage||atomicStaticStage||nuclearStaticStage;
+  const thermoStaticStage=(thermoStage&&params.mode!=='stop-pin-cylinder')||(thermalCycleStage&&params.mode!=='kinetic-md-box')||quantumStaticStage||atomicStaticStage||nuclearStaticStage||relativityStaticStage;
   const shmCameraKeyRef=useRef('');
   const morphInThisView=Boolean((presentationMode||autoFrameStage)&&spatial);
   const showThree = view3dEnabled || Boolean(morphInThisView && heldThreeId === plugin.meta.id);
@@ -362,7 +365,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const [defaultA, defaultB] = getDefaultScopeChannels(plugin.meta.id, params, plugin.getTelemetryChannels?channels:plugin.telemetryChannels);
     setChannelA(defaultA);
     setChannelB(defaultB);
-  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics','mech-conical-turntable','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','wave-vibration-coupling'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined,plugin.getTelemetryChannels?params.template:undefined,capacitorStage?params.oilDropEnabled:undefined,magneticStage?params.geometryType:undefined,thermalCycleStage||atomicStage||nuclearStage||orbitCompareStage||advancedStage?params.mode:undefined,nuclearStage?params.magneticFieldT:undefined]);
+  }, [plugin.meta.id, params.rodMode, plugin.meta.id === 'modern-photoelectric-compton' ? params.mode : undefined, plugin.meta.id === 'builder-circuit-mna' ? params.topology : undefined, plugin.meta.id==='stse-em-devices-suite'?params.device:undefined,['stse-tokamak-magnetic-mirror','astro-orbital-mechanics','mech-conical-turntable','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','wave-vibration-coupling'].includes(plugin.meta.id)?params.mode:undefined,plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined,plugin.getTelemetryChannels?params.template:undefined,capacitorStage?params.oilDropEnabled:undefined,magneticStage?params.geometryType:undefined,thermalCycleStage||atomicStage||nuclearStage||orbitCompareStage||advancedStage||relativityStage?params.mode:undefined,nuclearStage?params.magneticFieldT:undefined]);
 
   // 全部高频物理数据放入 ref，杜绝每帧触发 React 重渲染
   const simStateRef = useRef<unknown>(null);
@@ -407,6 +410,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const chaseSafeRef=useRef<{key:string;safe:ChaseSafeRect}|null>(null);
   const constrainedFitKeyRef=useRef('');
   const rollingFitKeyRef=useRef('');
+  const relativityFitKeyRef=useRef('');
   const advancedSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const projectileSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const contactSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
@@ -431,7 +435,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const initialCamera = resolveInitialCameraTransform(v2, latestRef.current.params, width, height);
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
-    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;rollingFitKeyRef.current='';advancedSafeRef.current=null;
+    b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;rollingFitKeyRef.current='';advancedSafeRef.current=null;relativityFitKeyRef.current='';
     chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
@@ -862,6 +866,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       if(fresh||b.left<safe.left-.5||b.right>safe.right+.5||b.top<safe.top-.5||b.bottom>safe.bottom+.5){
         const next=model.fitAdvancedViewport(ss,pp,v,safe);
         if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(next.scale/Math.max(1e-6,baseScaleRef.current)*100));}
+      }
+    }
+    const relativityAutomatic=p.meta.id==='comp-relativity-quantum-tunneling'&&!userTransformedViewRef.current&&!requestedStoryDeckRef.current&&!dragModeRef.current;
+    if(relativityAutomatic&&drawState!==null){
+      const model=p as unknown as RelativityStagePlugin,cur=latestRef.current,v=viewportRef.current,pp=pm as RelativityQuantumParams;
+      const key=JSON.stringify([cur.resetNonce,pp.mode,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      if(relativityFitKeyRef.current!==key){
+        const box=canvas.getBoundingClientRect(),panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect(),dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const right=cur.presentationMode||cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-300):v.width-26;
+        const bottom=cur.presentationMode||(!cur.oscilloscopeCollapsed&&pp.mode!=='minkowski-relativity')?Math.min(v.height-175,dock&&dock.height>0?dock.top-box.top-14:v.height-180):v.height-76;
+        const next=model.fitRelativityViewport(pp,v,{left:30,right,top:cur.presentationMode?90:28,bottom});
+        if(next){relativityFitKeyRef.current=key;cameraRef.current=next;viewportRef.current=next;baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(100);}
       }
     }
     const capacitorAutomatic=p.meta.id==='em-capacitor-millikan'&&!userTransformedViewRef.current&&
@@ -1344,7 +1360,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     const { channelA: chA, channelB: chB } = latestRef.current;
     const ts: number[] = new Array(snaps.length);
     const circuit=latestRef.current.plugin.meta.id==='builder-circuit-mna';
-    const mechanics=['comp-chaos-normal-coriolis','comp-rigid-rolling-slip','builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(latestRef.current.plugin.meta.id)||latestRef.current.plugin.meta.id==='builder-custom-ode-lab'||latestRef.current.plugin.meta.id==='stse-gravity-assist-rendezvous'||(latestRef.current.plugin.meta.id==='stse-em-launch-regen-brake'&&latestRef.current.params.mode==='regen-brake');
+    const mechanics=['comp-relativity-quantum-tunneling','comp-chaos-normal-coriolis','comp-rigid-rolling-slip','builder-mechanics-lab','mech-kinematics-chase','mech-dynamic-equilibrium','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(latestRef.current.plugin.meta.id)||latestRef.current.plugin.meta.id==='builder-custom-ode-lab'||latestRef.current.plugin.meta.id==='stse-gravity-assist-rendezvous'||(latestRef.current.plugin.meta.id==='stse-em-launch-regen-brake'&&latestRef.current.params.mode==='regen-brake');
     const seriesA: (number|null)[] = new Array(snaps.length);
     const seriesB: (number|null)[] = new Array(snaps.length);
     for (let i = 0; i < snaps.length; i++) {
@@ -1566,7 +1582,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   // Publish its paused frame before paint, without changing continuous cadence.
   useLayoutEffect(()=>{
     const current=latestRef.current;
-    if(!['comp-chaos-normal-coriolis','comp-rigid-rolling-slip','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(current.plugin.meta.id)&&current.plugin.meta.id!=='stse-gravity-assist-rendezvous'&&!(current.plugin.meta.id==='stse-em-launch-regen-brake'&&current.params.mode==='regen-brake')||isPlaying)return;
+    if(!['comp-relativity-quantum-tunneling','comp-chaos-normal-coriolis','comp-rigid-rolling-slip','mech-constrained-velocity','mech-projectile-coupling','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd','thermo-piston-gas-laws','thermo-cycles-kinetic-md','modern-rutherford-bohr','modern-nuclear-recoil-decay'].includes(current.plugin.meta.id)&&current.plugin.meta.id!=='stse-gravity-assist-rendezvous'&&!(current.plugin.meta.id==='stse-em-launch-regen-brake'&&current.params.mode==='regen-brake')||isPlaying)return;
     if(current.scrubTime===null&&simStateModelIdRef.current===current.plugin.meta.id&&
       simStateResetNonceRef.current===current.resetNonce&&simStateRef.current!==null&&simulationTimeRef.current>lastSnapshotTRef.current){
       const state=simStateRef.current,t=simulationTimeRef.current;
@@ -1624,7 +1640,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     lastSnapshotTRef.current = stepT;
 
     renderFrameToCanvas();
-    syncUPlotData(['comp-chaos-normal-coriolis','comp-rigid-rolling-slip','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd'].includes(latestRef.current.plugin.meta.id));
+    syncUPlotData(['comp-relativity-quantum-tunneling','comp-chaos-normal-coriolis','comp-rigid-rolling-slip','mech-block-conveyor','mech-vertical-circular','mech-conical-turntable','mech-spring-separation','mech-collision-recoil','mech-shm-resonance','em-electrostatic-field','em-capacitor-millikan','em-ac-field-oscilloscope','em-wireframe-rotation','em-eddy-vortex-field','em-ac-generator-rms','em-lc-rlc-oscillation','em-3d-magnetic-fields','wave-vibration-coupling','wave-2d-ripple-fdtd'].includes(latestRef.current.plugin.meta.id));
     emitTelemetrySummary(true);
   }, [stepOnceNonce]);
 
@@ -1838,7 +1854,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const equilibriumScope=plugin.meta.id==='mech-dynamic-equilibrium';
   const constrainedScope=plugin.meta.id==='mech-constrained-velocity';
   const projectileScope=plugin.meta.id==='mech-projectile-coupling';
-  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||shmStage||electroStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||magneticStage||waveStage||rippleStage||thermoStage||thermalCycleStage||atomicStage||nuclearStage||orbitCompareStage;
+  const measuredScope=circuitScope||mechanicsScope||odeScope||chaseScope||equilibriumScope||constrainedScope||projectileScope||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||electroStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||magneticStage||waveStage||rippleStage||thermoStage||thermalCycleStage||atomicStage||nuclearStage||orbitCompareStage;
   const contactPair=contactStage&&((channelA==='vBlock'&&channelB==='vCarrier')||(channelA==='vCarrier'&&channelB==='vBlock'));
   const semanticScope=heroScope||measuredScope;
   const splitScopeUnits = semanticScope && !!specA && !!specB && (specA.unit !== specB.unit||(orbitScope&&params.mode==='binary-lagrange'&&specA.key!==specB.key));
@@ -1880,7 +1896,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         {
           stroke: textColor,
           grid: { stroke: gridColor, width: 1 },
-          values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + (thermalCycleStage||orbitCompareStage?'*':'s') : `${v.toFixed(1)}s`),
+          values: (_u, splits) => splits.map((v) => measuredScope ? Number(v.toPrecision(4)) + (thermalCycleStage||orbitCompareStage||relativityStage?'*':'s') : `${v.toFixed(1)}s`),
           ...(deviceScope||atomicStage ? { label: '演示时间（非物理飞行时间）', labelSize: 13 } : {}),
           ...(heroScope ? { size: 30 } : measuredScope ? { size: 24 } : {})
         },
@@ -1896,7 +1912,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }] : [])
       ],
       series: [
-        { label: atomicStage?'演示时间 (s)':thermalCycleStage||orbitCompareStage?'约化时间 t*':'时间 t (s)' },
+        { label: atomicStage?'演示时间 (s)':thermalCycleStage||orbitCompareStage||relativityStage?'约化时间 t*':'时间 t (s)' },
         {
           label: specA ? `${specA.label} (${specA.unit})` : '通道 A',
           stroke: scopeColorA,
@@ -2033,7 +2049,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
-                  if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+                  if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -2059,7 +2075,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               // Like OrbitControls' start, pointer-down establishes camera
               // ownership before the first movement; a resize/fit cannot race
               // the teacher between gesture start and its first delta.
-              if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+              if(autoFrameStage||chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {
@@ -2153,7 +2169,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (e.pointerType === 'touch') hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = hoveredHandleIdRef.current ? 'pointer' : 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerCancel={(e) => {
               activePointersRef.current.clear();
@@ -2162,7 +2178,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerLeave={(e) => {
               if (e.pointerType === 'touch' || dragModeRef.current) return;
@@ -2337,7 +2353,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           <div className={`relative overflow-hidden ${heroScope ? 'pf-hero-scope-chart' : measuredScope ? 'h-[104px]' : 'h-[76px]'}`}>
             <div ref={uplotWrapRef} data-testid="uplot-container" className="w-full" />
             {heroScope && <div data-testid="scope-empty" className="pf-scope-empty absolute inset-0 place-items-center text-xs" style={{color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
-            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={advancedStage?'f11-scope-empty':rollingStage?'f10-scope-empty':atomicStage?'f04-scope-empty':thermalCycleStage?'f02-scope-empty':thermoStage?'f01-scope-empty':rippleStage?'ripple-scope-empty':waveStage?'wave-scope-empty':magneticStage?'magnetic-scope-empty':lcStage?'lc-scope-empty':generatorStage?'generator-scope-empty':eddyStage?'eddy-scope-empty':wireStage?'wire-scope-empty':acStage?'ac-scope-empty':capacitorStage?'capacitor-scope-empty':electroStage?'electro-scope-empty':shmStage?'shm-scope-empty':collisionStage?'collision-scope-empty':springStage?'spring-scope-empty':turntableStage?'turntable-scope-empty':verticalStage?'vertical-scope-empty':contactStage?'contact-scope-empty':equilibriumScope?'equilibrium-scope-empty':constrainedScope?'constrained-scope-empty':projectileScope?'projectile-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
+            {measuredScope && <div ref={circuitScopeEmptyRef} data-testid={relativityStage?'f12-scope-empty':advancedStage?'f11-scope-empty':rollingStage?'f10-scope-empty':atomicStage?'f04-scope-empty':thermalCycleStage?'f02-scope-empty':thermoStage?'f01-scope-empty':rippleStage?'ripple-scope-empty':waveStage?'wave-scope-empty':magneticStage?'magnetic-scope-empty':lcStage?'lc-scope-empty':generatorStage?'generator-scope-empty':eddyStage?'eddy-scope-empty':wireStage?'wire-scope-empty':acStage?'ac-scope-empty':capacitorStage?'capacitor-scope-empty':electroStage?'electro-scope-empty':shmStage?'shm-scope-empty':collisionStage?'collision-scope-empty':springStage?'spring-scope-empty':turntableStage?'turntable-scope-empty':verticalStage?'vertical-scope-empty':contactStage?'contact-scope-empty':equilibriumScope?'equilibrium-scope-empty':constrainedScope?'constrained-scope-empty':projectileScope?'projectile-scope-empty':chaseScope?'chase-scope-empty':odeScope?'ode-scope-empty':mechanicsScope?'b4-scope-empty':'b2-scope-empty'} className="absolute inset-0 place-items-center text-xs" style={{display:'grid',color:'var(--pf-text-muted)'}}>运行或单步后显示真实采样曲线</div>}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/85 text-xs font-semibold text-amber-300">
                 示波器曲线已在 POE 预测阶段遮蔽

@@ -172,6 +172,7 @@ export function isNonTimeSeriesModel(modelId: string, params: ParamRecord): bool
   if(modelId==='thermo-piston-gas-laws')return params.mode!=='stop-pin-cylinder';
   if(modelId==='thermo-cycles-kinetic-md')return params.mode!=='kinetic-md-box';
   if(modelId==='modern-photoelectric-compton')return true;
+  if(modelId==='comp-relativity-quantum-tunneling')return params.mode==='minkowski-relativity';
   if(modelId==='modern-rutherford-bohr')return params.mode==='bohr';
   if (modelId === 'circuit-dc-capacitor-mna' || modelId === 'builder-circuit-mna') {
     const dynamicTopologies = new Set(['rc-transient', 'rc-bridge-charge', 'series-parallel-dynamic']);
@@ -370,7 +371,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
       autoFreezeBadge: null,
       paramContextEpoch: s.paramContextEpoch + (contextChanged ? 1 : 0),
       ...((plugin.getParamFields||plugin.meta.id==='mech-kinematics-chase')?{isPlaying:false}:{}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'topology')||((plugin.meta.id==='thermo-piston-gas-laws'||plugin.meta.id==='thermo-cycles-kinetic-md'||plugin.meta.id==='modern-rutherford-bohr')&&Object.prototype.hasOwnProperty.call(patch,'mode'))
+      ...(Object.prototype.hasOwnProperty.call(patch, 'topology')||((plugin.meta.id==='thermo-piston-gas-laws'||plugin.meta.id==='thermo-cycles-kinetic-md'||plugin.meta.id==='modern-rutherford-bohr'||plugin.meta.id==='comp-relativity-quantum-tunneling')&&Object.prototype.hasOwnProperty.call(patch,'mode'))
         ? { oscilloscopeCollapsed: isNonTimeSeriesModel(plugin.meta.id, resolved) }
         : {}),
       canUndo: paramCommandStack.canUndo(plugin.meta.id),
@@ -387,7 +388,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       activePresetId: null,
       params: entry.beforeParams,
-      ...((s.loadedPlugin.meta.id==='thermo-piston-gas-laws'||s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'||s.loadedPlugin.meta.id==='modern-rutherford-bohr')?{isPlaying:false,oscilloscopeCollapsed:isNonTimeSeriesModel(s.loadedPlugin.meta.id,entry.beforeParams)}:{}),
+      ...((s.loadedPlugin.meta.id==='thermo-piston-gas-laws'||s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'||s.loadedPlugin.meta.id==='modern-rutherford-bohr'||s.loadedPlugin.meta.id==='comp-relativity-quantum-tunneling')?{isPlaying:false,oscilloscopeCollapsed:isNonTimeSeriesModel(s.loadedPlugin.meta.id,entry.beforeParams)}:{}),
       scrubTime: null,
       autoFreezeBadge: null,
       paramContextEpoch: s.paramContextEpoch + 1,
@@ -405,7 +406,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       activePresetId: null,
       params: entry.afterParams,
-      ...((s.loadedPlugin.meta.id==='thermo-piston-gas-laws'||s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'||s.loadedPlugin.meta.id==='modern-rutherford-bohr')?{isPlaying:false,oscilloscopeCollapsed:isNonTimeSeriesModel(s.loadedPlugin.meta.id,entry.afterParams)}:{}),
+      ...((s.loadedPlugin.meta.id==='thermo-piston-gas-laws'||s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'||s.loadedPlugin.meta.id==='modern-rutherford-bohr'||s.loadedPlugin.meta.id==='comp-relativity-quantum-tunneling')?{isPlaying:false,oscilloscopeCollapsed:isNonTimeSeriesModel(s.loadedPlugin.meta.id,entry.afterParams)}:{}),
       scrubTime: null,
       autoFreezeBadge: null,
       paramContextEpoch: s.paramContextEpoch + 1,
@@ -422,11 +423,11 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
         : [...s.activeLayers, layerId]
     })),
 
-  setPlaying: (playing) => set((s) => ({ isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton'||(s.loadedPlugin.meta.id==='modern-rutherford-bohr'&&s.params.mode==='bohr'))?false:playing, scrubTime: playing ? null : s.scrubTime,
+  setPlaying: (playing) => set((s) => ({ isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton'||(s.loadedPlugin.meta.id==='modern-rutherford-bohr'&&s.params.mode==='bohr')||(s.loadedPlugin.meta.id==='comp-relativity-quantum-tunneling'&&s.params.mode==='minkowski-relativity'))?false:playing, scrubTime: playing ? null : s.scrubTime,
     autoFreezeBadge: playing ? null : s.autoFreezeBadge })),
   togglePlaying: () =>
     set((s) => ({
-      isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton'||(s.loadedPlugin.meta.id==='modern-rutherford-bohr'&&s.params.mode==='bohr'))?false:!s.isPlaying,
+      isPlaying: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton'||(s.loadedPlugin.meta.id==='modern-rutherford-bohr'&&s.params.mode==='bohr')||(s.loadedPlugin.meta.id==='comp-relativity-quantum-tunneling'&&s.params.mode==='minkowski-relativity'))?false:!s.isPlaying,
       scrubTime: !s.isPlaying ? null : s.scrubTime,
       autoFreezeBadge: !s.isPlaying ? null : s.autoFreezeBadge
     })),
@@ -531,7 +532,7 @@ export const useClassroomStore = create<ClassroomStore>((set, get) => ({
     set((s) => ({
       isPlaying: false,
       scrubTime: null,
-      stepOnceNonce: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton'||(s.loadedPlugin.meta.id==='modern-rutherford-bohr'&&s.params.mode==='bohr'))?s.stepOnceNonce:s.stepOnceNonce + 1
+      stepOnceNonce: (s.loadedPlugin.meta.id==='optics-wave-interference'||(s.loadedPlugin.meta.id==='thermo-piston-gas-laws'&&s.params.mode!=='stop-pin-cylinder')||(s.loadedPlugin.meta.id==='thermo-cycles-kinetic-md'&&s.params.mode!=='kinetic-md-box')||s.loadedPlugin.meta.id==='modern-photoelectric-compton'||(s.loadedPlugin.meta.id==='modern-rutherford-bohr'&&s.params.mode==='bohr')||(s.loadedPlugin.meta.id==='comp-relativity-quantum-tunneling'&&s.params.mode==='minkowski-relativity'))?s.stepOnceNonce:s.stepOnceNonce + 1
     })),
   setScrubTime: (t) => set({ scrubTime: t }),
   setTelemetry: (telemetry) => set({ telemetry })
