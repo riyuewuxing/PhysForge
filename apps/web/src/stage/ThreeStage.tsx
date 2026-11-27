@@ -9,7 +9,7 @@ import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraD
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop, e10ConductorRadius, e10CopperMaterial, e10FluxCoreMaterial, e10FluxHaloMaterial, e10GridLineGeometry } from './spatialMaterials.js';
 import { fitFusionSpatialFrame,projectFusionFrame } from './fusionFraming.js';
-import { E10ParticleProjection,e10FluxRole } from './e10SceneFocus.js';
+import { E10ParticleProjection,e10FluxRole,e10ProjectedCloudOverlaps,type E10ScreenRect } from './e10SceneFocus.js';
 import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
 import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
@@ -475,6 +475,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     if(isBoundedStage||isTokamak3d||isMag3d)controls.addEventListener('start',lockB1Camera);
     let magneticSceneFitKey='',magneticScenePoints:THREE.Vector3[]=[],magneticBodyPoints:THREE.Vector3[]=[];
     let lastMagneticSceneKey='',lastMagneticProjectionKey='';
+    let lastMagneticShapeLayout='',magneticSceneSafe:E10ScreenRect|null=null,magneticSceneObstacles:E10ScreenRect[]=[];
 
     const velocityLabelAnchor = new THREE.Vector3();
     const forceLabelAnchor = new THREE.Vector3();
@@ -871,7 +872,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
       const b1Policy=b1PolicyRef.current;
       if(isBoundedStage||isTokamak3d||isMag3d){
-        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';magneticSceneFitKey='';lastMagneticProjectionKey='';b1FramedAt=-Infinity;dirty=true;}
+        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';magneticSceneFitKey='';lastMagneticProjectionKey='';lastMagneticShapeLayout='';b1FramedAt=-Infinity;dirty=true;}
         if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
         b1LastPolicy=b1Policy;
       }
@@ -942,12 +943,51 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             for(const line of getMagneticDisplayFieldLines(p))for(const q of line)magneticScenePoints.push(mapMagneticPoint(q));
           }
           const key=JSON.stringify([geometryKey,rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed]);
-          const safe=fusionSafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
+          const conservative=fusionSafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
           if(b1AutoFit&&b1Policy.allowed&&key!==magneticSceneFitKey&&magneticScenePoints.length){
-            morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
-            fitFusionSpatialFrame(morph,magneticScenePoints,rw,rh,safe);
-            controls.target.copy(morph.getOrbitTarget());controls.update();magneticSceneFitKey=key;
+            const shapeLayout=JSON.stringify([magneticFrameKey(p),solenoid?p.solenoidTurns:null,rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed]);
+            // Turning current off removes curves, not the conductor or the
+            // teacher's framing. Keep the previous view of this same shape.
+            const holdZero=solenoid&&p.currentI===0&&lastMagneticShapeLayout===shapeLayout&&magneticSceneSafe!==null;
+            if(!holdZero){
+              morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
+              magneticSceneSafe=conservative;magneticSceneObstacles=[];
+              if(solenoid){
+                const box=container.getBoundingClientRect();
+                const localRect=(selector:string):E10ScreenRect|null=>{
+                  const node=document.querySelector(selector);
+                  if(!node)return null;
+                  const r=node.getBoundingClientRect();
+                  if(r.width<=0||r.height<=0||getComputedStyle(node).visibility==='hidden')return null;
+                  return {left:r.left-box.left,right:r.right-box.left,top:r.top-box.top,bottom:r.bottom-box.top};
+                };
+                const panel=localRect(b1Policy.presentation?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]');
+                const dock=localRect(b1Policy.presentation?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]');
+                magneticSceneObstacles=[panel,dock].filter((r):r is E10ScreenRect=>r!==null);
+                // A fullscreen formula card occupies only a corner, not an
+                // entire vertical strip. Try the larger real available stage
+                // first, then a narrower fit, then the established safe area.
+                const bottom=dock?Math.min(rh-24,dock.top-12):conservative.bottom;
+                const top=b1Policy.presentation?54:38;
+                const right=b1Policy.presentation?rw-24:panel?panel.left-12:conservative.right;
+                const broad={left:30,right,top,bottom};
+                const middle={...broad,right:(right+conservative.right)/2};
+                const narrow={...broad,right:panel?Math.min(right,panel.left-16):conservative.right};
+                let accepted=false;
+                for(const trial of [broad,middle,narrow,conservative]){
+                  if(trial.right-trial.left<150||trial.bottom-trial.top<150)continue;
+                  const bounds=fitFusionSpatialFrame(morph,magneticScenePoints,rw,rh,trial);
+                  const view=morph.getActiveCamera();
+                  if(!fusionScreenFits(bounds,trial,24)||magneticSceneObstacles.some(r=>e10ProjectedCloudOverlaps(magneticScenePoints,view,rw,rh,r,15)))continue;
+                  magneticSceneSafe=trial;accepted=true;break;
+                }
+                if(!accepted)fitFusionSpatialFrame(morph,magneticScenePoints,rw,rh,conservative);
+              }else fitFusionSpatialFrame(morph,magneticScenePoints,rw,rh,conservative);
+              controls.target.copy(morph.getOrbitTarget());controls.update();
+            }
+            magneticSceneFitKey=key;lastMagneticShapeLayout=shapeLayout;
           }
+          const safe=magneticSceneSafe??conservative;
           const view=morph.getActiveCamera();view.updateMatrixWorld(true);
           // Thousands of static samples need projection only when the actual
           // camera/geometry/layout changes, not at every particle integration step.
@@ -957,7 +997,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             const bounds=projectFusionFrame(magneticScenePoints,view,rw,rh);
             if(solenoid){
               const body=projectFusionFrame(magneticBodyPoints,view,rw,rh);
-              container.dataset.e10SolenoidBounds=JSON.stringify({bounds,body,safe,samples:magneticScenePoints.length,bodySamples:magneticBodyPoints.length});
+              container.dataset.e10SolenoidBounds=JSON.stringify({bounds,body,safe,samples:magneticScenePoints.length,bodySamples:magneticBodyPoints.length,overlays:magneticSceneObstacles,overlaps:magneticSceneObstacles.filter(r=>e10ProjectedCloudOverlaps(magneticScenePoints,view,rw,rh,r,15)).length});
               delete container.dataset.e10WireBounds;
             }else{
               container.dataset.e10WireBounds=JSON.stringify({bounds,safe});
@@ -965,7 +1005,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             }
           }
         }else{
-          magneticSceneFitKey='';lastMagneticSceneKey='';lastMagneticProjectionKey='';magneticScenePoints=[];magneticBodyPoints=[];
+          magneticSceneFitKey='';lastMagneticSceneKey='';lastMagneticProjectionKey='';lastMagneticShapeLayout='';magneticSceneSafe=null;magneticSceneObstacles=[];magneticScenePoints=[];magneticBodyPoints=[];
           delete container.dataset.e10WireBounds;delete container.dataset.e10SolenoidBounds;
         }
       }

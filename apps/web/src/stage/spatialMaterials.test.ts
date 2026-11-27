@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import * as THREE from 'three';
-import {e10FluxRole,E10ParticleProjection} from './e10SceneFocus.js';
+import {e10FluxRole,E10ParticleProjection,e10ProjectedCloudOverlaps} from './e10SceneFocus.js';
 import {getMagneticDisplayFieldLines,type Magnetic3dParams} from '@physforge/simulations/em-3d-magnetic-fields/engine';
 import {e10ConductorRadius,e10CopperMaterial,e10FluxCoreMaterial,e10FluxHaloMaterial,e10GridLineGeometry,coilCopperMaterial,applyFluxEndpointFade} from './spatialMaterials.js';
 describe('E10 visual-only geometry and materials',()=>{
@@ -103,5 +103,17 @@ describe('H71 E10 clip-aware occlusion',()=>{
     mesh.position.z=3;mesh.updateMatrixWorld(true);
     expect(focus.read(center,.05,camera,[mesh],800,800).occluded).toBe(true);
     mesh.geometry.dispose();mesh.material.dispose();
+  });
+});
+
+describe('H71 E10 screen-space obstacle fit',()=>{
+  it('detects actual visible projected points and keeps screen-space margins',()=>{
+    const camera=new THREE.OrthographicCamera(-2,2,2,-2,.1,20);camera.position.set(0,0,5);camera.lookAt(0,0,0);camera.updateMatrixWorld(true);
+    const rect={left:600,right:790,top:20,bottom:300};
+    expect(e10ProjectedCloudOverlaps([{x:1.2,y:1,z:0}],camera,800,800,rect)).toBe(true);
+    expect(e10ProjectedCloudOverlaps([{x:.95,y:1,z:0}],camera,800,800,rect,12)).toBe(true);
+    expect(e10ProjectedCloudOverlaps([{x:.8,y:1,z:0}],camera,800,800,rect,12)).toBe(false);
+    expect(e10ProjectedCloudOverlaps([{x:1.2,y:-1,z:0}],camera,800,800,rect)).toBe(false);
+    expect(e10ProjectedCloudOverlaps([{x:1.2,y:1,z:6}],camera,800,800,rect)).toBe(false);
   });
 });
