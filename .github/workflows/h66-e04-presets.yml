@@ -1,0 +1,51 @@
+name: H66 E04 all-preset visual regression
+on:
+  push:
+    branches: [audit/v31-h66-e04-presets]
+permissions:
+  contents: read
+jobs:
+  presets:
+    name: E04 six presets (${{ matrix.phase }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - run: |
+          test "$(git rev-parse HEAD^)" = "df6f2add9cf0174087c3ba1195aa59662d0b069e"
+          git diff --name-only HEAD^ HEAD | sort > /tmp/changed
+          printf '%s\n' .github/workflows/h66-e04-presets.yml scripts/h66_e04_presets.mjs | sort | diff - /tmp/changed
+          echo "SOURCE_HEAD=$(git rev-parse HEAD^)" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm build
+        if: matrix.phase == 'online'
+        env:
+          VITE_BASE_PATH: /PhysForge/
+        timeout-minutes: 3
+      - run: node scripts/h66_e04_presets.mjs
+        timeout-minutes: 5
+        env:
+          PHASE: ${{ matrix.phase }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h66-e04-presets-${{ matrix.phase }}
+          path: |
+            evidence/e04-presets/*.png
+            evidence/e04-presets/report.json
+          if-no-files-found: error
+          retention-days: 7
