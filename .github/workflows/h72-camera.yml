@@ -1,0 +1,68 @@
+name: H72 exact-source dual camera replay
+on:
+  pull_request:
+    branches: ['audit/h71-solenoid']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h72-camera')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: baseline
+            sha: 001391b55786c68d4553673e07f93feb64c65da7
+            candidate: 'false'
+          - name: candidate
+            sha: d5817efde6768574c92502e4a1dde47867cf88d6
+            candidate: 'true'
+    name: Dual camera exact-source replay (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          cp audit/scripts/h72_camera.mjs source/scripts/h72_camera.mjs
+          sha256sum source/scripts/h72_camera.mjs
+        env:
+          EXPECTED_SOURCE: ${{ matrix.sha }}
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h72_camera.mjs
+        working-directory: source
+        timeout-minutes: 6
+        env:
+          EXPECTED_SOURCE: ${{ matrix.sha }}
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+          CANDIDATE: ${{ matrix.candidate }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h72-camera-${{ matrix.name }}
+          path: source/evidence/h72-camera/
+          if-no-files-found: error
+          retention-days: 7
