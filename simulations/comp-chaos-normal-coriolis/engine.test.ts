@@ -182,7 +182,7 @@ describe('H62 physical boundaries and exact event evidence',()=>{
     const p={...getPreset(2),diskOmegaRadps:-1.7,puckSpeedMps:2};let s=createInitialState(p);
     for(let i=0;i<200;i++)s=stepChaosNormalCoriolis(s,p,.05).nextState;
     const d=advancedDiagram(s,p),q=coriolisQuantities(s,p);
-    const rings=d.primitives.filter(v=>v.kind==='circle'&&!v.fill&&v.r>=1);
+    const rings=d.primitives.flatMap(v=>v.kind==='circle'&&!v.fill&&v.r>=1?[v]:[]);
     expect(rings).toHaveLength(2);expect(rings[0]!.r).toBe(rings[1]!.r);
     expect(q.r).toBeCloseTo(20,7);expect(q.positionError).toBeLessThan(1e-6);
     expect(rings[0]!.r).toBeGreaterThan(q.r);
