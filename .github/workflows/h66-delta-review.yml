@@ -1,0 +1,161 @@
+name: H66 exact changed-originals recovery
+on:
+  push:
+    branches: [audit/v31-h66-delta-review]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  delta:
+    name: Exact changed originals (${{ matrix.phase }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - run: |
+          test "$(git rev-parse HEAD^)" = "684e382682770a4a30664c437de92143ece77269"
+          git diff --name-only HEAD^ HEAD | sort > /tmp/changed
+          printf '%s\n' .github/workflows/h66-delta-review.yml scripts/h66_delta_review.py | sort | diff - /tmp/changed
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check Pillow==11.3.0
+        timeout-minutes: 2
+      - run: python scripts/h66_delta_review.py
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PHASE: ${{ matrix.phase }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h66-delta-manifest-${{ matrix.phase }}
+          path: evidence/h66-delta/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-01.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-01
+          path: evidence/h66-delta/review-01.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-02.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-02
+          path: evidence/h66-delta/review-02.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-03.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-03
+          path: evidence/h66-delta/review-03.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-04.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-04
+          path: evidence/h66-delta/review-04.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-05.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-05
+          path: evidence/h66-delta/review-05.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-06.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-06
+          path: evidence/h66-delta/review-06.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-07.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-07
+          path: evidence/h66-delta/review-07.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-08.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-08
+          path: evidence/h66-delta/review-08.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-09.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-09
+          path: evidence/h66-delta/review-09.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-10.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-10
+          path: evidence/h66-delta/review-10.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-11.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-11
+          path: evidence/h66-delta/review-11.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-12.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-12
+          path: evidence/h66-delta/review-12.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-13.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-13
+          path: evidence/h66-delta/review-13.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-14.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-14
+          path: evidence/h66-delta/review-14.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('evidence/h66-delta/review-15.zip') != '' }}
+        with:
+          name: h66-delta-${{ matrix.phase }}-15
+          path: evidence/h66-delta/review-15.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
