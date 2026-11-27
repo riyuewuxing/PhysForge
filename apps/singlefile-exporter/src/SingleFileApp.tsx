@@ -707,6 +707,11 @@ export const SingleFileApp: React.FC = () => {
     wrap.dataset.scopeUnits=split?'separate':'shared';
     const textColor = theme === 'projector' ? '#0f172a' : '#cbd5e1';
     const gridColor = theme === 'projector' ? 'rgba(15,23,42,0.12)' : 'rgba(148,163,184,0.16)';
+    // Small physical residuals must not become several indistinguishable zero ticks.
+    const advancedAxis = (key: 'A'|'B') => advancedSlice ? {values: (_u: uPlot, splits: number[]) => {
+      const labels=splits.map(v=>v===0?'0':Math.abs(v)<.001||Math.abs(v)>=1e5?v.toExponential(3):String(Number(v.toPrecision(5))));
+      wrap.dataset['scopeYTicks'+key]=JSON.stringify({splits,labels});return labels;
+    }} : {};
 
     const plot = new uPlot(
       {
@@ -724,8 +729,8 @@ export const SingleFileApp: React.FC = () => {
             values: (_u: uPlot, splits: number[]) => splits.map(v => Number(v.toPrecision(4)) + (thermalCycleSlice||orbitCompareSlice?'*':'s')),
             ...(atomicSlice?{label:'演示时间（非物理飞行时间）',labelSize:13}:{})
           } : {}) },
-          { stroke: measuredScope ? paint(specA?.color ?? '#38bdf8') : textColor, grid: { stroke: gridColor } },
-          ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false}}]:[])
+          { stroke: measuredScope ? paint(specA?.color ?? '#38bdf8') : textColor, grid: { stroke: gridColor }, ...advancedAxis('A') },
+          ...(split?[{scale:'y2',side:1 as const,stroke:paint(specB?.color??'#f472b6'),grid:{show:false},...advancedAxis('B')}]:[])
         ],
         series: [
           { label: thermalCycleSlice||orbitCompareSlice?'约化时间 t*':equilibriumSlice||atomicSlice?'演示时间 (s)':'t (s)' },

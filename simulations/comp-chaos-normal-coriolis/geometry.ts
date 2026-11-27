@@ -85,9 +85,11 @@ export function advancedItems(s:State,p:Params):Item[]{
     line(pt(left,mid),pt(right,mid),'muted',true);
     const start=s.nmTrail[0]?.t??0,end=Math.max(start+1,s.nmTrail.at(-1)?.t??0),span=end-start;
     const amax=Math.max(1,...s.nmTrail.map(z=>Math.max(Math.abs(z.x1),Math.abs(z.x2))));
-    for(const [key,role] of [['x1','main'],['x2','warm']] as const)trajectory(s.nmTrail.map(z=>pt(left+(z.t-start)/span*(right-left),mid+(top-bottom)*.44*z[key]/amax)),role);
+    for(const [key,role] of [['x1','main'],['x2','warm']] as const)trajectory(s.nmTrail.map(z=>pt(left+(z.t-start)/span*(right-left),mid+(top-bottom)*.44*z[key]/amax)),role,key==='x2');
     label(left,bottom-.12,fmt(start)+' s','muted','start');label(right,bottom-.12,fmt(end)+' s','muted','end');
-    label(0,.18,'x₁='+fmt(q.x1)+' m · x₂='+fmt(q.x2)+' m');
+    label(0,.18,'x₁ 实线='+fmt(q.x1)+' m · x₂ 虚线='+fmt(q.x2)+' m');
+    label(left+.10,mid+(top-bottom)*.44,fmt(amax)+' m','muted','start');
+    label(left+.10,mid-(top-bottom)*.44,'−'+fmt(amax)+' m','muted','start');
     label(0,-1.37,'K='+fmt(q.K)+' J · U墙='+fmt(q.Uwall)+' J · U耦合='+fmt(q.Ucoupling)+' J');
     label(0,-1.58,'E同相='+fmt(q.Es)+' J · E反相='+fmt(q.Ea)+' J · E总='+fmt(q.E)+' J','green');
     label(0,-1.79,'ω₁='+fmt(q.w1)+' rad/s；ω₂='+fmt(q.w2)+' rad/s','muted');
@@ -104,7 +106,7 @@ export function advancedItems(s:State,p:Params):Item[]{
       trajectory(trail,role);
       circle(head,Math.max(.035,r*.025),role,true);
       label(center.x,r+.9*u,title,role);
-      label(center.x,-r-.9*u,'r='+fmt(Math.hypot(head.x-center.x,head.y-center.y))+' m','muted');
+      label(center.x,-r-1.25*u,'r='+fmt(Math.hypot(head.x-center.x,head.y-center.y))+' m','muted');
     }
     label(0,-r-2.1*u,'同一长度比例 · 参考圆半径 '+fmt(r)+' m · 双系位置偏差 '+q.positionError.toExponential(2)+' m','ink');
   }

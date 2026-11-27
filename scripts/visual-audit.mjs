@@ -1372,11 +1372,13 @@ async function auditF11Advanced(page,offline,select){
   const dp=await sync('double-pendulum',{},true);await absent(['diskOmegaRadps','springKw']);await channels('dpEnergyDriftRel','dpDivergenceRad');
   await formulas(['dp-energy','dp-kinetic','dp-potential','dp-section','dp-separation']);await save('dp_initial',dp);
   await number('theta1Deg',20);await number('theta2Deg',15);
-  const section=await runTo(3.4,'double-pendulum',{theta1Deg:20,theta2Deg:15});if(!section.points.length)throw Error('F11 no actual upward section point');await save('dp_section',section);
+  const section=await runTo(3.4,'double-pendulum',{theta1Deg:20,theta2Deg:15});if(!section.points.length)throw Error('F11 no actual upward section point');
+  if(offline){const axis=await page.getByTestId(scopeId).evaluate(w=>['A','B'].map(k=>JSON.parse(w.dataset['scopeYTicks'+k]||'null')));for(const a of axis){if(!a||!a.splits.length||a.splits.length!==a.labels.length||new Set(a.labels).size!==a.labels.length||a.splits.some((v,i)=>v!==0&&Math.abs(Number(a.labels[i])-v)>Math.abs(v)*.001))throw Error('F11 misleading scientific scope labels '+JSON.stringify(axis));}out.dpAxisTicks=axis;}
+  await save('dp_section',section);
   await exported('dp',['庞加莱截面','主值角距','L₁=']);
   await select('coupled-normal-modes-beat');await sync('normal-modes',{},true);await absent(['m2Kg','theta1Deg','diskOmegaRadps']);await channels('x1Nm','x2Nm');
   await formulas(['nm-sym','nm-anti','nm-energy','nm-mode-energy']);
-  await save('normal_beat',await runTo(1.2,'normal-modes',{normalExcite:'single-beat'}));await exported('normal',['等质量双振子','E同相','E反相']);
+  await save('normal_beat',await runTo(1.2,'normal-modes',{normalExcite:'single-beat'}));await exported('normal',['等质量双振子','E同相','E反相','x₂ 虚线']);
   await option('normalExcite','antisymmetric');await sync('normal-modes',{normalExcite:'antisymmetric'},true);
   await save('normal_anti',await runTo(.6,'normal-modes',{normalExcite:'antisymmetric'}));
   await select('coriolis-rotating-disk');await sync('coriolis-disk',{},true);await absent(['m1Kg','springKw','theta1Deg']);await channels('labRadius','rotRadius');

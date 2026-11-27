@@ -145,6 +145,14 @@ describe('F11 independent mechanics and mode-specific evidence',()=>{
 });
 
 describe('H62 physical boundaries and exact event evidence',()=>{
+  it('distinguishes both normal waveforms in monochrome and formats scientific formula values',()=>{
+    const p=getPreset(1),a=createInitialState(p),s=stepChaosNormalCoriolis(a,p,.2).nextState;
+    const paths=advancedDiagram(s,p).primitives.flatMap(v=>v.kind==='trajectory'?[v]:[]);
+    expect(paths).toHaveLength(2);expect(paths.map(v=>v.dashed)).toEqual([false,true]);
+    expect(advancedDiagram(s,p).primitives.some(v=>v.kind==='text'&&v.text.includes('x₂ 虚线'))).toBe(true);
+    const dp=getPreset(0),formula=compChaosNormalCoriolisPlugin.formatFormulas!(createInitialState(dp),dp).find(f=>f.id==='dp-separation')!;
+    expect(formula.substitutedLatex).toContain('\\times 10^{-4}');
+  });
   it('stores genuine upward section roots with strict time brackets and monotone timestamps',()=>{
     const p={...getPreset(0),theta1Deg:20,theta2Deg:15};
     let s=createInitialState(p);const times:number[]=[];
