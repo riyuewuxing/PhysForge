@@ -1,0 +1,68 @@
+name: H70 E10 independent exact-source depth and framing replay
+on:
+  pull_request:
+    branches: ['audit/h69-geometry-all']
+permissions:
+  contents: read
+jobs:
+  focus:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h70-e10-focus')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: baseline
+            sha: 51bc58a463eb281fbac9fea0139e55ed217e884d
+            candidate: 'false'
+          - name: candidate
+            sha: 7d4e0036ff76a904df13ba50573fde09b53bfee9
+            candidate: 'true'
+    name: Actual depth and wire framing (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          cp audit/scripts/h70_e10_focus.mjs source/scripts/h70_e10_focus.mjs
+          sha256sum source/scripts/h70_e10_focus.mjs
+        env:
+          EXPECTED_SOURCE: ${{ matrix.sha }}
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h70_e10_focus.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          EXPECTED_SOURCE: ${{ matrix.sha }}
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+          CANDIDATE: ${{ matrix.candidate }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h70-focus-${{ matrix.name }}
+          path: source/evidence/h70-focus/
+          if-no-files-found: error
+          retention-days: 7
