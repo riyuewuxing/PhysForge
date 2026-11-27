@@ -29,13 +29,18 @@ jobs:
           for i in {1..18}; do
             state=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/46022936408)
             test "$(jq -r .head_sha <<<"$state")" = 54859b12382bcacdc471a586f086b2e89685781c
-            if [[ "$(jq -r .status <<<"$state")" == completed ]]; then
-              test "$(jq -r .conclusion <<<"$state")" = success
+            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/46022936408/jobs?per_page=100")
+            visual=$(jq -ce --arg n "visual ($PHASE)" '[.jobs[]|select(.name==$n)]|if length==1 then .[0] else error("nonunique visual job") end' <<<"$jobs")
+            if [[ "$(jq -r .status <<<"$visual")" == completed ]]; then
+              test "$(jq -r .conclusion <<<"$visual")" = success
               break
             fi
             sleep 5
           done
-          test "$(jq -r .status <<<"$state")" = completed
+          test "$(jq -r .status <<<"$visual")" = completed
+          test "$(jq -r .conclusion <<<"$visual")" = success
+          # This is an independent ancestor delta; the direct-parent comparison
+          # remains NOT_RUN and its red workflow status is not overwritten.
           old=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/46015253705)
           test "$(jq -r .head_sha <<<"$old")" = c965dab0e44516615d4cc094b811734392e52f4c
           test "$(jq -r .conclusion <<<"$old")" = success
