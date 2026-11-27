@@ -535,7 +535,9 @@ export function drawFloatingIUCard(
   ctx.restore();
 }
 
-function overlaps(a: LabelBox, b: LabelBox): boolean {
+export type LabelObstacle = Pick<LabelBox, 'x' | 'y' | 'width' | 'height'>;
+
+function overlaps(a: LabelObstacle, b: LabelObstacle): boolean {
   return Math.abs(a.x - b.x) * 2 < a.width + b.width && Math.abs(a.y - b.y) * 2 < a.height + b.height;
 }
 
@@ -544,7 +546,8 @@ export function resolveLabelBoxes(
   labels: ReadonlyArray<CanvasLabel>,
   measureText: (text: string, font?: string) => number,
   canvasWidth: number,
-  canvasHeight: number
+  canvasHeight: number,
+  fixedObstacles: ReadonlyArray<LabelObstacle> = []
 ): LabelBox[] {
   const width = Math.max(0, finite(canvasWidth));
   const height = Math.max(0, finite(canvasHeight));
@@ -586,7 +589,7 @@ export function resolveLabelBoxes(
         height: boxHeight,
         font
       };
-      const conflicts = placed.filter((other) => overlaps(current, other));
+      const conflicts = [...fixedObstacles, ...placed].filter((other) => overlaps(current, other));
       if (conflicts.length === 0) {
         best = current;
         break;
@@ -612,7 +615,8 @@ export function resolveAndDrawLabels(
   ctx: CanvasRenderingContext2D,
   rawLabels: ReadonlyArray<CanvasLabel>,
   canvasWidth: number,
-  canvasHeight: number
+  canvasHeight: number,
+  fixedObstacles: ReadonlyArray<LabelObstacle> = []
 ): void {
   if (rawLabels.length === 0) return;
   const boxes = resolveLabelBoxes(
@@ -622,7 +626,8 @@ export function resolveAndDrawLabels(
       return ctx.measureText(text).width;
     },
     canvasWidth,
-    canvasHeight
+    canvasHeight,
+    fixedObstacles
   );
   ctx.save();
   ctx.textAlign = 'center';
