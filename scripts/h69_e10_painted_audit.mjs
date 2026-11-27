@@ -17,12 +17,13 @@ try {
   try{
    await ctx.addInitScript(()=>{
     const p=CanvasRenderingContext2D.prototype;
-    const original={beginPath:p.beginPath,moveTo:p.moveTo,lineTo:p.lineTo,stroke:p.stroke,clearRect:p.clearRect};
+    const original={beginPath:p.beginPath,moveTo:p.moveTo,lineTo:p.lineTo,stroke:p.stroke,clearRect:p.clearRect,fillRect:p.fillRect};
     const map=new WeakMap();
     const target=c=>c.canvas.getAttribute('data-testid')==='sf-canvas';
     const state=c=>{if(!map.has(c))map.set(c,{path:[],strokes:[]});return map.get(c);};
     Object.defineProperty(window,'__h69Paint',{value:()=>{const c=document.querySelector('[data-testid="sf-canvas"]');if(!c)return null;return {width:c.width,height:c.height,strokes:state(c.getContext('2d')).strokes.slice()};}});
     p.clearRect=function(...a){if(target(this)){state(this).strokes=[];state(this).path=[];}return original.clearRect.apply(this,a);};
+    p.fillRect=function(x,y,w,h){if(target(this)&&x===0&&y===0&&w>=this.canvas.width&&h>=this.canvas.height){state(this).strokes=[];state(this).path=[];}return original.fillRect.call(this,x,y,w,h);};
     p.beginPath=function(...a){if(target(this))state(this).path=[];return original.beginPath.apply(this,a);};
     for(const method of ['moveTo','lineTo'])p[method]=function(x,y){if(target(this)){const m=this.getTransform();state(this).path.push([m.a*x+m.c*y+m.e,m.b*x+m.d*y+m.f]);}return original[method].call(this,x,y);};
     p.stroke=function(...a){

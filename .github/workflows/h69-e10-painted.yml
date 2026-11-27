@@ -16,10 +16,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          fetch-depth: 3
       - run: |
           test "$(git rev-parse HEAD)" = "$AUDIT_HEAD"
-          test "$(git rev-parse HEAD^)" = "$SOURCE_HEAD"
+          git merge-base --is-ancestor "$SOURCE_HEAD" HEAD
+          test "$(git diff --name-only "$SOURCE_HEAD" HEAD | sort | tr '\n' ' ')" = ".github/workflows/h69-e10-painted.yml scripts/h69_e10_painted_audit.mjs "
       - uses: pnpm/action-setup@v4
         with:
           version: 10
