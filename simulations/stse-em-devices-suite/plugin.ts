@@ -561,7 +561,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ctx.arc(particle.x, particle.y, m.len(0.03), 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = '#e2e8f0';
+    ctx.fillStyle = viewport.theme === 'projector' ? '#0f172a' : '#e2e8f0';
     ctx.font = 'bold 14px ui-sans-serif, system-ui';
     const summaryMap: Record<EmDevicesParams['device'], string> = {
       'velocity-selector': `速度选择器 v_sel = E/B = ${state.selectedSpeed.toFixed(0)} m/s`,
@@ -572,9 +572,16 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       'em-flowmeter': `电磁流量计 · 开路测量 · 均匀流速理想模型`
     };
     ctx.textAlign = 'center';
-    ctx.fillText(summaryMap[params.device], viewport.width * 0.5, 28);
-    ctx.font='11px system-ui, sans-serif';ctx.fillStyle='#94a3b8';
-    ctx.fillText(state.flight?flightReadout(state.flight):state.cyclotron?cyclotronReadout(params,state.cyclotron):sensorReadout(state,params)+' · 示意慢放', viewport.width * 0.5, 46);
+    const area = viewport.presentationReadoutArea;
+    const x = area ? (area.left + area.right) / 2 : viewport.width * 0.5;
+    const y = area ? area.top + 14 : 28;
+    const paintReadout = (text: string, baseline: number) => {
+      if (area) ctx.fillText(text, x, baseline, Math.max(1, area.right - area.left));
+      else ctx.fillText(text, x, baseline);
+    };
+    paintReadout(summaryMap[params.device], y);
+    ctx.font='11px system-ui, sans-serif';ctx.fillStyle=viewport.theme==='projector'?'#475569':'#94a3b8';
+    paintReadout(state.flight?flightReadout(state.flight):state.cyclotron?cyclotronReadout(params,state.cyclotron):sensorReadout(state,params)+' · 示意慢放', y + 18);
     ctx.restore();
   },
   getControlHandles: (_state, params) => {
