@@ -1,0 +1,69 @@
+name: H81 missing parent image recovery
+on:
+  pull_request:
+    branches: ['polish/v31-h81-presentation-readability']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  recover:
+    if: github.event.pull_request.head.ref == 'audit/h81-parent-recovery'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Retrieve exact archived inputs
+        timeout-minutes: 4
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p recovery-input
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15204326193/zip > recovery-input/h80-online-manifest.zip
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15205819560/zip > recovery-input/h81-online-manifest.zip
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15202887733/zip > recovery-input/h80-offline-manifest.zip
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15205649484/zip > recovery-input/h81-offline-manifest.zip
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15202777364/zip > recovery-input/h80-online-raw.zip
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15202706358/zip > recovery-input/h80-offline-raw.zip
+          sha256sum -c <<'EOF'
+          427874eb4db31fa818a7920b98763b6c35ec60b9547738d632a5bd91967d7fe9  recovery-input/h80-online-manifest.zip
+          9fca543bdf71da6aeb5120b964d31fe53f3fcaa5344305c192b5189d267b0765  recovery-input/h81-online-manifest.zip
+          9593d0165b3bcb8377a09c543a92ab1d9670b296399044a040141cb1df83b51b  recovery-input/h80-offline-manifest.zip
+          d1b58b956fe63ae9f76b22ff4301b8d4f44dd789f161c8b26e6493483b619263  recovery-input/h81-offline-manifest.zip
+          e38aa0eca734a92d48674ef8bb42d6c4f54bc683bb21011129be2155bc7ea9d4  recovery-input/h80-online-raw.zip
+          0a3933d56ec9ab9cbe838a1789b0b948a76271cd01127da88d08263431070c3c  recovery-input/h80-offline-raw.zip
+          EOF
+      - name: Extract missing exact parents
+        timeout-minutes: 1
+        run: python scripts/h81_recover_missing_parent.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h81-missing-parent-online-1
+          path: recovery/online-1/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h81-missing-parent-online-2
+          path: recovery/online-2/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h81-missing-parent-online-3
+          path: recovery/online-3/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h81-missing-parent-online-4
+          path: recovery/online-4/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h81-missing-parent-offline-1
+          path: recovery/offline-1/
+          if-no-files-found: error
+          retention-days: 7
