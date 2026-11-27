@@ -225,21 +225,21 @@ export const compChaosNormalCoriolisPlugin = Object.assign(defineSimulationPlugi
   formatFormulas:(s,p)=>{
     if(p.mode==='double-pendulum')return [
       {id:'dp-energy',label:'双摆机械能（铅直向下为角度零点）',latex:'E=T+U',substitutedLatex:'E='+s.dpCurrentEnergy.toFixed(4)+'\\ \\mathrm J'},
-      {id:'dp-kinetic',label:'动能与耦合项',latex:'T=\\frac12(m_1+m_2)L_1^2\\dot\\theta_1^2+\\frac12m_2L_2^2\\dot\\theta_2^2+m_2L_1L_2\\dot\\theta_1\\dot\\theta_2\\cos(\\theta_1-\\theta_2)'},
-      {id:'dp-potential',label:'重力势能（固定支点为零）',latex:'U=-(m_1+m_2)gL_1\\cos\\theta_1-m_2gL_2\\cos\\theta_2'},
+      {id:'dp-kinetic',label:'动能与耦合项',latex:'\\begin{aligned}T&=\\tfrac12(m_1+m_2)L_1^2\\dot\\theta_1^2\\\\&+\\tfrac12m_2L_2^2\\dot\\theta_2^2\\\\&+m_2L_1L_2\\dot\\theta_1\\dot\\theta_2\\\\&\\quad\\times\\cos(\\theta_1-\\theta_2)\\end{aligned}'},
+      {id:'dp-potential',label:'重力势能（固定支点为零）',latex:'\\begin{aligned}U&=-(m_1+m_2)gL_1\\cos\\theta_1\\\\&-m_2gL_2\\cos\\theta_2\\end{aligned}'},
       {id:'dp-section',label:'真实事件定位截面',latex:'\\theta_1=2k\\pi,\\quad\\dot\\theta_1>0',substitutedLatex:'N='+s.poincarePts.length},
       {id:'dp-separation',label:'两主值角差的欧氏距离，不是李雅普诺夫指数',latex:'d=\\sqrt{\\Delta\\theta_1^2+\\Delta\\theta_2^2}',substitutedLatex:'d='+computeObservables(s,p).dpDivergenceRad!.toExponential(3)+'\\ \\mathrm{rad}'}
     ];
     if(p.mode==='normal-modes'){const q=normalQuantities(s,p);return [
       {id:'nm-sym',label:'同相频率',latex:'\\omega_1=\\sqrt{k_w/m}',substitutedLatex:'\\omega_1='+q.w1.toFixed(4)+'\\ \\mathrm{rad/s}'},
       {id:'nm-anti',label:'反相频率',latex:'\\omega_2=\\sqrt{(k_w+2k_c)/m}',substitutedLatex:'\\omega_2='+q.w2.toFixed(4)+'\\ \\mathrm{rad/s}'},
-      {id:'nm-energy',label:'机械能（包含耦合弹簧势能）',latex:'E=\\tfrac12m(v_1^2+v_2^2)+\\tfrac12k_w(x_1^2+x_2^2)+\\tfrac12k_c(x_1-x_2)^2',substitutedLatex:'E='+q.E.toFixed(4)+'\\ \\mathrm J'},
+      {id:'nm-energy',label:'机械能（包含耦合弹簧势能）',latex:'\\begin{aligned}E&=\\tfrac12m(v_1^2+v_2^2)\\\\&+\\tfrac12k_w(x_1^2+x_2^2)\\\\&+\\tfrac12k_c(x_1-x_2)^2\\end{aligned}',substitutedLatex:'E='+q.E.toFixed(4)+'\\ \\mathrm J'},
       {id:'nm-mode-energy',label:'独立模能量',latex:'E=E_s+E_a',substitutedLatex:'E_s='+q.Es.toFixed(3)+'\\ \\mathrm J,\\ E_a='+q.Ea.toFixed(3)+'\\ \\mathrm J'}
     ];}
     const q=coriolisQuantities(s,p);return [
-      {id:'cor-position',label:'惯性自由运动到匀速旋转坐标变换',latex:'x=Vt\\cos(\\Omega t),\\quad y=-Vt\\sin(\\Omega t)'},
+      {id:'cor-position',label:'惯性自由运动到匀速旋转坐标变换',latex:'\\begin{aligned}x&=Vt\\cos(\\Omega t)\\\\y&=-Vt\\sin(\\Omega t)\\end{aligned}'},
       {id:'cor-coriolis',label:'科氏加速度',latex:'\\mathbf a_C=-2\\boldsymbol\\Omega\\times\\mathbf v_r',substitutedLatex:'a_C='+Math.hypot(q.axC,q.ayC).toFixed(3)+'\\ \\mathrm{m/s^2}'},
-      {id:'cor-centrifugal',label:'离心加速度',latex:'\\mathbf a_f=-\\boldsymbol\\Omega\\times(\\boldsymbol\\Omega\\times\\mathbf r_r)',substitutedLatex:'a_f='+Math.hypot(q.axF,q.ayF).toFixed(3)+'\\ \\mathrm{m/s^2}'},
+      {id:'cor-centrifugal',label:'离心加速度',latex:'\\begin{aligned}\\mathbf a_f&=-\\boldsymbol\\Omega\\times\\\\&\\quad(\\boldsymbol\\Omega\\times\\mathbf r_r)\\end{aligned}',substitutedLatex:'a_f='+Math.hypot(q.axF,q.ayF).toFixed(3)+'\\ \\mathrm{m/s^2}'},
       {id:'cor-error',label:'独立积分与坐标变换的位置偏差',latex:'\\delta r=|\\mathbf r_{ODE}-\\mathbf r_{rot}|',substitutedLatex:'\\delta r='+q.positionError.toExponential(3)+'\\ \\mathrm m'}
     ];
   }
