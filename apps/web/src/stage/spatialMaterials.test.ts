@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import * as THREE from 'three';
-import {e10FluxRole,E10ParticleProjection,e10ProjectedCloudOverlaps} from './e10SceneFocus.js';
+import {e10FluxRole,E10ParticleProjection,e10ProjectedCloudOverlaps,e10FrameSamples} from './e10SceneFocus.js';
 import {getMagneticDisplayFieldLines,type Magnetic3dParams} from '@physforge/simulations/em-3d-magnetic-fields/engine';
 import {e10ConductorRadius,e10CopperMaterial,e10FluxCoreMaterial,e10FluxHaloMaterial,e10GridLineGeometry,coilCopperMaterial,applyFluxEndpointFade} from './spatialMaterials.js';
 describe('E10 visual-only geometry and materials',()=>{
@@ -115,5 +115,15 @@ describe('H71 E10 screen-space obstacle fit',()=>{
     expect(e10ProjectedCloudOverlaps([{x:.8,y:1,z:0}],camera,800,800,rect,12)).toBe(false);
     expect(e10ProjectedCloudOverlaps([{x:1.2,y:-1,z:0}],camera,800,800,rect)).toBe(false);
     expect(e10ProjectedCloudOverlaps([{x:1.2,y:1,z:6}],camera,800,800,rect)).toBe(false);
+  });
+});
+
+describe('H72 E10 camera crop contract',()=>{
+  it('selects actual conductor samples without removing domain samples',()=>{
+    const body=[{x:1,y:2,z:3}],domain=[...body,{x:4,y:5,z:6}];
+    expect(e10FrameSamples('body',body,domain)).toBe(body);
+    expect(e10FrameSamples('domain',body,domain)).toBe(domain);
+    expect(domain).toHaveLength(2);
+    expect(e10FrameSamples('body',[],domain)).toBe(domain);
   });
 });

@@ -60,3 +60,10 @@ export function e10ProjectedCloudOverlaps(points:readonly {x:number;y:number;z:n
   }
   return false;
 }
+
+/** Two explicitly named camera crops of the same scene. Focus must never
+ * remove a field mesh or change the physical parameters. */
+export type E10FrameMode='domain'|'body';
+export function e10FrameSamples<T>(mode:E10FrameMode,body:readonly T[],domain:readonly T[]):readonly T[]{
+  return mode==='body'&&body.length>0?body:domain;
+}
