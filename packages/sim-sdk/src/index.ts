@@ -128,6 +128,8 @@ export interface Viewport {
   theme?: 'chalkboard' | 'projector';
   /** Optional observation-frame identity for plugins with frame-dependent history. */
   observationFrameId?: string;
+  /** Host-reserved screen-space region for readouts; never affects physical coordinates. */
+  presentationReadoutArea?: { left: number; right: number; top: number };
   width: number;
   height: number;
   dpr: number;

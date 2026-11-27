@@ -1194,7 +1194,13 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
     if (drawState !== null) {
       const layerSet = readDisplayedLayers();
-      p.renderCanvas(ctx, drawState, pm, { ...vp, theme: currentTheme, ...(p.meta.id==='stse-gravity-assist-rendezvous'?{observationFrameId:latestRef.current.activeFrameId}:{}), ...(inductionAutomatic?{inductionLabelSafe:inductionSafeRef.current?.safe}:{}) }, layerSet);
+      // The S02 readout is screen-space, not world-space. Keep it below the
+      // fullscreen title and left of the formula card using the shell's layout
+      // (left 68px, top 24px, formula width min(320px,38vw), right 24px).
+      const presentationReadoutArea = p.meta.id === 'stse-em-devices-suite' && latestRef.current.presentationMode
+        ? {left: 68, right: Math.max(69, vp.width - Math.min(320, vp.width * 0.38) - 40), top: 88}
+        : undefined;
+      p.renderCanvas(ctx, drawState, pm, { ...vp, theme: currentTheme, presentationReadoutArea, ...(p.meta.id==='stse-gravity-assist-rendezvous'?{observationFrameId:latestRef.current.activeFrameId}:{}), ...(inductionAutomatic?{inductionLabelSafe:inductionSafeRef.current?.safe}:{}) }, layerSet);
 
       // 壳层统一 Strobe 频闪打点叠加
       if (strobe && !masked && snapshotsRef.current.length > 2) {
