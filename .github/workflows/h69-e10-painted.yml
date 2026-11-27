@@ -1,0 +1,43 @@
+name: H69 E10 independent painted-field replay
+on:
+  pull_request:
+    branches: ['polish/v31-*']
+permissions:
+  contents: read
+jobs:
+  offline:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h69-e10-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    env:
+      SOURCE_HEAD: ${{ github.event.pull_request.base.sha }}
+      AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 3
+      - run: |
+          test "$(git rev-parse HEAD)" = "$AUDIT_HEAD"
+          git merge-base --is-ancestor "$SOURCE_HEAD" HEAD
+          test "$(git diff --name-only "$SOURCE_HEAD" HEAD | sort | tr '\n' ' ')" = ".github/workflows/h69-e10-painted.yml scripts/h69_e10_painted_audit.mjs "
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/h69_e10_painted_audit.mjs
+        timeout-minutes: 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h69-e10-painted-evidence
+          path: |
+            evidence/h69/*.png
+            evidence/h69/report.json
+          if-no-files-found: error
+          retention-days: 7
