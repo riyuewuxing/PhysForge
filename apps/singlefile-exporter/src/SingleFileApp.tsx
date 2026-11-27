@@ -5,6 +5,8 @@ import { Play, Pause, RotateCcw, StepForward, Eye, EyeOff, SunMoon, Sparkles, Ma
 import targetPlugin from '@physforge/target-plugin';
 import type {ThermoCycleMdState} from '../../../simulations/thermo-cycles-kinetic-md/engine.js';
 import type {ThermoGasState} from '../../../simulations/thermo-piston-gas-laws/engine.js';
+import type {OpticsParams} from '../../../simulations/optics-ray-studio/engine.js';
+type OpticsSlicePlugin=typeof import('../../../simulations/optics-ray-studio/plugin.js').opticsRayStudioPlugin;
 import type { KinematicsChaseState,KinematicsChaseParams } from '../../../simulations/mech-kinematics-chase/engine.js';
 type ChaseSlicePlugin=typeof import('../../../simulations/mech-kinematics-chase/plugin.js').mechKinematicsChasePlugin;
 import type { BlockConveyorState,BlockConveyorParams } from '../../../simulations/mech-block-conveyor/engine.js';
@@ -65,6 +67,10 @@ const MAX_SNAPSHOTS = 2400;
 // isolated singlefile bundle (the exporter explicitly rejects those IDs).
 const circuitSlice=targetPlugin.paramSchema.some(f=>f.key==='topology'&&f.kind==='select'&&f.options.some(o=>o.value==='divider-lamp'));
 const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind==='select'&&f.options.some(o=>o.value==='thin-lens-imaging'));
+function resolveSliceCamera(params:ParamRecord,width:number,height:number){
+  if(opticalSlice)return (targetPlugin as unknown as OpticsSlicePlugin).resolveOpticsSliceCamera(params as OpticsParams,width,height);
+  return resolveInitialCameraTransform(targetPlugin as SimulationPluginV2<ParamRecord,unknown>,params,width,height);
+}
 const mechanicsSlice=targetPlugin.paramSchema.some(f=>f.key==='scenario'&&f.kind==='select'&&f.options.some(o=>o.value==='atwood-constrained'));
 const odeSlice=Boolean(targetPlugin.getTelemetryChannels)&&targetPlugin.paramSchema.some(f=>f.key==='template');
 const chaseSlice=targetPlugin.paramSchema.some(f=>f.key==='vA0')&&targetPlugin.paramSchema.some(f=>f.key==='xB0')&&targetPlugin.paramSchema.some(f=>f.key==='reactionTime');
@@ -580,12 +586,7 @@ export const SingleFileApp: React.FC = () => {
   // Commit a discrete display transition before the browser paints; continuous
   // integration still uses rAF and the existing throttled React summaries.
   useLayoutEffect(() => {
-    const camera = resolveInitialCameraTransform(
-      targetPlugin as SimulationPluginV2<ParamRecord, unknown>,
-      latestRef.current.params,
-      viewportRef.current.width,
-      viewportRef.current.height
-    );
+    const camera = resolveSliceCamera(latestRef.current.params,viewportRef.current.width,viewportRef.current.height);
     viewportRef.current = { ...viewportRef.current, ...camera };
     if(simStateRef.current!==null)targetPlugin.engine.disposeState?.(simStateRef.current);
     const init = targetPlugin.engine.createInitialState(params);
@@ -667,12 +668,7 @@ export const SingleFileApp: React.FC = () => {
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
       viewportRef.current = { ...viewportRef.current, width, height, dpr };
-      const camera = resolveInitialCameraTransform(
-        targetPlugin as SimulationPluginV2<ParamRecord, unknown>,
-        latestRef.current.params,
-        width,
-        height
-      );
+      const camera = resolveSliceCamera(latestRef.current.params,width,height);
       viewportRef.current = { ...viewportRef.current, ...camera };
       drawCanvas();
     };
