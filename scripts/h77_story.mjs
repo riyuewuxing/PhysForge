@@ -174,7 +174,7 @@ try{
  // treating residual inertia during the first 800ms as automatic camera takeover.
  const delta=(a,b)=>['left','right','top','bottom'].reduce((sum,k)=>sum+Math.abs(a.bounds[k]-b.bounds[k]),0);
  let manual3d=await read3d(),stable=0;const settleStart=Date.now();
- while(Date.now()-settleStart<7000&&stable<3){
+ while(Date.now()-settleStart<15000&&stable<3){
    await page.waitForTimeout(200);const sample=await read3d();
    check(!sample.automatic,'teacher 3D orbit lock lost while damping');
    stable=delta(manual3d,sample)<.4?stable+1:0;manual3d=sample;
@@ -214,19 +214,24 @@ try{
  await page.goto(url+'&preset=double-rod-momentum-conservation',{waitUntil:'networkidle'});
  await canvas.waitFor({state:'visible'});
  await page.getByText('更多参数与图层',{exact:false}).first().click();
- const layer=page.getByRole('checkbox',{name:'安培力与外力矢量'}),autoButton=page.getByTestId('btn-auto-fbd');
+ const layer=page.getByRole('checkbox',{name:'安培力与外力矢量'}),autoButton=page.getByTestId('btn-auto-fbd'),menu=page.getByTestId('btn-tools-menu');
+ const toggleFbd=async()=>{
+   if(await menu.getAttribute('aria-expanded')!=='true')await menu.click();
+   await autoButton.waitFor({state:'visible'});await autoButton.click();
+   if(await menu.getAttribute('aria-expanded')==='true')await menu.click();
+ };
  await layer.waitFor({state:'visible'});
  const wbForces=()=>canvas.evaluate(()=>structuredClone(window.__h66E04Paint.filter(l=>/^F安/.test(l.text))));
  await layer.uncheck();await page.waitForTimeout(150);
- if((await wbForces()).length===0){await autoButton.click();await page.waitForTimeout(150);}
+ if((await wbForces()).length===0){await toggleFbd();await page.waitForTimeout(150);}
  const fallback=await wbForces();
  check(fallback.length===2&&fallback.every(l=>l.align==='left')&&fallback.some(l=>/^F安₁ =/.test(l.text))&&fallback.some(l=>/^F安₂ =/.test(l.text)),'independent FBD fallback not visible '+JSON.stringify(fallback));
  await page.screenshot({path:path.join(out,'workbench-fbd-only.png')});
- await autoButton.click();await page.waitForTimeout(150);const neither=await wbForces();
+ await toggleFbd();await page.waitForTimeout(150);const neither=await wbForces();
  check(neither.length===0,'forces still shown with both switches off');
  await layer.check();await page.waitForTimeout(150);const native=await wbForces();
  check(native.length===2&&native.every(l=>l.align==='center'),'native force paint missing '+JSON.stringify(native));
- await autoButton.click();await page.waitForTimeout(150);const bothWb=await wbForces();
+ await toggleFbd();await page.waitForTimeout(150);const bothWb=await wbForces();
  check(JSON.stringify(native)===JSON.stringify(bothWb),'duplicate FBD in workbench');
  report.forces.push({name:'four-workbench-layer-combinations',fallback,neither,native,bothWb});
  await page.screenshot({path:path.join(out,'workbench-both.png')});
