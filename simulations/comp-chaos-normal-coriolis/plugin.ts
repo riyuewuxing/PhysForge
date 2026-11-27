@@ -1,8 +1,11 @@
-import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type ParamFieldSpec,type TelemetryChannelSpec } from '@physforge/sim-sdk';
+import { advancedItems,advancedDiagram,advancedBounds,advancedViewBounds,fitAdvancedViewport,pendulumBobs,normalCenters,coriolisFrames,type Role } from './geometry.js';
 import { CLASSROOM_GRAVITY } from '@physforge/physics-core';
 import { chaosNormalCoriolisPresets } from './presets.js';
 import {
   checkInvariants,
+  normalQuantities,
+  coriolisQuantities,
   computeObservables,
   createInitialState,
   stepChaosNormalCoriolis,
@@ -41,8 +44,8 @@ const paramSchema: readonly ParamFieldSpec<ChaosNormalCoriolisParams>[] = [
       { value: 'single-beat', label: '单侧偏置（拍频传递）' }
     ]
   },
-  { key: 'diskOmegaRadps', kind: 'number', label: '圆盘角速度 Ω', unit: 'rad/s', defaultValue: 1.2, min: 0.2, max: 3.0, step: 0.2 },
-  { key: 'puckSpeedMps', kind: 'number', label: '冰球惯性射速 v₀', unit: 'm/s', defaultValue: 0.9, min: 0.3, max: 2.0, step: 0.1 }
+  { key: 'diskOmegaRadps', kind: 'number', label: '圆盘角速度 Ω', unit: 'rad/s', defaultValue: 1.2, min: -3.0, max: 3.0, step: 0.2 },
+  { key: 'puckSpeedMps', kind: 'number', label: '冰球惯性射速 v₀', unit: 'm/s', defaultValue: 0.9, min: 0, max: 2.0, step: 0.1 }
 ];
 
 function clamp(value: number, min: number, max: number): number {
@@ -50,7 +53,34 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
+const channels:readonly TelemetryChannelSpec[]=[
+  {key:'dpEnergyDriftRel',label:'双摆能量最大相对漂移',unit:'',color:'#4ade80'},
+  {key:'dpDivergenceRad',label:'两初值主值角距',unit:'rad',color:'#f43f5e'},
+  {key:'dpTheta1',label:'θ₁ 主值角',unit:'rad',color:'#38bdf8'},
+  {key:'dpTheta2',label:'θ₂ 主值角',unit:'rad',color:'#fbbf24'},
+  {key:'x1Nm',label:'振子 1 位移',unit:'m',color:'#38bdf8'},
+  {key:'x2Nm',label:'振子 2 位移',unit:'m',color:'#fbbf24'},
+  {key:'normalEnergyJ',label:'双振子总能量',unit:'J',color:'#4ade80'},
+  {key:'normalSymEnergyJ',label:'同相模能量',unit:'J',color:'#38bdf8'},
+  {key:'normalAntiEnergyJ',label:'反相模能量',unit:'J',color:'#fbbf24'},
+  {key:'labRadius',label:'惯性系径向距离',unit:'m',color:'#4ade80'},
+  {key:'rotRadius',label:'旋转系径向距离',unit:'m',color:'#38bdf8'},
+  {key:'coriolisDeviation',label:'双系位置偏差',unit:'m',color:'#f43f5e'},
+  {key:'coriolisVelocityError',label:'双系速度偏差',unit:'m/s',color:'#fbbf24'},
+  {key:'coriolisAccel',label:'科氏加速度大小',unit:'m/s²',color:'#38bdf8'},
+  {key:'centrifugalAccel',label:'离心加速度大小',unit:'m/s²',color:'#f472b6'}
+];
+const modeKeys:Record<ChaosNormalCoriolisParams['mode'],readonly string[]>={
+  'double-pendulum':['mode','m1Kg','m2Kg','l1M','l2M','theta1Deg','theta2Deg'],
+  'normal-modes':['mode','m1Kg','springKw','springKc','normalExcite'],
+  'coriolis-disk':['mode','diskOmegaRadps','puckSpeedMps']
+};
+const channelKeys:Record<ChaosNormalCoriolisParams['mode'],readonly string[]>={
+  'double-pendulum':['dpEnergyDriftRel','dpDivergenceRad','dpTheta1','dpTheta2'],
+  'normal-modes':['x1Nm','x2Nm','normalEnergyJ','normalSymEnergyJ','normalAntiEnergyJ'],
+  'coriolis-disk':['labRadius','rotRadius','coriolisDeviation','coriolisVelocityError','coriolisAccel','centrifugalAccel']
+};
+export const compChaosNormalCoriolisPlugin = Object.assign(defineSimulationPlugin<
   ChaosNormalCoriolisParams,
   ChaosNormalCoriolisState
 >({
@@ -73,17 +103,17 @@ export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
   layers: [
     { id: 'main', label: '混沌分叉 / 简正波形 / 双系对照', defaultVisible: true }
   ],
-  telemetryChannels: [
-    { key: 'dpEnergyDriftRel', label: '双摆能量漂移', unit: '', color: '#4ade80' },
-    { key: 'dpDivergenceRad', label: '双初值分离角距', unit: 'rad', color: '#f43f5e' },
-    { key: 'x1Nm', label: '振子 1 位移', unit: 'm', color: '#38bdf8' },
-    { key: 'x2Nm', label: '振子 2 位移', unit: 'm', color: '#fbbf24' }
-  ],
+  telemetryChannels:channels,
+  getParamFields:p=>paramSchema.filter(f=>modeKeys[p.mode].includes(f.key)).map(f=>p.mode==='normal-modes'&&f.key==='m1Kg'?{...f,label:'每个振子的质量 m'}:f),
+  getTelemetryChannels:p=>channels.filter(c=>channelKeys[p.mode].includes(c.key)),
+  defaultView:{
+    scale:(p,v)=>{const b=advancedBounds(createInitialState(p),p),base=Math.max(1,.24*Math.min(v.width,v.height)),w=v.width-(v.width>=900?300:0);return Math.max(.035,Math.min((w-48)/(b.maxX-b.minX)/base,(v.height-210)/(b.maxY-b.minY)/base));},
+    offsetRatioX:(p,v)=>{const b=advancedBounds(createInitialState(p),p),base=Math.max(1,.24*Math.min(v.width,v.height)),w=v.width-(v.width>=900?300:0),ppm=Math.max(.035*base,Math.min((w-48)/(b.maxX-b.minX),(v.height-210)/(b.maxY-b.minY)));return (w/2-.45*v.width-(b.maxX+b.minX)*ppm/2)/Math.max(1,v.width);},
+    offsetRatioY:-.075
+  },
   getForceVectors: (state, params) => {
     if (params.mode === 'double-pendulum') {
-      const [theta1, theta2] = state.dpState;
-      const bob1 = { x: params.l1M * Math.sin(theta1), y: -params.l1M * Math.cos(theta1) };
-      const bob2 = { x: bob1.x + params.l2M * Math.sin(theta2), y: bob1.y - params.l2M * Math.cos(theta2) };
+      const [bob1,bob2]=pendulumBobs(state.dpState,params);
       return [
         { id: 'weight-1', label: 'm₁g', origin: bob1, force: { x: 0, y: -params.m1Kg * CLASSROOM_GRAVITY }, color: '#fbbf24', category: 'gravity', unit: 'N' },
         { id: 'weight-2', label: 'm₂g', origin: bob2, force: { x: 0, y: -params.m2Kg * CLASSROOM_GRAVITY }, color: '#fb923c', category: 'gravity', unit: 'N' }
@@ -93,29 +123,21 @@ export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
       const [x1, x2] = state.nmVerlet.positions;
       const safeX1 = x1 ?? 0;
       const safeX2 = x2 ?? 0;
-      const origin1 = { x: safeX1, y: 0 };
-      const origin2 = { x: safeX2, y: 0 };
+      const [origin1,origin2]=normalCenters(state,params);
       return [
         { id: 'normal-restoring-1', label: 'F₁', origin: origin1, force: { x: -params.springKw * safeX1 - params.springKc * (safeX1 - safeX2), y: 0 }, color: '#38bdf8', category: 'other', unit: 'N' },
         { id: 'normal-restoring-2', label: 'F₂', origin: origin2, force: { x: -params.springKw * safeX2 - params.springKc * (safeX2 - safeX1), y: 0 }, color: '#fbbf24', category: 'other', unit: 'N' }
       ];
     }
-    const [x, y, vx, vy] = state.rotDirectState;
-    const omega = params.diskOmegaRadps;
+    const q=coriolisQuantities(state,params),origin=coriolisFrames(state,params).rot;
     return [
-      { id: 'coriolis-specific', label: 'a_C (F/m)', origin: { x, y }, force: { x: 2 * omega * vy, y: -2 * omega * vx }, color: '#38bdf8', category: 'other', unit: 'N/kg' },
-      { id: 'centrifugal-specific', label: 'a_cf (F/m)', origin: { x, y }, force: { x: omega * omega * x, y: omega * omega * y }, color: '#f472b6', category: 'other', unit: 'N/kg' }
+      {id:'coriolis-specific',label:'a_C (F/m)',origin,force:{x:q.axC,y:q.ayC},color:'#38bdf8',category:'other',unit:'N/kg'},
+      {id:'centrifugal-specific',label:'a_cf (F/m)',origin,force:{x:q.axF,y:q.ayF},color:'#f472b6',category:'other',unit:'N/kg'}
     ];
   },
   getControlHandles: (state, params) => {
-    if (params.mode !== 'double-pendulum') return [];
-    const theta1 = state.dpState[0]!;
-    const theta2 = state.dpState[1]!;
-    const bob1 = { x: params.l1M * Math.sin(theta1), y: -params.l1M * Math.cos(theta1) };
-    const bob2 = {
-      x: bob1.x + params.l2M * Math.sin(theta2),
-      y: bob1.y - params.l2M * Math.cos(theta2)
-    };
+    if(params.mode!=='double-pendulum'||state.t>1e-12)return [];
+    const [bob1,bob2]=pendulumBobs(state.dpState,params);
     const angleFrom = (x: number, y: number) => {
       const thetaDeg = (Math.atan2(x, -y) * 180) / Math.PI;
       return Number(clamp(thetaDeg, 10, 175).toFixed(1));
@@ -164,198 +186,63 @@ export const compChaosNormalCoriolisPlugin = defineSimulationPlugin<
     }),
     importScene: (dsl) => dsl.params as Partial<ChaosNormalCoriolisParams>
   },
-  exportDiagramIR: (state, params) => {
-    const primitives: DiagramPrimitive[] = [
-      { kind: 'line', x1: 0, y1: 1.0, x2: Math.sin(state.dpState[0]!), y2: 1.0 - Math.cos(state.dpState[0]!) },
-      { kind: 'circle', cx: Math.sin(state.dpState[0]!), cy: 1.0 - Math.cos(state.dpState[0]!), r: 0.08, fill: true },
-      { kind: 'mathLabel', x: 0, y: -1.2, text: `\\text{Mode: }${params.mode}`, align: 'middle' }
-    ];
-    return {
-      width: 680,
-      height: 400,
-      viewBox: { minX: -2.2, minY: -1.5, maxX: 2.2, maxY: 1.5 },
-      title: '分析力学与非惯性系示意图',
-      primitives
-    };
-  },
-  renderCanvas: (ctx, state, params, viewport, activeLayers) => {
-    const m = createWorldMapper(viewport);
-    if (!activeLayers.has('main')) return;
-    ctx.save();
-
-    if (params.mode === 'double-pendulum') {
-      const pivot = m.toScreen(0, 0);
-      const drawDp = (s: readonly [number, number, number, number], col: string) => {
-        const bob1 = m.toScreen(params.l1M * Math.sin(s[0]), -params.l1M * Math.cos(s[0]));
-        const bob2 = m.toScreen(
-          params.l1M * Math.sin(s[0]) + params.l2M * Math.sin(s[1]),
-          -params.l1M * Math.cos(s[0]) - params.l2M * Math.cos(s[1])
-        );
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 2.6;
-        ctx.beginPath();
-        ctx.moveTo(pivot.x, pivot.y);
-        ctx.lineTo(bob1.x, bob1.y);
-        ctx.lineTo(bob2.x, bob2.y);
-        ctx.stroke();
-        ctx.fillStyle = col;
-        ctx.beginPath();
-        ctx.arc(bob1.x, bob1.y, m.len(0.035), 0, Math.PI * 2);
-        ctx.arc(bob2.x, bob2.y, m.len(0.035), 0, Math.PI * 2);
-        ctx.fill();
-      };
-      drawDp(state.dpShadow, 'rgba(244, 63, 94, 0.55)');
-      drawDp(state.dpState, '#38bdf8');
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 13px ui-sans-serif, system-ui';
-      ctx.fillText(`混沌双摆 Δθ₀=1e-4 分离 | 最大能量漂移 ${state.dpMaxRelDrift.toExponential(2)}`, 20, 28);
-      ctx.restore();
-      return;
+  exportDiagramIR:advancedDiagram,
+  renderCanvas:(ctx,s,p,vp,layers)=>{
+    if(!layers.has('main'))return;
+    const m=createWorldMapper(vp),paper=vp.theme==='projector';
+    const colors:Record<Role,string>=paper?{ink:'#172033',muted:'#64748b',main:'#0369a1',shadow:'#be123c',green:'#166534',warm:'#92400e'}:{ink:'#e2e8f0',muted:'#94a3b8',main:'#38bdf8',shadow:'#fb7185',green:'#4ade80',warm:'#fbbf24'};
+    const trace=(points:readonly {x:number;y:number}[])=>{if(points.length<2)return;ctx.beginPath();points.forEach((p,i)=>{const z=m.toScreen(p.x,p.y);if(i)ctx.lineTo(z.x,z.y);else ctx.moveTo(z.x,z.y);});ctx.stroke();};
+    const text=(x:number,y:number,t:string,align:CanvasTextAlign='center',size=11)=>{const a=m.toScreen(x,y);ctx.save();ctx.font='500 '+size+'px system-ui,sans-serif';ctx.textAlign=align;ctx.textBaseline='middle';ctx.fillText(t,a.x,a.y);ctx.restore();};
+    ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+    for(const {role,primitive:d} of advancedItems(s,p)){
+      ctx.strokeStyle=colors[role];ctx.fillStyle=colors[role];ctx.lineWidth=role==='muted'?1:2;
+      ctx.setLineDash('dashed' in d&&d.dashed?[4,4]:[]);
+      if(d.kind==='line')trace([{x:d.x1,y:d.y1},{x:d.x2,y:d.y2}]);
+      else if(d.kind==='trajectory'||d.kind==='polyline')trace(d.points);
+      else if(d.kind==='circle'){
+        const z=m.toScreen(d.cx,d.cy);ctx.beginPath();ctx.arc(z.x,z.y,Math.max(1.5,m.len(d.r)),0,Math.PI*2);if(d.fill)ctx.fill();else ctx.stroke();
+      }else if(d.kind==='rect'){
+        const z=m.toScreen(d.x,d.y+d.height);ctx.strokeRect(z.x,z.y,m.len(d.width),m.len(d.height));
+      }else if(d.kind==='block'){
+        const z=m.toScreen(d.cx-d.width/2,d.cy+d.height/2),w=m.len(d.width),h=m.len(d.height);
+        ctx.globalAlpha=.23;ctx.fillRect(z.x,z.y,w,h);ctx.globalAlpha=1;ctx.strokeRect(z.x,z.y,w,h);
+        if(d.label)text(d.cx,d.cy,d.label);
+      }else if(d.kind==='spring'){
+        const dx=d.x2-d.x1,dy=d.y2-d.y1,l=Math.hypot(dx,dy);if(l<1e-9)continue;
+        const count=2*(d.coils??10),amp=d.amplitude??.06,pts=[{x:d.x1,y:d.y1}];
+        for(let i=1;i<count;i++){const t=i/count,k=(i%2?1:-1)*amp;pts.push({x:d.x1+t*dx-k*dy/l,y:d.y1+t*dy+k*dx/l});}
+        pts.push({x:d.x2,y:d.y2});trace(pts);
+      }else if(d.kind==='text')text(d.x,d.y,d.text,d.align==='start'?'left':d.align==='end'?'right':'center',Math.max(10,Math.min(14,m.len(.10))));
     }
-
-    if (params.mode === 'normal-modes') {
-      const labels: CanvasLabel[] = [];
-      const yMass = 0.5;
-      const x1 = -0.9 + state.nmVerlet.positions[0]!;
-      const x2 = 0.9 + state.nmVerlet.positions[1]!;
-      const drawSpring = (startX: number, endX: number, y: number, color: string) => {
-        const start = m.toScreen(startX, y);
-        const end = m.toScreen(endX, y);
-        const dx = end.x - start.x;
-        const segments = 12;
-        const amplitude = m.len(0.085);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.7;
-        ctx.beginPath();
-        ctx.moveTo(start.x, start.y);
-        for (let i = 1; i < segments; i++) {
-          const t = i / segments;
-          ctx.lineTo(start.x + dx * t, start.y + (i % 2 === 0 ? -amplitude : amplitude));
-        }
-        ctx.lineTo(end.x, end.y);
-        ctx.stroke();
-      };
-      const wallLeft = m.toScreen(-2, 0.5);
-      const wallRight = m.toScreen(2, 0.5);
-      const mass1 = m.toScreen(x1, yMass);
-      const mass2 = m.toScreen(x2, yMass);
-      const halfMass = m.len(0.16);
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(wallLeft.x, wallLeft.y - m.len(0.35));
-      ctx.lineTo(wallLeft.x, wallLeft.y + m.len(0.35));
-      ctx.moveTo(wallRight.x, wallRight.y - m.len(0.35));
-      ctx.lineTo(wallRight.x, wallRight.y + m.len(0.35));
-      ctx.stroke();
-      drawSpring(-2, x1 - 0.16, yMass, '#94a3b8');
-      drawSpring(x1 + 0.16, x2 - 0.16, yMass, '#a78bfa');
-      drawSpring(x2 + 0.16, 2, yMass, '#94a3b8');
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(mass1.x - halfMass, mass1.y - halfMass, halfMass * 2, halfMass * 2);
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(mass2.x - halfMass, mass2.y - halfMass, halfMass * 2, halfMass * 2);
-
-      const graphLeft = -1.8;
-      const graphRight = 1.8;
-      const graphBottom = -1.45;
-      const graphCenterY = -1.0;
-      const graphTop = -0.55;
-      const graphA = m.toScreen(graphLeft, graphBottom);
-      const graphB = m.toScreen(graphLeft, graphTop);
-      const graphC = m.toScreen(graphRight, graphBottom);
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(graphA.x, graphA.y);
-      ctx.lineTo(graphB.x, graphB.y);
-      ctx.lineTo(graphB.x + m.len(graphRight - graphLeft), graphB.y);
-      ctx.moveTo(graphA.x, graphA.y);
-      ctx.lineTo(graphC.x, graphC.y);
-      ctx.stroke();
-      const drawTrail = (key: 'x1' | 'x2', color: string) => {
-        if (state.nmTrail.length < 2) return;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
-        state.nmTrail.forEach((pt, idx) => {
-          const wx = graphLeft + (idx / (state.nmTrail.length - 1)) * (graphRight - graphLeft);
-          const wy = graphCenterY + clamp(pt[key] * 0.35, -0.42, 0.42);
-          const point = m.toScreen(wx, wy);
-          if (idx === 0) ctx.moveTo(point.x, point.y);
-          else ctx.lineTo(point.x, point.y);
-        });
-        ctx.stroke();
-      };
-      drawTrail('x1', '#38bdf8');
-      drawTrail('x2', '#fbbf24');
-      labels.push(
-        { id: 'normal-mode-summary', x: viewport.width * 0.5, y: 28, text: `耦合振子 (${params.normalExcite}) | x₁=${state.nmVerlet.positions[0]!.toFixed(3)}, x₂=${state.nmVerlet.positions[1]!.toFixed(3)}`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' },
-        { id: 'normal-mode-mass-1', x: mass1.x, y: mass1.y, text: 'm₁', color: '#0f172a', font: 'bold 12px ui-sans-serif, system-ui' },
-        { id: 'normal-mode-mass-2', x: mass2.x, y: mass2.y, text: 'm₂', color: '#0f172a', font: 'bold 12px ui-sans-serif, system-ui' }
-      );
-      resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
-      ctx.restore();
-      return;
-    }
-
-    const labels: CanvasLabel[] = [];
-    const rDisk = m.len(1.0);
-    const drawDisk = (worldX: number, title: string, pts: readonly { x: number; y: number }[], head: { x: number; y: number }, col: string) => {
-      const center = m.toScreen(worldX, 0);
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, rDisk, 0, Math.PI * 2);
-      ctx.stroke();
-      if (pts.length > 1) {
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 2.4;
-        ctx.beginPath();
-        pts.forEach((p, idx) => {
-          const point = m.toScreen(worldX + p.x * 0.45, p.y * 0.45);
-          if (idx === 0) ctx.moveTo(point.x, point.y);
-          else ctx.lineTo(point.x, point.y);
-        });
-        ctx.stroke();
-      }
-      const headPoint = m.toScreen(worldX + head.x * 0.45, head.y * 0.45);
-      ctx.fillStyle = col;
-      ctx.beginPath();
-      ctx.arc(headPoint.x, headPoint.y, m.len(0.035), 0, Math.PI * 2);
-      ctx.fill();
-      const titlePoint = m.toScreen(worldX, -1.25);
-      labels.push({ id: `coriolis-${worldX}`, x: titlePoint.x, y: titlePoint.y, text: title, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
-    };
-    drawDisk(
-      -1.25,
-      '地面惯性系（自由直轨）',
-      state.coriolisTrail.map((p) => ({ x: p.lx, y: p.ly })),
-      state.labPos,
-      '#4ade80'
-    );
-    drawDisk(
-      1.25,
-      '转动圆盘系（科里奥利偏折）',
-      state.coriolisTrail.map((p) => ({ x: p.rx, y: p.ry })),
-      { x: state.rotDirectState[0]!, y: state.rotDirectState[1]! },
-      '#38bdf8'
-    );
-    labels.push({ id: 'coriolis-summary', x: viewport.width * 0.5, y: 28, text: `双系轨迹重合偏差: ${state.coriolisDeviation.toExponential(2)}`, color: '#e2e8f0', font: 'bold 13px ui-sans-serif, system-ui' });
-    resolveAndDrawLabels(ctx, labels, viewport.width, viewport.height);
     ctx.restore();
+    if(ctx.canvas?.dataset)ctx.canvas.dataset.advancedMechanicsRendered=JSON.stringify({
+      t:s.t,mode:p.mode,bounds:advancedViewBounds(s,p,vp),params:p,obs:computeObservables(s,p),
+      ...(p.mode==='double-pendulum'?{bobs:pendulumBobs(s.dpState,p),shadow:pendulumBobs(s.dpShadow,p),state:s.dpState,shadowState:s.dpShadow,points:s.poincarePts}
+        :p.mode==='normal-modes'?{centers:normalCenters(s,p),q:normalQuantities(s,p)}
+        :{frames:coriolisFrames(s,p),q:coriolisQuantities(s,p),labPos:s.labPos})
+    });
   },
-  formatFormulas: (state, params) => [
-    {
-      id: 'comp-advanced-mech',
-      label: '强基分析力学核心关系',
-      latex:
-        params.mode === 'normal-modes'
-          ? '\\omega_1=\\sqrt{\\frac{k_w}{m}},\\quad \\omega_2=\\sqrt{\\frac{k_w+2k_c}{m}}'
-          : '\\mathbf{a}_{\\text{非}}=-2\\boldsymbol{\\Omega}\\times\\mathbf{v}_r-\\boldsymbol{\\Omega}\\times(\\boldsymbol{\\Omega}\\times\\mathbf{r}_r)',
-      substitutedLatex: `\\Delta E_{\\text{rel}}=${state.dpMaxRelDrift.toExponential(2)},\\; \\text{CorDev}=${state.coriolisDeviation.toExponential(2)}`
-    }
-  ]
-});
-
+  formatFormulas:(s,p)=>{
+    const scientific=(v:number)=>{if(v===0)return '0';const [m,e]=v.toExponential(3).split('e');return m+'\\times 10^{'+Number(e)+'}';};
+    if(p.mode==='double-pendulum')return [
+      {id:'dp-energy',label:'双摆机械能（铅直向下为角度零点）',latex:'E=T+U',substitutedLatex:'E='+s.dpCurrentEnergy.toFixed(4)+'\\ \\mathrm J'},
+      {id:'dp-kinetic',label:'动能与耦合项',latex:'\\begin{aligned}T&=\\tfrac12(m_1+m_2)L_1^2\\dot\\theta_1^2\\\\&+\\tfrac12m_2L_2^2\\dot\\theta_2^2\\\\&+m_2L_1L_2\\dot\\theta_1\\dot\\theta_2\\\\&\\quad\\times\\cos(\\theta_1-\\theta_2)\\end{aligned}'},
+      {id:'dp-potential',label:'重力势能（固定支点为零）',latex:'\\begin{aligned}U&=-(m_1+m_2)gL_1\\cos\\theta_1\\\\&-m_2gL_2\\cos\\theta_2\\end{aligned}'},
+      {id:'dp-section',label:'真实事件定位截面',latex:'\\theta_1=2k\\pi,\\quad\\dot\\theta_1>0',substitutedLatex:'N='+s.poincarePts.length},
+      {id:'dp-separation',label:'两主值角差的欧氏距离，不是李雅普诺夫指数',latex:'d=\\sqrt{\\Delta\\theta_1^2+\\Delta\\theta_2^2}',substitutedLatex:'d='+scientific(computeObservables(s,p).dpDivergenceRad!)+'\\ \\mathrm{rad}'}
+    ];
+    if(p.mode==='normal-modes'){const q=normalQuantities(s,p);return [
+      {id:'nm-sym',label:'同相频率',latex:'\\omega_1=\\sqrt{k_w/m}',substitutedLatex:'\\omega_1='+q.w1.toFixed(4)+'\\ \\mathrm{rad/s}'},
+      {id:'nm-anti',label:'反相频率',latex:'\\omega_2=\\sqrt{(k_w+2k_c)/m}',substitutedLatex:'\\omega_2='+q.w2.toFixed(4)+'\\ \\mathrm{rad/s}'},
+      {id:'nm-energy',label:'机械能（包含耦合弹簧势能）',latex:'\\begin{aligned}E&=\\tfrac12m(v_1^2+v_2^2)\\\\&+\\tfrac12k_w(x_1^2+x_2^2)\\\\&+\\tfrac12k_c(x_1-x_2)^2\\end{aligned}',substitutedLatex:'E='+q.E.toFixed(4)+'\\ \\mathrm J'},
+      {id:'nm-mode-energy',label:'独立模能量',latex:'E=E_s+E_a',substitutedLatex:'E_s='+q.Es.toFixed(3)+'\\ \\mathrm J,\\ E_a='+q.Ea.toFixed(3)+'\\ \\mathrm J'}
+    ];}
+    const q=coriolisQuantities(s,p);return [
+      {id:'cor-position',label:'惯性自由运动到匀速旋转坐标变换',latex:'\\begin{aligned}x&=Vt\\cos(\\Omega t)\\\\y&=-Vt\\sin(\\Omega t)\\end{aligned}'},
+      {id:'cor-coriolis',label:'科氏加速度',latex:'\\mathbf a_C=-2\\boldsymbol\\Omega\\times\\mathbf v_r',substitutedLatex:'a_C='+Math.hypot(q.axC,q.ayC).toFixed(3)+'\\ \\mathrm{m/s^2}'},
+      {id:'cor-centrifugal',label:'离心加速度',latex:'\\begin{aligned}\\mathbf a_f&=-\\boldsymbol\\Omega\\times\\\\&\\quad(\\boldsymbol\\Omega\\times\\mathbf r_r)\\end{aligned}',substitutedLatex:'a_f='+Math.hypot(q.axF,q.ayF).toFixed(3)+'\\ \\mathrm{m/s^2}'},
+      {id:'cor-error',label:'独立积分与坐标变换的位置偏差',latex:'\\delta r=|\\mathbf r_{ODE}-\\mathbf r_{rot}|',substitutedLatex:'\\delta r='+scientific(q.positionError)+'\\ \\mathrm m'}
+    ];
+  }
+}),{fitAdvancedViewport,advancedViewBounds});
 export default compChaosNormalCoriolisPlugin;

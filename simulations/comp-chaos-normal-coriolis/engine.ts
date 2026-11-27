@@ -1,6 +1,7 @@
 import {
   CLASSROOM_GRAVITY,
   degToRad,
+  bisectEvent,
   integrateAdaptiveRK45,
   stepVelocityVerlet,
   type VerletState
@@ -33,7 +34,7 @@ export interface ChaosNormalCoriolisState {
   readonly dpInitialEnergy: number;
   readonly dpCurrentEnergy: number;
   readonly dpMaxRelDrift: number;
-  readonly poincarePts: readonly { th2: number; w2: number }[];
+  readonly poincarePts: readonly { t:number; th1:number; th2:number; w1:number; w2:number; bracketWidth:number }[];
   // Normal modes
   readonly nmVerlet: VerletState;
   readonly nmPrevX1: number;
@@ -108,7 +109,7 @@ export function createInitialState(params: ChaosNormalCoriolisParams): ChaosNorm
         : [0.8, 0];
 
   const labPos = { x: 0, y: 0 };
-  const labVel = { x: Math.max(0.2, params.puckSpeedMps), y: 0 };
+  const labVel = { x: Math.max(0, params.puckSpeedMps), y: 0 };
 
   return {
     t: 0,
@@ -138,6 +139,7 @@ export function stepChaosNormalCoriolis(
   if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
   if (dt === 0) return { nextState: state, events: [] };
 
+  const events: StepResult<ChaosNormalCoriolisState>['events']=[];
   // 1. Double pendulum RK45
   let dpState = state.dpState;
   let dpShadow = state.dpShadow;
@@ -146,16 +148,41 @@ export function stepChaosNormalCoriolis(
   let poincarePts = state.poincarePts;
   if (params.mode === 'double-pendulum') {
     const deriv = makeDoublePendulumDeriv(params);
-    const r1 = integrateAdaptiveRK45(state.dpState, state.t, dt, deriv, { absTol: 1e-11, relTol: 1e-10, maxSubsteps: 4000 });
-    const r2 = integrateAdaptiveRK45(state.dpShadow, state.t, dt, deriv, { absTol: 1e-11, relTol: 1e-10, maxSubsteps: 4000 });
-    dpState = [r1.state[0]!, r1.state[1]!, r1.state[2]!, r1.state[3]!];
-    dpShadow = [r2.state[0]!, r2.state[1]!, r2.state[2]!, r2.state[3]!];
-    dpCurE = doublePendulumEnergy(dpState, params);
-    const scaleE = Math.abs(state.dpInitialEnergy) + 10;
-    const relDrift = Math.abs(dpCurE - state.dpInitialEnergy) / scaleE;
-    if (relDrift > dpMaxRelDrift) dpMaxRelDrift = relDrift;
-    if (state.dpState[0]! < 0 && dpState[0]! >= 0 && dpState[2]! > 0) {
-      poincarePts = [...poincarePts.slice(-120), { th2: dpState[1]!, w2: dpState[3]! }];
+    const opts={absTol:1e-11,relTol:1e-10,maxSubsteps:4000};
+    type DP=ChaosNormalCoriolisState['dpState'];
+    const advance=(y:DP,t:number,h:number):DP=>{
+      const r=integrateAdaptiveRK45(y,t,h,deriv,opts).state;
+      return [r[0]!,r[1]!,r[2]!,r[3]!];
+    };
+    // Small search brackets; locate upward theta1=2pi*k crossings by re-integrating, not endpoint interpolation.
+    const n=Math.max(1,Math.ceil(dt/.01)),h=dt/n;
+    for(let j=0;j<n;j++){
+      const t=state.t+j*h,before=dpState,after=advance(before,t,h);
+      const turn=2*Math.PI;
+      // A section can be crossed upward and back downward within one search
+      // bracket. Isolate a bracketed extremum of theta1 before testing roots.
+      const cut=before[2]*after[2]<0?bisectEvent(before,t,h,(y,sub)=>advance(y,t,sub),y=>y[2],{timeTolerance:1e-9}):null;
+      const segments=cut&&cut.timeOffset>0&&cut.timeOffset<h?
+        [{a:before,b:cut.state,t0:t,dt:cut.timeOffset},{a:cut.state,b:after,t0:cut.time,dt:h-cut.timeOffset}]:
+        [{a:before,b:after,t0:t,dt:h}];
+      for(const part of segments){
+        for(let k=Math.floor(part.a[0]/turn)+1;k<=Math.floor(part.b[0]/turn);k++){
+          const target=k*turn;
+          const hit=bisectEvent(part.a,part.t0,part.dt,(y,sub)=>advance(y,part.t0,sub),y=>y[0]-target,{timeTolerance:1e-8});
+          if(hit&&hit.state[2]>0){
+            const y=hit.state;
+            const point={t:hit.time,th1:y[0],th2:principalAngle(y[1]),w1:y[2],w2:y[3],bracketWidth:hit.bracketWidth};
+            if(!poincarePts.length||point.t-poincarePts[poincarePts.length-1]!.t>1e-7){
+              poincarePts=[...poincarePts.slice(-119),point];
+              events.push({id:'poincare-'+point.t.toFixed(8),time:point.t,label:'θ₁=2πk，ω₁>0',metrics:{theta2:point.th2,omega2:point.w2}});
+            }
+          }
+        }
+      }
+      dpState=after;
+      dpShadow=advance(dpShadow,t,h);
+      dpCurE=doublePendulumEnergy(dpState,params);
+      dpMaxRelDrift=Math.max(dpMaxRelDrift,Math.abs(dpCurE-state.dpInitialEnergy)/dpEnergyScale(state.dpInitialEnergy,params));
     }
   }
 
@@ -168,7 +195,7 @@ export function stepChaosNormalCoriolis(
     const m = Math.max(0.2, params.m1Kg);
     const kw = Math.max(1, params.springKw);
     const kc = Math.max(0.1, params.springKc);
-    const sub = Math.max(8, Math.ceil(dt / 0.002));
+    const sub = Math.max(8, Math.ceil(dt / 0.0005));
     const h = dt / sub;
     const accel = (pos: readonly number[]): number[] => {
       const x1 = pos[0]!;
@@ -244,29 +271,55 @@ export function stepChaosNormalCoriolis(
       coriolisDeviation: corDev,
       coriolisTrail: corTrail
     },
-    events: []
+    events
   };
 }
 
-export function computeObservables(state: ChaosNormalCoriolisState): Record<string, number> {
-  return {
-    t: state.t,
-    dpEnergyDriftRel: state.dpMaxRelDrift,
-    dpDivergenceRad: Math.hypot(state.dpState[0]! - state.dpShadow[0]!, state.dpState[1]! - state.dpShadow[1]!),
-    x1Nm: state.nmVerlet.positions[0]!,
-    x2Nm: state.nmVerlet.positions[1]!,
-    coriolisDeviation: state.coriolisDeviation
-  };
+export function principalAngle(theta:number):number{return Math.atan2(Math.sin(theta),Math.cos(theta));}
+function dpEnergyScale(initial:number,p:ChaosNormalCoriolisParams):number{
+  return Math.max(1,Math.abs(initial),CLASSROOM_GRAVITY*((p.m1Kg+p.m2Kg)*p.l1M+p.m2Kg*p.l2M));
 }
-
-export function checkInvariants(state: ChaosNormalCoriolisState, _i: ChaosNormalCoriolisState, params: ChaosNormalCoriolisParams): InvariantReport[] {
-  const err = params.mode === 'coriolis-disk' ? state.coriolisDeviation : state.dpMaxRelDrift;
-  return [
-    {
-      name: params.mode === 'coriolis-disk' ? '旋转系直积与实验室系坐标变换偏差' : '双摆 30s 长时 RK45 机械能相对漂移',
-      measuredError: err,
-      tolerance: 1e-6,
-      passed: err < 1e-6
-    }
-  ];
+export function normalQuantities(s:ChaosNormalCoriolisState,p:ChaosNormalCoriolisParams){
+  const m=Math.max(.2,p.m1Kg),kw=Math.max(1,p.springKw),kc=Math.max(.1,p.springKc);
+  const [x1=0,x2=0]=s.nmVerlet.positions,[v1=0,v2=0]=s.nmVerlet.velocities;
+  const K=.5*m*(v1*v1+v2*v2),Uwall=.5*kw*(x1*x1+x2*x2),Ucoupling=.5*kc*(x1-x2)**2;
+  const Es=.25*m*(v1+v2)**2+.25*kw*(x1+x2)**2;
+  const Ea=.25*m*(v1-v2)**2+.25*(kw+2*kc)*(x1-x2)**2;
+  return {x1,x2,v1,v2,K,Uwall,Ucoupling,E:K+Uwall+Ucoupling,Es,Ea,w1:Math.sqrt(kw/m),w2:Math.sqrt((kw+2*kc)/m)};
+}
+export function coriolisQuantities(s:ChaosNormalCoriolisState,p:ChaosNormalCoriolisParams){
+  const [x,y,vx,vy]=s.rotDirectState,w=p.diskOmegaRadps,c=Math.cos(w*s.t),sn=Math.sin(w*s.t);
+  const labX=s.labPos.x*c+s.labPos.y*sn,labY=-s.labPos.x*sn+s.labPos.y*c;
+  const labVx=s.labVel.x*c+s.labVel.y*sn+w*labY,labVy=-s.labVel.x*sn+s.labVel.y*c-w*labX;
+  return {x,y,vx,vy,axC:2*w*vy,ayC:-2*w*vx,axF:w*w*x,ayF:w*w*y,
+    positionError:Math.hypot(x-labX,y-labY),velocityError:Math.hypot(vx-labVx,vy-labVy),
+    r:Math.hypot(x,y),labR:Math.hypot(s.labPos.x,s.labPos.y)};
+}
+export function computeObservables(s: ChaosNormalCoriolisState,p:ChaosNormalCoriolisParams): Record<string, number> {
+  if(p.mode==='normal-modes'){
+    const q=normalQuantities(s,p);
+    return {t:s.t,x1Nm:q.x1,x2Nm:q.x2,v1Nm:q.v1,v2Nm:q.v2,normalEnergyJ:q.E,normalSymEnergyJ:q.Es,normalAntiEnergyJ:q.Ea,kineticEnergy:q.K,potentialEnergy:q.Uwall+q.Ucoupling};
+  }
+  if(p.mode==='coriolis-disk'){
+    const q=coriolisQuantities(s,p);
+    return {t:s.t,coriolisDeviation:q.positionError,coriolisVelocityError:q.velocityError,labRadius:q.labR,rotRadius:q.r,rotX:q.x,rotY:q.y,coriolisAccel:Math.hypot(q.axC,q.ayC),centrifugalAccel:Math.hypot(q.axF,q.ayF)};
+  }
+  return {t:s.t,dpEnergyDriftRel:s.dpMaxRelDrift,dpDivergenceRad:Math.hypot(principalAngle(s.dpState[0]-s.dpShadow[0]),principalAngle(s.dpState[1]-s.dpShadow[1])),
+    dpTheta1:principalAngle(s.dpState[0]),dpTheta2:principalAngle(s.dpState[1]),dpOmega1:s.dpState[2],dpOmega2:s.dpState[3],dpEnergyJ:s.dpCurrentEnergy,poincareCount:s.poincarePts.length};
+}
+export function checkInvariants(s: ChaosNormalCoriolisState,initial: ChaosNormalCoriolisState,p: ChaosNormalCoriolisParams): InvariantReport[] {
+  const report=(name:string,e:number,tolerance:number,unit?:string):InvariantReport=>({name,measuredError:e,tolerance,passed:Number.isFinite(e)&&e<tolerance,...(unit?{unit}:{})});
+  if(p.mode==='normal-modes'){
+    const q=normalQuantities(s,p),a=normalQuantities(initial,p),scale=Math.max(1e-12,a.E);
+    return [report('等质量双振子真实机械能相对误差',Math.abs(q.E-a.E)/scale,3e-5),
+      report('同相模能量相对总初能误差',Math.abs(q.Es-a.Es)/scale,3e-5),
+      report('反相模能量相对总初能误差',Math.abs(q.Ea-a.Ea)/scale,3e-5)];
+  }
+  if(p.mode==='coriolis-disk'){
+    const q=coriolisQuantities(s,p);
+    return [report('旋转系直接积分与坐标变换位置偏差',q.positionError,1e-6,'m'),report('旋转系速度变换偏差',q.velocityError,1e-6,'m/s')];
+  }
+  const e=doublePendulumEnergy(initial.dpState,p),scale=dpEnergyScale(e,p);
+  return [report('双摆 RK45 机械能最大相对漂移',Math.max(s.dpMaxRelDrift,Math.abs(doublePendulumEnergy(s.dpState,p)-e)/scale),1e-6),
+    report('邻近双摆独立机械能误差',Math.abs(doublePendulumEnergy(s.dpShadow,p)-doublePendulumEnergy(initial.dpShadow,p))/scale,1e-6)];
 }

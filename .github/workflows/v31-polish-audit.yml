@@ -17,6 +17,35 @@ permissions:
   contents: read
   actions: read
 jobs:
+  f11-focus:
+    name: F11 focused browser evidence
+    if: startsWith(github.event.pull_request.head.ref, 'polish/v31-h62-f11-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm build
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: pnpm audit:visual
+        env:
+          PHYSFORGE_VISUAL_FOCUS: F11
+          PHYSFORGE_VISUAL_PHASE: all
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: f11-focus-evidence
+          path: artifacts/ui-audit/
+          retention-days: 7
   visual:
     name: visual (${{ matrix.phase }})
     strategy:
@@ -24,7 +53,7 @@ jobs:
       matrix:
         phase: [online, offline]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,7 +107,7 @@ jobs:
           REVIEW_HEAD: ${{ github.event.pull_request.base.sha }}
           REVIEW_BRANCH: ${{ github.event.pull_request.base.ref }}
           REVIEW_PHASE: ${{ matrix.phase }}
-        run: python scripts/visual_review_pack.py --resolve-base --repo "$REVIEW_REPO" --head "$REVIEW_HEAD" --base-branch "$REVIEW_BRANCH" --phase "$REVIEW_PHASE" --out artifacts/base-review --prefixes H53_F07,H56_F08,H59_F09,H60_F10
+        run: python scripts/visual_review_pack.py --resolve-base --repo "$REVIEW_REPO" --head "$REVIEW_HEAD" --base-branch "$REVIEW_BRANCH" --phase "$REVIEW_PHASE" --out artifacts/base-review --prefixes H53_F07,H56_F08,H59_F09,H60_F10,H62_F11
         timeout-minutes: 4
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && hashFiles('artifacts/base-review/manifest.json') != '' }}
@@ -182,7 +211,7 @@ jobs:
           REVIEW_HEAD: ${{ github.event.pull_request.head.sha }}
           REVIEW_BASE: ${{ github.event.pull_request.base.sha }}
           REVIEW_PHASE: ${{ matrix.phase }}
-        run: python scripts/visual_review_pack.py --raw artifacts/raw-review --out artifacts/small-review --head "$REVIEW_HEAD" --base-sha "$REVIEW_BASE" --phase "$REVIEW_PHASE" --baseline artifacts/base-manifest/manifest.json --prefixes H53_F07,H56_F08,H59_F09,H60_F10
+        run: python scripts/visual_review_pack.py --raw artifacts/raw-review --out artifacts/small-review --head "$REVIEW_HEAD" --base-sha "$REVIEW_BASE" --phase "$REVIEW_PHASE" --baseline artifacts/base-manifest/manifest.json --prefixes H53_F07,H56_F08,H59_F09,H60_F10,H62_F11
         timeout-minutes: 3
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && hashFiles('artifacts/small-review/manifest.json') != '' }}
