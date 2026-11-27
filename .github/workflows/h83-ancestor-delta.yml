@@ -1,0 +1,59 @@
+name: H83 exact H81 ancestor visual delta
+on:
+  pull_request:
+    branches: ['polish/v31-h83-s02-readout']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  delta:
+    if: github.event.pull_request.head.ref == 'audit/h83-h81-delta'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PHASE: ${{ matrix.phase }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify exact runs and retrieve retained artifacts
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          mkdir -p inputs review
+          for i in {1..18}; do
+            state=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/46022936408)
+            test "$(jq -r .head_sha <<<"$state")" = 54859b12382bcacdc471a586f086b2e89685781c
+            if [[ "$(jq -r .status <<<"$state")" == completed ]]; then
+              test "$(jq -r .conclusion <<<"$state")" = success
+              break
+            fi
+            sleep 5
+          done
+          test "$(jq -r .status <<<"$state")" = completed
+          old=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/46015253705)
+          test "$(jq -r .head_sha <<<"$old")" = c965dab0e44516615d4cc094b811734392e52f4c
+          test "$(jq -r .conclusion <<<"$old")" = success
+          for run in 46015253705 46022936408; do
+            meta=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" | jq -ce --arg n "v31-polish-visual-$PHASE" '[.artifacts[]|select(.name==$n and .expired==false)]|if length==1 then .[0] else error("nonunique or missing raw artifact") end')
+            id=$(jq -r .id <<<"$meta")
+            digest=$(jq -r .digest <<<"$meta")
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "inputs/$run.zip"
+            echo "${digest#sha256:}  inputs/$run.zip" | sha256sum -c -
+            echo "$meta" > "inputs/$run.json"
+          done
+      - name: Compare all PNG paths and exact bytes
+        timeout-minutes: 2
+        run: python scripts/h83_ancestor_delta.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h83-h81-delta-${{ matrix.phase }}
+          path: review/
+          if-no-files-found: warn
+          retention-days: 7
