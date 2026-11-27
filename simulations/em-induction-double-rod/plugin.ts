@@ -1,13 +1,12 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { inductionStoryDecks } from './storyDecks.js';
+import { drawInductionRail,drawInductionRod,inductionArrowLength,inductionVisualPalette } from './visualStyle.js';
 import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints, inductionLoadDimensions } from './diagramGeometry.js';
 export { rodDisplayX } from './diagramGeometry.js';
 import {
   createWorldMapper,
   defineSimulationPlugin,
   drawGlowVectorArrow,
-  drawGlowingConductorRod,
-  drawMetallicRail,
   resolveAndDrawLabels,
   type DiagramPrimitive,
   type ParamFieldSpec
@@ -603,10 +602,12 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
     const railMidY = center.y;
     const railTopY = m.toY(g.l1/2);
     const railBotY = m.toY(-g.l1/2);
+    const projector=viewport.theme==='projector',palette=inductionVisualPalette(projector);
+    const rodWidth=Math.max(10,Math.min(14,m.len(.06)));
     const labels: Array<{ id: string; x: number; y: number; text: string; color: string; font?: string }> = [];
 
     if (activeLayers.has('railsAndField')) {
-      ctx.save();ctx.strokeStyle='rgba(148,163,184,0.35)';ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=1.4;ctx.lineCap='round';
+      ctx.save();ctx.strokeStyle=palette.field;ctx.fillStyle=palette.field;ctx.globalAlpha=palette.fieldAlpha;ctx.lineWidth=1.4;ctx.lineCap='round';
       for(const p of inductionFieldPoints(params)){
         const q=m.toScreen(p.x,p.y);
         ctx.beginPath();
@@ -615,14 +616,15 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
       }
       ctx.restore();
       if(!g.schematicStep){
-        for(const rail of g.rails)drawMetallicRail(ctx,m.toX(rail.start.x),m.toY(rail.start.y),m.toX(rail.end.x),8);
+        const left=m.toX(Math.min(g.x1,g.x2)),right=m.toX(Math.max(g.x1,g.x2));
+        for(const rail of g.rails)drawInductionRail(ctx,m.toX(rail.start.x),m.toY(rail.start.y),m.toX(rail.end.x),left,right,9,projector);
       }else{
-        ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#64748b';ctx.lineWidth=8;
+        ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=projector?'#475569':'#64748b';ctx.lineWidth=8;
         for(const rail of g.rails){const a=m.toScreen(rail.start.x,rail.start.y),b=m.toScreen(rail.end.x,rail.end.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
-        ctx.strokeStyle='#e2e8f0';ctx.lineWidth=2;
+        ctx.strokeStyle=projector?'#cbd5e1':'#e2e8f0';ctx.lineWidth=2;
         for(const rail of g.rails){const a=m.toScreen(rail.start.x,rail.start.y),b=m.toScreen(rail.end.x,rail.end.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
         ctx.restore();
-        labels.push({id:'unequal-rail-note',x:center.x,y:m.toY(Math.max(g.l1,g.l2)/2)-26,text:'不同杆长 · 连接线为示意',color:'#94a3b8'});
+        labels.push({id:'unequal-rail-note',x:center.x,y:m.toY(Math.max(g.l1,g.l2)/2)-26,text:'不同杆长 · 连接线为示意',color:palette.note});
       }
     }
 
@@ -630,7 +632,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
       if (params.rodMode === 'single') {
         const loadX=m.toX(g.x2),{halfGap,halfPlateWidth}=inductionLoadDimensions(g.l1);
         const upper=m.toY(halfGap),lower=m.toY(-halfGap),halfPlate=m.len(halfPlateWidth);
-        ctx.save();ctx.strokeStyle='#fbbf24';ctx.lineWidth=2.4;ctx.shadowColor='#fbbf24';ctx.shadowBlur=8;
+        ctx.save();ctx.strokeStyle=palette.load;ctx.lineWidth=2.8;ctx.shadowColor=palette.load;ctx.shadowBlur=projector?0:9;
         ctx.beginPath();ctx.moveTo(loadX,railTopY);ctx.lineTo(loadX,upper);
         if(params.circuitLoad==='capacitor'||params.circuitLoad==='battery'){
           const lowerPlate=params.circuitLoad==='battery'?halfPlate*0.55:halfPlate;
@@ -640,20 +642,20 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
           for(let i=1;i<=6;i++)ctx.lineTo(loadX+(i===6?0:(i%2===0?1:-1)*halfPlate*0.65),upper+(lower-upper)*i/6);
         }
         ctx.moveTo(loadX,lower);ctx.lineTo(loadX,railBotY);ctx.stroke();ctx.restore();
-        labels.push({ id: 'load-label', x: loadX, y: railBotY + 28, text: params.circuitLoad === 'battery' ? '电源 E' : params.circuitLoad === 'capacitor' ? '电容 C' : '电阻 R', color: '#fcd34d' });
+        labels.push({ id: 'load-label', x: loadX, y: railBotY + 28, text: params.circuitLoad === 'battery' ? '电源 E' : params.circuitLoad === 'capacitor' ? '电容 C' : '电阻 R', color: palette.loadLabel });
       }
 
       if (params.rodMode === 'double') {
         const x2 = toX(state.x2);
-        drawGlowingConductorRod(ctx, x2, m.toY(g.l2/2), m.toY(-g.l2/2), state.v2, '#f472b6', '#fbcfe8', 10);
-        labels.push({ id: 'rod2-label', x: x2, y: m.toY(-g.l2/2) + 31, text: `杆2 v₂=${state.v2.toFixed(2)} m/s`, color: '#f9a8d4' });
+        drawInductionRod(ctx, x2, m.toY(g.l2/2), m.toY(-g.l2/2), state.v2, palette.rod2, palette.rod2Core, rodWidth,projector);
+        labels.push({ id: 'rod2-label', x: x2, y: m.toY(-g.l2/2) + 31, text: `杆2 v₂=${state.v2.toFixed(2)} m/s`, color: palette.rod2Label });
       }
       const x1 = toX(state.x1);
-      drawGlowingConductorRod(ctx, x1, railTopY, railBotY, state.v1, '#38bdf8', '#e0f2fe', 11);
+      drawInductionRod(ctx, x1, railTopY, railBotY, state.v1, palette.rod, palette.rodCore, rodWidth,projector);
       if (Math.abs(state.v1) > 0.05 || params.rodMode === 'single') {
-        const velocityLength = Math.max(-110, Math.min(110, state.v1 * 18));
+        const velocityLength = inductionArrowLength(state.v1,60,135);
         if (Math.abs(velocityLength) >= 6) {
-          drawGlowVectorArrow(ctx, x1, railMidY + 14, x1 + velocityLength, railMidY + 14, '#38bdf8', 4.5, 14);
+          drawGlowVectorArrow(ctx, x1, railMidY + 18, x1 + velocityLength, railMidY + 18, palette.velocity, 5, 17);
         }
       }
     }
@@ -665,11 +667,11 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         const a=m.toScreen(seg.start.x,seg.start.y),b=m.toScreen(seg.end.x,seg.end.y);
         const dx=b.x-a.x,dy=b.y-a.y,length=Math.hypot(dx,dy);
         if(length<16)continue;
-        const scale=Math.sign(signedCurrent)*Math.min(54,length*0.65)/length;
+        const scale=Math.sign(signedCurrent)*Math.min(70,length*0.65)/length;
         const cx=(a.x+b.x)/2,cy=(a.y+b.y)/2;
-        drawGlowVectorArrow(ctx,cx-dx*scale/2,cy-dy*scale/2,cx+dx*scale/2,cy+dy*scale/2,'#f59e0b',3,10);
+        drawGlowVectorArrow(ctx,cx-dx*scale/2,cy-dy*scale/2,cx+dx*scale/2,cy+dy*scale/2,palette.current,3.6,12);
       }
-      labels.push({id:'current-label',x:(m.toX(g.x1)+m.toX(g.x2))/2,y:m.toY(-Math.max(g.l1,g.l2)/2)+24,text:`I = ${Math.abs(state.current).toFixed(2)} A`,color:'#fbbf24',font:'600 14px system-ui, sans-serif'});
+      labels.push({id:'current-label',x:(m.toX(g.x1)+m.toX(g.x2))/2,y:m.toY(-Math.max(g.l1,g.l2)/2)+24,text:`I = ${Math.abs(state.current).toFixed(2)} A`,color:palette.currentLabel,font:'600 15px system-ui, sans-serif'});
     }
 
     if (activeLayers.has('forceVectors')) {
@@ -678,11 +680,11 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
       const ampereForce = bl * state.current;
       const netForce = params.rodMode === 'single' && params.circuitLoad === 'battery' ? ampereForce : -ampereForce;
       if (Math.abs(netForce) > 0.05) {
-        const length = Math.max(-120, Math.min(120, netForce * 24));
-        const forceY = railMidY - 14;
-        drawGlowVectorArrow(ctx, x1 - 6 * Math.sign(length), forceY, x1 + length, forceY, '#fb7185', 4.5, 14);
+        const length = inductionArrowLength(netForce,35,145);
+        const forceY = railMidY - 18;
+        drawGlowVectorArrow(ctx, x1 - 6 * Math.sign(length), forceY, x1 + length, forceY, palette.force, 5, 17);
         const forceLabel = `F安 = ${Math.abs(ampereForce).toFixed(2)} N`;
-        const forceLabelFont = '600 15px system-ui, sans-serif';
+        const forceLabelFont = viewport.width>=1100?'600 17px system-ui, sans-serif':'600 15px system-ui, sans-serif';
         ctx.save();
         ctx.font = forceLabelFont;
         const forceLabelWidth = ctx.measureText(forceLabel).width + 12;
@@ -692,7 +694,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
           x: x1 + Math.sign(length) * (forceLabelWidth * 0.5 + 14),
           y: forceY - 24,
           text: forceLabel,
-          color: '#fb7185',
+          color: palette.force,
           font: forceLabelFont
         });
       }
@@ -700,16 +702,16 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         const x2 = toX(state.x2);
         const force2 = params.magneticB * getEffectiveL2(params) * state.current;
         if (Math.abs(force2) > 0.05) {
-          const length = Math.max(-120, Math.min(120, force2 * 24));
-          const forceY = railMidY - 14;
-          drawGlowVectorArrow(ctx, x2 - 6 * Math.sign(length), forceY, x2 + length, forceY, '#f472b6', 4.5, 14);
-          labels.push({ id: 'ampere-force-2', x: x2 + length * 0.5, y: forceY - 24, text: `F安₂ = ${Math.abs(force2).toFixed(2)} N`, color: '#f472b6' });
+          const length = inductionArrowLength(force2,35,145);
+          const forceY = railMidY - 18;
+          drawGlowVectorArrow(ctx, x2 - 6 * Math.sign(length), forceY, x2 + length, forceY, palette.rod2, 5, 17);
+          labels.push({ id: 'ampere-force-2', x: x2 + length * 0.5, y: forceY - 24, text: `F安₂ = ${Math.abs(force2).toFixed(2)} N`, color: palette.rod2Label });
         }
       }
       if (Math.abs(params.externalForce) > 0.05) {
-        const length = Math.max(-100, Math.min(100, params.externalForce * 16));
-        drawGlowVectorArrow(ctx, x1, railMidY + 12, x1 + length, railMidY + 12, '#4ade80', 3.5, 12);
-        labels.push({ id: 'external-force', x: x1 + length * 0.55, y: railMidY + 33, text: 'F外', color: '#4ade80' });
+        const length = inductionArrowLength(params.externalForce,24,120);
+        drawGlowVectorArrow(ctx, x1, railMidY + 37, x1 + length, railMidY + 37, palette.external, 3.5, 12);
+        labels.push({ id: 'external-force', x: x1 + length * 0.55, y: railMidY + 57, text: 'F外', color: palette.external });
       }
     }
 

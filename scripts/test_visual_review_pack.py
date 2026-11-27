@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ import zipfile
 
 from PIL import Image
 
-from visual_review_pack import exact_parent_runs, pack, read_baseline, resolve_base
+from visual_review_pack import exact_parent_runs, main, pack, read_baseline, resolve_base
 
 
 class ReviewPackTests(unittest.TestCase):
@@ -103,6 +104,70 @@ class ReviewPackTests(unittest.TestCase):
             dict(id=7, head_sha="newer", conclusion="success",
                  path=".github/workflows/v31-polish-audit.yml")]}):
             self.assertEqual(list(exact_parent_runs(args)), [])
+
+    def test_required_parent_retries_exact_sha_after_early_lookup_miss(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            raw = root / "raw"
+            raw.mkdir()
+            Image.new("RGB", (12, 12), "blue").save(raw / "actual.png")
+            early = root / "early.json"
+            early.write_text(json.dumps(dict(schema=1, head_sha="parent", phase="online",
+                images=[], errors=["exact parent visual evidence unavailable"])))
+            args = ["visual_review_pack.py", "--raw", str(raw), "--out", str(root / "out"),
+                    "--head", "child", "--base-sha", "parent", "--phase", "online",
+                    "--baseline", str(early), "--require-baseline", "--repo", "owner/repo",
+                    "--base-branch", "polish/v31-parent"]
+            def late_lookup(a):
+                self.assertEqual((a.head, a.phase, a.base_branch),
+                                 ("parent", "online", "polish/v31-parent"))
+                pack(raw, a.out, a.head, a.phase, [], targets_only=True)
+                return 0
+            with patch.object(sys, "argv", args), patch("visual_review_pack.resolve_base",
+                    side_effect=late_lookup) as retry:
+                self.assertEqual(main(), 0)
+                self.assertEqual(retry.call_count, 1)
+            manifest = json.loads((root / "out/manifest.json").read_text())
+            self.assertEqual(manifest["baseline_status"], "COMPARED")
+            self.assertEqual(manifest["images"][0]["change"], "UNCHANGED")
+
+    def test_required_parent_missing_or_wrong_sha_fails_but_preserves_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            raw = root / "raw"
+            raw.mkdir()
+            Image.new("RGB", (12, 12), "blue").save(raw / "actual.png")
+            wrong = root / "wrong"
+            pack(raw, wrong, "different-sha", "offline", [])
+            args = ["visual_review_pack.py", "--raw", str(raw), "--out", str(root / "out"),
+                    "--head", "child", "--base-sha", "parent", "--phase", "offline",
+                    "--baseline", str(wrong / "manifest.json"), "--require-baseline",
+                    "--repo", "owner/repo"]
+            def wrong_retry(a):
+                pack(raw, a.out, "different-sha", "offline", [])
+                return 0
+            with patch.object(sys, "argv", args), patch("visual_review_pack.resolve_base",
+                    side_effect=wrong_retry):
+                self.assertEqual(main(), 1)
+            manifest = json.loads((root / "out/manifest.json").read_text())
+            self.assertEqual(manifest["baseline_status"], "NOT_RUN")
+            self.assertIn("required exact parent comparison unavailable", manifest["errors"])
+            self.assertEqual(manifest["selected_count"], 1)
+            with zipfile.ZipFile(root / "out/review-01.zip") as z:
+                self.assertEqual(z.read("actual.png"), (raw / "actual.png").read_bytes())
+
+    def test_first_unstacked_baseline_remains_optional(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            raw = root / "raw"
+            raw.mkdir()
+            Image.new("RGB", (12, 12), "blue").save(raw / "actual.png")
+            args = ["visual_review_pack.py", "--raw", str(raw), "--out", str(root / "out"),
+                    "--head", "child", "--base-sha", "main", "--phase", "offline"]
+            with patch.object(sys, "argv", args), patch("visual_review_pack.resolve_base") as retry:
+                self.assertEqual(main(), 0)
+                retry.assert_not_called()
+            self.assertEqual(json.loads((root / "out/manifest.json").read_text())["baseline_status"], "NOT_RUN")
 
     def test_slot_and_size_overflow_not_silent(self):
         with tempfile.TemporaryDirectory() as td:

@@ -219,7 +219,7 @@ jobs:
       matrix:
         phase: [online, offline]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 13
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -240,9 +240,17 @@ jobs:
         env:
           REVIEW_HEAD: ${{ github.event.pull_request.head.sha }}
           REVIEW_BASE: ${{ github.event.pull_request.base.sha }}
+          REVIEW_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           REVIEW_PHASE: ${{ matrix.phase }}
-        run: python scripts/visual_review_pack.py --raw artifacts/raw-review --out artifacts/small-review --head "$REVIEW_HEAD" --base-sha "$REVIEW_BASE" --phase "$REVIEW_PHASE" --baseline artifacts/base-manifest/manifest.json --prefixes H53_F07,H56_F08,H59_F09,H60_F10,H62_F11,H63_F12
-        timeout-minutes: 3
+          REVIEW_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=()
+          if [[ "$REVIEW_BASE_BRANCH" == polish/v31-* ]]; then
+            args+=(--require-baseline)
+          fi
+          python scripts/visual_review_pack.py --raw artifacts/raw-review --out artifacts/small-review --head "$REVIEW_HEAD" --base-sha "$REVIEW_BASE" --phase "$REVIEW_PHASE" --baseline artifacts/base-manifest/manifest.json --repo "$REVIEW_REPO" --base-branch "$REVIEW_BASE_BRANCH" --prefixes H53_F07,H56_F08,H59_F09,H60_F10,H62_F11,H63_F12 "${args[@]}"
+        timeout-minutes: 6
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && hashFiles('artifacts/small-review/manifest.json') != '' }}
         with:

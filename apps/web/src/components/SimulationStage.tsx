@@ -1167,6 +1167,11 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           const sPos = worldToScreen(h.position.x, h.position.y, vp);
           const hovered = h.id === hoveredHandleIdRef.current;
           const showHandle = h.showWhenIdle !== false || hovered;
+          // E04's external-force control is drawn by the web shell, not the
+          // model renderer. Preserve its semantic green on white paper.
+          const handleColor = currentTheme === 'projector' &&
+            p.meta.id === 'em-induction-double-rod' && h.id === 'external-force-rod1'
+            ? '#166534' : h.color ?? '#38bdf8';
           if (showHandle && hovered) {
             ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
             ctx.shadowColor = h.color ?? '#38bdf8';
@@ -1179,7 +1184,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           if (showHandle && h.origin) {
             const sOrig = worldToScreen(h.origin.x, h.origin.y, vp);
             ctx.setLineDash([4, 3]);
-            ctx.strokeStyle = h.color ?? '#38bdf8';
+            ctx.strokeStyle = handleColor;
             ctx.lineWidth = 1.6;
             ctx.beginPath();
             ctx.moveTo(sOrig.x, sOrig.y);
@@ -1188,7 +1193,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             ctx.setLineDash([]);
           }
           if (showHandle) {
-            ctx.fillStyle = h.color ?? '#38bdf8';
+            ctx.fillStyle = handleColor;
             ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = 2;
             ctx.beginPath();
