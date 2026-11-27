@@ -39,12 +39,14 @@ try{
   const pre=String(viewport.width);
   const read=async()=>stage.evaluate(s=>{
    const legend=s.querySelector('[data-testid="e10-focus-legend"]');
-   return {dataset:{...s.dataset},rect:s.getBoundingClientRect().toJSON(),legend:legend?.textContent,buttons:[...s.querySelectorAll('[data-testid^="e10-frame-"]')].filter(x=>x.tagName==='BUTTON').map(x=>({id:x.dataset.testid,pressed:x.getAttribute('aria-pressed'),disabled:x.disabled,rect:x.getBoundingClientRect().toJSON()}))};
+   const rect=q=>document.querySelector(q)?.getBoundingClientRect().toJSON()??null;
+   return {dataset:{...s.dataset},rect:s.getBoundingClientRect().toJSON(),legend:legend?.textContent,legendRect:rect('[data-testid="e10-legend-stack"]'),vectorRect:rect('[data-testid="three-vector-legend"]'),focusRect:rect('[data-testid="e10-focus-legend"]'),controlsRect:rect('[data-testid="fullscreen-controls"]'),scopeRect:rect('[data-testid="floating-scope-dock"]'),formulaRect:rect('[data-testid="fullscreen-formula"]'),panelRect:rect('[data-testid="right-control-panel"]'),buttons:[...s.querySelectorAll('[data-testid^="e10-frame-"]')].filter(x=>x.tagName==='BUTTON').map(x=>({id:x.dataset.testid,pressed:x.getAttribute('aria-pressed'),disabled:x.disabled,rect:x.getBoundingClientRect().toJSON()}))};
   });
   const shot=async(name)=>{await page.waitForTimeout(600);const d=await read();report.states[pre+'-'+name]=d;await page.screenshot({path:path.join(out,pre+'-'+name+'.png')});return d;};
   const bounds=d=>JSON.parse(d.dataset.e10SolenoidBounds||'null');
   const bodyHeight=d=>bounds(d).body.bottom-bounds(d).body.top;
   const sameState=(a,b,label)=>{assert(a.dataset.magneticRendered===b.dataset.magneticRendered,label+' physics changed');for(const k of ['fieldLineCount','conductorCount','currentArrowCount','currentArrowDirection','e10MeridianCount','e10ContextCount'])assert(a.dataset[k]===b.dataset[k],label+' changed '+k);};
+  const rectOverlap=(a,b)=>!!a&&!!b&&a.width>0&&a.height>0&&b.width>0&&b.height>0&&Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1;
   const checkFit=(d,mode,label)=>{
    const b=bounds(d);assert(!!b,label+' no projection');if(!b)return;
    const q=mode==='body'?b.body:b.bounds,s=b.safe;
@@ -53,6 +55,11 @@ try{
    assert(b.fitSamples===(mode==='body'?b.bodySamples:b.samples),label+' wrong camera sample selection');
    assert(d.buttons.find(x=>x.id==='e10-frame-'+mode)?.pressed==='true',label+' wrong selected button');
    assert(d.dataset.fieldLineCount==='33'&&d.dataset.conductorCount==='10',label+' actual scene geometry removed');
+   assert(!!d.legendRect&&!rectOverlap(d.vectorRect,d.focusRect),label+' teaching legend cards overlap');
+   for(const overlay of [d.controlsRect,d.scopeRect,d.formulaRect,d.panelRect])assert(!rectOverlap(d.legendRect,overlay),label+' legend intersects actual external overlay');
+   if(d.legendRect){const lr=d.legendRect,r=d.rect;const local={left:lr.left-r.left,right:lr.right-r.left,top:lr.top-r.top,bottom:lr.bottom-r.top};
+    assert(b.overlays.some(x=>Math.abs(x.left-local.left)<=.26&&Math.abs(x.right-local.right)<=.26&&Math.abs(x.top-local.top)<=.26&&Math.abs(x.bottom-local.bottom)<=.26),label+' actual legend rectangle absent from fit');}
+
   };
   const choose=async mode=>{await page.getByTestId('e10-frame-'+mode).click();await page.waitForFunction(mode=>JSON.parse(document.querySelector('[data-testid="three-stage-container"]')?.dataset.e10SolenoidBounds||'null')?.mode===mode,mode);};
   const initial=await shot('domain-initial');
@@ -62,6 +69,8 @@ try{
     assert(bodyHeight(close)>=1.4*bodyHeight(initial),pre+' close-up insufficient actual body enlargement');
     assert(close.legend.includes('外围场线可出画'),pre+' missing crop disclosure');
     assert(bounds(close).samples===bounds(initial).samples,pre+' field sampling removed');
+    await page.getByTestId('btn-toggle-oscilloscope').click();await page.getByTestId('btn-expand-oscilloscope').waitFor({state:'visible'});const collapsed=await shot('body-scope-collapsed');checkFit(collapsed,'body',pre+' scope collapsed');sameState(close,collapsed,pre+' scope collapsed');
+    await page.getByTestId('btn-expand-oscilloscope').click();await page.getByTestId('floating-scope-dock').waitFor({state:'visible'});const reopened=await shot('body-scope-reopened');checkFit(reopened,'body',pre+' scope reopened');sameState(close,reopened,pre+' scope reopened');
     // Manual orbit preserves the selected view but does not auto-fit.
     const box=await stage.locator('canvas').boundingBox();
     await page.mouse.move(box.x+box.width*.42,box.y+box.height*.38);await page.mouse.down();await page.mouse.move(box.x+box.width*.35,box.y+box.height*.31,{steps:8});await page.mouse.up();
