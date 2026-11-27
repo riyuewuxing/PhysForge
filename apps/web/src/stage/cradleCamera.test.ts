@@ -26,6 +26,13 @@ describe('B4 cradle real safe camera',()=>{
     const expanded={left:28,right:950,top:28,bottom:680};
     expect(cradleBodiesFit(bodies,a!,expanded,60)).toBe(true);
   });
+  it('reserves full mass-bearing two-ball label width when the target moves right',()=>{
+    const bodies=[ball(.65),ball(2.02)];
+    expect(cradleBodiesFit(bodies,vp,compact,87)).toBe(false);
+    const next=fitCradleCamera(bodies,vp,compact,87);
+    expect(next).not.toBeNull();
+    expect(cradleBodiesFit(bodies,next!,compact,87)).toBe(true);
+  });
   it('does not fabricate a fit for empty, non-finite or impossibly narrow input',()=>{
     expect(fitCradleCamera([rail],vp,compact,60)).toBeNull();
     expect(fitCradleCamera([ball(NaN)],vp,compact,60)).toBeNull();
