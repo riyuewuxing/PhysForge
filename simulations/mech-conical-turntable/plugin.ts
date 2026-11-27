@@ -1,5 +1,5 @@
 import { CLASSROOM_GRAVITY as g } from '@physforge/physics-core';
-import { createWorldMapper,defineSimulationPlugin,resolveAndDrawLabels,type ParamFieldSpec,type TelemetryChannelSpec } from '@physforge/sim-sdk';
+import { createWorldMapper,defineSimulationPlugin,resolveAndDrawLabels,type LabelObstacle,type ParamFieldSpec,type TelemetryChannelSpec } from '@physforge/sim-sdk';
 import { conicalTurntablePresets } from './presets.js';
 import { checkInvariants,computeObservables,createInitialState,stepConicalTurntable,type ConicalTurntableParams,type ConicalTurntableState } from './engine.js';
 import { turntableDiagram,turntableForceVectors,turntableInitialView,fitTurntableViewport,turntableBoundsFit,type TurntableRole } from './diagram.js';
@@ -68,6 +68,7 @@ export const mechConicalTurntablePlugin=Object.assign(defineSimulationPlugin<Con
     const m=createWorldMapper(vp),d=turntableDiagram(s,p),paper=vp.theme==='projector';
     const colors:Record<TurntableRole,string>=paper?{disk:'#e2e8f0',rim:'#334155',guide:'#64748b',rope:'#334155','block-a':'#0369a1','block-b':'#be185d','friction-a':'#166534','friction-b':'#be185d',tension:'#075985',velocity:'#7c3aed',ink:'#0f172a',event:'#b45309','plot-axis':'#475569','plot-limit':'#64748b',gravity:'#92400e',net:'#166534',bob:'#b45309',orbit:'#475569','top-bob':'#b45309',pivot:'#0f172a'}:{disk:'#25354a',rim:'#bac7d3',guide:'#64748b',rope:'#d6e5ef','block-a':'#38bdf8','block-b':'#f472b6','friction-a':'#4ade80','friction-b':'#f472b6',tension:'#38bdf8',velocity:'#c4b5fd',ink:'#e2e8f0',event:'#fbbf24','plot-axis':'#94a3b8','plot-limit':'#64748b',gravity:'#fbbf24',net:'#4ade80',bob:'#fbbf24',orbit:'#94a3b8','top-bob':'#fbbf24',pivot:'#cbd5e1'};
     const labels:Array<{id:string;x:number;y:number;text:string;color:string;font:string}>=[];
+    const obstacles:LabelObstacle[]=[];
     for(const [i,{primitive:q,role,layer}] of d.items.entries()){
       if(layer!=='always'&&!layers.has(layer))continue;
       const color=colors[role];ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=role==='rim'?3:role==='rope'?2.5:1.7;
@@ -81,6 +82,9 @@ export const mechConicalTurntablePlugin=Object.assign(defineSimulationPlugin<Con
         }
       }else if(q.kind==='circle'||q.kind==='arc'){
         const c=m.toScreen(q.cx,q.cy),r=m.len(q.r);ctx.setLineDash(q.dashed?[5,5]:[]);
+        if(p.mode==='conical-pendulum'&&q.kind==='circle'&&q.fill&&(role==='bob'||role==='top-bob'||role==='pivot')){
+          const radius=Math.max(2,r)+5;obstacles.push({x:c.x,y:c.y,width:2*radius,height:2*radius});
+        }
         if(q.kind==='circle'&&q.fill&&role==='disk'&&!paper){const grad=ctx.createRadialGradient(c.x-.24*r,c.y-.32*r,.04*r,c.x,c.y,r);grad.addColorStop(0,'#394d63');grad.addColorStop(.76,'#233346');grad.addColorStop(1,'#152235');ctx.fillStyle=grad;}
         if(q.kind==='circle'&&q.fill&&(role==='bob'||role==='top-bob')&&!paper){ctx.shadowBlur=12;ctx.shadowColor=color;}
         ctx.beginPath();ctx.arc(c.x,c.y,q.kind==='circle'&&q.fill?Math.max(2,r):r,q.kind==='arc'?-q.startAngle:0,q.kind==='arc'?-q.endAngle:2*Math.PI,q.kind==='arc');
@@ -96,7 +100,7 @@ export const mechConicalTurntablePlugin=Object.assign(defineSimulationPlugin<Con
       }
       ctx.restore();
     }
-    resolveAndDrawLabels(ctx,labels.filter(l=>l.x>=0&&l.x<=vp.width&&l.y>=0&&l.y<=vp.height),vp.width,vp.height);
+    resolveAndDrawLabels(ctx,labels.filter(l=>l.x>=0&&l.x<=vp.width&&l.y>=0&&l.y<=vp.height),vp.width,vp.height,obstacles);
   }
 }),{fitTurntableViewport,turntableBoundsFit});
 export default mechConicalTurntablePlugin;

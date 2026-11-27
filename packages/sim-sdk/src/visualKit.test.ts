@@ -92,6 +92,20 @@ describe('Canvas visual kit', () => {
     }
   });
 
+  it('avoids fixed geometry without moving or drawing it', () => {
+    const obstacles = [{x:100,y:80,width:44,height:44},{x:150,y:80,width:28,height:28}];
+    const original=JSON.stringify(obstacles);
+    const labels=resolveLabelBoxes([
+      {id:'near-bob',x:100,y:80,text:'F projected',color:'#fff'},
+      {id:'near-second',x:150,y:80,text:'v',color:'#0ff'}
+    ],text=>text.length*7,260,180,obstacles);
+    expect(labels.map(l=>l.id)).toEqual(['near-bob','near-second']);
+    for(const l of labels)for(const o of obstacles){
+      expect(Math.abs(l.x-o.x)*2>=l.width+o.width||Math.abs(l.y-o.y)*2>=l.height+o.height).toBe(true);
+    }
+    expect(JSON.stringify(obstacles)).toBe(original);
+  });
+
   it('draws rail material without erasing the stage or circuit junctions', () => {
     const addColorStop = vi.fn();
     const ctx = {
