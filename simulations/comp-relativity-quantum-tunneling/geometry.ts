@@ -49,7 +49,7 @@ export function relativityItems(s:State,p:Params):RelativityItem[]{
     const db=1.15,dt=2.05,wb=.22,wa=.48;
     const xAt=(j:number)=>qx(TDSE_X_MIN+j*TDSE_DX);
     text(0,2.48,'一维含时薛定谔演化 · 512 节点 · ℏ=m=1（约化单位）');
-    for(const [y1,y2] of [[db,dt],[wb-wa,wb+wa],[VB-.5,VB+.5]]){
+    for(const [y1,y2] of [[db,dt],[wb-wa,wb+wa],[VB-.5,VB+.5]] as const){
       add({kind:'rect',x:QLEFT,y:y1,width:QRIGHT-QLEFT,height:y2-y1},'muted');
     }
     for(const edge of [support.left,support.right]){
