@@ -1,5 +1,5 @@
 import { describe,expect,it } from 'vitest';
-import { inductionArrowLength,inductionVisualPalette,inductionWakeExtent } from './visualStyle.js';
+import { inductionArrowLength,inductionFieldLabel,inductionVisualPalette,inductionWakeExtent } from './visualStyle.js';
 
 function luminance(hex:string):number{
   const rgb=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255);
@@ -21,6 +21,11 @@ describe('E04 presentation-only style',()=>{
     expect(inductionWakeExtent(-1)).toBe(70);
     expect(inductionWakeExtent(100)).toBe(-165);
     expect(inductionWakeExtent(Infinity)).toBe(0);
+  });
+  it('reports real field magnitude and direction without a spurious direction at zero',()=>{
+    expect(inductionFieldLabel(0)).toBe('B = 0 T');
+    expect(inductionFieldLabel(1.5)).toBe('B = 1.5 T · 垂直纸面向里');
+    expect(inductionFieldLabel(-.75)).toBe('B = 0.75 T · 垂直纸面向外');
   });
   it('uses projector-readable text colors for every diagram annotation',()=>{
     const p=inductionVisualPalette(true);

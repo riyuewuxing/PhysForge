@@ -1,6 +1,6 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { inductionStoryDecks } from './storyDecks.js';
-import { drawInductionRail,drawInductionRod,inductionArrowLength,inductionVisualPalette } from './visualStyle.js';
+import { drawInductionRail,drawInductionRod,inductionArrowLength,inductionVisualPalette,inductionFieldLabel } from './visualStyle.js';
 import { rodDisplayX, inductionDiagramGeometry, inductionDiagramCurrent, inductionFieldPoints, inductionLoadDimensions } from './diagramGeometry.js';
 export { rodDisplayX } from './diagramGeometry.js';
 import {
@@ -581,11 +581,11 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         id: 'faraday-emf',
         label: '动生感应电动势与安培力',
         latex: double
-          ? '\\begin{aligned}\\mathcal{E}_{\\rm mot}&=B(L_1v_1-L_2v_2)\\\\ |F_{\\text{安},1}|&=|BIL_1|,\\quad |F_{\\text{安},2}|=|BIL_2|\\end{aligned}'
+          ? '\\begin{aligned}\\mathcal{E}_{\\rm mot}&=B(L_1v_1-L_2v_2)\\\\ |F_{\\text{安},1}|&=|BIL_1|\\\\ |F_{\\text{安},2}|&=|BIL_2|\\end{aligned}'
           : '\\begin{aligned}\\mathcal{E}_{\\rm mot}&=BLv\\\\ |F_{\\text{安}}|&=|BIL|\\end{aligned}',
         substitutedLatex: double
-          ? `\\begin{aligned}\\mathcal{E}_{\\rm mot}&=${emf.toFixed(2)}\\text{ V},\\quad I=${state.current.toFixed(2)}\\text{ A}\\\\ |F_{\\text{安},1}|&=${force1.toFixed(2)}\\text{ N},\\quad |F_{\\text{安},2}|=${force2.toFixed(2)}\\text{ N}\\end{aligned}`
-          : `\\begin{aligned}\\mathcal{E}_{\\rm mot}&=${emf.toFixed(2)}\\text{ V}\\\\ I&=${state.current.toFixed(2)}\\text{ A},\\quad |F_{\\text{安}}|=${force1.toFixed(2)}\\text{ N}\\end{aligned}`
+          ? `\\begin{aligned}\\mathcal{E}_{\\rm mot}&=${emf.toFixed(2)}\\text{ V}\\\\ I&=${state.current.toFixed(2)}\\text{ A}\\\\ |F_{\\text{安},1}|&=${force1.toFixed(2)}\\text{ N}\\\\ |F_{\\text{安},2}|&=${force2.toFixed(2)}\\text{ N}\\end{aligned}`
+          : `\\begin{aligned}\\mathcal{E}_{\\rm mot}&=${emf.toFixed(2)}\\text{ V}\\\\ I&=${state.current.toFixed(2)}\\text{ A}\\\\ |F_{\\text{安}}|&=${force1.toFixed(2)}\\text{ N}\\end{aligned}`
       },
       ...(double ? [{
         id: 'double-rod-energy-state', label: '两杆速度、总动能和累计焦耳热',
@@ -615,6 +615,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         else{ctx.arc(q.x,q.y,2.2,0,Math.PI*2);ctx.fill();}
       }
       ctx.restore();
+      labels.push({id:'magnetic-field-label',x:center.x,y:m.toY(Math.max(g.l1,g.l2)/2)-(g.schematicStep?76:44),text:inductionFieldLabel(params.magneticB),color:palette.note,font:'600 14px system-ui, sans-serif'});
       if(!g.schematicStep){
         const left=m.toX(Math.min(g.x1,g.x2)),right=m.toX(Math.max(g.x1,g.x2));
         for(const rail of g.rails)drawInductionRail(ctx,m.toX(rail.start.x),m.toY(rail.start.y),m.toX(rail.end.x),left,right,9,projector);
@@ -656,6 +657,10 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         const velocityLength = inductionArrowLength(state.v1,60,135);
         if (Math.abs(velocityLength) >= 6) {
           drawGlowVectorArrow(ctx, x1, railMidY + 18, x1 + velocityLength, railMidY + 18, palette.velocity, 5, 17);
+          const velocityText = `${params.rodMode === 'double' ? 'v₁' : 'v'} = ${Math.abs(state.v1).toFixed(2)} m/s`;
+          ctx.save(); ctx.font='600 14px system-ui, sans-serif';
+          const labelWidth=ctx.measureText(velocityText).width; ctx.restore();
+          labels.push({id:'velocity-label',x:x1+velocityLength+Math.sign(velocityLength)*(labelWidth/2+12),y:railMidY+18,text:velocityText,color:palette.velocity,font:'600 14px system-ui, sans-serif'});
         }
       }
     }

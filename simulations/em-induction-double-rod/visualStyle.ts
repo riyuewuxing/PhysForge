@@ -2,14 +2,14 @@ import { drawGlowingConductorRod, drawMetallicRail } from '@physforge/sim-sdk';
 
 export function inductionVisualPalette(projector: boolean) {
   return projector ? {
-    field: '#64748b', fieldAlpha: .66,
+    field: '#64748b', fieldAlpha: .86,
     load: '#92400e', loadLabel: '#78350f',
     current: '#92400e', currentLabel: '#78350f',
     force: '#9f1239', velocity: '#075985', external: '#166534',
     rod: '#0369a1', rodCore: '#bae6fd', rod2: '#86198f', rod2Core: '#f5d0fe',
     rod2Label: '#86198f', note: '#475569'
   } : {
-    field: '#94a3b8', fieldAlpha: .38,
+    field: '#94a3b8', fieldAlpha: .62,
     load: '#fbbf24', loadLabel: '#fcd34d',
     current: '#f59e0b', currentLabel: '#fbbf24',
     force: '#ff8177', velocity: '#67e8f9', external: '#4ade80',
@@ -86,4 +86,9 @@ export function drawInductionRod(
   }
   // The base primitive draws the exact conductor without a duplicate wake.
   drawGlowingConductorRod(ctx,x,yTop,yBot,0,tint,core,width);
+}
+
+/** Display magnitude and the sign convention shared by the actual field markers. */
+export function inductionFieldLabel(B: number): string {
+  return B === 0 ? 'B = 0 T' : `B = ${Number(Math.abs(B).toPrecision(3))} T · ${B > 0 ? '垂直纸面向里' : '垂直纸面向外'}`;
 }

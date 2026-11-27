@@ -757,7 +757,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               if (isMag3d && closed && points[0]!.distanceTo(points[points.length - 1]!) < 1e-8) points.pop();
               const curve = new THREE.CatmullRomCurve3(points, closed, 'centripetal');
               const divisions=Math.min(512,Math.max(32,points.length));
-              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.005:.009, 5, closed);
+              const geometry = new THREE.TubeGeometry(curve, divisions, isMag3d?(role==='meridian'?.0065:.005):.009, 5, closed);
               applyFluxEndpointFade(geometry,closed);
               const fluxCore=new THREE.Mesh(geometry,isMag3d?e10FluxCoreMaterial(true,role):coilFluxCoreMaterial(true));
               if(isMag3d)fluxCore.name='e10-field-'+role;
