@@ -1,5 +1,6 @@
 import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { ensureRapierLoaded } from './rapierLoader.js';
+import { layoutCradleLabels, type CradleLabel } from './cradleLabelLayout.js';
 import {
   checkInvariants,
   computeObservables,
@@ -358,6 +359,7 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
       return { sx: point.x, sy: point.y };
     };
 
+    const cradleLabels:CradleLabel[]=[];
     if (activeLayers.has('bodies')) {
       if (params.scenario === 'atwood-constrained') {
         const pulley = state.bodies.find((b) => b.id === 'pulley');
@@ -439,10 +441,25 @@ export const mechFreeSandboxPlugin = defineSimulationPlugin<SandboxParams, Sandb
           ctx.textAlign=atwood?(b.x<0?'right':'left'):'center';
           const x=atwood?p.sx+Math.sign(b.x)*(b.halfW*pxPerM+9):p.sx;
           const y=atwood?p.sy+5:p.sy-b.halfH*pxPerM-10;
-          ctx.fillText(b.label+(atwood?' vᵧ='+b.vy.toFixed(2):' vₓ='+b.vx.toFixed(2))+' m/s', x,y);
+          const text=b.label+(atwood?' vᵧ='+b.vy.toFixed(2):' vₓ='+b.vx.toFixed(2))+' m/s';
+          if(params.scenario==='newtons-cradle'){
+            const top=p.sy-b.halfH*pxPerM,bottom=p.sy+b.halfH*pxPerM;
+            if(p.sx>=0&&p.sx<=viewport.width&&bottom>=0&&top<=viewport.height){
+              cradleLabels.push({id:b.id,text,color:paper?'#334155':b.color,x:p.sx,top,bottom,width:ctx.measureText(text).width});
+            }
+          }else ctx.fillText(text,x,y);
           ctx.restore();
         }
       }
+    }
+
+    if(cradleLabels.length){
+      ctx.save();
+      ctx.font='bold 13px system-ui, sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      for(const label of layoutCradleLabels(cradleLabels,viewport.width,viewport.height)){
+        ctx.fillStyle=label.color;ctx.fillText(label.text,label.x,label.y);
+      }
+      ctx.restore();
     }
 
     ctx.save();
