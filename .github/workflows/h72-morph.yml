@@ -1,0 +1,56 @@
+name: H72 exact-source close-up morph and zero current
+on:
+  pull_request:
+    branches: ['audit/h72-camera']
+permissions:
+  contents: read
+jobs:
+  morph:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h72-morph')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: ba755175626be01b28ba8bb57c94f72776878d97
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          cp audit/scripts/h72_morph.mjs source/scripts/h72_morph.mjs
+          sha256sum source/scripts/h72_morph.mjs
+        env:
+          EXPECTED_SOURCE: ba755175626be01b28ba8bb57c94f72776878d97
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h72_morph.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          EXPECTED_SOURCE: ba755175626be01b28ba8bb57c94f72776878d97
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h72-morph-evidence
+          path: source/evidence/h72-morph/
+          if-no-files-found: error
+          retention-days: 7
