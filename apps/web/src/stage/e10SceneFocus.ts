@@ -33,7 +33,14 @@ export class E10ParticleProjection {
     this.ray.near=0;this.ray.far=Math.max(0,centerDistance-1e-6);
     this.hits.length=0;
     for(const mesh of occluders)if(mesh.visible)this.ray.intersectObject(mesh,false,this.hits);
-    const hitDistance=this.hits[0]?.distance??null;
+    // A ray hit before the actual near clipping plane is not rendered and
+    // must not masquerade as a visible occluder. Test view-space depth rather
+    // than Euclidean ray distance (off-axis perspective rays differ).
+    const hit=this.hits.find(h=>{
+      const depth=-this.eye.copy(h.point).applyMatrix4(camera.matrixWorldInverse).z;
+      return depth>=camera.near-1e-8&&depth<=camera.far+1e-8;
+    });
+    const hitDistance=hit?.distance??null;
     return {visible,occluded:hitDistance!==null,x:screenX,y:screenY,radiusPx,centerDistance,hitDistance};
   }
 }
