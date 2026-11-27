@@ -8,7 +8,7 @@ export function lampDisplayLight(powerW:number):number{
 
 /** The standard two-terminal circle is retained. The glass tint, specular
  * highlights and emission are decorative; electrical connections remain
- * at the original ring endpoints, with the filament drawn by the caller. */
+ * at the original ring endpoints, with the lamp mark drawn by the caller. */
 export function drawLampGlass(ctx:CanvasRenderingContext2D,q:Point,rr:number,power:number,paper:boolean):number{
   const light=lampDisplayLight(power);
   if(![q.x,q.y,rr].every(Number.isFinite)||rr<=0)return light;
@@ -74,4 +74,23 @@ export function drawWiperContact(ctx:CanvasRenderingContext2D,q:Point,r:number,p
   ctx.lineWidth=Math.max(1.3,r*.23);ctx.shadowColor='#ffd395';ctx.shadowBlur=paper?0:10;
   ctx.beginPath();ctx.arc(q.x,q.y,r,0,Math.PI*2);ctx.fill();ctx.stroke();
   ctx.shadowBlur=0;ctx.fillStyle=potential;ctx.beginPath();ctx.arc(q.x,q.y,r*.42,0,Math.PI*2);ctx.fill();ctx.restore();
+}
+
+/** IEC-style lamp mark: a cross inside the existing two-terminal circle.
+ * This is a schematic symbol, not four electrical contacts or a resistor
+ * zigzag. Its size is normalized to the original glass radius. */
+export function lampCrossStrokes(q:Point,rr:number):readonly [Point,Point][] {
+  if(![q.x,q.y,rr].every(Number.isFinite)||rr<=0)return [];
+  const d=rr*.54;
+  return [[{x:q.x-d,y:q.y-d},{x:q.x+d,y:q.y+d}],[{x:q.x+d,y:q.y-d},{x:q.x-d,y:q.y+d}]];
+}
+export function drawLampCross(ctx:CanvasRenderingContext2D,q:Point,rr:number,powerW:number,paper:boolean):void{
+  const strokes=lampCrossStrokes(q,rr);if(!strokes.length)return;
+  const light=lampDisplayLight(powerW);
+  ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.lineWidth=Math.max(1.3,rr*.085);ctx.strokeStyle=paper?(light>0?'#92400e':'#475569'):(light>0?'#ffe1a6':'#cbd5e1');
+  ctx.shadowColor='#ffc76f';ctx.shadowBlur=paper?0:10*light;
+  ctx.beginPath();for(const [a,b] of strokes){ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);}ctx.stroke();
+  if(!paper&&light>0){ctx.shadowBlur=0;ctx.globalAlpha=.15+.5*light;ctx.lineWidth=Math.max(.65,rr*.035);ctx.strokeStyle='#fff9e5';ctx.stroke();}
+  ctx.restore();
 }

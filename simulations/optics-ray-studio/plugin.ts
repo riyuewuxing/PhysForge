@@ -1,6 +1,6 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { opticalScene, SLIT_SCREEN, type OpticalMark } from './sceneGeometry.js';
-import { TIR_WINDOW,drawTirMediumWindow,drawTirHeroRay,drawTirHitRing,resolveOpticsSliceCamera } from './visualStyle.js';
+import { TIR_WINDOW,drawTirMediumWindow,drawTirHeroRay,drawTirHitRing,resolveOpticsSliceCamera,tirCriticalEquation } from './visualStyle.js';
 import { degToRad } from '@physforge/physics-core';
 import {
   createWorldMapper,
@@ -769,7 +769,7 @@ export const opticsRayStudioPlugin = Object.assign(defineSimulationPlugin<Optics
     }
     if (params.sceneMode === 'tir-interface') {
       const c=state.criticalAngleDeg;
-      const critical=c===null?'':'\\\\ \\sin C=\\frac{n_2}{n_1}';
+      const critical='\\\\ '+tirCriticalEquation(c);
       const base=state.isTotalInternalReflection?'\\theta_1\\ge C,\\quad R=1':'n_1\\sin\\theta_1=n_2\\sin\\theta_2';
       const result=state.refractedAngleDeg===null?'\\text{无传播折射光}':'\\theta_2='+state.refractedAngleDeg.toFixed(1)+'^\\circ';
       return [{id:'snell-eq',label:'无吸收介质界面（临界角仅 n₁>n₂）',
