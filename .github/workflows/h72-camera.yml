@@ -17,7 +17,7 @@ jobs:
             sha: 001391b55786c68d4553673e07f93feb64c65da7
             candidate: 'false'
           - name: candidate
-            sha: ba755175626be01b28ba8bb57c94f72776878d97
+            sha: 2b23866a1122ffe443fc594360aabe1c8e233607
             candidate: 'true'
     name: Dual camera exact-source replay (${{ matrix.name }})
     steps:

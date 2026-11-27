@@ -76,6 +76,7 @@ try{
     await page.mouse.move(box.x+box.width*.42,box.y+box.height*.38);await page.mouse.down();await page.mouse.move(box.x+box.width*.35,box.y+box.height*.31,{steps:8});await page.mouse.up();
     await page.waitForFunction(()=>document.querySelector('[data-testid="three-stage-container"]')?.dataset.e10AutoFit==='false');
     const manual=await shot('body-manual');sameState(close,manual,pre+' manual');
+    assert(manual.buttons.every(b=>b.pressed==='false')&&manual.legend.includes('手动视角'),pre+' manual camera falsely marked automatic');
     await choose('body');const reselect=await shot('body-reselect');checkFit(reselect,'body',pre+' reselect');sameState(manual,reselect,pre+' reselect');
     await choose('domain');const domain=await shot('domain-reselect');checkFit(domain,'domain',pre+' return domain');sameState(initial,domain,pre+' return');
     await page.getByTestId('btn-reset-view').click();await page.waitForTimeout(400);
