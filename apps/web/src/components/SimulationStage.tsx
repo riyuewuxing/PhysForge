@@ -8,6 +8,8 @@ import type { TokamakMirrorState,TokamakMirrorParams } from '../../../../simulat
 type FusionStagePlugin=typeof import('../../../../simulations/stse-tokamak-magnetic-mirror/plugin.js').stseTokamakMagneticMirrorPlugin;
 import type { AstroOrbitalState,AstroOrbitalParams } from '../../../../simulations/astro-orbital-mechanics/engine.js';
 type OrbitStagePlugin=typeof import('../../../../simulations/astro-orbital-mechanics/plugin.js').astroOrbitalMechanicsPlugin;
+import type { SandboxState } from '../../../../simulations/mech-free-sandbox/engine.js';
+import { cradleBodiesFit,fitCradleCamera,type CradleSafeRect } from '../stage/cradleCamera.js';
 import type { KinematicsChaseParams,KinematicsChaseState } from '../../../../simulations/mech-kinematics-chase/engine.js';
 import type { ChaseSafeRect } from '../../../../simulations/mech-kinematics-chase/plugin.js';
 type ChaseStagePlugin=typeof import('../../../../simulations/mech-kinematics-chase/plugin.js').mechKinematicsChasePlugin;
@@ -293,6 +295,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const fusionStage=plugin.meta.id==='stse-tokamak-magnetic-mirror';
   const autoFrameStage=b1Stage||fusionStage;
   const chaseStage=plugin.meta.id==='mech-kinematics-chase';
+  const cradleStage=plugin.meta.id==='builder-mechanics-lab'&&(params.scenario==='newtons-cradle'||params.scenario==='elastic-collision');
   const contactStage=plugin.meta.id==='mech-block-conveyor';
   const inductionStage=plugin.meta.id==='em-induction-double-rod';
   const verticalStage=plugin.meta.id==='mech-vertical-circular';
@@ -422,6 +425,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const userTransformedViewRef = useRef<boolean>(false);
   const b1FitKeyRef=useRef('');
   const chaseSafeRef=useRef<{key:string;safe:ChaseSafeRect}|null>(null);
+  const cradleSafeRef=useRef<{key:string;safe:CradleSafeRect}|null>(null);
   const constrainedFitKeyRef=useRef('');
   const rollingFitKeyRef=useRef('');
   const relativityFitKeyRef=useRef('');
@@ -451,7 +455,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;rollingFitKeyRef.current='';advancedSafeRef.current=null;relativityFitKeyRef.current='';
-    chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;inductionSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;
+    cradleSafeRef.current=null;chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;inductionSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -705,6 +709,36 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       const safe=chaseSafeRef.current!.safe;
       if(fresh||!model.chaseBoundsInViewport(state,params,v,safe)){
         const next=model.chaseFitViewport(state,params,v,safe);
+        if(next){
+          cameraRef.current=next;viewportRef.current=next;
+          if(fresh)baseScaleRef.current=next.scale;
+          setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+        }
+      }
+    }
+    const cradleAutomatic=p.meta.id==='builder-mechanics-lab'&&(pm.scenario==='newtons-cradle'||pm.scenario==='elastic-collision')&&
+      !userTransformedViewRef.current&&!requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&!dragModeRef.current;
+    if(cradleAutomatic&&drawState!==null){
+      const cur=latestRef.current,v=viewportRef.current;
+      const bodies=(drawState as SandboxState).bodies;
+      const key=JSON.stringify([pm.scenario,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed,cur.resetNonce]);
+      const fresh=cradleSafeRef.current?.key!==key;
+      if(fresh){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const fallbackRight=v.width-(cur.presentationMode?Math.min(320,v.width*.38)+24:284)-16;
+        const fallbackBottom=v.height-(cur.presentationMode?100:180);
+        const right=cur.presentationMode||cur.rightSidebarOpen?Math.min(fallbackRight,panel&&panel.width>0?panel.left-box.left-16:fallbackRight):v.width-26;
+        const bottom=cur.presentationMode||!cur.oscilloscopeCollapsed?Math.min(fallbackBottom,dock&&dock.height>0?dock.top-box.top-14:fallbackBottom):v.height-76;
+        cradleSafeRef.current={key,safe:{left:28,right,top:cur.presentationMode?90:28,bottom}};
+      }
+      const safe=cradleSafeRef.current!.safe;
+      ctx.save();ctx.font='bold 13px system-ui, sans-serif';
+      const halfWidth=Math.max(0,...bodies.filter(b=>b.dynamic).map(b=>ctx.measureText(b.label+' vₓ='+b.vx.toFixed(2)+' m/s').width/2));
+      ctx.restore();
+      if(!cradleBodiesFit(bodies,v,safe,halfWidth)){
+        const next=fitCradleCamera(bodies,v,safe,halfWidth);
         if(next){
           cameraRef.current=next;viewportRef.current=next;
           if(fresh)baseScaleRef.current=next.scale;
@@ -1386,7 +1420,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if(p.meta.id==='mech-constrained-velocity'&&frame&&drawState!==null){canvas.dataset.constrainedRendered=JSON.stringify({t:frame.t,mode:pm.mode,...p.engine.computeObservables(drawState,pm)});canvas.dataset.constrainedViewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.constrainedAutoFit=String(constrainedAutomatic);}
     if(p.meta.id==='builder-custom-ode-lab'&&frame&&drawState!==null){canvas.dataset.odeRendered=JSON.stringify({t:frame.t,template:pm.template,...p.engine.computeObservables(drawState,pm)});}
     if(p.meta.id==='builder-mechanics-lab'&&frame&&drawState!==null){
-      canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...p.engine.computeObservables(drawState,pm)});
+      canvas.dataset.b4Rendered=JSON.stringify({t:frame.t,scenario:pm.scenario,...p.engine.computeObservables(drawState,pm)});canvas.dataset.b4Viewport=JSON.stringify({width:vp.width,height:vp.height,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});canvas.dataset.b4AutoFit=String(cradleAutomatic);
     }
     if(p.meta.id==='builder-circuit-mna'&&frame&&drawState!==null){
       canvas.dataset.b2Rendered=JSON.stringify({t:frame.t,topology:pm.topology,...p.engine.computeObservables(drawState,pm)});
@@ -1718,7 +1752,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     emitTelemetrySummary(true);
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
 
-  useEffect(()=>{if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(inductionStage){inductionSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(rollingStage){rollingFitKeyRef.current='';renderFrameToCanvas();}else if(advancedStage){advancedSafeRef.current=null;renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}else if(acStage){acSafeRef.current=null;renderFrameToCanvas();}else if(wireStage){wireSafeRef.current=null;renderFrameToCanvas();}else if(eddyStage){eddySafeRef.current=null;renderFrameToCanvas();}else if(generatorStage){generatorSafeRef.current=null;renderFrameToCanvas();}else if(lcStage){lcSafeRef.current=null;renderFrameToCanvas();}else if(waveStage){waveSafeRef.current=null;renderFrameToCanvas();}else if(rippleStage){rippleSafeRef.current=null;renderFrameToCanvas();}else if(transformerStage){transformerSafeRef.current=null;renderFrameToCanvas();}else if(orbitCompareStage){orbitCompareSafeRef.current=null;renderFrameToCanvas();}},[orbitCompareStage,chaseStage,inductionStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,rollingStage,advancedStage,capacitorStage,acStage,wireStage,eddyStage,generatorStage,lcStage,waveStage,rippleStage,transformerStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
+  useEffect(()=>{if(cradleStage){cradleSafeRef.current=null;renderFrameToCanvas();}else if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(inductionStage){inductionSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(rollingStage){rollingFitKeyRef.current='';renderFrameToCanvas();}else if(advancedStage){advancedSafeRef.current=null;renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}else if(acStage){acSafeRef.current=null;renderFrameToCanvas();}else if(wireStage){wireSafeRef.current=null;renderFrameToCanvas();}else if(eddyStage){eddySafeRef.current=null;renderFrameToCanvas();}else if(generatorStage){generatorSafeRef.current=null;renderFrameToCanvas();}else if(lcStage){lcSafeRef.current=null;renderFrameToCanvas();}else if(waveStage){waveSafeRef.current=null;renderFrameToCanvas();}else if(rippleStage){rippleSafeRef.current=null;renderFrameToCanvas();}else if(transformerStage){transformerSafeRef.current=null;renderFrameToCanvas();}else if(orbitCompareStage){orbitCompareSafeRef.current=null;renderFrameToCanvas();}},[orbitCompareStage,chaseStage,cradleStage,inductionStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,rollingStage,advancedStage,capacitorStage,acStage,wireStage,eddyStage,generatorStage,lcStage,waveStage,rippleStage,transformerStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
@@ -1726,7 +1760,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     storySpatialCommandRef.current = null;
     applyDefaultCameraView(viewportRef.current.width, viewportRef.current.height);
     renderFrameToCanvas();
-  }, [plugin.meta.id, resetViewNonce, plugin.meta.id==='builder-circuit-mna'?params.topology:undefined, plugin.meta.id==='builder-optics-ray'?params.sceneMode:undefined]);
+  }, [plugin.meta.id, resetViewNonce, plugin.meta.id==='builder-circuit-mna'?params.topology:undefined, plugin.meta.id==='builder-optics-ray'?params.sceneMode:undefined, plugin.meta.id==='builder-mechanics-lab'?params.scenario:undefined]);
 
   // 鼠标滚轮以指针为锚点缩放 (0.1x ~ 20x)
   useEffect(() => {
@@ -2121,7 +2155,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
-                  if(autoFrameStage||chaseStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+                  if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -2147,7 +2181,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               // Like OrbitControls' start, pointer-down establishes camera
               // ownership before the first movement; a resize/fit cannot race
               // the teacher between gesture start and its first delta.
-              if(autoFrameStage||chaseStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+              if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {
@@ -2241,7 +2275,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               if (e.pointerType === 'touch') hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = hoveredHandleIdRef.current ? 'pointer' : 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||cradleStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerCancel={(e) => {
               activePointersRef.current.clear();
@@ -2250,7 +2284,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               hoveredHandleIdRef.current = null;
               const canvas = canvasRef.current;
               if (canvas) canvas.style.cursor = 'grab';
-              if((chaseStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
+              if((chaseStage||cradleStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||plugin.meta.id==='mech-constrained-velocity'||plugin.meta.id==='mech-projectile-coupling')&&!userTransformedViewRef.current)renderFrameToCanvas();
             }}
             onPointerLeave={(e) => {
               if (e.pointerType === 'touch' || dragModeRef.current) return;

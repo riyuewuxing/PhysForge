@@ -23,6 +23,13 @@ describe('B4 cradle velocity label lanes',()=>{
     expect(out.every(x=>x.y>140)).toBe(true);
     expect(out.map(x=>x.id)).toEqual(['1','2','3']);
   });
+  it('separates wider two-ball velocity labels carrying mass values',()=>{
+    const input=[label('b1',560,430,480,183),label('b2',620,430,480,184)];
+    const out=layoutCradleLabels(input,1024,768);
+    expect(out.map(x=>x.lane)).toEqual([0,1]);
+    expect(Math.abs(out[0]!.y-out[1]!.y)).toBeGreaterThanOrEqual(22);
+    expect(out.every(x=>x.y<430)).toBe(true);
+  });
   it('leaves spaced labels on a common row and handles an empty list',()=>{
     expect(layoutCradleLabels([label('1',100),label('2',300)],500,700).map(x=>x.lane)).toEqual([0,0]);
     expect(layoutCradleLabels([],500,700)).toEqual([]);

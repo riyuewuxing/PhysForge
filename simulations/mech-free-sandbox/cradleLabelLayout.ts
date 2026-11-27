@@ -1,5 +1,5 @@
 /** Pack measured velocity labels into non-intersecting horizontal lanes.
- * Only the B4 cradle uses this; physical coordinates/velocities never change. */
+ * B4 cradle and two-ball collisions use this; physical coordinates/velocities never change. */
 export interface CradleLabel {
   id:string; text:string; color:string; x:number; top:number; bottom:number; width:number;
 }
