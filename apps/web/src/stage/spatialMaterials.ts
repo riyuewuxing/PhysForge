@@ -17,7 +17,7 @@ export function obsidianStageFloorMaterial(): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color: 0x0b0f17, roughness: 0.65, metalness: 0.15 });
 }
 
-/** E10 only: copper highlights and bounded local flux glow (no postprocessing pass). */
+/** Shared legacy coil look; S01 keeps these exact settings. */
 export function coilCopperMaterial(): THREE.MeshPhysicalMaterial {
   return new THREE.MeshPhysicalMaterial({ color: 0xa45e38, metalness: 0.92, roughness: 0.19, clearcoat: 0.42, clearcoatRoughness: 0.16, envMapIntensity: 0.92 });
 }
@@ -26,6 +26,38 @@ export function coilFluxCoreMaterial(vertexColors = false): THREE.MeshBasicMater
 }
 export function coilFluxHaloMaterial(): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({ color: 0x2ebbd7, toneMapped: false, transparent: true, opacity: 0.11, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true });
+}
+
+/** E10 display radii are symbolic, never physical wire radii or field regularization.
+ * Leave visible air between even the densest finite solenoid turns. */
+export function e10ConductorRadius(geometryType:string,radiusR:number,turns:number):number {
+  const R=Math.max(.2,radiusR);
+  if(geometryType==='straight-wire'||geometryType==='parallel-wires')return .05;
+  const nominal=Math.min(.048,.055*R);
+  if(geometryType!=='finite-solenoid')return nominal;
+  const n=Math.max(4,Math.min(16,Math.round(turns)));
+  return Math.min(nominal,.32*2.4*R/(n-1));
+}
+export function e10CopperMaterial(): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({color:0xb86a42,metalness:.92,roughness:.26,clearcoat:.25,clearcoatRoughness:.18,envMapIntensity:.72});
+}
+export function e10FluxCoreMaterial(vertexColors=false): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({color:0x53ccdf,toneMapped:false,transparent:true,opacity:vertexColors?.78:.95,depthWrite:false,vertexColors});
+}
+export function e10FluxHaloMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({color:0x2ebbd7,toneMapped:false,transparent:true,opacity:.09,depthWrite:false,blending:THREE.AdditiveBlending,vertexColors:true});
+}
+/** Smoothly fade the nonphysical floor grid, including the endpoints.
+ * This is strictly E10 scenery, not a coordinate or field magnitude encoding. */
+export function e10GridLineGeometry(a:THREE.Vector3,b:THREE.Vector3):THREE.BufferGeometry {
+  const points:THREE.Vector3[]=[],rgba=new Float32Array(33*4);
+  for(let i=0;i<=32;i++){
+    const p=a.clone().lerp(b,i/32);points.push(p);
+    const x=Math.max(0,1-(p.x/7)**2),z=Math.max(0,1-(p.z/(p.z<0?5:8))**2);
+    rgba.set([1,1,1,Math.pow(x*z,1.5)],i*4);
+  }
+  const g=new THREE.BufferGeometry().setFromPoints(points);
+  g.setAttribute('color',new THREE.BufferAttribute(rgba,4));return g;
 }
 
 /** Fade only the ends of display-truncated curves; not a field-strength encoding.
