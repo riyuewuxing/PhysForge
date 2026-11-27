@@ -615,7 +615,7 @@ export const emInductionDoubleRodPlugin = Object.assign(defineSimulationPlugin<
         else{ctx.arc(q.x,q.y,2.2,0,Math.PI*2);ctx.fill();}
       }
       ctx.restore();
-      labels.push({id:'magnetic-field-label',x:center.x,y:m.toY(Math.max(g.l1,g.l2)/2)-44,text:inductionFieldLabel(params.magneticB),color:palette.note,font:'600 14px system-ui, sans-serif'});
+      labels.push({id:'magnetic-field-label',x:center.x,y:m.toY(Math.max(g.l1,g.l2)/2)-(g.schematicStep?76:44),text:inductionFieldLabel(params.magneticB),color:palette.note,font:'600 14px system-ui, sans-serif'});
       if(!g.schematicStep){
         const left=m.toX(Math.min(g.x1,g.x2)),right=m.toX(Math.max(g.x1,g.x2));
         for(const rail of g.rails)drawInductionRail(ctx,m.toX(rail.start.x),m.toY(rail.start.y),m.toX(rail.end.x),left,right,9,projector);
