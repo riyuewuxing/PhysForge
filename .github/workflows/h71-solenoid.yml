@@ -1,0 +1,81 @@
+name: H71 exact-source solenoid and clip-depth replay
+on:
+  pull_request:
+    branches: ['audit/h70-e10-focus']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h71-solenoid')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: baseline
+            sha: 7d4e0036ff76a904df13ba50573fde09b53bfee9
+            candidate: 'false'
+          - name: candidate
+            sha: 001391b55786c68d4553673e07f93feb64c65da7
+            candidate: 'true'
+    name: Solenoid exact-source replay (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          cp audit/scripts/h71_solenoid.mjs source/scripts/h71_solenoid.mjs
+          cp audit/scripts/h71_clip_tests.txt source/apps/web/src/stage/spatialMaterials.test.ts
+          sha256sum source/scripts/h71_solenoid.mjs source/apps/web/src/stage/spatialMaterials.test.ts
+        env:
+          EXPECTED_SOURCE: ${{ matrix.sha }}
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - name: Same three near clipping tests against exact source
+        run: |
+          mkdir -p evidence/h71-solenoid
+          set +e
+          pnpm exec vitest run apps/web/src/stage/spatialMaterials.test.ts -t 'H71 E10 clip-aware occlusion' --reporter=json --outputFile=evidence/h71-solenoid/clip.json
+          result=$?
+          set -e
+          node -e 'const r=require("./evidence/h71-solenoid/clip.json");const candidate=process.env.CANDIDATE==="true";const a=r.testResults.flatMap(x=>x.assertionResults).filter(x=>x.fullName.includes("H71 E10 clip-aware occlusion"));const expected=candidate?"passed":"failed";console.log(JSON.stringify({candidate,tests:a.map(x=>({name:x.fullName,status:x.status,messages:x.failureMessages}))}));if(a.length!==3||a.some(x=>x.status!==expected))process.exit(1)'
+          if [ "$CANDIDATE" = true ]; then test "$result" = 0; else test "$result" != 0; fi
+        working-directory: source
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h71_solenoid.mjs
+        working-directory: source
+        timeout-minutes: 6
+        env:
+          EXPECTED_SOURCE: ${{ matrix.sha }}
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+          CANDIDATE: ${{ matrix.candidate }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h71-solenoid-${{ matrix.name }}
+          path: source/evidence/h71-solenoid/
+          if-no-files-found: error
+          retention-days: 7
