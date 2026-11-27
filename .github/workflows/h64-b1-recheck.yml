@@ -1,0 +1,48 @@
+name: H64 B1 matched-time offline recheck
+on:
+  push:
+    branches: ['audit/v31-h64-b1-recheck']
+permissions:
+  contents: read
+jobs:
+  offline-supplement:
+    name: Offline supplement ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [builder-composite-em-field]
+    env:
+      SOURCE_HEAD: '37bc70b5bdeb1088bcd0c866d149cfb34e876da5'
+      MODEL: ${{ matrix.model }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify exact underlying product tree
+        run: |
+          test "$(git rev-parse HEAD^)" = "$SOURCE_HEAD"
+          git diff --name-only "$SOURCE_HEAD" HEAD | sort > /tmp/actual
+          printf '%s\n' .github/workflows/h64-b1-recheck.yml scripts/h64_offline_supplement.mjs | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/h64_offline_supplement.mjs
+        timeout-minutes: 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h64-b1-recheck
+          path: |
+            evidence/offline/*.png
+            evidence/offline/report.json
+          if-no-files-found: error
+          retention-days: 7
