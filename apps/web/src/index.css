@@ -430,6 +430,19 @@ input[type="range"].pf-slider::-moz-range-thumb {
 [data-theme="projector"] [data-testid="right-control-panel"] option { background: #fff; color: #0f172a; }
 [data-theme="projector"] [data-testid="formula-card"] [class*="text-emerald-"] { color: #166534; }
 
+/* H81: the title is outside SimulationStage, but its background is the actual
+   rendered stage. A projector 2D canvas (including the lazy-stage fallback)
+   is white; the mounted Three.js canvas retains a dark scene. Keep the
+   original dark-scene typography and do not recolor physical primitives. */
+[data-theme="projector"] section:not(:has([data-testid="stage-canvas-box"] [data-testid="three-stage-container"] canvas)) > [data-testid="fullscreen-title"] {
+  color: var(--pf-text);
+  filter: none;
+}
+[data-theme="projector"] section:not(:has([data-testid="stage-canvas-box"] [data-testid="three-stage-container"] canvas)) > [data-testid="fullscreen-title"] > div:nth-child(2) {
+  color: var(--pf-text-muted);
+}
+
+
 /* H3: same potential stops in the Canvas, both legends and paper mode. */
 [data-divider-palette="range"] { background:linear-gradient(90deg,#67e8f9 0%,#d3dbd9 25%,#ffc76f 50%,#ff7d77 100%); }
 [data-divider-palette="zero"] { background:#67e8f9; }
