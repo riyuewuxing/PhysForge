@@ -1,0 +1,55 @@
+name: H81 exact-source fullscreen contrast
+on:
+  pull_request:
+    branches: ['polish/v31-h81-presentation-readability']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h81-fullscreen-contrast')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: c965dab0e44516615d4cc094b811734392e52f4c
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "c965dab0e44516615d4cc094b811734392e52f4c"
+          cp audit/scripts/h81_fullscreen_contrast.mjs source/scripts/
+          sha256sum source/scripts/h81_fullscreen_contrast.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h81_fullscreen_contrast.mjs
+        working-directory: source
+        timeout-minutes: 4
+        env:
+          SOURCE_HEAD: c965dab0e44516615d4cc094b811734392e52f4c
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h81-fullscreen-contrast
+          path: |
+            source/evidence/h81-title/*.png
+            source/evidence/h81-title/report.json
+          if-no-files-found: error
+          retention-days: 7
