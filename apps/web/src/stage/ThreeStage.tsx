@@ -9,6 +9,7 @@ import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraD
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop, e10ConductorRadius, e10CopperMaterial, e10FluxCoreMaterial, e10FluxHaloMaterial, e10GridLineGeometry } from './spatialMaterials.js';
 import { fitFusionSpatialFrame,projectFusionFrame } from './fusionFraming.js';
+import { inductionOpeningPoints, inductionOpeningSafeRect } from './inductionSpatialFrame.js';
 import { E10ParticleProjection,e10FluxRole,e10ProjectedCloudOverlaps,e10FrameSamples,type E10FrameMode,type E10ScreenRect } from './e10SceneFocus.js';
 import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
 import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
@@ -303,6 +304,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const isTokamak3d = plugin.meta.id === 'stse-tokamak-magnetic-mirror';
     const isBoundedStage=plugin.meta.id==='builder-composite-em-field';
     const isOrbitStage=plugin.meta.id==='astro-orbital-mechanics';
+    const isInductionStage=plugin.meta.id==='em-induction-double-rod';
     const magneticAxisWidget = isMag3d||isBoundedStage||isTokamak3d ? container.querySelector<SVGSVGElement>('[data-magnetic-axis-widget]') : null;
 
     const width = Math.max(320, container.clientWidth);
@@ -481,6 +483,20 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     let b1LastPolicy=b1PolicyRef.current;
     const lockB1Camera=()=>{b1AutoFit=false;};
     if(isBoundedStage||isTokamak3d||isMag3d)controls.addEventListener('start',lockB1Camera);
+    // An authored E04 opening may fit the real circuit once its transition
+    // settles. A teacher orbit/pan/zoom owns subsequent framing.
+    let inductionOpeningAuto=false,inductionOpeningKey='',inductionOpeningCheckedAt=-Infinity;
+    const lockInductionOpening=()=>{inductionOpeningAuto=false;dirty=true;};
+    if(isInductionStage)controls.addEventListener('start',lockInductionOpening);
+    const inductionOverlayRect=(testId:string)=>{
+      const node=document.querySelector('[data-testid="'+testId+'"]');
+      if(!node)return null;
+      const r=node.getBoundingClientRect(),box=container.getBoundingClientRect(),style=getComputedStyle(node);
+      if(r.width<=0||r.height<=0||style.display==='none'||style.visibility==='hidden')return null;
+      const q=(n:number)=>Math.round(n*4)/4;
+      return {left:q(r.left-box.left),right:q(r.right-box.left),top:q(r.top-box.top),bottom:q(r.bottom-box.top)};
+    };
+    let inductionSafe:ReturnType<typeof inductionOpeningSafeRect>|null=null;
     let magneticSceneFitKey='',magneticScenePoints:THREE.Vector3[]=[],magneticBodyPoints:THREE.Vector3[]=[];
     let lastMagneticSceneKey='',lastMagneticProjectionKey='';
     let lastMagneticShapeLayout='',magneticSceneSafe:E10ScreenRect|null=null,magneticSceneObstacles:E10ScreenRect[]=[];
@@ -822,6 +838,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
         if(isBoundedStage||isTokamak3d||isMag3d)controls.removeEventListener('start',lockB1Camera);
+        if(isInductionStage)controls.removeEventListener('start',lockInductionOpening);
         e10Ring?.remove();
         planarDriver?.dispose();
         clearDeviceLabels();
@@ -871,6 +888,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
           if(isBoundedStage||isTokamak3d||isMag3d)b1AutoFit=false;
+          if(isInductionStage){
+            inductionOpeningAuto=command.view.morphT===0&&b1PolicyRef.current.presentation;
+            inductionOpeningKey='';inductionOpeningCheckedAt=-Infinity;inductionSafe=null;
+          }
           morph.startKeyframe(command.view, now, command.durationMs);
           if (storyCameraCommandRef) storyCameraCommandRef.current = null;
           lastMorphTarget = target;
@@ -878,6 +899,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           authored = true;
           dirty = true;
         } else if (target !== lastMorphTarget) {
+          if(isInductionStage){inductionOpeningAuto=false;inductionSafe=null;}
           if (target === 1 && morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
@@ -930,6 +952,24 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       // callback that the adaptive frame guard is about to discard.
       if(changed&&!isBoundedStage&&!isTokamak3d&&!isMag3d)syncLatest();
       if(changed&&(isBoundedStage||isTokamak3d||isMag3d))dirty=true;
+      if(isInductionStage&&inductionOpeningAuto&&morph&&morph.getMorphT()===0&&!morph.isAnimating&&
+          (now-inductionOpeningCheckedAt>=250||!inductionOpeningKey)){
+        inductionOpeningCheckedAt=now;
+        const w=renderer.domElement.clientWidth||width,h=renderer.domElement.clientHeight||height;
+        const safe=inductionOpeningSafeRect(w,h,inductionOverlayRect('fullscreen-formula'),
+          inductionOverlayRect('fullscreen-controls'),inductionOverlayRect('story-hud'));
+        const key=JSON.stringify([w,h,safe,frameParams,[...frameLayers]]);
+        if(key!==inductionOpeningKey){
+          inductionOpeningKey=key;inductionSafe=safe;
+          const root=scene.getObjectByName('physforge-flagship-em-induction-double-rod');
+          const points=root?inductionOpeningPoints(root):[];
+          if(points.length&&safe.right-safe.left>140&&safe.bottom-safe.top>140){
+            morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
+            fitFusionSpatialFrame(morph,points,w,h,safe);
+            controls.target.copy(morph.getOrbitTarget());controls.update();dirty=true;
+          }
+        }
+      }
       if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) return;
 
       const renderStart = performance.now();
@@ -1068,6 +1108,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget,renderCamera,isBoundedStage,isTokamak3d?(frameParams as TokamakMirrorParams).mode:undefined);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
+      if(isInductionStage){
+        const root=scene.getObjectByName('physforge-flagship-em-induction-double-rod');
+        const points=root?inductionOpeningPoints(root):[];
+        if(points.length)container.dataset.inductionSpatialBounds=JSON.stringify({bounds:projectFusionFrame(points,renderCamera,rw,rh),safe:inductionSafe,points:points.length,automatic:inductionOpeningAuto,animating:morph?.isAnimating??false});
+        else delete container.dataset.inductionSpatialBounds;
+      }
       if(isOrbitStage&&latestState){
         const trail=scene.getObjectByName('engine-trail');
         const actual=trail instanceof THREE.Line?trail.geometry.drawRange.count:0;
