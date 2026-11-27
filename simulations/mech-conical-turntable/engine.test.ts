@@ -176,6 +176,24 @@ describe('H26 M07 linked diagrams and parameter-domain contracts',()=>{
     const v={width:1440,height:900,dpr:1,scale:1,offsetX:0,offsetY:0},safe={left:28,right:1120,top:28,bottom:720};
     const fit=fitTurntableViewport(s,q,v,safe)!;expect(turntableBoundsFit(s,q,fit,safe)).toBe(true);
   });
+  it('reserves heading clearance above the real top orbit and tangential arrow at all cone phases',()=>{
+    for(const L of [.6,1.5,2.5])for(const omega of [Math.sqrt(9.8/L)*1.001,6])for(const phase of [0,Math.PI/2,Math.PI,3*Math.PI/2]){
+      const q={...p,mode:'conical-pendulum' as const,omega,pendulumLength:L};
+      if(omega<=Math.sqrt(9.8/L))continue;
+      const s=stepConicalTurntable(createInitialState(q),q,phase/omega).nextState,d=turntableDiagram(s,q);
+      const title=d.items.find(i=>i.primitive.kind==='text'&&i.primitive.text==='水平俯视 · 同一相位')?.primitive;
+      const orbit=d.items.find(i=>i.role==='orbit')?.primitive;
+      const v=d.items.find(i=>i.role==='velocity')?.primitive;
+      expect(title?.kind).toBe('text');expect(orbit?.kind).toBe('circle');expect(v?.kind).toBe('arrow');
+      if(title?.kind==='text'&&orbit?.kind==='circle'&&v?.kind==='arrow'){
+        expect(title.y).toBeGreaterThan(Math.max(orbit.cy+orbit.r+.06*L,v.y1,v.y2)+.15*L);
+        expect(d.bounds.maxY).toBeGreaterThan(title.y);
+      }
+      const viewport={width:1024,height:720,dpr:1,scale:1,offsetX:0,offsetY:0};
+      const safe={left:28,right:700,top:28,bottom:540};
+      expect(turntableBoundsFit(s,q,fitTurntableViewport(s,q,viewport,safe)!,safe)).toBe(true);
+    }
+  });
   it('cone linked top view uses the actual 3D radius while side projection preserves the real bob',()=>{
     const q={...p,mode:'conical-pendulum' as const,omega:3.6},s=stepConicalTurntable(createInitialState(q),q,Math.PI/(2*q.omega)).nextState,d=turntableDiagram(s,q);
     expect(d.items.find(i=>i.role==='bob')?.primitive).toMatchObject({kind:'circle',cx:s.a.x,cy:s.a.y});
