@@ -1,0 +1,55 @@
+name: H83 exact-source S02 readout and pointer lifecycle
+on:
+  pull_request:
+    branches: ['polish/v31-h83-s02-readout']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h83-s02-readout')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 54859b12382bcacdc471a586f086b2e89685781c
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "54859b12382bcacdc471a586f086b2e89685781c"
+          cp audit/scripts/h83_s02_readout.mjs source/scripts/
+          sha256sum source/scripts/h83_s02_readout.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h83_s02_readout.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: 54859b12382bcacdc471a586f086b2e89685781c
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h83-s02-preview
+          path: |
+            source/evidence/h83-s02/*.png
+            source/evidence/h83-s02/report.json
+          if-no-files-found: error
+          retention-days: 7
