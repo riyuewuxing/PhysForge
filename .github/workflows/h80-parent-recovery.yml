@@ -1,0 +1,63 @@
+name: H80 missing parent image recovery
+on:
+  pull_request:
+    branches: ['polish/v31-h80-m07-labels']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  recover:
+    if: github.event.pull_request.head.ref == 'audit/h80-parent-recovery'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Retrieve exact archived inputs
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p recovery-input
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15199583103/zip > recovery-input/h79-manifest.zip
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15204326193/zip > recovery-input/h80-manifest.zip
+          gh api repos/riyuewuxing/PhysForge/actions/artifacts/15200301244/zip > recovery-input/h79-raw.zip
+          sha256sum -c <<'EOF'
+          7c0c2972c32d62c3b4aa4436afbf23213e3fe0af9d88a8e8b852995ae7b3150b  recovery-input/h79-manifest.zip
+          427874eb4db31fa818a7920b98763b6c35ec60b9547738d632a5bd91967d7fe9  recovery-input/h80-manifest.zip
+          e4887c52fbf350916ac3799a9ed1f05663c32aa9ea5c0d7d3e1dc771d60d66e9  recovery-input/h79-raw.zip
+          EOF
+      - name: Extract only missing parents
+        timeout-minutes: 1
+        run: python scripts/h80_recover_missing_parent.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h80-missing-parent-1
+          path: recovery/part-1/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h80-missing-parent-2
+          path: recovery/part-2/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h80-missing-parent-3
+          path: recovery/part-3/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h80-missing-parent-4
+          path: recovery/part-4/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h80-missing-parent-5
+          path: recovery/part-5/
+          if-no-files-found: error
+          retention-days: 7
