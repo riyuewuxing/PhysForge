@@ -1,5 +1,6 @@
 import { createWorldMapper, type DiagramPrimitive, type DiagramIR, type Viewport } from '@physforge/sim-sdk';
 import { DIVIDER_RESISTANCE, dividerLowerResistance, sampleDividerLampIvCurve, type CircuitParams, type CircuitState } from './engine.js';
+import {drawLampGlass,drawCircuitMeterFace,drawWiperContact} from './visualStyle.js';
 
 type Point = { x: number; y: number };
 const pt=(x:number,y:number):Point=>({x,y});
@@ -20,11 +21,11 @@ export const dividerWiperX=X_WIPER;
 export function dividerWiperLabelAnchor(sliderR:number):Point {
   return pt(X_WIPER-.35,Math.max(Y_BOTTOM+.28,Math.min(Y_TOP-.28,dividerWiperY(sliderR))));
 }
-export function dividerDefaultCamera(width:number,height:number):{scale:number;offsetRatioX:number;offsetRatioY:number} {
+export function dividerDefaultCamera(width:number,height:number,reserveInspector=true):{scale:number;offsetRatioX:number;offsetRatioY:number} {
   const base=Math.max(1,Math.min(width,height)*.24);
-  const usable=width-(width>=900?300:0);
+  const usable=width-(reserveInspector&&width>=900?300:0);
   const scale=Math.max(.1,Math.min(1.05,(usable-36)/(5.0*base),(height-125)/(3.6*base)));
-  return {scale,offsetRatioX:(usable/2-.10*base*scale)/Math.max(1,width)-.45,offsetRatioY:-.035};
+  return {scale,offsetRatioX:(usable/2-(reserveInspector?.10:.075)*base*scale)/Math.max(1,width)-.45,offsetRatioY:-.035};
 }
 
 export function dividerPotentialColor(v:number,emf:number,paper=false):string {
@@ -114,10 +115,7 @@ export function renderDivider(ctx:CanvasRenderingContext2D,state:CircuitState,pa
   }
   function meter(p:Point,r:number,value:number,unit:string,color:string) {
     const q=s(p),rr=len(r);ctx.save();
-    const grad=ctx.createLinearGradient(q.x-rr,q.y-rr,q.x+rr,q.y+rr);
-    grad.addColorStop(0,paper?'#ffffff':'#424b55');grad.addColorStop(1,paper?'#edf2f7':'#19242d');
-    ctx.fillStyle=grad;ctx.strokeStyle=color;ctx.lineWidth=Math.max(1.8,len(.012));ctx.shadowColor=color;ctx.shadowBlur=paper?0:12;
-    ctx.beginPath();ctx.arc(q.x,q.y,rr,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
+    drawCircuitMeterFace(ctx,q,rr,color,paper);
     ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=ink;ctx.font='600 '+Math.max(8,Math.min(18,rr*.54))+'px system-ui, sans-serif';
     ctx.fillText(value.toFixed(2),q.x,q.y-rr*.13);ctx.fillStyle=color;ctx.font='500 '+Math.max(8,rr*.39)+'px system-ui, sans-serif';ctx.fillText(unit,q.x,q.y+rr*.48);ctx.restore();
   }
@@ -149,25 +147,10 @@ export function renderDivider(ctx:CanvasRenderingContext2D,state:CircuitState,pa
   }else trace([pt(X_A-A_R,Y_LAMP),pt(X_A+A_R,Y_LAMP)],tap);
   // Lamp is a two-terminal symbol with visible filament. Glow is power driven,
   // not a fixed animation or an alleged absolute photometric brightness.
-  const q=s(g.lamp),rr=len(L_R),light=Math.min(1,Math.sqrt(Math.max(0,state.outputPower)/8));
-  if(!paper&&light>0){const halo=ctx.createRadialGradient(q.x,q.y,0,q.x,q.y,rr*2.3);halo.addColorStop(0,'rgba(255,185,70,'+(.34*light)+')');halo.addColorStop(1,'rgba(255,185,70,0)');ctx.fillStyle=halo;ctx.beginPath();ctx.arc(q.x,q.y,rr*2.3,0,Math.PI*2);ctx.fill();}
-  const bulbGlass=ctx.createRadialGradient(q.x-rr*.30,q.y-rr*.35,0,q.x,q.y,rr);
-  bulbGlass.addColorStop(0,paper?'#fff':light>.01?'rgba(255,222,166,'+(.25+.45*light)+')':'#49525d');
-  bulbGlass.addColorStop(.65,paper?'#fafafa':light>.01?'#5b4630':'#252c34');
-  bulbGlass.addColorStop(1,paper?'#f1f5f9':'#24282b');
-  ctx.fillStyle=bulbGlass;ctx.strokeStyle=light>.01?warm:(paper?'#64748b':'#8394a5');ctx.lineWidth=Math.max(1.6,len(.012));ctx.shadowColor=warm;ctx.shadowBlur=paper?0:12*light;
-  ctx.beginPath();ctx.arc(q.x,q.y,rr,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
-  if(light>.02&&!paper){
-    ctx.save();ctx.strokeStyle=warm;ctx.globalAlpha=.22+.48*light;ctx.lineWidth=Math.max(1.1,len(.008));ctx.lineCap='round';
-    for(const angle of [-2.25,-1.57,-.89,.89,1.57,2.25]){
-      const u=Math.cos(angle),v=Math.sin(angle);ctx.beginPath();ctx.moveTo(q.x+u*rr*1.12,q.y+v*rr*1.12);
-      ctx.lineTo(q.x+u*rr*(1.22+.19*light),q.y+v*rr*(1.22+.19*light));ctx.stroke();
-    }
-    ctx.restore();
-  }
-  trace([pt(X_LAMP-L_R,Y_LAMP),pt(X_LAMP-.07,Y_LAMP),pt(X_LAMP-.04,Y_LAMP+.07),pt(X_LAMP+.01,Y_LAMP-.065),pt(X_LAMP+.06,Y_LAMP+.05),pt(X_LAMP+.09,Y_LAMP),pt(X_LAMP+L_R,Y_LAMP)],light>.01?warm:ink,light>.01?warm:ink,Math.max(1.5,wireWidth*.48));
+  const q=s(g.lamp),rr=len(L_R),light=drawLampGlass(ctx,q,rr,state.outputPower,paper);
+  trace([pt(X_LAMP-L_R,Y_LAMP),pt(X_LAMP-.07,Y_LAMP),pt(X_LAMP-.04,Y_LAMP+.07),pt(X_LAMP+.01,Y_LAMP-.065),pt(X_LAMP+.06,Y_LAMP+.05),pt(X_LAMP+.09,Y_LAMP),pt(X_LAMP+L_R,Y_LAMP)],light>0?warm:ink,light>0?warm:ink,Math.max(1.5,wireWidth*.48));
   // Junctions mark only actual connections, not nearby labels.
-  for(const p of [g.wiper])node(p,tap,.035);
+  drawWiperContact(ctx,s(g.wiper),Math.max(3,len(.050)),tap,paper);
   for(const p of [g.sliderBottom])node(p,low);
   if(layers.has('meters')){node(pt(X_POS,Y_LAMP),tap);node(pt(X_NEG,Y_LAMP),low);}
   trace([g.sliderBottom,pt(X_WIPER,Y_BOTTOM-.10)],low,low,wireWidth*.5);

@@ -7,6 +7,8 @@ import type {ThermoCycleMdState} from '../../../simulations/thermo-cycles-kineti
 import type {ThermoGasState} from '../../../simulations/thermo-piston-gas-laws/engine.js';
 import type {OpticsParams} from '../../../simulations/optics-ray-studio/engine.js';
 type OpticsSlicePlugin=typeof import('../../../simulations/optics-ray-studio/plugin.js').opticsRayStudioPlugin;
+import type {CircuitParams} from '../../../simulations/circuit-dc-capacitor-mna/engine.js';
+type CircuitSlicePlugin=typeof import('../../../simulations/circuit-dc-capacitor-mna/plugin.js').circuitDcCapacitorMnaPlugin;
 import type { KinematicsChaseState,KinematicsChaseParams } from '../../../simulations/mech-kinematics-chase/engine.js';
 type ChaseSlicePlugin=typeof import('../../../simulations/mech-kinematics-chase/plugin.js').mechKinematicsChasePlugin;
 import type { BlockConveyorState,BlockConveyorParams } from '../../../simulations/mech-block-conveyor/engine.js';
@@ -68,6 +70,7 @@ const MAX_SNAPSHOTS = 2400;
 const circuitSlice=targetPlugin.paramSchema.some(f=>f.key==='topology'&&f.kind==='select'&&f.options.some(o=>o.value==='divider-lamp'));
 const opticalSlice=targetPlugin.paramSchema.some(f=>f.key==='sceneMode'&&f.kind==='select'&&f.options.some(o=>o.value==='thin-lens-imaging'));
 function resolveSliceCamera(params:ParamRecord,width:number,height:number){
+  if(circuitSlice)return (targetPlugin as unknown as CircuitSlicePlugin).resolveCircuitSliceCamera(params as CircuitParams,width,height);
   if(opticalSlice)return (targetPlugin as unknown as OpticsSlicePlugin).resolveOpticsSliceCamera(params as OpticsParams,width,height);
   return resolveInitialCameraTransform(targetPlugin as SimulationPluginV2<ParamRecord,unknown>,params,width,height);
 }
@@ -232,6 +235,11 @@ export const SingleFileApp: React.FC = () => {
   const [poeMasked, setPoeMasked] = useState(false);
   const [theme, setTheme] = useState<'chalkboard' | 'projector'>('chalkboard');
   const [bigScreen, setBigScreen] = useState(false);
+  const [dividerScopeOpen,setDividerScopeOpen]=useState(false);
+  const staticDivider=circuitSlice&&params.topology==='divider-lamp';
+  // A topology switch resets only the presentation preference. The sampled
+  // history is still maintained by the existing physical-clock machinery.
+  useLayoutEffect(()=>{if(circuitSlice)setDividerScopeOpen(false);},[params.topology]);
   const [resetNonce, setResetNonce] = useState(0);
   const [stepOnceNonce, setStepOnceNonce] = useState(0);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
@@ -923,6 +931,14 @@ export const SingleFileApp: React.FC = () => {
             style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-canvas-bg)' }}
           >
             <canvas ref={canvasRef} data-testid="sf-canvas" className="block w-full h-full" />
+            {staticDivider&&!poeMasked&&(
+              <button type="button" data-testid="sf-b2-scope-toggle" aria-expanded={dividerScopeOpen} aria-controls="sf-b2-scope-panel"
+                onClick={()=>setDividerScopeOpen(v=>!v)}
+                className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border px-4 py-1.5 text-xs cursor-pointer shadow-md"
+                style={{borderColor:'var(--pf-border)',backgroundColor:'var(--pf-surface)',color:'var(--pf-text)'}}>
+                {dividerScopeOpen?'收起示波器':'展开示波器'}
+              </button>
+            )}
             {poeMasked && (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 p-6 text-center">
                 <button
@@ -937,7 +953,9 @@ export const SingleFileApp: React.FC = () => {
           </div>
           <div
             className="rounded-xl border p-2 shrink-0"
-            hidden={opticalSlice||transformerSlice||waveOpticsSlice||thermoStaticSlice}
+            id={circuitSlice?'sf-b2-scope-panel':undefined}
+            data-testid={circuitSlice?'sf-b2-scope-panel':undefined}
+            hidden={opticalSlice||transformerSlice||waveOpticsSlice||thermoStaticSlice||(staticDivider&&!dividerScopeOpen)}
             style={{ borderColor: 'var(--pf-border)', backgroundColor: 'var(--pf-surface)' }}
           >
             <div className="flex items-center gap-2 text-xs mb-1">
