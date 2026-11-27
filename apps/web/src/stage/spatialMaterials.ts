@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type {E10FluxRole} from './e10SceneFocus.js';
 
 /** Return individually owned materials: callers dispose them with their scene geometry. */
 export function anodizedRailMaterial(): THREE.MeshPhysicalMaterial {
@@ -41,11 +42,12 @@ export function e10ConductorRadius(geometryType:string,radiusR:number,turns:numb
 export function e10CopperMaterial(): THREE.MeshPhysicalMaterial {
   return new THREE.MeshPhysicalMaterial({color:0xb86a42,metalness:.92,roughness:.26,clearcoat:.25,clearcoatRoughness:.18,envMapIntensity:.72});
 }
-export function e10FluxCoreMaterial(vertexColors=false): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({color:0x53ccdf,toneMapped:false,transparent:true,opacity:vertexColors?.78:.95,depthWrite:false,vertexColors});
+export function e10FluxCoreMaterial(vertexColors=false,role:E10FluxRole='meridian'): THREE.MeshBasicMaterial {
+  const opacity=role==='meridian'?(vertexColors?.78:.95):(vertexColors?.31:.43);
+  return new THREE.MeshBasicMaterial({color:0x53ccdf,toneMapped:false,transparent:true,opacity,depthWrite:false,vertexColors});
 }
-export function e10FluxHaloMaterial(): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({color:0x2ebbd7,toneMapped:false,transparent:true,opacity:.09,depthWrite:false,blending:THREE.AdditiveBlending,vertexColors:true});
+export function e10FluxHaloMaterial(role:E10FluxRole='meridian'): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({color:0x2ebbd7,toneMapped:false,transparent:true,opacity:role==='meridian'?.09:.028,depthWrite:false,blending:THREE.AdditiveBlending,vertexColors:true});
 }
 /** Smoothly fade the nonphysical floor grid, including the endpoints.
  * This is strictly E10 scenery, not a coordinate or field magnitude encoding. */
