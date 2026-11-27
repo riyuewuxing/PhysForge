@@ -5,7 +5,7 @@ export const relativityQuantumPresets: readonly PresetSpec<RelativityQuantumPara
   {
     id: 'tdse-sub-barrier-tunneling',
     name: '一维高斯波包量子势垒隧穿（E₀ < V₀, Crank-Nicolson 幺正演化）',
-    description: '波包能量 E₀=2.0 低于势垒 V₀=2.45，经典粒子 100% 反射，而量子波函数指数穿透势垒产生非零透射率 T',
+    description: '中心动能 E₀=2.0 低于势垒 V₀=2.45；有限波包具有动量展宽，观察势垒两侧占据概率随时间演化',
     curriculumNotes: '强基/大学量子先修 · 512 格一维含时薛定谔方程与概率流守恒',
     params: {
       mode: 'tdse-tunneling',
@@ -21,8 +21,8 @@ export const relativityQuantumPresets: readonly PresetSpec<RelativityQuantumPara
   },
   {
     id: 'tdse-double-barrier-resonance',
-    name: '双势垒量子共振隧穿与方势阱散射（法布里-珀罗量子态）',
-    description: '对称双势垒内形成驻波准束缚态，特定动量波包可发生强烈共振透射与势阱内波纹干涉',
+    name: '双势垒干涉腔（扫描中心波矢探查共振）',
+    description: '对称双势垒的腔内干涉与占据概率；比较不同中心波矢，不预设当前参数必然共振',
     curriculumNotes: '强基/大学量子 · 谐振隧穿与散射振幅干涉',
     params: {
       mode: 'tdse-tunneling',
@@ -39,7 +39,7 @@ export const relativityQuantumPresets: readonly PresetSpec<RelativityQuantumPara
   {
     id: 'minkowski-lorentz-twins',
     name: '狭义相对论闵可夫斯基时空图：同时线偏转、光锥与双生子佯谬',
-    description: '动态调节相对速率 β=v/c，直观展示洛伦兹剪切坐标轴、类时双曲线不变性 (Δs²=c²t²-x²) 与固有时差异',
+    description: '静态调节有向 β=v/c 与事件坐标；等比例光锥、洛伦兹轴和不变间隔；理想瞬时折返世界线的同端点固有时比较',
     curriculumNotes: '选择性必修三 / 强基竞赛 · 狭义相对论时空几何不变量',
     params: {
       mode: 'minkowski-relativity',

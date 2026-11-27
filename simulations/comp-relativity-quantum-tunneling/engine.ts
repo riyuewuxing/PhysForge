@@ -22,13 +22,23 @@ export type RelativityQuantumParams = {
 
 export interface RelativityQuantumState {
   readonly t: number;
+  readonly mode: RelativityQuantumMode;
+  readonly inputKey: string;
   readonly psiRe: Float64Array;
   readonly psiIm: Float64Array;
   readonly potential: Float64Array;
   readonly totalNorm: number;
   readonly normDrift: number;
   readonly reflectionProb: number;
+  /** Compatibility aliases: occupation probabilities, NOT asymptotic reflection/transmission coefficients. */
   readonly transmissionProb: number;
+  readonly middleProb: number;
+  readonly energyExpectation: number;
+  readonly initialEnergy: number;
+  readonly boundaryProb: number;
+  readonly maxBoundaryProb: number;
+  readonly eventXPrime: number;
+  readonly eventCtPrime: number;
   readonly gammaFactor: number;
   readonly intervalS2: number;
   readonly intervalPrimeS2: number;
@@ -37,7 +47,7 @@ export interface RelativityQuantumState {
   readonly twinTravelerProperTime: number;
 }
 
-function buildPotentialArray(params: RelativityQuantumParams): Float64Array {
+export function buildPotentialArray(params: RelativityQuantumParams): Float64Array {
   const V = new Float64Array(TDSE_GRID_N);
   const v0 = params.barrierHeightV0;
   const w = Math.max(0.4, params.barrierWidth);
@@ -78,6 +88,28 @@ export function solveLorentzInterval(betaRaw: number, x: number, ct: number): {
   };
 }
 
+function inputKey(p:RelativityQuantumParams):string{
+  return p.mode==='tdse-tunneling'?JSON.stringify([p.mode,p.potentialShape,p.barrierHeightV0,p.barrierWidth,p.waveMomentumK0,p.packetSigma]):
+    JSON.stringify([p.mode,p.lorentzBeta,p.eventX,p.eventCt]);
+}
+export function potentialSupport(V:Float64Array):{first:number;last:number;left:number;right:number;empty:boolean}{
+  const first=V.findIndex(v=>v!==0);
+  if(first<0){const mid=Math.ceil(-TDSE_X_MIN/TDSE_DX);return {first:mid,last:mid-1,left:0,right:0,empty:true};}
+  let last=V.length-1;while(last>first&&V[last]===0)last--;
+  return {first,last,left:TDSE_X_MIN+(first-.5)*TDSE_DX,right:TDSE_X_MIN+(last+.5)*TDSE_DX,empty:false};
+}
+export function quantumQuantities(re:Float64Array,im:Float64Array,V:Float64Array){
+  const support=potentialSupport(V);let total=0,left=0,middle=0,right=0,E=0,boundary=0;
+  for(let j=0;j<TDSE_GRID_N;j++){
+    const a=re[j]!,b=im[j]!,density=a*a+b*b,p=density*TDSE_DX;
+    total+=p;if(j<support.first)left+=p;else if(j>support.last)right+=p;else middle+=p;
+    const Ha=(2*a-(re[j-1]??0)-(re[j+1]??0))/(2*TDSE_DX**2)+V[j]!*a;
+    const Hb=(2*b-(im[j-1]??0)-(im[j+1]??0))/(2*TDSE_DX**2)+V[j]!*b;
+    E+=(a*Ha+b*Hb)*TDSE_DX;
+    if(Math.abs(TDSE_X_MIN+j*TDSE_DX)>=45)boundary+=p;
+  }
+  return {total,left,middle,right,E,boundary,support};
+}
 export function createInitialState(params: RelativityQuantumParams): RelativityQuantumState {
   const psiRe = new Float64Array(TDSE_GRID_N);
   const psiIm = new Float64Array(TDSE_GRID_N);
@@ -96,18 +128,8 @@ export function createInitialState(params: RelativityQuantumParams): RelativityQ
     normSum += (re * re + im * im) * TDSE_DX;
   }
   const invSqrt = 1 / Math.sqrt(Math.max(1e-18, normSum));
-  let normAfter = 0;
-  let refP = 0;
-  let transP = 0;
-  for (let j = 0; j < TDSE_GRID_N; j++) {
-    psiRe[j] = psiRe[j]! * invSqrt;
-    psiIm[j] = psiIm[j]! * invSqrt;
-    const prob = (psiRe[j]! * psiRe[j]! + psiIm[j]! * psiIm[j]!) * TDSE_DX;
-    normAfter += prob;
-    const x = TDSE_X_MIN + j * TDSE_DX;
-    if (x < -params.barrierWidth * 0.6) refP += prob;
-    else if (x > params.barrierWidth * 0.6) transP += prob;
-  }
+  for(let j=0;j<TDSE_GRID_N;j++){psiRe[j]=psiRe[j]!*invSqrt;psiIm[j]=psiIm[j]!*invSqrt;}
+  const potential=buildPotentialArray(params),q=quantumQuantities(psiRe,psiIm,potential);
 
   const lor = solveLorentzInterval(params.lorentzBeta, params.eventX, params.eventCt);
   const stayTau = 10;
@@ -115,13 +137,14 @@ export function createInitialState(params: RelativityQuantumParams): RelativityQ
 
   return {
     t: 0,
+    mode:params.mode,inputKey:inputKey(params),
     psiRe,
     psiIm,
-    potential: buildPotentialArray(params),
-    totalNorm: normAfter,
-    normDrift: Math.abs(normAfter - 1),
-    reflectionProb: refP,
-    transmissionProb: transP,
+    potential,
+    totalNorm:q.total,normDrift:Math.abs(q.total-1),
+    reflectionProb:q.left,transmissionProb:q.right,middleProb:q.middle,
+    energyExpectation:q.E,initialEnergy:q.E,boundaryProb:q.boundary,maxBoundaryProb:q.boundary,
+    eventXPrime:lor.xPrime,eventCtPrime:lor.ctPrime,
     gammaFactor: lor.gamma,
     intervalS2: lor.s2,
     intervalPrimeS2: lor.s2Prime,
@@ -133,7 +156,7 @@ export function createInitialState(params: RelativityQuantumParams): RelativityQ
 
 /**
  * 1D TDSE Crank-Nicolson single-step solver with complex Thomas tridiagonal elimination (m=1, hbar=1).
- * Cayley operator (I + i*dt/2*H)^{-1}(I - i*dt/2*H) guarantees exact unitary norm conservation (< 1e-10).
+ * Cayley operator is unitary for the discrete Hermitian H with zero ghost cells; floating-point drift is audited. Finite-box boundaries reflect.
  */
 function advanceCrankNicolsonStep(
   psiReIn: Float64Array,
@@ -220,80 +243,40 @@ export function stepRelativityQuantum(
   params: RelativityQuantumParams,
   dt: number
 ): StepResult<RelativityQuantumState> {
-  if (!Number.isFinite(dt) || dt < 0) throw new Error(`Invalid dt: ${dt}`);
-  if (dt === 0) return { nextState: state, events: [] };
-
-  const V = buildPotentialArray(params);
-  let re = state.psiRe;
-  let im = state.psiIm;
-  if (params.mode === 'tdse-tunneling') {
-    const substeps = Math.max(1, Math.round(dt / 0.05));
-    const h = dt / substeps;
-    for (let s = 0; s < substeps; s++) {
-      const res = advanceCrankNicolsonStep(re, im, V, h);
-      re = res.nextRe;
-      im = res.nextIm;
-    }
+  if(!Number.isFinite(dt)||dt<0)throw Error('Invalid dt: '+dt);
+  if(state.inputKey!==inputKey(params))return {nextState:createInitialState(params),events:[],advancedTime:0,halt:true};
+  if(params.mode==='minkowski-relativity')return {nextState:state,events:[],advancedTime:0,halt:true};
+  if(dt===0)return {nextState:state,events:[]};
+  const V=state.potential,n=Math.max(1,Math.ceil(dt/.05)),h=dt/n;
+  let re=state.psiRe,im=state.psiIm,maxBoundary=state.maxBoundaryProb;
+  for(let j=0;j<n;j++){
+    const a=advanceCrankNicolsonStep(re,im,V,h);re=a.nextRe;im=a.nextIm;
+    let b=0;for(let k=0;k<TDSE_GRID_N;k++)if(Math.abs(TDSE_X_MIN+k*TDSE_DX)>=45)b+=(re[k]!**2+im[k]!**2)*TDSE_DX;
+    maxBoundary=Math.max(maxBoundary,b);
   }
-
-  let norm = 0;
-  let refP = 0;
-  let transP = 0;
-  const edge = params.potentialShape === 'double-barrier' ? 2.5 + 0.5 * params.barrierWidth : 0.6 * params.barrierWidth;
-  for (let j = 0; j < TDSE_GRID_N; j++) {
-    const p = (re[j]! * re[j]! + im[j]! * im[j]!) * TDSE_DX;
-    norm += p;
-    const x = TDSE_X_MIN + j * TDSE_DX;
-    if (x < -edge) refP += p;
-    else if (x > edge) transP += p;
+  const q=quantumQuantities(re,im,V);
+  return {nextState:{...state,t:state.t+dt,psiRe:re,psiIm:im,
+    totalNorm:q.total,normDrift:Math.abs(q.total-1),
+    reflectionProb:q.left,transmissionProb:q.right,middleProb:q.middle,
+    energyExpectation:q.E,boundaryProb:q.boundary,maxBoundaryProb:maxBoundary},events:[]};
+}
+export function computeObservables(s:RelativityQuantumState):Record<string,number>{
+  if(s.mode==='minkowski-relativity')return {t:s.t,gammaFactor:s.gammaFactor,eventXPrime:s.eventXPrime,eventCtPrime:s.eventCtPrime,
+    intervalS2:s.intervalS2,intervalPrimeS2:s.intervalPrimeS2,intervalError:s.intervalError,
+    twinStayProperTime:s.twinStayProperTime,twinTravelerProperTime:s.twinTravelerProperTime};
+  return {t:s.t,totalNorm:s.totalNorm,normDrift:s.normDrift,reflectionProb:s.reflectionProb,transmissionProb:s.transmissionProb,
+    middleProb:s.middleProb,energyExpectation:s.energyExpectation,energyDrift:Math.abs(s.energyExpectation-s.initialEnergy),
+    boundaryProb:s.boundaryProb,maxBoundaryProb:s.maxBoundaryProb};
+}
+export function checkInvariants(s:RelativityQuantumState,initial:RelativityQuantumState,p:RelativityQuantumParams):InvariantReport[]{
+  const report=(name:string,e:number,tolerance:number):InvariantReport=>({name,measuredError:e,tolerance,passed:Number.isFinite(e)&&e<tolerance});
+  if(p.mode==='minkowski-relativity'){
+    const a=solveLorentzInterval(p.lorentzBeta,p.eventX,p.eventCt),b=solveLorentzInterval(-p.lorentzBeta,s.eventXPrime,s.eventCtPrime);
+    return [report('洛伦兹时空间隔绝对误差',Math.abs(s.intervalPrimeS2-s.intervalS2),1e-10),
+      report('洛伦兹正反变换坐标误差',Math.max(Math.abs(s.eventXPrime-a.xPrime),Math.abs(s.eventCtPrime-a.ctPrime),Math.abs(b.xPrime-p.eventX),Math.abs(b.ctPrime-p.eventCt)),1e-10)];
   }
-
-  const lor = solveLorentzInterval(params.lorentzBeta, params.eventX, params.eventCt);
-  return {
-    nextState: {
-      t: state.t + dt,
-      psiRe: re,
-      psiIm: im,
-      potential: V,
-      totalNorm: norm,
-      normDrift: Math.abs(norm - 1),
-      reflectionProb: refP,
-      transmissionProb: transP,
-      gammaFactor: lor.gamma,
-      intervalS2: lor.s2,
-      intervalPrimeS2: lor.s2Prime,
-      intervalError: lor.err,
-      twinStayProperTime: 10,
-      twinTravelerProperTime: 10 / lor.gamma
-    },
-    events: []
-  };
-}
-
-export function computeObservables(state: RelativityQuantumState): Record<string, number> {
-  return {
-    t: state.t,
-    totalNorm: state.totalNorm,
-    normDrift: state.normDrift,
-    reflectionProb: state.reflectionProb,
-    transmissionProb: state.transmissionProb,
-    gammaFactor: state.gammaFactor,
-    intervalError: state.intervalError
-  };
-}
-
-export function checkInvariants(
-  state: RelativityQuantumState,
-  _i: RelativityQuantumState,
-  params: RelativityQuantumParams
-): InvariantReport[] {
-  const err = params.mode === 'tdse-tunneling' ? state.normDrift : state.intervalError;
-  return [
-    {
-      name: params.mode === 'tdse-tunneling' ? 'Crank-Nicolson TDSE 概率归一化漂移' : '洛伦兹变换 Δs² 跨系不变量误差',
-      measuredError: err,
-      tolerance: 1e-10,
-      passed: err < 1e-10
-    }
-  ];
+  const q=quantumQuantities(s.psiRe,s.psiIm,s.potential),a=quantumQuantities(initial.psiRe,initial.psiIm,initial.potential);
+  return [report('离散 TDSE 总概率归一化误差',Math.abs(q.total-1),1e-10),
+    report('静态 Hamiltonian 能量期望漂移',Math.abs(q.E-a.E)/Math.max(1,Math.abs(a.E)),1e-9),
+    report('左中右占据概率闭合及读数误差',Math.max(Math.abs(q.left+q.middle+q.right-q.total),Math.abs(q.left-s.reflectionProb),Math.abs(q.right-s.transmissionProb),Math.abs(q.middle-s.middleProb)),1e-10)];
 }
