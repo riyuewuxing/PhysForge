@@ -38,7 +38,7 @@ function bounds(p:ConicalTurntableParams):Bounds{
   if(p.mode==='turntable-dual'){
     const R=diskRadius(p);return {minX:-1.17*R,maxX:4.0*R,minY:-1.22*R,maxY:1.22*R};
   }
-  const L=p.pendulumLength;return {minX:-1.35*L,maxX:3.7*L,minY:1.1-1.43*L,maxY:1.1+.40*L};
+  const L=p.pendulumLength;return {minX:-1.35*L,maxX:3.7*L,minY:1.1-1.43*L,maxY:1.1+1.02*L};
 }
 export function turntableBoundsFit(_s:ConicalTurntableState,p:ConicalTurntableParams,v:Viewport,safe:TurntableSafeRect){
   const b=bounds(p),ppm=.24*Math.min(v.width,v.height)*v.scale,ox=.45*v.width+v.offsetX,oy=.5*v.height+v.offsetY;
@@ -105,7 +105,7 @@ export function turntableDiagram(s:ConicalTurntableState,p:ConicalTurntableParam
     for(const [i,[label,role]] of ([['T','tension'],['fA','friction-a'],['fB','friction-b']] as const).entries())txt({x:x0+.4*R+i*.67*R,y:.89*R},label,role,'sweep');
   }else{
     const L=p.pendulumLength,R=s.rA,pivot={x:0,y:1.1},top={x:2.4*L,y:1.1-.53*L},theta=s.coneAngleDeg*Math.PI/180;
-    txt({x:0,y:1.1+.27*L},'固定竖直截面正投影','ink','turntable');
+    txt({x:0,y:1.1+.82*L},'固定竖直截面正投影','ink','turntable');
     line(pivot,{x:0,y:1.1-L},'guide','turntable',true);dot(pivot,.035*L,'pivot','turntable');line(pivot,s.a,'rope','turntable');
     dot(s.a,.065*L,'bob','always');
     if(s.rotatingCone){
@@ -116,7 +116,7 @@ export function turntableDiagram(s:ConicalTurntableState,p:ConicalTurntableParam
       dot(top,R,'orbit','turntable',false);dot(top,.025*L,'pivot','turntable');
       const point={x:top.x+R*Math.cos(s.angleRad),y:top.y+R*Math.sin(s.angleRad)};
       line(top,point,'guide','construction');dot(point,.06*L,'top-bob','always');
-      txt({x:top.x,y:1.1+.27*L},'水平俯视 · 同一相位','ink','turntable');
+      txt({x:top.x,y:1.1+.82*L},'水平俯视 · 同一相位','ink','turntable');
       txt({x:top.x,y:top.y-R-.12*L},'r=L sinθ','guide','construction');
       if(opts?.showVelocityVectors!==false)arrow(point,{x:-Math.sin(s.angleRad),y:Math.cos(s.angleRad)},.30*L,'v','velocity','construction');
     }else{dot(top,.035*L,'pivot','turntable');txt({x:top.x,y:top.y+.18*L},'竖直静止 · 无圆周轨道','ink','turntable');}
