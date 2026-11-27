@@ -4,6 +4,7 @@ on:
     branches: [main, 'polish/v31-*']
     paths:
       - 'simulations/**'
+      - 'apps/singlefile-exporter/src/**'
       - 'apps/web/src/components/RightControlPanel.tsx'
       - 'apps/web/src/components/SimulationStage.tsx'
       - 'apps/web/src/components/ExportStudioDrawer.tsx'
