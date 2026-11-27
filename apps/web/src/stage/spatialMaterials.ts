@@ -40,14 +40,14 @@ export function e10ConductorRadius(geometryType:string,radiusR:number,turns:numb
   return Math.min(nominal,.32*2.4*R/(n-1));
 }
 export function e10CopperMaterial(): THREE.MeshPhysicalMaterial {
-  return new THREE.MeshPhysicalMaterial({color:0xb86a42,metalness:.92,roughness:.26,clearcoat:.25,clearcoatRoughness:.18,envMapIntensity:.72});
+  return new THREE.MeshPhysicalMaterial({color:0x99502e,metalness:.92,roughness:.20,clearcoat:.38,clearcoatRoughness:.14,envMapIntensity:.68});
 }
 export function e10FluxCoreMaterial(vertexColors=false,role:E10FluxRole='meridian'): THREE.MeshBasicMaterial {
-  const opacity=role==='meridian'?(vertexColors?.78:.95):(vertexColors?.31:.43);
+  const opacity=role==='meridian'?(vertexColors?.86:.95):(vertexColors?.31:.43);
   return new THREE.MeshBasicMaterial({color:0x53ccdf,toneMapped:false,transparent:true,opacity,depthWrite:false,vertexColors});
 }
 export function e10FluxHaloMaterial(role:E10FluxRole='meridian'): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({color:0x2ebbd7,toneMapped:false,transparent:true,opacity:role==='meridian'?.09:.028,depthWrite:false,blending:THREE.AdditiveBlending,vertexColors:true});
+  return new THREE.MeshBasicMaterial({color:0x2ebbd7,toneMapped:false,transparent:true,opacity:role==='meridian'?.12:.028,depthWrite:false,blending:THREE.AdditiveBlending,vertexColors:true});
 }
 /** Smoothly fade the nonphysical floor grid, including the endpoints.
  * This is strictly E10 scenery, not a coordinate or field magnitude encoding. */

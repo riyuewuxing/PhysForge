@@ -27,7 +27,7 @@ export class E10ParticleProjection {
     const screenX=(x+1)*width/2,screenY=(1-y)*height/2;
     if(!visible)return {visible,occluded:false,x:screenX,y:screenY,radiusPx:0,centerDistance:null,hitDistance:null};
     this.offset.set(radius,0,0).applyQuaternion(camera.quaternion).add(center).project(camera);
-    const radiusPx=Math.max(9,Math.min(26,Math.abs(this.offset.x-x)*width/2+3));
+    const radiusPx=Math.max(12,Math.min(26,Math.abs(this.offset.x-x)*width/2+3));
     this.ndcXY.set(x,y);this.ray.setFromCamera(this.ndcXY,camera);
     const centerDistance=center.distanceTo(this.ray.ray.origin);
     this.ray.near=0;this.ray.far=Math.max(0,centerDistance-1e-6);

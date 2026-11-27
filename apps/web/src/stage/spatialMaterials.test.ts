@@ -14,6 +14,7 @@ describe('E10 visual-only geometry and materials',()=>{
     const legacy=coilCopperMaterial(),c=e10CopperMaterial(),next=e10CopperMaterial(),core=e10FluxCoreMaterial(true),halo=e10FluxHaloMaterial(),arrow=e10FluxCoreMaterial();
     expect(c).not.toBe(next);expect(c).not.toBe(legacy);expect(legacy.envMapIntensity).toBe(.92);
     expect(c.envMapIntensity).toBeLessThan(legacy.envMapIntensity);
+    expect(c.roughness).toBeLessThan(.26);expect(c.clearcoat).toBeGreaterThan(.25);
     expect(halo.opacity).toBeLessThan(core.opacity);expect(core.vertexColors).toBe(true);expect(arrow.vertexColors).toBe(false);expect(arrow.opacity).toBeGreaterThan(core.opacity);
     for(const m of [legacy,c,next,core,halo,arrow])m.dispose();
   });
@@ -50,7 +51,7 @@ describe('H70 E10 teaching hierarchy and real depth',()=>{
     const mesh=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshBasicMaterial());
     mesh.position.z=2;mesh.updateMatrixWorld(true);
     let r=projection.read(center,.05,camera,[mesh],1200,800);
-    expect(r.visible).toBe(true);expect(r.occluded).toBe(true);expect(r.x).toBeCloseTo(600,8);expect(r.y).toBeCloseTo(400,8);expect(r.hitDistance).toBeLessThan(r.centerDistance!);
+    expect(r.visible).toBe(true);expect(r.occluded).toBe(true);expect(r.radiusPx).toBeGreaterThanOrEqual(12);expect(r.radiusPx).toBeLessThanOrEqual(26);expect(r.x).toBeCloseTo(600,8);expect(r.y).toBeCloseTo(400,8);expect(r.hitDistance).toBeLessThan(r.centerDistance!);
     mesh.position.z=-2;mesh.updateMatrixWorld(true);
     expect(projection.read(center,.05,camera,[mesh],1200,800).occluded).toBe(false);
     mesh.position.z=2;mesh.visible=false;mesh.updateMatrixWorld(true);
