@@ -40,20 +40,22 @@ export function drawTirMediumWindow(ctx:CanvasRenderingContext2D,left:number,rig
   upper.addColorStop(.35,paper?'rgba(56,189,248,.08)':'rgba(68,135,184,.085)');
   upper.addColorStop(.77,paper?'rgba(56,189,248,.16)':'rgba(94,166,215,.23)');
   upper.addColorStop(1,paper?'rgba(56,189,248,.20)':'rgba(126,193,235,.32)');
-  ctx.fillStyle=upper;ctx.fillRect(left,top,w,hit.y-top);
+  ctx.fillStyle=upper;
+  ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(right,top);ctx.lineTo(right,hit.y);ctx.lineTo(left,hit.y);ctx.closePath();ctx.fill();
   // A soft local specular wash provides glass-like depth without extra walls.
   if(!paper){
-    ctx.save();ctx.beginPath();ctx.rect(left,top,w,hit.y-top);ctx.clip();
+    // Reuse the exact same world-space polygon for the second material layer.
     const wash=ctx.createRadialGradient(hit.x,hit.y,0,hit.x,hit.y,Math.max(w*.54,hit.y-top));
     wash.addColorStop(0,'rgba(106,174,216,.19)');
     wash.addColorStop(.48,'rgba(72,139,184,.07)');wash.addColorStop(1,'rgba(72,139,184,0)');
-    ctx.fillStyle=wash;ctx.fillRect(left,top,w,hit.y-top);ctx.restore();
+    ctx.fillStyle=wash;ctx.fill();
   }
   const lower=ctx.createLinearGradient(0,hit.y,0,bottom);
   lower.addColorStop(0,paper?'rgba(100,116,139,.07)':'rgba(112,138,167,.13)');
   lower.addColorStop(.24,paper?'rgba(100,116,139,.035)':'rgba(112,138,167,.045)');
   lower.addColorStop(1,'rgba(100,116,139,0)');
-  ctx.fillStyle=lower;ctx.fillRect(left,hit.y,w,bottom-hit.y);
+  ctx.fillStyle=lower;
+  ctx.beginPath();ctx.moveTo(left,hit.y);ctx.lineTo(right,hit.y);ctx.lineTo(right,bottom);ctx.lineTo(left,bottom);ctx.closePath();ctx.fill();
   // Only this horizontal line is the actual material interface.
   ctx.strokeStyle=paper?'#64748b':'rgba(143,212,250,.72)';ctx.lineWidth=1.5;
   if(!paper){ctx.shadowColor='#78c9ec';ctx.shadowBlur=9;}
