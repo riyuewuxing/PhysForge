@@ -1,0 +1,52 @@
+name: H77 exact-source S02 offline mode and actual axis units
+on:
+  pull_request:
+    branches: ['polish/v31-h77-e04-opening']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: github.event.pull_request.head.ref == 'audit/h77-s02-units'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: aefbd177e9d611fd6c06c21791db5fe2ad8595c8
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "aefbd177e9d611fd6c06c21791db5fe2ad8595c8"
+          cp audit/scripts/h77_s02_units.mjs source/scripts/
+          sha256sum source/scripts/h77_s02_units.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: node scripts/h77_s02_units.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: aefbd177e9d611fd6c06c21791db5fe2ad8595c8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h77-s02-units
+          path: |
+            source/evidence/h77-s02-units/*.png
+            source/evidence/h77-s02-units/*.html
+            source/evidence/h77-s02-units/report.json
+          if-no-files-found: error
+          retention-days: 7
