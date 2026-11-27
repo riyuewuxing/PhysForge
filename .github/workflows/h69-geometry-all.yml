@@ -1,0 +1,51 @@
+name: H69 all E10 standalone geometries actual-paint evidence
+on:
+  pull_request:
+    branches: ['audit/h69-3d-compare']
+permissions:
+  contents: read
+jobs:
+  offline:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h69-geometry-all')
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 51bc58a463eb281fbac9fea0139e55ed217e884d
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = '51bc58a463eb281fbac9fea0139e55ed217e884d'
+          cp audit/scripts/h69_geometry_all.mjs source/scripts/h69_geometry_all.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: node scripts/h69_geometry_all.mjs
+        working-directory: source
+        timeout-minutes: 4
+        env:
+          EXPECTED_SOURCE: 51bc58a463eb281fbac9fea0139e55ed217e884d
+          AUDIT_HEAD: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h69-geometry-all-evidence
+          path: |
+            source/evidence/h69-offline-geometry/*.png
+            source/evidence/h69-offline-geometry/report.json
+          if-no-files-found: error
+          retention-days: 7
