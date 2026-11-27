@@ -33,7 +33,30 @@ export class E10ParticleProjection {
     this.ray.near=0;this.ray.far=Math.max(0,centerDistance-1e-6);
     this.hits.length=0;
     for(const mesh of occluders)if(mesh.visible)this.ray.intersectObject(mesh,false,this.hits);
-    const hitDistance=this.hits[0]?.distance??null;
+    // A ray hit before the actual near clipping plane is not rendered and
+    // must not masquerade as a visible occluder. Test view-space depth rather
+    // than Euclidean ray distance (off-axis perspective rays differ).
+    const hit=this.hits.find(h=>{
+      const depth=-this.eye.copy(h.point).applyMatrix4(camera.matrixWorldInverse).z;
+      return depth>=camera.near-1e-8&&depth<=camera.far+1e-8;
+    });
+    const hitDistance=hit?.distance??null;
     return {visible,occluded:hitDistance!==null,x:screenX,y:screenY,radiusPx,centerDistance,hitDistance};
   }
+}
+
+export type E10ScreenRect={left:number;right:number;top:number;bottom:number};
+/** Screen-space collision of real static samples with a visible overlay.
+ * Margin covers the symbolic tube and arrow widths, not physical radius. */
+export function e10ProjectedCloudOverlaps(points:readonly {x:number;y:number;z:number}[],camera:THREE.Camera,width:number,height:number,rect:E10ScreenRect,margin=12):boolean{
+  camera.updateMatrixWorld(true);
+  const matrix=new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
+  const v=new THREE.Vector4();
+  for(const p of points){
+    v.set(p.x,p.y,p.z,1).applyMatrix4(matrix);
+    if(v.w<=0)continue;
+    const x=(v.x/v.w+1)*width/2,y=(1-v.y/v.w)*height/2,z=v.z/v.w;
+    if(Math.abs(z)<=1&&x>=rect.left-margin&&x<=rect.right+margin&&y>=rect.top-margin&&y<=rect.bottom+margin)return true;
+  }
+  return false;
 }

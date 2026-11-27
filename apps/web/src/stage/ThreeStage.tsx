@@ -9,7 +9,7 @@ import { CameraMorphController, alignedCanvasViewport, liftPoint, projectCameraD
 import type { StorySpatialCommand } from '../presentation/storyCamera.js';
 import { brushedCopperMaterial, magneticFluxMaterial, dielectricGlassMaterial, coilCopperMaterial, coilFluxCoreMaterial, coilFluxHaloMaterial, createParticleGlow, applyFluxEndpointFade, createMagneticBackdrop, e10ConductorRadius, e10CopperMaterial, e10FluxCoreMaterial, e10FluxHaloMaterial, e10GridLineGeometry } from './spatialMaterials.js';
 import { fitFusionSpatialFrame,projectFusionFrame } from './fusionFraming.js';
-import { E10ParticleProjection,e10FluxRole } from './e10SceneFocus.js';
+import { E10ParticleProjection,e10FluxRole,e10ProjectedCloudOverlaps,type E10ScreenRect } from './e10SceneFocus.js';
 import { createPlanarFlagshipScene,fitB1SpatialFrame,b1ProjectedBounds,b1ProjectionFits } from './planarFlagshipScenes.js';
 import { b1FieldCaption,b1StateCaption,b1FrameBounds,b1SafeRect } from '../../../../simulations/em-bounded-magnetic-field/plugin.js';
 import type { BoundedMagneticParams,BoundedMagneticState } from '../../../../simulations/em-bounded-magnetic-field/engine.js';
@@ -415,7 +415,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     const e10Ring=isMag3d?document.createElement('div'):null;
     if(e10Ring){
       e10Ring.dataset.testid='e10-occlusion-ring';e10Ring.setAttribute('aria-hidden','true');
-      Object.assign(e10Ring.style,{position:'absolute',left:'0',top:'0',display:'none',pointerEvents:'none',border:'1.5px dashed #ffe3a1',borderRadius:'50%',boxSizing:'border-box',zIndex:'1',boxShadow:'0 0 5px #e9b55b44'});
+      Object.assign(e10Ring.style,{position:'absolute',left:'0',top:'0',display:'none',pointerEvents:'none',border:'2px dashed #fff2c1',borderRadius:'50%',boxSizing:'border-box',zIndex:'1',boxShadow:'0 0 0 1px #0b1018, inset 0 0 0 1px #0b1018',filter:'drop-shadow(0 0 1px #080d16) drop-shadow(0 0 2px #080d16)'});
       container.appendChild(e10Ring);
     }
     scene.add(marker);
@@ -473,8 +473,9 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     let b1LastPolicy=b1PolicyRef.current;
     const lockB1Camera=()=>{b1AutoFit=false;};
     if(isBoundedStage||isTokamak3d||isMag3d)controls.addEventListener('start',lockB1Camera);
-    let magneticWireFitKey='',magneticWirePoints:THREE.Vector3[]=[];
-    let lastWireGeometryKey='';
+    let magneticSceneFitKey='',magneticScenePoints:THREE.Vector3[]=[],magneticBodyPoints:THREE.Vector3[]=[];
+    let lastMagneticSceneKey='',lastMagneticProjectionKey='';
+    let lastMagneticShapeLayout='',magneticSceneSafe:E10ScreenRect|null=null,magneticSceneObstacles:E10ScreenRect[]=[];
 
     const velocityLabelAnchor = new THREE.Vector3();
     const forceLabelAnchor = new THREE.Vector3();
@@ -871,7 +872,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
 
       const b1Policy=b1PolicyRef.current;
       if(isBoundedStage||isTokamak3d||isMag3d){
-        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';magneticWireFitKey='';b1FramedAt=-Infinity;dirty=true;}
+        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';magneticSceneFitKey='';lastMagneticProjectionKey='';lastMagneticShapeLayout='';b1FramedAt=-Infinity;dirty=true;}
         if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
         b1LastPolicy=b1Policy;
       }
@@ -929,23 +930,84 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if(isMag3d&&latestState&&morph&&morph.getMorphT()===0&&!morph.isAnimating){
         const p=frameParams as Magnetic3dParams;
         const wire=p.geometryType==='straight-wire'||p.geometryType==='parallel-wires';
-        if(wire){
-          // Fit real static geometry, never follow the physical trajectory.
-          const geometryKey=JSON.stringify([magneticFrameKey(p),p.currentI===0]);
-          if(lastWireGeometryKey!==geometryKey){
-            lastWireGeometryKey=geometryKey;
-            magneticWirePoints=buildMagneticConductorPaths(p).flatMap(path=>path.flatMap(seg=>[mapMagneticPoint(seg.a),mapMagneticPoint(seg.b)]));
-            for(const line of getMagneticDisplayFieldLines(p))for(const q of line)magneticWirePoints.push(mapMagneticPoint(q));
+        const solenoid=p.geometryType==='finite-solenoid';
+        if(wire||solenoid){
+          // Use the same static centerline samples as the rendered tubes. Do
+          // not trim outer field lines or follow the time-dependent particle.
+          // The existing 24px fitting margin covers symbolic tube/arrow widths.
+          const geometryKey=JSON.stringify([magneticFrameKey(p),solenoid?p.solenoidTurns:null,solenoid?Math.sign(p.currentI):p.currentI===0]);
+          if(lastMagneticSceneKey!==geometryKey){
+            lastMagneticSceneKey=geometryKey;
+            magneticBodyPoints=buildMagneticConductorPaths(p).flatMap(path=>path.flatMap(seg=>[mapMagneticPoint(seg.a),mapMagneticPoint(seg.b)]));
+            magneticScenePoints=[...magneticBodyPoints];
+            for(const line of getMagneticDisplayFieldLines(p))for(const q of line)magneticScenePoints.push(mapMagneticPoint(q));
           }
           const key=JSON.stringify([geometryKey,rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed]);
-          const safe=fusionSafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
-          if(b1AutoFit&&b1Policy.allowed&&key!==magneticWireFitKey&&magneticWirePoints.length){
-            morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
-            fitFusionSpatialFrame(morph,magneticWirePoints,rw,rh,safe);
-            controls.target.copy(morph.getOrbitTarget());controls.update();magneticWireFitKey=key;
+          const conservative=fusionSafeRect(rw,rh,b1Policy.presentation,!b1Policy.scopeCollapsed);
+          if(b1AutoFit&&b1Policy.allowed&&key!==magneticSceneFitKey&&magneticScenePoints.length){
+            const shapeLayout=JSON.stringify([magneticFrameKey(p),solenoid?p.solenoidTurns:null,rw,rh,b1Policy.presentation,b1Policy.scopeCollapsed]);
+            // Turning current off removes curves, not the conductor or the
+            // teacher's framing. Keep the previous view of this same shape.
+            const holdZero=solenoid&&p.currentI===0&&lastMagneticShapeLayout===shapeLayout&&magneticSceneSafe!==null;
+            if(!holdZero){
+              morph.syncFromOrbitPosition(camera.position,controls.target,camera.fov);
+              magneticSceneSafe=conservative;magneticSceneObstacles=[];
+              if(solenoid){
+                const box=container.getBoundingClientRect();
+                const localRect=(selector:string):E10ScreenRect|null=>{
+                  const node=document.querySelector(selector);
+                  if(!node)return null;
+                  const r=node.getBoundingClientRect();
+                  if(r.width<=0||r.height<=0||getComputedStyle(node).visibility==='hidden')return null;
+                  return {left:r.left-box.left,right:r.right-box.left,top:r.top-box.top,bottom:r.bottom-box.top};
+                };
+                const panel=localRect(b1Policy.presentation?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]');
+                const dock=localRect(b1Policy.presentation?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]');
+                magneticSceneObstacles=[panel,dock].filter((r):r is E10ScreenRect=>r!==null);
+                // A fullscreen formula card occupies only a corner, not an
+                // entire vertical strip. Try the larger real available stage
+                // first, then a narrower fit, then the established safe area.
+                const bottom=dock?Math.min(rh-24,dock.top-12):conservative.bottom;
+                const top=b1Policy.presentation?54:38;
+                const right=b1Policy.presentation?rw-24:panel?panel.left-12:conservative.right;
+                const broad={left:30,right,top,bottom};
+                const middle={...broad,right:(right+conservative.right)/2};
+                const narrow={...broad,right:panel?Math.min(right,panel.left-16):conservative.right};
+                let accepted=false;
+                for(const trial of [broad,middle,narrow,conservative]){
+                  if(trial.right-trial.left<150||trial.bottom-trial.top<150)continue;
+                  const bounds=fitFusionSpatialFrame(morph,magneticScenePoints,rw,rh,trial);
+                  const view=morph.getActiveCamera();
+                  if(!fusionScreenFits(bounds,trial,24)||magneticSceneObstacles.some(r=>e10ProjectedCloudOverlaps(magneticScenePoints,view,rw,rh,r,15)))continue;
+                  magneticSceneSafe=trial;accepted=true;break;
+                }
+                if(!accepted)fitFusionSpatialFrame(morph,magneticScenePoints,rw,rh,conservative);
+              }else fitFusionSpatialFrame(morph,magneticScenePoints,rw,rh,conservative);
+              controls.target.copy(morph.getOrbitTarget());controls.update();
+            }
+            magneticSceneFitKey=key;lastMagneticShapeLayout=shapeLayout;
           }
-          container.dataset.e10WireBounds=JSON.stringify({bounds:projectFusionFrame(magneticWirePoints,morph.getActiveCamera(),rw,rh),safe});
-        }else{magneticWireFitKey='';lastWireGeometryKey='';magneticWirePoints=[];delete container.dataset.e10WireBounds;}
+          const safe=magneticSceneSafe??conservative;
+          const view=morph.getActiveCamera();view.updateMatrixWorld(true);
+          // Thousands of static samples need projection only when the actual
+          // camera/geometry/layout changes, not at every particle integration step.
+          const projectionKey=JSON.stringify([key,...view.matrixWorld.elements,...view.projectionMatrix.elements]);
+          if(projectionKey!==lastMagneticProjectionKey){
+            lastMagneticProjectionKey=projectionKey;
+            const bounds=projectFusionFrame(magneticScenePoints,view,rw,rh);
+            if(solenoid){
+              const body=projectFusionFrame(magneticBodyPoints,view,rw,rh);
+              container.dataset.e10SolenoidBounds=JSON.stringify({bounds,body,safe,samples:magneticScenePoints.length,bodySamples:magneticBodyPoints.length,overlays:magneticSceneObstacles,overlaps:magneticSceneObstacles.filter(r=>e10ProjectedCloudOverlaps(magneticScenePoints,view,rw,rh,r,15)).length});
+              delete container.dataset.e10WireBounds;
+            }else{
+              container.dataset.e10WireBounds=JSON.stringify({bounds,safe});
+              delete container.dataset.e10SolenoidBounds;
+            }
+          }
+        }else{
+          magneticSceneFitKey='';lastMagneticSceneKey='';lastMagneticProjectionKey='';lastMagneticShapeLayout='';magneticSceneSafe=null;magneticSceneObstacles=[];magneticScenePoints=[];magneticBodyPoints=[];
+          delete container.dataset.e10WireBounds;delete container.dataset.e10SolenoidBounds;
+        }
       }
       if (isMag3d || isDeviceStage) {
         separateWorldLabels(renderer.domElement.clientWidth || width, renderer.domElement.clientHeight || height);
@@ -1102,7 +1164,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           <span className="text-slate-400">方向示意 · 非比例</span>
         </div>
       )}
-      {plugin.meta.id==='em-3d-magnetic-fields'&&<div data-testid="e10-focus-legend" className={`pointer-events-none absolute ${presentationMode?'bottom-[45px] left-3':'left-3 top-[46px]'} z-10 max-w-[350px] rounded-md bg-slate-950/70 px-2 py-1 text-[10px] text-slate-300`}>{params.geometryType==='finite-solenoid'&&activeLayers.has('fieldLines3d')?'亮线：z-y 观察剖面 · 淡线：其他空间采样（非场强） · ':''}虚线环：粒子中心被导体遮挡</div>}
+      {plugin.meta.id==='em-3d-magnetic-fields'&&<div data-testid="e10-focus-legend" className={`pointer-events-none absolute ${presentationMode?'bottom-[45px] left-3':'left-3 top-[46px]'} z-10 max-w-[360px] rounded-md border border-white/10 bg-slate-950/85 px-2 py-1 text-[11px] font-medium leading-relaxed text-slate-200`}>{params.geometryType==='finite-solenoid'&&activeLayers.has('fieldLines3d')?'亮线：z-y 观察剖面 · 淡线：其他空间采样（非场强） · ':''}虚线环：粒子中心被导体遮挡</div>}
        <div aria-hidden="true" data-testid="three-axis-widget" className="pointer-events-none absolute bottom-3 right-3 z-10 rounded-lg border border-white/10 bg-slate-950/70 p-1 shadow-lg backdrop-blur">
         {(plugin.meta.id === 'em-3d-magnetic-fields'||plugin.meta.id==='builder-composite-em-field'||plugin.meta.id==='stse-tokamak-magnetic-mirror') ? <svg data-magnetic-axis-widget="" viewBox="0 0 60 60" width="60" height="60" aria-label="实际物理坐标轴方向">
           <circle cx="30" cy="30" r="1.8" fill="#cbd5e1" />
