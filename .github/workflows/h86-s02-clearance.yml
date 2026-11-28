@@ -1,0 +1,55 @@
+name: H86 exact-source S02 MHD label clearance
+on:
+  pull_request:
+    branches: ['polish/v31-h86-s02-mhd-label-clearance']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h86-s02-mhd-clearance')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 6074a9d0bafc049934facbe0cf54421972944a27
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "6074a9d0bafc049934facbe0cf54421972944a27"
+          cp audit/scripts/h86_s02_clearance.mjs source/scripts/
+          sha256sum source/scripts/h86_s02_clearance.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h86_s02_clearance.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: 6074a9d0bafc049934facbe0cf54421972944a27
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h86-s02-clearance-evidence
+          path: |
+            source/evidence/h86-s02/*.png
+            source/evidence/h86-s02/report.json
+          if-no-files-found: error
+          retention-days: 7
