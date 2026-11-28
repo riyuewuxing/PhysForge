@@ -476,8 +476,18 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     ctx.save();
     const m = createWorldMapper(viewport);
     const diagram = getDeviceSchematic(params.device,params);
+    // Presentation palette is local to Canvas; keep the chalkboard, 3D and
+    // exported diagram's semantic colors and geometry unchanged.
+    const projector = viewport.theme === 'projector';
+    const annotation = projector ? '#334155' : '#94a3b8';
+    const magnetic = projector ? '#075985' : '#38bdf8';
+    const electric = projector ? '#92400e' : '#fbbf24';
+    const projectorCueColors = {
+      electric: '#92400e', flow: '#047857', current: '#166534',
+      'magnetic-force': '#be123c'
+    } as const;
 
-    ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+    ctx.strokeStyle = projector ? '#64748b' : 'rgba(148,163,184,0.35)';
     ctx.lineWidth = 1;
     const bRailTop = m.toScreen(1.28, 0.6);
     const bRailBottom = m.toScreen(1.28, -0.6);
@@ -491,7 +501,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
 
     // All hardware outlines share the same normalized footprint as the spatial stage and exported diagram.
     for (const part of diagram.parts) {
-      ctx.strokeStyle = part.material==='copper'?'#d97706':part.material==='glass'?'#64748b':'#94a3b8';
+      ctx.strokeStyle = part.material==='copper'?(projector?'#b45309':'#d97706'):part.material==='glass'?(projector?'#475569':'#64748b'):(projector?'#475569':'#94a3b8');
       ctx.fillStyle = part.material==='copper'?'rgba(217,119,6,0.18)':part.material==='glass'?'rgba(56,189,248,0.035)':'rgba(148,163,184,0.12)';
       ctx.lineWidth=2;
       ctx.beginPath();
@@ -506,43 +516,43 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
     }
     for (const field of diagram.fields) {
       const point=m.toScreen(field.x,field.y),radius=Math.max(3,m.len(0.045));
-      ctx.strokeStyle='#38bdf8';ctx.fillStyle='#38bdf8';ctx.lineWidth=1.25;
+      ctx.strokeStyle=magnetic;ctx.fillStyle=magnetic;ctx.lineWidth=1.25;
       ctx.beginPath();ctx.arc(point.x,point.y,radius,0,Math.PI*2);ctx.stroke();
       ctx.beginPath();ctx.arc(point.x,point.y,1.5,0,Math.PI*2);ctx.fill();
     }
     for (const cue of diagram.cues) {
       const a=m.toScreen(cue.x,cue.y),b=m.toScreen(cue.x+cue.dx,cue.y+cue.dy);
       const angle=Math.atan2(b.y-a.y,b.x-a.x),size=8;
-      ctx.strokeStyle=deviceCueColor(cue.kind);ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=2;
+      ctx.strokeStyle=projector?projectorCueColors[cue.kind]:deviceCueColor(cue.kind);ctx.fillStyle=ctx.strokeStyle;ctx.lineWidth=2;
       ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
       ctx.moveTo(b.x-size*Math.cos(angle-.45),b.y-size*Math.sin(angle-.45));ctx.lineTo(b.x,b.y);
       ctx.lineTo(b.x-size*Math.cos(angle+.45),b.y-size*Math.sin(angle+.45));ctx.stroke();
       ctx.font='600 12px system-ui, sans-serif';ctx.fillText(cue.label,(a.x+b.x)/2+6,(a.y+b.y)/2-8);
     }
-    ctx.fillStyle='#94a3b8';ctx.font='12px system-ui, sans-serif';ctx.textAlign='center';
-    for (const label of diagram.labels) { const p=m.toScreen(label.x,label.y);const terminal=/^(上|下) /.test(label.text);ctx.fillStyle=terminal?'#f8fafc':'#94a3b8';ctx.font=terminal?'bold 14px system-ui, sans-serif':'12px system-ui, sans-serif';ctx.fillText(label.text,p.x,p.y); }
+    ctx.fillStyle=annotation;ctx.font='12px system-ui, sans-serif';ctx.textAlign='center';
+    for (const label of diagram.labels) { const p=m.toScreen(label.x,label.y);const terminal=/^(上|下) /.test(label.text);ctx.fillStyle=terminal?(projector?'#0f172a':'#f8fafc'):annotation;ctx.font=terminal?'bold 14px system-ui, sans-serif':'12px system-ui, sans-serif';ctx.fillText(label.text,p.x,p.y); }
     ctx.textAlign='left';
 
     // RF arrow above the actual gap; direction from the current RF voltage.
     if(state.cyclotron){
       const sign=Math.sign(state.cyclotron.rfVoltageV),a=m.toScreen(-0.25-sign*0.14,CYCL_DISPLAY_RADIUS+0.12),b=m.toScreen(-0.25+sign*0.14,CYCL_DISPLAY_RADIUS+0.12);
       if(Math.abs(state.cyclotron.rfVoltageV)>1e-6){
-        ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineTo(b.x-sign*7,b.y-4);ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-sign*7,b.y+4);ctx.stroke();
+        ctx.strokeStyle=electric;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineTo(b.x-sign*7,b.y-4);ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-sign*7,b.y+4);ctx.stroke();
       }
     }
     if(state.cyclotron){
       const history=cyclotronHistory(params,state.cyclotron);
-      ctx.strokeStyle='rgba(251,191,36,0.46)';ctx.lineWidth=1.2;
+      ctx.strokeStyle=projector?'#a16207':'rgba(251,191,36,0.46)';ctx.lineWidth=1.2;
       for(const arc of history){
         ctx.beginPath();arc.points.forEach((v,i)=>{const w=deviceDiagramPoint(v.x,v.y),q=m.toScreen(w.x,w.y);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);});ctx.stroke();
       }
-      if(history.length){const q=m.toScreen(-0.25,-1.08);ctx.textAlign='center';ctx.fillStyle='#cbd5e1';ctx.font='11px system-ui, sans-serif';ctx.fillText('浅色：抽样历史圆弧 · 亮色：最近实际轨迹',q.x,q.y);ctx.textAlign='left';}
+      if(history.length){const q=m.toScreen(-0.25,-1.08);ctx.textAlign='center';ctx.fillStyle=projector?'#334155':'#cbd5e1';ctx.font='11px system-ui, sans-serif';ctx.fillText(projector?'细线：抽样历史圆弧 · 粗线：最近实际轨迹':'浅色：抽样历史圆弧 · 亮色：最近实际轨迹',q.x,q.y);ctx.textAlign='left';}
     }
     // Draw particle trail & head
     if (state.trail.length > 1) {
-      ctx.strokeStyle = state.cyclotron?'#ffd37a':'#38bdf8';
+      ctx.strokeStyle = state.cyclotron?(projector?'#78350f':'#ffd37a'):magnetic;
       ctx.lineWidth = state.cyclotron?2.8:2.4;
-      if(state.cyclotron){ctx.shadowColor='#f59e0b';ctx.shadowBlur=5;}
+      if(state.cyclotron&&!projector){ctx.shadowColor='#f59e0b';ctx.shadowBlur=5;}
       ctx.beginPath();
       state.trail.forEach((p, idx) => {
         const world = deviceDiagramPoint(p.x,p.y);
@@ -554,7 +564,7 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       });
       ctx.stroke();ctx.shadowBlur=0;
     }
-    ctx.fillStyle = state.cyclotron?'#fff1c7':params.device === 'hall-sensor' && params.carrierType === 'hole' ? '#f43f5e' : '#4ade80';
+    ctx.fillStyle = state.cyclotron?(projector?'#78350f':'#fff1c7'):params.device === 'hall-sensor' && params.carrierType === 'hole' ? (projector?'#be123c':'#f43f5e') : (projector?'#166534':'#4ade80');
     ctx.beginPath();
     const world = deviceDiagramPoint(state.particlePos.x,state.particlePos.y);
     const particle = m.toScreen(world.x,world.y);
