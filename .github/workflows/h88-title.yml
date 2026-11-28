@@ -1,0 +1,55 @@
+name: H88 exact-source fullscreen title and E02 camera
+on:
+  pull_request:
+    branches: ['polish/v31-h88-presentation-title']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h88-presentation-title')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: d773cf90728616a1edb29a0cc03bf9479e4c5952
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "d773cf90728616a1edb29a0cc03bf9479e4c5952"
+          cp audit/scripts/h88_title.mjs source/scripts/
+          sha256sum source/scripts/h88_title.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h88_title.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: d773cf90728616a1edb29a0cc03bf9479e4c5952
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-title-evidence
+          path: |
+            source/evidence/h88-title/*.png
+            source/evidence/h88-title/report.json
+          if-no-files-found: error
+          retention-days: 7
