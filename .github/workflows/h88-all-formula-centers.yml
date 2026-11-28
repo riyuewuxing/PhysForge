@@ -1,0 +1,62 @@
+name: H88 all formula centers and touch scroll
+on:
+  pull_request:
+    branches: ['polish/v31-h88-formula-radical-hit']
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    if: github.event.pull_request.head.ref == 'audit/h88-radical-recheck'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    strategy:
+      fail-fast: false
+      matrix:
+        width: [1024, 1440]
+        pointer: [mouse, touch]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: d920f52f9b6d4e7888878760af159e1dcabd4180
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_HEAD"
+          cp audit/scripts/h88_formula_centers.mjs source/scripts/
+          git -C source diff --exit-code
+        env:
+          SOURCE_HEAD: d920f52f9b6d4e7888878760af159e1dcabd4180
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h88_formula_centers.mjs
+        working-directory: source
+        timeout-minutes: 6
+        env:
+          SOURCE_HEAD: d920f52f9b6d4e7888878760af159e1dcabd4180
+          WIDTH: ${{ matrix.width }}
+          POINTER: ${{ matrix.pointer }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-formula-centers-${{ matrix.width }}-${{ matrix.pointer }}
+          path: source/evidence/h88-formula-centers/
+          if-no-files-found: error
+          retention-days: 7
