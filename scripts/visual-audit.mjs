@@ -3907,6 +3907,11 @@ async function auditV3StoryAndFormula(page, origin, screenshot) {
   await page.waitForFunction(() => document.querySelector('[data-testid="app-shell"]')?.getAttribute('data-model-id') === 'stse-em-devices-suite', null, { timeout: 20000 });
   const slider = page.getByTestId('param-slider-eFieldVPerM');
   const before = Number(await slider.inputValue());
+  const initialB = Number(await page.getByTestId('param-slider-bFieldT').inputValue());
+  // This audit uses the exact velocity-selector preset and a +60 CSS px
+  // drag: 200000 + 60*(500000-10000)/240, snapped to 10000 = 320000.
+  if (before !== 200000 || initialB !== 1) throw new Error('S02 selector audit preset changed: ' + JSON.stringify({before, initialB}));
+  const expected = 320000, expectedSpeed = expected / initialB;
   await page.getByTestId('btn-fullscreen-speech').click();
   const token = page.locator('[data-testid="live-formula-velocity-selector"] [data-param="eFieldVPerM"]').first();
   await token.waitFor({ state: 'visible' });
@@ -3914,17 +3919,55 @@ async function auditV3StoryAndFormula(page, origin, screenshot) {
   const rect = await token.boundingBox();
   if (!rect) throw new Error('Formula token missing bounds');
   const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
-  await page.mouse.move(x, y); await page.mouse.down();
+  // Observe the actual Canvas label independently of the HUD's painted
+  // acknowledgement. Scope instrumentation to this one audit and restore it.
+  await page.evaluate(() => {
+    const proto = CanvasRenderingContext2D.prototype;
+    const original = proto.fillText;
+    window.__PF_S02_PAINTED_SPEED = null;
+    window.__PF_S02_RESTORE_FILLTEXT = () => { proto.fillText = original; delete window.__PF_S02_PAINTED_SPEED; delete window.__PF_S02_RESTORE_FILLTEXT; };
+    proto.fillText = function(value, ...args) {
+      const result = Reflect.apply(original, this, [value, ...args]);
+      if (this.canvas.dataset.testid === 'simulation-canvas') {
+        const match = String(value).match(/v_sel\s*=\s*E\/B\s*=\s*(\d+)\s*m\/s/);
+        if (match) window.__PF_S02_PAINTED_SPEED = Number(match[1]);
+      }
+      return result;
+    };
+  });
+  let formulaPaintedSpeed, formulaAppliedValue;
   try {
-    await page.mouse.move(x + (before > 300000 ? -60 : 60), y, { steps: 8 });
-    await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'visible' });
-    if (!await token.evaluate(node => node === window.__PF_V3_AUDIT_TOKEN)) throw new Error('KaTeX node identity changed during drag');
-    if (screenshot) await screenshot('S02_live_formula_drag');
-  } finally { await page.mouse.up(); }
-  await page.getByTestId('btn-exit-fullscreen-speech').click();
-  const after = Number(await slider.inputValue());
-  if (!Number.isFinite(after) || after === before) throw new Error('Formula drag did not change actual slider');
-  return { freeze, frozenTime, authoredMorph: true, storyContextLost: true, formulaHighlight: true, formulaBefore: before, formulaAfter: after, tokenIdentityPreserved: true };
+    await page.mouse.move(x, y); await page.mouse.down();
+    try {
+      await page.mouse.move(x + 60, y, { steps: 8 });
+      await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({ state: 'visible' });
+      const readSynchronized = ({expected, expectedSpeed}) => {
+        const hud = document.querySelector('[data-testid="live-formula-hud"]:not([hidden])');
+        return hud?.dataset.pending === 'false' && Number(hud.dataset.appliedValue) === expected &&
+          window.__PF_S02_PAINTED_SPEED === expectedSpeed;
+      };
+      // Visibility alone is not a paint barrier: the 15 Hz commit policy
+      // can leave the HUD in its intentional pending state after pointermove.
+      await page.waitForFunction(readSynchronized, {expected, expectedSpeed}, {timeout: 10000});
+      if (!await token.evaluate(node => node === window.__PF_V3_AUDIT_TOKEN)) throw new Error('KaTeX node identity changed during drag');
+      if (screenshot) await screenshot('S02_live_formula_drag');
+      if (!await page.evaluate(readSynchronized, {expected, expectedSpeed})) throw new Error('S02 selector lost paint synchronization during capture');
+      ({formulaPaintedSpeed, formulaAppliedValue} = await page.evaluate(() => ({
+        formulaPaintedSpeed: window.__PF_S02_PAINTED_SPEED,
+        formulaAppliedValue: Number(document.querySelector('[data-testid="live-formula-hud"]:not([hidden])')?.dataset.appliedValue)
+      })));
+    } finally { await page.mouse.up(); }
+    await page.getByTestId('btn-exit-fullscreen-speech').click();
+    await page.waitForFunction(({expected,expectedSpeed}) => {
+      return Number(document.querySelector('[data-testid="param-slider-eFieldVPerM"]')?.value) === expected &&
+        window.__PF_S02_PAINTED_SPEED === expectedSpeed;
+    }, {expected,expectedSpeed}, {timeout: 10000});
+    const after = Number(await slider.inputValue());
+    if (after !== expected) throw new Error('Formula drag did not commit exact target');
+    return { freeze, frozenTime, authoredMorph: true, storyContextLost: true, formulaHighlight: true, formulaBefore: before, formulaAfter: after, formulaExpected: expected, formulaAppliedValue, formulaPaintedSpeed, tokenIdentityPreserved: true };
+  } finally {
+    await page.evaluate(() => { window.__PF_S02_RESTORE_FILLTEXT?.(); delete window.__PF_V3_AUDIT_TOKEN; });
+  }
 }
 
 async function main() {
