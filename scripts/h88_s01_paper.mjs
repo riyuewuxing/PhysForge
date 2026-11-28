@@ -59,7 +59,21 @@ async function run(base,width,preset){
   await page.mouse.move(bb.x+bb.width*.38,bb.y+bb.height*.44);await page.mouse.down();await page.mouse.move(bb.x+bb.width*.42,bb.y+bb.height*.47,{steps:6});await page.mouse.up();
   await page.waitForFunction(()=>document.querySelector('[data-testid="three-stage-container"]')?.dataset.s01AutoFit==='false');
   await page.waitForFunction(before=>document.querySelector('[data-magnetic-axis-widget]')?.getAttribute('data-axis-orientation')!==before,axisBefore);
-  await page.waitForTimeout(700);
+  // OrbitControls damping is frame-based; wall time is not a settle criterion
+  // on software WebGL. Wait for actual camera projection to stop moving.
+  await page.evaluate(()=>new Promise((resolve,reject)=>{
+    const start=performance.now();let previous=null,streak=0;
+    function tick(now){
+      const n=document.querySelector('[data-testid="three-stage-container"]');
+      const axis=n?.querySelector('[data-magnetic-axis-widget]')?.getAttribute('data-axis-orientation');
+      const b=JSON.parse(n?.dataset.s01ScreenBounds||'null');
+      const next=b&&axis?{axis,v:[b.left,b.right,b.top,b.bottom]}:null;
+      if(next&&previous&&next.axis===previous.axis&&next.v.every((x,i)=>Math.abs(x-previous.v[i])<.001))streak++;else streak=0;
+      previous=next;
+      if(streak>=12)resolve(true);else if(now-start>25000)reject(Error('orbit damping never settled'));else requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }));
   await page.evaluate(()=>{window.__s01Canvas=document.querySelector('[data-testid="three-stage-container"] canvas');});
   const dark=await read(page,'chalkboard');await snap(page,key+'-dark');
   await theme(page,'projector');const paper=await read(page,'projector');await snap(page,key+'-paper');
