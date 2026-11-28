@@ -50,6 +50,35 @@ export function averageNewtonPixel(p:WaveOpticsParams,xMm:number,yMm:number,dxMm
   const sinc=(z:number)=>z===0?1:Math.sin(z)/z;
   return Math.max(0,Math.min(1,.5+(I-.5)*sinc(factor*xMm*dxMm/2)*sinc(factor*yMm*dyMm/2)));
 }
+// Pixel-footprint integration above is a physical display average, but a
+// rectangular reconstruction has sidelobes beyond Nyquist. Apply a separate,
+// explicitly display-only local Gaussian attenuation there. It is a locally
+// linear phase approximation, not a change to the optical point intensity,
+// geometry, physical bin extrema or exported profile.
+// The transition preserves resolved fringes (<= 1/4 cycle per pixel) exactly.
+export function newtonDisplayGain(p:WaveOpticsParams,xMm:number,yMm:number,dxMm:number,dyMm:number):number{
+  const r=Math.hypot(xMm,yMm)*1e-3,R=p.lensRadiusR,lambda=p.wavelengthNm*1e-9;
+  if(![r,R,lambda,p.refractiveIndexN2,dxMm,dyMm].every(Number.isFinite)||
+    R<=r||lambda<=0||p.refractiveIndexN2<=0||dxMm<0||dyMm<0)return 1;
+  const factor=4*Math.PI*p.refractiveIndexN2/(lambda*Math.sqrt((R-r)*(R+r)))*1e-6;
+  const phaseStep=Math.hypot(factor*xMm*dxMm,factor*yMm*dyMm);
+  const f=phaseStep/(2*Math.PI),t=Math.max(0,Math.min(1,(f-.25)/.25));
+  if(t===0)return 1;
+  const weight=t*t*(3-2*t);
+  // Sigma is 0.65 display pixels; smooth onset reaches full filtering at
+  // Nyquist. Unlike a sinc, this has no high-frequency contrast revival.
+  return 1+weight*Math.expm1(-.5*(.65*phaseStep)**2);
+}
+export function filterNewtonDisplayMean(p:WaveOpticsParams,mean:number,xMm:number,yMm:number,dxMm:number,dyMm:number):number{
+  return Math.max(0,Math.min(1,.5+(mean-.5)*newtonDisplayGain(p,xMm,yMm,dxMm,dyMm)));
+}
+export function averageNewtonDisplayPixel(p:WaveOpticsParams,xMm:number,yMm:number,dxMm:number,dyMm:number):number|undefined{
+  const mean=averageNewtonPixel(p,xMm,yMm,dxMm,dyMm);
+  return mean===undefined?undefined:filterNewtonDisplayMean(p,mean,xMm,yMm,dxMm,dyMm);
+}
+export function newtonDisplayNeedsFilter(p:WaveOpticsParams,rMm:number,dxMm:number,dyMm:number):boolean{
+  return newtonDisplayGain(p,rMm,0,Math.max(dxMm,dyMm),0)<1;
+}
 let patternCache:{key:string;canvas:HTMLCanvasElement}|undefined;
 export function makePattern(p:WaveOpticsParams,hex:string,widthPx:number,heightPx:number):HTMLCanvasElement|undefined{
   const profile=makeOpticsProfile(p);if(!profile.points.length||typeof document==='undefined')return undefined;
@@ -74,7 +103,7 @@ export function makePattern(p:WaveOpticsParams,hex:string,widthPx:number,heightP
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
     const u=(x+.5)/w,v=(y+.5)/h;
     const xx=profile.min+span*u,yy=profile.min+span*v;
-    const value=ring?(Math.hypot(xx,yy)<=profile.max?averageNewtonPixel(p,xx,yy,dx,dy):undefined):(columnValues?.[x]??column(x,8*(v-.5)));
+    const value=ring?(Math.hypot(xx,yy)<=profile.max?averageNewtonDisplayPixel(p,xx,yy,dx,dy):undefined):(columnValues?.[x]??column(x,8*(v-.5)));
     const idx=4*(y*w+x);
     if(value===undefined){data.data[idx+3]=0;continue;}
     for(let j=0;j<3;j++)data.data[idx+j]=Math.round((rgb[j]??0)*value);
