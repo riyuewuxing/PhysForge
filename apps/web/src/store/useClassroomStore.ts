@@ -61,6 +61,8 @@ export interface TelemetrySummary {
   events: PhysicsEvent[];
   invariants: InvariantReport[];
   formulaItems: FormulaDisplayItem[];
+  /** S02 flat velocity-selector parameters from the same state actually painted by Canvas. */
+  paintedSelector?: { eFieldVPerM: number; bFieldT: number };
 }
 
 const paramCommandStack = new CommandStack(50);
