@@ -355,6 +355,9 @@ input[type="range"].pf-slider::-moz-range-thumb {
 /* KaTeX's second vlist row is an empty depth strut, painted above fraction
    denominators. It must not intercept a real formula token's pointer. */
 .pf-live-formula-markup .vlist-t2 > .vlist-r:nth-child(2) > .vlist { pointer-events:none; }
+/* KaTeX radical/stretchy SVG glyphs are decorative paint, not drag targets.
+   A wide radical SVG otherwise covers numerator and denominator token centers. */
+.pf-live-formula-markup .katex-html svg { pointer-events:none; }
 .pf-live-formula-hud { position:fixed; z-index:90; transform:translate(-50%,calc(-100% - 9px)); pointer-events:none; border:1px solid #475569; border-radius:8px; background:#020617; color:#e2e8f0; padding:.45rem .65rem; font-size:12px; box-shadow:0 6px 20px #0008; }
 .pf-live-formula-hud[hidden] { display:none; }
 
