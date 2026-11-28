@@ -321,6 +321,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const waveOpticsStage=plugin.meta.id==='optics-wave-interference';
   const thermoStage=plugin.meta.id==='thermo-piston-gas-laws';
   const orbitCompareStage=plugin.meta.id==='stse-gravity-assist-rendezvous';
+  const m10BinaryStage=plugin.meta.id==='astro-orbital-mechanics'&&params.mode==='binary-lagrange';
   const thermalCycleStage=plugin.meta.id==='thermo-cycles-kinetic-md';
   const quantumStaticStage=plugin.meta.id==='modern-photoelectric-compton';
   const atomicStage=plugin.meta.id==='modern-rutherford-bohr',atomicStaticStage=atomicStage&&params.mode==='bohr';
@@ -448,6 +449,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const rippleSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const transformerSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const orbitCompareSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
+  const m10BinarySafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const b1FitAtRef=useRef(-Infinity);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
@@ -456,7 +458,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;rollingFitKeyRef.current='';advancedSafeRef.current=null;relativityFitKeyRef.current='';
-    cradleSafeRef.current=null;chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;inductionSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;
+    cradleSafeRef.current=null;chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;inductionSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;m10BinarySafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -1139,6 +1141,36 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         if(next){cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));}
       }
     }
+    // M10's finite Roche teaching geometry must not disappear under the
+    // normal workbench dock. Fullscreen/morph and manual/replay views retain
+    // their previous ownership; the physical state and contour data are untouched.
+    const m10BinaryAutomatic=p.meta.id==='astro-orbital-mechanics'&&pm.mode==='binary-lagrange'&&
+      !latestRef.current.presentationMode&&!userTransformedViewRef.current&&!requestedStoryDeckRef.current&&
+      latestRef.current.activeFrameId==='ground'&&scrub===null&&!dragModeRef.current&&readDisplayedLayers().has('rocheIsolines');
+    let m10BinaryRadius:number|null=null;
+    if(m10BinaryAutomatic&&drawState!==null){
+      const model=p as unknown as OrbitStagePlugin,cur=latestRef.current,v=viewportRef.current;
+      const key=JSON.stringify([cur.resetNonce,pm.massRatioQ,v.width,v.height,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      const fresh=m10BinarySafeRef.current?.key!==key;
+      if(fresh){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector('[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector('[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const right=cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-300):v.width-26;
+        const bottom=dock&&dock.height>0?dock.top-box.top-16:cur.oscilloscopeCollapsed?v.height-76:v.height-180;
+        m10BinarySafeRef.current={key,safe:{left:30,right,top:112,bottom}};
+      }
+      const safe=m10BinarySafeRef.current!.safe;
+      m10BinaryRadius=model.binaryRocheFrameRadius(drawState as AstroOrbitalState,pm as AstroOrbitalParams,readDisplayedLayers());
+      if(fresh||!model.binaryRocheViewportFits(v,m10BinaryRadius,safe)){
+        const next=model.fitBinaryRocheViewport(v,m10BinaryRadius,safe);
+        if(next){
+          cameraRef.current=next;viewportRef.current=next;
+          if(fresh)baseScaleRef.current=next.scale;
+          setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+        }
+      }
+    }
     // Keep real teaching geometry in the uncovered stage, without altering
     // state, story camera ownership or a teacher's manual pan/zoom.
     const orbitCompareAutomatic=p.meta.id==='stse-gravity-assist-rendezvous'&&!userTransformedViewRef.current&&
@@ -1456,6 +1488,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     if(p.meta.id==='astro-orbital-mechanics'&&frame&&drawState!==null){
       const model=p as unknown as OrbitStagePlugin;
       canvas.dataset.m10Rendered=JSON.stringify(model.orbitRenderSnapshot(drawState as AstroOrbitalState,pm as AstroOrbitalParams,readDisplayedLayers()));
+      if(pm.mode==='binary-lagrange')canvas.dataset.m10BinaryView=JSON.stringify({automatic:m10BinaryAutomatic,radius:m10BinaryRadius,safe:m10BinarySafeRef.current?.safe,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});
+      else delete canvas.dataset.m10BinaryView;
     }
     if(fusionModel&&fusionPoints&&frame){
       canvas.dataset.s01ScreenBounds=JSON.stringify(fusionModel.fusionFlatScreenBounds(fusionPoints,viewportRef.current));
@@ -1785,6 +1819,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   }, [activeLayers, strobeEnabled, poeMasked, theme, scrubTime, autoFbdEnabled, fbdComponentsEnabled, activeFrameId]);
 
   useEffect(()=>{if(cradleStage){cradleSafeRef.current=null;renderFrameToCanvas();}else if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(inductionStage){inductionSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(rollingStage){rollingFitKeyRef.current='';renderFrameToCanvas();}else if(advancedStage){advancedSafeRef.current=null;renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}else if(acStage){acSafeRef.current=null;renderFrameToCanvas();}else if(wireStage){wireSafeRef.current=null;renderFrameToCanvas();}else if(eddyStage){eddySafeRef.current=null;renderFrameToCanvas();}else if(generatorStage){generatorSafeRef.current=null;renderFrameToCanvas();}else if(lcStage){lcSafeRef.current=null;renderFrameToCanvas();}else if(waveStage){waveSafeRef.current=null;renderFrameToCanvas();}else if(rippleStage){rippleSafeRef.current=null;renderFrameToCanvas();}else if(transformerStage){transformerSafeRef.current=null;renderFrameToCanvas();}else if(orbitCompareStage){orbitCompareSafeRef.current=null;renderFrameToCanvas();}},[orbitCompareStage,chaseStage,cradleStage,inductionStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,rollingStage,advancedStage,capacitorStage,acStage,wireStage,eddyStage,generatorStage,lcStage,waveStage,rippleStage,transformerStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
+
+  useEffect(()=>{if(m10BinaryStage){m10BinarySafeRef.current=null;renderFrameToCanvas();}},[m10BinaryStage,rightSidebarOpen,oscilloscopeCollapsed,presentationMode,activeLayers]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
