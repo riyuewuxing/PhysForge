@@ -314,7 +314,7 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
       ctx.strokeStyle=projector?'#64748b':'#475569';ctx.lineWidth=1;ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);
       if(isRing){
         const span=profile.max-profile.min,filtered=newtonDisplayNeedsFilter(p,profile.max,span/pattern.width,span/pattern.height);
-        label('ring-ruler',center,2.04,'r≤'+profile.max.toFixed(1)+' mm · '+(p.halfWaveLoss?'中心暗':'中心亮')+(filtered?' · 显示滤波':''));
+        label('ring-ruler',center,2.04,(filtered?'r≤':'视场半径 ')+profile.max.toFixed(1)+' mm · '+(p.halfWaveLoss?'中心暗':'中心亮')+(filtered?' · 显示滤波':''));
       }
       else if(p.mode==='thin-film-wedge'){label('thin-end',x0+.14,1.64,'x=0');label('thick-end',x1-.15,1.64,'20 mm');label('wedge-pattern',center,1.83,'等厚干涉俯视图');}
       else {label('angle-domain',center,1.83,'远场图样 · sin θ');label('angle-note',center,1.65,'非屏上距离');}
