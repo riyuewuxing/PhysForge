@@ -98,11 +98,17 @@ async function formulaCase(page,key){
  try {
   for(const dx of [5,10,15,20,25,30,35,40,45,50,55,60]){
     await move(dx);
+    // CDP touch dispatch may return before a coalesced pointermove is
+    // delivered to the document. Wait for the actual input event, not the
+    // product value, then test the exact same independently derived target.
+    if(touch)await page.waitForFunction(expected=>window.__h88PointerEvents.some(e=>e.type==='pointermove'&&e.pointerType==='touch'&&Math.abs(e.x-expected)<.01),x+dir*dx);
     const immediate=await read();report.pointerEvents??={};report.pointerEvents[key]=await page.evaluate(()=>window.__h88PointerEvents);report.eventSamples??=[];report.eventSamples.push({key,dx,...immediate});samples.push({...immediate,phase:'event',dx,expected:quant(B+dir*dx*3.8/240)});
     check(immediate.target===quant(B+dir*dx*3.8/240),key+': pointer oracle '+dx);
     // Sample after a browser animation frame and a following task boundary.
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0))));
-    samples.push({...await read(),phase:'frame',dx,expected:quant(B+dir*dx*3.8/240)});
+    const frame=await read();
+    check(frame.target===quant(B+dir*dx*3.8/240),key+': post-frame pointer oracle '+dx);
+    samples.push({...frame,phase:'frame',dx,expected:quant(B+dir*dx*3.8/240)});
   }
   const target=quant(B+dir*60*3.8/240);
   let streak=0;
