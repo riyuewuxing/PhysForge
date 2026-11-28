@@ -51,6 +51,7 @@ interface ThreeStageProps {
   readonly activeLayers: ReadonlySet<string>;
   readonly getFrameLayers?: () => ReadonlySet<string>;
   readonly presentationMode?: boolean;
+  readonly theme?: 'chalkboard' | 'projector';
   readonly morphTarget?: 0 | 1;
   readonly initialFlatViewport?: Viewport;
   readonly onMorphProgress?: (progress: number) => void;
@@ -249,6 +250,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   activeLayers,
   getFrameLayers,
   presentationMode = false,
+  theme = 'chalkboard',
   morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback,
   initialB1AutoFit=true,b1AutoFitAllowed=true,b1ResetViewNonce=0,b1ScopeCollapsed=false
 }) => {
@@ -265,6 +267,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   const latestStateRef = useRef(simState);
   const latestParamsRef = useRef(params);
   const latestLayersRef = useRef(activeLayers);
+  const themeRef = useRef(theme); themeRef.current = theme;
   const morphPropsRef = useRef({ morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback });
   morphPropsRef.current = { morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback };
   const initialViewportRef = useRef(initialFlatViewport);
@@ -670,8 +673,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         } else {
           marker.scale.setScalar(.038);
           const fusion=state as TokamakMirrorState;
-          sphereMat.color.set(fusion.escaped?0xfb7185:0xffe9b0);
-          sphereMat.emissive.set(fusion.escaped?0xa5253e:0xffaf4b);
+          const paper=themeRef.current==='projector';
+          sphereMat.color.set(paper?(fusion.escaped?0xbe123c:0xb45309):(fusion.escaped?0xfb7185:0xffe9b0));
+          sphereMat.emissive.set(paper?(fusion.escaped?0x881337:0x78350f):(fusion.escaped?0xa5253e:0xffaf4b));
+          sphereMat.emissiveIntensity=paper?.18:1.4;
           if(fusionTrail&&fusionHalo&&(lastFusionTrail!==fusion.trail||lastFusionMode!==fusionParams.mode)){
             lastFusionTrail=fusion.trail;lastFusionMode=fusionParams.mode;
             fusionTrail.update(fusion.trail,p=>fusionDisplayPoint(p,fusionParams.mode));
@@ -777,17 +782,21 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               applyFluxEndpointFade(geometry,closed);
               const fluxCore=new THREE.Mesh(geometry,isMag3d?e10FluxCoreMaterial(true,role):coilFluxCoreMaterial(true));
               if(isMag3d)fluxCore.name='e10-field-'+role;
+              else if(isTokamak3d)fluxCore.name='fusion-field-core';
               staticGroup.add(fluxCore);
               if (isMag3d||isTokamak3d) {
                 const haloGeometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.018:.024, 5, closed);
                 applyFluxEndpointFade(haloGeometry,closed);
-                staticGroup.add(new THREE.Mesh(haloGeometry, isMag3d?e10FluxHaloMaterial(role):coilFluxHaloMaterial()));
+                const halo=new THREE.Mesh(haloGeometry, isMag3d?e10FluxHaloMaterial(role):coilFluxHaloMaterial());
+                if(isTokamak3d)halo.name='fusion-field-halo';
+                staticGroup.add(halo);
                 // Tangent of an actual ordered field sample, not a decorative direction.
                 if (renderedFieldCount % (isTokamak3d?2:4) === 0) {
                   const index = Math.max(1, Math.floor(points.length / 2));
                   const start = points[index-1]!, delta = points[index]!.clone().sub(start);
                   if (delta.lengthSq() > 1e-10) {
                     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085, 8), isMag3d?e10FluxCoreMaterial(false,role):coilFluxCoreMaterial());
+                    if(isTokamak3d)cone.name='fusion-field-direction';
                     cone.position.copy(start).lerp(points[index]!, 0.5);
                     cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), delta.normalize());
                     staticGroup.add(cone);
@@ -871,6 +880,34 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     });
     resizeObserver.observe(container);
 
+    // S01 paper palette changes only display materials, never the camera,
+    // physics state, geometry, field samples or WebGL context ownership.
+    const fusionPaperBackground=new THREE.Color('#f8fafc');
+    let lastFusionPalette:string|null=null;
+    let lastFusionPaletteKey='';
+    const applyFusionPalette=()=>{
+      const paper=themeRef.current==='projector';
+      const palette=paper?'projector':'chalkboard';
+      const key=JSON.stringify([palette,lastConfigSig,fusionPinKey]);
+      if(lastFusionPaletteKey===key)return;
+      lastFusionPaletteKey=key;lastFusionPalette=palette;
+      scene.background=paper?fusionPaperBackground:magneticBackdrop;
+      const paint=(obj:THREE.Object3D,color:number,opacity?:number)=>{
+        if(obj instanceof THREE.Mesh&&obj.material instanceof THREE.MeshBasicMaterial){obj.material.color.setHex(color);if(opacity!==undefined)obj.material.opacity=opacity;}
+      };
+      staticGroup.traverse(o=>{
+        if(o.name==='fusion-field-core'||o.name==='fusion-field-direction')paint(o,paper?0x075985:0x75e5f1,paper?.95:.87);
+        else if(o.name==='fusion-field-halo')paint(o,0x2ebbd7,paper?0:.11);
+        else if(o.name==='tokamak-vacuum-chamber')paint(o,paper?0x0e7490:0x7dd3fc,paper?.09:.06);
+      });
+      const trail=trailGroup.getObjectByName('fusion-particle-trail');if(trail)paint(trail,paper?0x92400e:0xffcb75);
+      const halo=trailGroup.getObjectByName('fusion-particle-trail-halo');if(halo)paint(halo,0xffa445,paper?0:.15);
+      if(particleGlow)particleGlow.material.opacity=paper?0:1;
+      for(const [arrow,head,shaft] of [[velocityArrow,paper?0x92400e:0xfacc15,paper?0x92400e:0xffd36b],[lorentzForceArrow,paper?0xbe123c:0xfb7185,paper?0xbe123c:0xf472b6],[magneticFieldArrow,paper?0x075985:0x38bdf8,paper?0x075985:0x54d7ed]] as const){
+        arrow.setColor(new THREE.Color(head));const stem=arrow.getObjectByName('magnetic-vector-shaft');if(stem)paint(stem,shaft);
+      }
+      fusionPins?.children.forEach(pin=>paint(pin,pin.name==='fusion-escape'?(paper?0xbe123c:0xfb7185):(paper?0x166534:0x4ade80)));
+    };
     let lastSyncedParams = getFrameParams?.() ?? latestParamsRef.current;
     let lastSyncedLayers = readLayers();
     syncState(readState(), lastSyncedParams, lastSyncedLayers);
@@ -943,6 +980,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if(layoutKey!==magneticLayoutKey){magneticLayoutKey=layoutKey;dirty=true;}
         }
       }
+      const fusionThemeChanged=isTokamak3d&&lastFusionPalette!==themeRef.current;
+      if(fusionThemeChanged)dirty=true;
       const changed=latestState!==null&&latestState!==undefined&&(latestState!==lastSyncedState||frameParams!==lastSyncedParams||frameLayers!==lastSyncedLayers);
       const syncLatest=()=>{
         syncState(latestState,frameParams,frameLayers);
@@ -973,7 +1012,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) return;
 
       const renderStart = performance.now();
-      if(changed&&(isBoundedStage||isTokamak3d||isMag3d))syncLatest();
+      if((changed&&(isBoundedStage||isTokamak3d||isMag3d))||fusionThemeChanged)syncLatest();
+      if(isTokamak3d)applyFusionPalette();
       const b1=isBoundedStage&&latestState!==null&&latestState!==undefined?latestState as BoundedMagneticState:null;
       const bp=frameParams as BoundedMagneticParams;
       const rw=renderer.domElement.clientWidth||width,rh=renderer.domElement.clientHeight||height;
@@ -1108,6 +1148,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget,renderCamera,isBoundedStage,isTokamak3d?(frameParams as TokamakMirrorParams).mode:undefined);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
+      if(isTokamak3d&&lastFusionPalette)container.dataset.s01Palette=lastFusionPalette;
       if(isInductionStage){
         const root=scene.getObjectByName('physforge-flagship-em-induction-double-rod');
         const points=root?inductionOpeningPoints(root):[];
