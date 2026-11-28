@@ -87,7 +87,7 @@ async function formulaCase(page,key){
  await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({state:'visible',timeout:2000});
  let held;
  try {
-  for(const dx of [5,10,15,20,25,30,35,40,45,50,55,60]){
+  for(const dx of [5,10,15,20,25,30,35,40,45,50,55,64]){
     await page.mouse.move(x+dir*dx,y);
     const immediate=await read();report.eventSamples??=[];report.eventSamples.push({key,dx,...immediate});samples.push({...immediate,phase:'event',dx,expected:quant(B+dir*dx*3.8/240)});
     check(immediate.target===quant(B+dir*dx*3.8/240),key+': pointer oracle '+dx);
@@ -95,7 +95,7 @@ async function formulaCase(page,key){
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0))));
     samples.push({...await read(),phase:'frame',dx,expected:quant(B+dir*dx*3.8/240)});
   }
-  const target=quant(B+dir*60*3.8/240);
+  const target=quant(B+dir*64*3.8/240);
   let streak=0;
   for(let i=0;i<100;i++){
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0))));
@@ -107,7 +107,7 @@ async function formulaCase(page,key){
   await snap(page,key+'-held');
  }finally{await page.mouse.up();}
  await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({state:'hidden'});
- const target=quant(B+dir*60*3.8/240);
+ const target=quant(B+dir*64*3.8/240);
  await page.waitForFunction(v=>Math.abs((window.__h88Paint?.v??Infinity)-v)<1,E/target);
  const released=await read();
  check(close(released.vs,E/target)&&close(released.paint?.v,E/target),key+': release formula and paint oracle');
