@@ -288,6 +288,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 }) => {
   const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = canvasRefExternal ?? internalCanvasRef;
+  const paintedSelectorRef = useRef<{ canvas: HTMLCanvasElement; state: unknown; params: ParamRecord; values: NonNullable<TelemetrySummary['paintedSelector']> } | null>(null);
   const stageBoxRef = useRef<HTMLDivElement | null>(null);
   const spatial = isSimulationPluginV3(plugin) ? plugin.spatial3D : undefined;
   const [heldThreeId, setHeldThreeId] = useState<string | null>(() => view3dEnabled ? plugin.meta.id : null);
@@ -638,6 +639,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   };
 
   const renderFrameToCanvas = () => {
+    paintedSelectorRef.current = null;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -1202,6 +1204,12 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         : undefined;
       p.renderCanvas(ctx, drawState, pm, { ...vp, theme: currentTheme, presentationReadoutArea, ...(p.meta.id==='stse-gravity-assist-rendezvous'?{observationFrameId:latestRef.current.activeFrameId}:{}), ...(inductionAutomatic?{inductionLabelSafe:inductionSafeRef.current?.safe}:{}) }, layerSet);
 
+      // An acknowledgement is produced only after the real selector drawing call.
+      if (p.meta.id === 'stse-em-devices-suite' && pm.device === 'velocity-selector' &&
+          typeof pm.eFieldVPerM === 'number' && typeof pm.bFieldT === 'number') {
+        paintedSelectorRef.current = { canvas, state: drawState, params: pm, values: { eFieldVPerM: pm.eFieldVPerM, bFieldT: pm.bFieldT } };
+      }
+
       // 壳层统一 Strobe 频闪打点叠加
       if (strobe && !masked && snapshotsRef.current.length > 2) {
         const currentT = frame ? frame.t : 0;
@@ -1512,13 +1520,17 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       ? p.engine.checkInvariants(activeSnap.state, initialStateRef.current, pm)
       : [];
     const formulaItems = p.formatFormulas ? p.formatFormulas(activeSnap.state, pm) : [];
+    const painted = paintedSelectorRef.current;
+    const paintedSelector = painted && painted.canvas === canvasRef.current && painted.state === activeSnap.state && painted.params === pm &&
+      p.meta.id === 'stse-em-devices-suite' && pm.device === 'velocity-selector' ? painted.values : undefined;
 
     notify({
       t: activeSnap.t,
       observables: activeSnap.observables ?? p.engine.computeObservables(activeSnap.state, pm),
       events: eventsRef.current,
       invariants,
-      formulaItems
+      formulaItems,
+      paintedSelector
     });
   };
 
