@@ -1301,10 +1301,27 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             ctx.stroke();
             ctx.font = hovered ? 'bold 12px sans-serif' : 'bold 11px sans-serif';
           }
+          // The electric rail is to the LEFT of the selector chamber.
+          // Prefer its outer side, and on narrow fitted views put the text
+          // below/above the complete rail rather than across the device.
+          const isSelectorElectric = p.meta.id === 'stse-em-devices-suite' && h.id === 'device-e-field';
+          const electricLabelPosition = (width: number, height: number, gap: number) => {
+            const left = sPos.x - gap - width;
+            if (left >= 6) return { x: left, y: Math.max(6, Math.min(vp.height - height - 6, sPos.y - height / 2)) };
+            const bottom = worldToScreen(h.position.x, -0.68, vp).y + 8;
+            const top = worldToScreen(h.position.x, 0.68, vp).y - height - 8;
+            const x = Math.max(6, Math.min(vp.width - width - 6, sPos.x - width / 2));
+            if (bottom + height <= vp.height - 6) return { x, y: Math.max(6, bottom) };
+            if (top >= 6) return { x, y: top };
+            // A manually zoomed/panned viewport may not contain either rail end.
+            // Retain a readable label rather than clip it outside the Canvas.
+            return { x, y: Math.max(6, Math.min(vp.height - height - 6, sPos.y - height - gap)) };
+          };
           if (showHandle && hovered) {
             const labelWidth = ctx.measureText(h.label).width + 14;
-            const labelX = Math.max(6, Math.min(vp.width - labelWidth - 6, sPos.x + 14));
-            const labelY = Math.max(18, Math.min(vp.height - 8, sPos.y - 16));
+            const electric = isSelectorElectric ? electricLabelPosition(labelWidth, 22, 14) : undefined;
+            const labelX = electric?.x ?? Math.max(6, Math.min(vp.width - labelWidth - 6, sPos.x + 14));
+            const labelY = electric ? electric.y + 13 : Math.max(18, Math.min(vp.height - 8, sPos.y - 16));
             ctx.fillStyle = 'rgba(11, 15, 23, 0.9)';
             ctx.beginPath();
             ctx.roundRect(labelX, labelY - 13, labelWidth, 22, 6);
@@ -1316,7 +1333,14 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           } else if (showHandle) {
             // Keep the sampled voltage annotation off the I-U curve and axis.
             const isPhotoelectricSample = plugin.meta.id === 'modern-photoelectric-compton' && h.id === 'anode-voltage-point';
-            ctx.fillText(h.label, sPos.x + 10, sPos.y + (isPhotoelectricSample ? -12 : 4));
+            if (isSelectorElectric) {
+              const measured = ctx.measureText(h.label);
+              const height = measured.actualBoundingBoxAscent + measured.actualBoundingBoxDescent;
+              const pos = electricLabelPosition(measured.width, height, 10);
+              ctx.fillText(h.label, pos.x, pos.y + measured.actualBoundingBoxAscent);
+            } else {
+              ctx.fillText(h.label, sPos.x + 10, sPos.y + (isPhotoelectricSample ? -12 : 4));
+            }
           }
         }
         ctx.restore();
