@@ -30,7 +30,14 @@ export function clampAndQuantize(raw: number, min: number, max: number, step: nu
   const clamped = Math.max(min, Math.min(max, raw));
   if (!Number.isFinite(step) || step <= 0) return clamped;
   // Significant digits, not -log10(step): 0.25/2.5 and tiny SI values must stay on their grids.
-  const snapped = min + Math.round((clamped - min) / step) * step;
+  const grid = (clamped - min) / step;
+  // An exact half-step can arrive a few ulps below its mathematical value
+  // after pointer increments. Normalize only roundoff-sized half-step ties;
+  // keep genuine sub-half-step values below the boundary.
+  const half = Math.floor(grid) + 0.5;
+  const tolerance = Math.min(1e-9, 8 * Number.EPSILON * Math.max(1, Math.abs(grid)));
+  const stableGrid = Math.abs(grid - half) <= tolerance ? half : grid;
+  const snapped = min + Math.round(stableGrid) * step;
   return Math.max(min, Math.min(max, Number(snapped.toPrecision(15))));
 }
 
