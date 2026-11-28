@@ -63,13 +63,21 @@ export interface FormulaScrubberHooks {
 /** Delegated pointer capture; never renders KaTeX or replaces token nodes. */
 export function attachFormulaScrubber(container: HTMLElement, spec: LiveFormulaSpec, hooks: FormulaScrubberHooks): () => void {
   const bindings = new Map(spec.bindings.map((binding) => [binding.tokenKey, binding]));
-  let active: { pointerId: number; binding: LiveFormulaVarBinding; element: HTMLElement; startY: number; lastX: number; accum: number; emitted: number } | null = null;
+  let active: { pointerId: number; binding: LiveFormulaVarBinding; element: HTMLElement; startX: number; startY: number; lastX: number; accum: number; emitted: number; moved: boolean; pointerType: string } | null = null;
   let raf = 0;
   let lastEmitAt = -Infinity;
   let pending: { key: string; value: number } | null = null;
+  // Native double-click can be synthesized for adjacent touch targets. Only
+  // consecutive completed, stationary gestures on the very same token qualify.
+  let lastTap: { element: HTMLElement; pointerType: string } | null = null;
+  let resetEligible: HTMLElement | null = null;
+  const clearTaps = () => { lastTap = null; resetEligible = null; };
+  const onOtherPointerDown = (event: PointerEvent) => {
+    if (!(event.target instanceof Node) || !container.contains(event.target)) clearTaps();
+  };
 
   const findToken = (target: EventTarget | null) => {
-    if (!(target instanceof HTMLElement)) return null;
+    if (!(target instanceof Element)) return null;
     const wrapper = target.closest<HTMLElement>('.pf-live-var');
     const token = target.closest<HTMLElement>('[data-param]') ?? wrapper?.querySelector<HTMLElement>('[data-param]');
     if (!token || !container.contains(token)) return null;
@@ -102,15 +110,17 @@ export function attachFormulaScrubber(container: HTMLElement, spec: LiveFormulaS
 
   const onPointerDown = (event: PointerEvent) => {
     if (active || event.isPrimary === false || event.button !== 0) return;
+    resetEligible = null;
     const token = findToken(event.target);
-    if (!token) return;
+    if (!token) { clearTaps(); return; }
     const { binding, element } = token;
+    if (lastTap?.element !== element || lastTap.pointerType !== event.pointerType) lastTap = null;
     const value = hooks.getParamValue(binding.paramKey);
     if (!Number.isFinite(value) || !Number.isFinite(binding.min) || !Number.isFinite(binding.max) || binding.min > binding.max) return;
     event.preventDefault();
     event.stopPropagation();
-    try { element.setPointerCapture(event.pointerId); } catch { return; }
-    active = { pointerId: event.pointerId, binding, element, startY: event.clientY, lastX: event.clientX, accum: value, emitted: value };
+    try { element.setPointerCapture(event.pointerId); } catch { clearTaps(); return; }
+    active = { pointerId: event.pointerId, binding, element, startX: event.clientX, startY: event.clientY, lastX: event.clientX, accum: value, emitted: value, moved: false, pointerType: event.pointerType };
     lastEmitAt = -Infinity;
     element.classList.add('pf-live-var--dragging');
     hooks.onBegin?.(binding.paramKey);
@@ -122,6 +132,7 @@ export function attachFormulaScrubber(container: HTMLElement, spec: LiveFormulaS
     const { binding, element } = active;
     const dx = event.clientX - active.lastX;
     active.lastX = event.clientX;
+    if (dx !== 0 || Math.abs(event.clientY - active.startY) > 3) active.moved = true;
     const gear = getScrubGear(event.clientY - active.startY, event.shiftKey);
     const sensitivity = binding.sensitivity ?? (binding.max - binding.min) / 240;
     active.accum = Math.max(binding.min, Math.min(binding.max, active.accum + dx * sensitivity * gear.factor));
@@ -142,15 +153,28 @@ export function attachFormulaScrubber(container: HTMLElement, spec: LiveFormulaS
     hooks.onEnd?.(binding.paramKey);
     hide();
   };
-  const onPointerEnd = (event: PointerEvent) => end(event.pointerId);
+  const onPointerEnd = (event: PointerEvent) => {
+    if (!active || active.pointerId !== event.pointerId) return;
+    const { element, pointerType, moved, startX, startY } = active;
+    const tap = event.type === 'pointerup' && !moved &&
+      Math.hypot(event.clientX - startX, event.clientY - startY) <= 3;
+    if (tap) {
+      resetEligible = lastTap?.element === element && lastTap.pointerType === pointerType ? element : null;
+      lastTap = { element, pointerType };
+    } else clearTaps();
+    end(event.pointerId);
+  };
   const onDoubleClick = (event: MouseEvent) => {
     const token = findToken(event.target);
-    if (!token) return;
+    const eligible = resetEligible;
+    clearTaps();
+    if (!token || token.element !== eligible || active) return;
     event.preventDefault();
     const value = hooks.getDefaultValue(token.binding.paramKey);
     if (Number.isFinite(value)) hooks.onParamChange(token.binding.paramKey, value);
   };
 
+  container.ownerDocument.addEventListener('pointerdown', onOtherPointerDown, true);
   container.addEventListener('pointerdown', onPointerDown);
   container.addEventListener('pointermove', onPointerMove);
   container.addEventListener('pointerup', onPointerEnd);
@@ -161,6 +185,8 @@ export function attachFormulaScrubber(container: HTMLElement, spec: LiveFormulaS
     if (active) end(active.pointerId, false);
     if (raf) cancelAnimationFrame(raf);
     pending = null;
+    clearTaps();
+    container.ownerDocument.removeEventListener('pointerdown', onOtherPointerDown, true);
     container.removeEventListener('pointerdown', onPointerDown);
     container.removeEventListener('pointermove', onPointerMove);
     container.removeEventListener('pointerup', onPointerEnd);

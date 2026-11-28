@@ -51,12 +51,14 @@ describe('live formula scrubber', () => {
     type Handler = (event: unknown) => void;
     class FakeElement {
       dataset = { param: 'B' };
+      ownerDocument?: FakeElement;
+      children = new Set<FakeElement>();
       classes = new Set<string>();
       classList = { add: (name: string) => this.classes.add(name), remove: (name: string) => this.classes.delete(name) };
       captured: number | null = null;
       listeners = new Map<string, Handler>();
       closest() { return this; }
-      contains() { return true; }
+      contains(node: FakeElement) { return node === this || this.children.has(node); }
       setPointerCapture(id: number) { this.captured = id; }
       hasPointerCapture(id: number) { return this.captured === id; }
       releasePointerCapture() { this.captured = null; }
@@ -65,12 +67,20 @@ describe('live formula scrubber', () => {
       removeEventListener(name: string) { this.listeners.delete(name); }
     }
     vi.stubGlobal('HTMLElement', FakeElement);
+    vi.stubGlobal('Element', FakeElement);
+    vi.stubGlobal('Node', FakeElement);
     const queued = new Map<number, FrameRequestCallback>();
     let sequence = 0;
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { queued.set(++sequence, callback); return sequence; });
     vi.stubGlobal('cancelAnimationFrame', (id: number) => { queued.delete(id); });
     const container = new FakeElement();
+    const doc = new FakeElement();
+    container.ownerDocument = doc;
     const token = new FakeElement();
+    const other = new FakeElement();
+    const outside = new FakeElement();
+    container.children.add(token);
+    container.children.add(other);
     const spec: LiveFormulaSpec = { id: 'r', latex: '', bindings: [
       { tokenKey: 'B', paramKey: 'magneticB', label: 'B', unit: 'T', min: 0, max: 10, step: 0.25, sensitivity: 1 }
     ] };
@@ -82,10 +92,16 @@ describe('live formula scrubber', () => {
       getParamValue: () => current, getDefaultValue: () => 2, onParamChange: changed,
       onVisualUpdate: (state) => visual.push(state), onBegin: begin, onEnd: end
     });
-    const event = (name: string, x: number, y: number, pointerId = 1) => container.listeners.get(name)?.({
-      target: token, pointerId, button: 0, isPrimary: true, clientX: x, clientY: y, shiftKey: false,
-      preventDefault() {}, stopPropagation() {}
-    });
+    const event = (name: string, x: number, y: number, pointerId = 1, target = token, pointerType = 'mouse') => {
+      const e = { type: name, target, pointerId, pointerType, button: 0, isPrimary: true, clientX: x, clientY: y, shiftKey: false,
+        preventDefault() {}, stopPropagation() {} };
+      doc.listeners.get(name)?.(e);
+      if (container.contains(target)) container.listeners.get(name)?.(e);
+    };
+    const tap = (target = token, pointerType = 'mouse') => {
+      event('pointerdown', 0, 0, 1, target, pointerType);
+      event('pointerup', 0, 0, 1, target, pointerType);
+    };
     event('pointerdown', 0, 0);
     event('pointermove', 2, 70, 2);
     expect(changed).not.toHaveBeenCalled();
@@ -97,8 +113,24 @@ describe('live formula scrubber', () => {
     expect(token.classes.size).toBe(0);
     expect(begin).toHaveBeenCalledOnce();
     expect(end).toHaveBeenCalledOnce();
+    // A synthetic double-click after a drag is not a reset.
     event('dblclick', 0, 0);
+    expect(current).toBe(3);
+    // Distinct token DOM nodes (even of the same binding) cannot form a reset pair.
+    tap(token, 'touch'); tap(other, 'touch');
+    event('dblclick', 0, 0, 1, other, 'touch');
+    expect(current).toBe(3);
+    tap(); event('pointerdown', 0, 0, 1, outside); tap();
+    event('dblclick', 0, 0);
+    expect(current).toBe(3);
+    tap(); event('pointerdown', 0, 0); event('pointercancel', 0, 0); tap();
+    event('dblclick', 0, 0);
+    expect(current).toBe(3);
+    tap(); tap(); event('dblclick', 0, 0);
     expect(changed).toHaveBeenLastCalledWith('magneticB', 2);
+    current = 4;
+    tap(token, 'touch'); tap(token, 'touch'); event('dblclick', 0, 0, 1, token, 'touch');
+    expect(current).toBe(2);
     expect(queued.size).toBe(0);
     event('pointerdown', 0, 0);
     event('pointermove', 4, 0);
@@ -108,5 +140,6 @@ describe('live formula scrubber', () => {
     expect(queued.size).toBe(0);
     expect(token.captured).toBeNull();
     expect(container.listeners.size).toBe(0);
+    expect(doc.listeners.size).toBe(0);
   });
 });
