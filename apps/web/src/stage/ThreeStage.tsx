@@ -101,7 +101,12 @@ const magneticAxisColors = [
 
 function updateMagneticAxisWidget(widget:SVGSVGElement,camera:THREE.Camera,directPhysicalAxes=false,fusionMode?:TokamakMirrorParams['mode']):void{
   const directions = magneticAxisColors.map(axis => projectCameraDirection(fusionMode?new THREE.Vector3(...Object.values(fusionDisplayPoint(axis.direction,fusionMode)) as [number,number,number]):directPhysicalAxes?new THREE.Vector3(axis.direction.x,axis.direction.y,axis.direction.z):mapMagneticPoint(axis.direction), camera));
-  const orientation = directions.map(v => v.toArray().map(x => x.toFixed(3)).join(',')).join(';');
+  // S01's displayed axis uses three decimals; signed rounded zero is the same
+  // direction, not a camera change. Keep every nonzero digit intact.
+  const orientation = directions.map(v => v.toArray().map(x => {
+    const rounded=x.toFixed(3);
+    return fusionMode&&rounded==='-0.000'?'0.000':rounded;
+  }).join(',')).join(';');
   if (widget.getAttribute('data-axis-orientation') === orientation) return;
   widget.setAttribute('data-axis-orientation', orientation);
   for (let i = 0; i < magneticAxisColors.length; i++) {
@@ -486,6 +491,53 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     let b1LastPolicy=b1PolicyRef.current;
     const lockB1Camera=()=>{b1AutoFit=false;};
     if(isBoundedStage||isTokamak3d||isMag3d)controls.addEventListener('start',lockB1Camera);
+    // OrbitControls continues applying its damping tail even after the change
+    // event threshold stops marking the scene dirty. A later palette repaint
+    // then unexpectedly reveals that hidden camera motion. Settle and publish
+    // the final actual render for S01 only; never disable damping during input.
+    type FusionOrbitPhase='idle'|'gesture'|'damping'|'final-render';
+    let fusionOrbitPhase:FusionOrbitPhase='idle',fusionOrbitStableFrames=0;
+    const fusionPreviousPosition=new THREE.Vector3(),fusionPreviousTarget=new THREE.Vector3(),fusionPreviousQuaternion=new THREE.Quaternion();
+    const setFusionOrbitPhase=(phase:FusionOrbitPhase)=>{
+      fusionOrbitPhase=phase;
+      if(isTokamak3d)container.dataset.s01OrbitPhase=phase;
+    };
+    const cancelFusionOrbitSettle=()=>{
+      if(!isTokamak3d)return;
+      fusionOrbitStableFrames=0;setFusionOrbitPhase('idle');
+    };
+    const startFusionOrbit=()=>{
+      fusionOrbitStableFrames=0;setFusionOrbitPhase('gesture');
+    };
+    const endFusionOrbit=()=>{
+      fusionOrbitStableFrames=0;setFusionOrbitPhase('damping');dirty=true;
+    };
+    if(isTokamak3d){
+      setFusionOrbitPhase('idle');
+      controls.addEventListener('start',startFusionOrbit);
+      controls.addEventListener('end',endFusionOrbit);
+    }
+    const updateOrbitControls=()=>{
+      if(!isTokamak3d||fusionOrbitPhase!=='damping'){controls.update();return;}
+      fusionPreviousPosition.copy(camera.position);
+      fusionPreviousTarget.copy(controls.target);
+      fusionPreviousQuaternion.copy(camera.quaternion);
+      controls.update();
+      const scale=Math.max(1,camera.position.distanceTo(controls.target));
+      const q=camera.quaternion,p=fusionPreviousQuaternion;
+      const rotation=Math.min(Math.hypot(q.x-p.x,q.y-p.y,q.z-p.z,q.w-p.w),Math.hypot(q.x+p.x,q.y+p.y,q.z+p.z,q.w+p.w));
+      // Measure the real pose update, not OrbitControls' change event or a
+      // stale DOM frame. Flush only a sub-pixel residual after 4 stable ticks.
+      const stable=fusionPreviousPosition.distanceTo(camera.position)<=scale*1e-7&&
+        fusionPreviousTarget.distanceTo(controls.target)<=scale*1e-7&&rotation<=1e-7;
+      fusionOrbitStableFrames=stable?fusionOrbitStableFrames+1:0;
+      if(fusionOrbitStableFrames<4)return;
+      const damping=controls.enableDamping;
+      controls.enableDamping=false;
+      controls.update();
+      controls.enableDamping=damping;
+      setFusionOrbitPhase('final-render');dirty=true;
+    };
     // An authored E04 opening may fit the real circuit once its transition
     // settles. A teacher orbit/pan/zoom owns subsequent framing.
     let inductionOpeningAuto=false,inductionOpeningKey='',inductionOpeningCheckedAt=-Infinity;
@@ -847,6 +899,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
         if(isBoundedStage||isTokamak3d||isMag3d)controls.removeEventListener('start',lockB1Camera);
+        if(isTokamak3d){
+          controls.removeEventListener('start',startFusionOrbit);
+          controls.removeEventListener('end',endFusionOrbit);
+          delete container.dataset.s01OrbitPhase;
+          delete container.dataset.s01CameraPose;
+        }
         if(isInductionStage)controls.removeEventListener('start',lockInductionOpening);
         e10Ring?.remove();
         planarDriver?.dispose();
@@ -925,6 +983,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
           if(isBoundedStage||isTokamak3d||isMag3d)b1AutoFit=false;
+          cancelFusionOrbitSettle();
           if(isInductionStage){
             inductionOpeningAuto=command.view.morphT===0&&b1PolicyRef.current.presentation;
             inductionOpeningKey='';inductionOpeningCheckedAt=-Infinity;inductionSafe=null;
@@ -936,6 +995,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           authored = true;
           dirty = true;
         } else if (target !== lastMorphTarget) {
+          cancelFusionOrbitSettle();
           if(isInductionStage){inductionOpeningAuto=false;inductionSafe=null;}
           if (target === 1 && morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
@@ -949,18 +1009,18 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         controls.enabled = morph.getMorphT() === 0 && !morph.isAnimating;
         if (controls.enabled) {
           if (!wasEnabled || authored) controls.target.copy(morph.getOrbitTarget());
-          controls.update();
+          updateOrbitControls();
         }
         const progress = morph.getMorphT();
         container.dataset.morphT = String(progress);
         morphPropsRef.current.onMorphProgress?.(progress);
       } else {
-        controls.update();
+        updateOrbitControls();
       }
 
       const b1Policy=b1PolicyRef.current;
       if(isBoundedStage||isTokamak3d||isMag3d){
-        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';magneticSceneFitKey='';lastMagneticProjectionKey='';lastMagneticShapeLayout='';b1FramedAt=-Infinity;dirty=true;}
+        if(b1Policy.nonce!==b1LastPolicy.nonce){cancelFusionOrbitSettle();b1AutoFit=true;b1FramingKey='';magneticSceneFitKey='';lastMagneticProjectionKey='';lastMagneticShapeLayout='';b1FramedAt=-Infinity;dirty=true;}
         if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
         b1LastPolicy=b1Policy;
       }
@@ -1166,6 +1226,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         container.dataset.s01VelocityVectors=String(frameLayers.has('velocityComponents'));
         if(fusionPoints)container.dataset.s01ScreenBounds=JSON.stringify(projectFusionFrame(fusionPoints,renderCamera,rw,rh));
         container.dataset.s01AutoFit=String(b1AutoFit&&b1Policy.allowed);
+        // These values describe the camera that just rendered, never a
+        // pending controls update. Idle is published only after final paint.
+        container.dataset.s01CameraPose=JSON.stringify({position:renderCamera.position.toArray(),
+          quaternion:renderCamera.quaternion.toArray(),target:controls.target.toArray(),projection:renderCamera.projectionMatrix.toArray()});
+        if(fusionOrbitPhase==='final-render')setFusionOrbitPhase('idle');
       }
       if(b1){
         // Diagnostics and visible caption refer to the state just rendered.
