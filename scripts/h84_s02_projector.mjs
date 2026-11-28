@@ -202,7 +202,13 @@ async function lifecycleCase(base){
  const page=await ctx.newPage();page.setDefaultTimeout(10000);
  page.on('pageerror',e=>report.errors.push(e.message));page.on('console',m=>{if(m.type()==='error')report.errors.push(m.text());});
  page.on('request',r=>{if(/^https?:/.test(r.url())&&!r.url().startsWith('http://127.0.0.1:'))report.external.push(r.url());});
- await page.addInitScript(()=>{window.__pfPointerId=null;document.addEventListener('pointerdown',e=>{window.__pfPointerId=e.pointerId;},true);});
+ await page.addInitScript(()=>{
+  window.__pfPointerId=null;window.__pfCaptureEvents=[];
+  document.addEventListener('pointerdown',e=>{window.__pfPointerId=e.pointerId;window.__pfCaptureEvents=[];},true);
+  for(const type of ['gotpointercapture','lostpointercapture','pointercancel']){
+   document.addEventListener(type,e=>window.__pfCaptureEvents.push({type:e.type,pointerId:e.pointerId,trusted:e.isTrusted,target:e.target?.className?.toString()}),true);
+  }
+ });
  try{
   await page.goto(base+'?model=stse-em-devices-suite&preset=velocity-selector-spectrometer',{waitUntil:'networkidle'});
   const slider=page.getByTestId('param-slider-eFieldVPerM');
@@ -225,7 +231,17 @@ async function lifecycleCase(base){
      await page.getByTestId('btn-exit-fullscreen-speech').evaluate(n=>n.click());
      await page.getByTestId('fullscreen-title').waitFor({state:'hidden'});
     }else{
-     await token.evaluate((n,type)=>{const el=n.closest('.pf-live-var')??n;const id=window.__pfPointerId;if(type==='lostpointercapture'&&el.hasPointerCapture(id))el.releasePointerCapture(id);else el.dispatchEvent(new PointerEvent(type,{pointerId:id,bubbles:true}));},kind);
+     if(kind==='lostpointercapture'){
+      // Chromium processes pending capture changes before the next pointer
+      // event. Exercise a trusted pointermove while the button is still down,
+      // not pointerup (which would conceal a missing lostcapture handler).
+      const capture=await token.evaluate(n=>{const el=n.closest('.pf-live-var')??n;const id=window.__pfPointerId;const held=el.hasPointerCapture(id);if(held)el.releasePointerCapture(id);return {held,id};});
+      check(capture.held,kind+': actual capture held before release');
+      await page.mouse.move(x+(before>300000?-61:61),y);
+      await page.waitForFunction(id=>window.__pfCaptureEvents.some(e=>e.type==='lostpointercapture'&&e.trusted&&e.pointerId===id),capture.id,{timeout:3000});
+     }else{
+      await token.evaluate(n=>{const el=n.closest('.pf-live-var')??n;el.dispatchEvent(new PointerEvent('pointercancel',{pointerId:window.__pfPointerId,bubbles:true}));});
+     }
      await hud.waitFor({state:'hidden'});
     }
    }finally{await page.mouse.up();}
@@ -239,7 +255,7 @@ async function lifecycleCase(base){
    await page.waitForTimeout(180);
    const stable=Number(await slider.inputValue());
    check(stable===after,kind+': no late write after teardown');
-   report.lifecycle.push({kind,before,preview,after,stable});
+   report.lifecycle.push({kind,before,preview,after,stable,events:await page.evaluate(()=>window.__pfCaptureEvents)});
    await page.screenshot({path:path.join(out,'lifecycle-'+kind+'.png')});
   }
  }catch(e){report.issues.push(String(e?.stack||e));await page.screenshot({path:path.join(out,'lifecycle-failure.png')}).catch(()=>{});}
