@@ -18,6 +18,18 @@ describe('live formula scrubber', () => {
     expect(() => clampAndQuantize(NaN, 0, 1, 0.1)).toThrow();
   });
 
+  it('rounds half-step ties consistently for one move and partitioned pointer moves', () => {
+    const min = .2, max = 4, step = .1, sensitivity = (max - min) / 240;
+    let partitioned = 1;
+    for (let i = 0; i < 12; i++) partitioned += 5 * sensitivity;
+    expect(clampAndQuantize(partitioned, min, max, step)).toBe(2);
+    expect(clampAndQuantize(1 + 60 * sensitivity, min, max, step)).toBe(2);
+    expect(clampAndQuantize(1.95 - 1e-8, min, max, step)).toBe(1.9);
+    expect(clampAndQuantize(1.95 + 1e-8, min, max, step)).toBe(2);
+    expect(clampAndQuantize(-.15 - .02 * Number.EPSILON, -.2, .2, .1)).toBe(-.1);
+    expect(clampAndQuantize(1.5e-10, 0, 1e-9, 1e-10)).toBe(2e-10);
+  });
+
   it('formats nonzero microscopic and astronomical values without rounding them to zero', () => {
     expect(formatLiveFormulaValue(1.602e-19, 3)).toBe('1.602e-19');
     expect(formatLiveFormulaValue(2e24, 2)).toBe('2.00e+24');
