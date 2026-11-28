@@ -56,11 +56,11 @@ async function withPage(key,fn,height=w===1024?768:900){
  const ctx=await browser.newContext({viewport:{width:w,height},deviceScaleFactor:1,hasTouch:kind==='touch',serviceWorkers:'block'});
  await ctx.addInitScript(()=>{
    window.__h88Events=[];
-   for(const type of ['pointerdown','pointermove','pointerup','pointercancel','gotpointercapture','lostpointercapture']){
+   for(const type of ['pointerdown','pointermove','pointerup','pointercancel','gotpointercapture','lostpointercapture','click','dblclick']){
     document.addEventListener(type,e=>{
       const wrap=e.target?.closest?.('.pf-live-var');
       const token=e.target?.closest?.('[data-param]')??wrap?.querySelector?.('[data-param]');
-      window.__h88Events.push({type,pointerType:e.pointerType,x:e.clientX,y:e.clientY,param:token?.dataset.param,formula:token?.closest('[data-formula-id]')?.dataset.formulaId});
+      window.__h88Events.push({type,pointerType:e.pointerType,detail:e.detail,target:e.target?.outerHTML?.slice(0,250),x:e.clientX,y:e.clientY,param:token?.dataset.param,formula:token?.closest('[data-formula-id]')?.dataset.formulaId});
       if(window.__h88Events.length>2000)window.__h88Events.shift();
     },true);
    }
@@ -85,6 +85,8 @@ async function load(page,model,preset,override){
  if(await play.getAttribute('aria-label')==='暂停')await play.click();
  if(override){
   const control=page.locator('#param-'+override[0]);
+  if(!await control.isVisible())await page.getByText('更多参数与图层',{exact:true}).click();
+  await control.waitFor({state:'visible'});
   await control.selectOption(override[1]);
   if(await control.inputValue()!==override[1])throw Error('mode override did not apply');
  }
@@ -113,7 +115,7 @@ async function move(page,cdp,x,y){
  if(cdp)await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y}]});else await page.mouse.move(x,y);
 }
 async function tapToken(page,cdp,hit,key,capture){
- if(!check(hit.hit,key+' center hit blocked by '+JSON.stringify(hit.blockedBy)))return {ok:false,hit};
+ if(!check(hit.hit,key+' center hit blocked by '+JSON.stringify(hit.blockedBy))){await snap(page,key+'-blocked');return {ok:false,hit};}
  await page.evaluate(()=>window.__h88Events=[]);
  let opened=false,txt='';
  await down(page,cdp,hit.x,hit.y);
@@ -123,6 +125,7 @@ async function tapToken(page,cdp,hit,key,capture){
    if(capture)await snap(page,key+'-held');
  }catch(e){report.issues.push(key+': HUD did not open: '+String(e));await snap(page,key+'-no-hud').catch(()=>{});}
  finally{await up(page,cdp);}
+ await page.waitForFunction(()=>window.__h88Events.some(e=>e.type==='pointerup'||e.type==='pointercancel'),null,{timeout:1400});
  await frame(page);
  check(await hud(page).count()===0,key+': HUD did not close after release');
  const events=await page.evaluate(()=>window.__h88Events);
