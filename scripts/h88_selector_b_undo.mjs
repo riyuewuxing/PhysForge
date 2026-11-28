@@ -67,17 +67,29 @@ async function formulaCase(page,key){
     sameToken:window.__h88Token===document.querySelector('[data-testid="live-formula-velocity-selector"] [data-param="bFieldT"]')};
  });
  await token.evaluate(n=>{window.__h88Token=n;});
- const r=await token.boundingBox(),x=r.x+r.width/2,y=r.y+r.height/2;
+ const hit=await token.evaluate(n=>{
+   const r=n.getBoundingClientRect(),wrapper=n.closest('.pf-live-var');
+   const matches=(x,y)=>{const top=document.elementFromPoint(x,y);return top?.closest('[data-param]')===n||top?.closest('.pf-live-var')===wrapper;};
+   const center={x:r.x+r.width/2,y:r.y+r.height/2};
+   if(matches(center.x,center.y))return {...center,centerHit:true,rect:r.toJSON()};
+   for(let y=Math.ceil(r.top);y<r.bottom;y++)for(let x=Math.ceil(r.left);x<r.right;x++)if(matches(x,y))return {x,y,centerHit:false,rect:r.toJSON()};
+   return {centerHit:false,rect:r.toJSON(),blockedBy:document.elementFromPoint(center.x,center.y)?.outerHTML.slice(0,500)};
+ });
+ report.hitTests??=[];report.hitTests.push({key,hit});
+ check(Number.isFinite(hit.x)&&Number.isFinite(hit.y),key+': token must have an actual pointer hit region');
+ if(!Number.isFinite(hit.x)||!Number.isFinite(hit.y))throw Error('denominator has no hit-testable point');
+ const {x,y}=hit;
  const dir=B>2.5?-1:1,quant=(v)=>Math.round(Math.max(.2,Math.min(4,v))*10)/10;
  const close=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<=Math.max(1,Math.abs(b)*0.0005);
  const samples=[],initial=await read();
  check(close(initial.vs,E/B)&&close(initial.paint?.v,E/B),key+': initial formula/paint independent oracle');
  await page.mouse.move(x,y);await page.mouse.down();
+ await page.locator('[data-testid="live-formula-hud"]:visible').waitFor({state:'visible',timeout:2000});
  let held;
  try {
   for(const dx of [5,10,15,20,25,30,35,40,45,50,55,60]){
     await page.mouse.move(x+dir*dx,y);
-    const immediate=await read();samples.push({...immediate,phase:'event',dx,expected:quant(B+dir*dx*3.8/240)});
+    const immediate=await read();report.eventSamples??=[];report.eventSamples.push({key,dx,...immediate});samples.push({...immediate,phase:'event',dx,expected:quant(B+dir*dx*3.8/240)});
     check(immediate.target===quant(B+dir*dx*3.8/240),key+': pointer oracle '+dx);
     // Sample after a browser animation frame and a following task boundary.
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0))));
