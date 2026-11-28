@@ -1,6 +1,6 @@
 import { orbitalStoryDecks } from './storyDecks.js';
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
-import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
+import { createWorldMapper, defineSimulationPlugin, type DiagramPrimitive, type ParamFieldSpec, type Viewport } from '@physforge/sim-sdk';
 import { astroOrbitalPresets } from './presets.js';
 import {
   checkInvariants,
@@ -79,6 +79,50 @@ export function orbitalBurnMarkers(state:AstroOrbitalState,params:AstroOrbitalPa
 }
 export function orbitDisplayVelocity(state:AstroOrbitalState,corotating:boolean){
   return orbitDisplayXY(state.vxNorm+(corotating?state.yNorm:0),state.vyNorm-(corotating?state.xNorm:0),state.tNorm,corotating);
+}
+
+/** Rotation-invariant radius of the actual finite, sampled Roche contours.
+ * No change to contour extraction, equations, or the displayed reference frame. */
+let binaryRocheRadiusCache: { q: number; radius: number } | null = null;
+export function binaryRocheFrameRadius(state: AstroOrbitalState, params: AstroOrbitalParams, layers: ReadonlySet<string>): number {
+  let radius = 1.1;
+  if (layers.has('rocheIsolines')) {
+    const q = params.massRatioQ;
+    if (binaryRocheRadiusCache?.q !== q) {
+      let r = 1.1;
+      for (const contour of extractRocheIsolines(q)) for (const seg of contour.segments) {
+        r = Math.max(r, Math.hypot(seg.a.x, seg.a.y), Math.hypot(seg.b.x, seg.b.y));
+      }
+      for (const lp of computeLagrangePoints(q)) r = Math.max(r, Math.hypot(lp.x, lp.y));
+      binaryRocheRadiusCache = { q, radius: r };
+    }
+    radius = binaryRocheRadiusCache.radius;
+  }
+  if (layers.has('orbit')) {
+    const v = orbitDisplayVelocity(state, layers.has('corotatingView'));
+    radius = Math.max(radius, Math.hypot(state.xNorm, state.yNorm) + .35 * Math.hypot(v.x, v.y));
+    for (const pt of state.trailNorm) radius = Math.max(radius, Math.hypot(pt.x, pt.y));
+  }
+  return radius;
+}
+export type BinaryRocheSafeRect = { left: number; right: number; top: number; bottom: number };
+const ROCHE_MARGIN_PX = 28;
+export function binaryRocheViewportFits(viewport: Viewport, radius: number, safe: BinaryRocheSafeRect): boolean {
+  const m = createWorldMapper(viewport), a = m.toScreen(-radius, radius), b = m.toScreen(radius, -radius);
+  return a.x >= safe.left + ROCHE_MARGIN_PX - 1e-6 && b.x <= safe.right - ROCHE_MARGIN_PX + 1e-6 &&
+    a.y >= safe.top + ROCHE_MARGIN_PX - 1e-6 && b.y <= safe.bottom - ROCHE_MARGIN_PX + 1e-6;
+}
+/** A view-only fit centered in the safe rectangle; never enlarge the original
+ * authored binary view and never remove a contour to make it fit. */
+export function fitBinaryRocheViewport(viewport: Viewport, radius: number, safe: BinaryRocheSafeRect): Viewport | null {
+  const w = safe.right - safe.left - 2 * ROCHE_MARGIN_PX, h = safe.bottom - safe.top - 2 * ROCHE_MARGIN_PX;
+  if (!(radius > 0) || !Number.isFinite(radius) || w < 72 || h < 72) return null;
+  const unit = createWorldMapper({ ...viewport, scale: 1, offsetX: 0, offsetY: 0 });
+  const ppm = Math.min(w / (2 * radius), h / (2 * radius), unit.ppm * ((.42 / .24) / 2.6));
+  if (!(ppm > 0) || !Number.isFinite(ppm) || !(unit.ppm > 0)) return null;
+  const anchor = unit.toScreen(0, 0);
+  return { ...viewport, scale: ppm / unit.ppm,
+    offsetX: (safe.left + safe.right) / 2 - anchor.x, offsetY: (safe.top + safe.bottom) / 2 - anchor.y };
 }
 
 const paramSchema: readonly ParamFieldSpec<AstroOrbitalParams>[] = [
@@ -479,6 +523,6 @@ export const astroOrbitalMechanicsPlugin = Object.assign(defineSimulationPlugin<
     }
     return items;
   }
-}), { orbitRenderSnapshot,storyDecks: orbitalStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 8.5, sceneDepthRadius: 8, default3DAzimuthRad: 0.5, default3DPolarRad: 0.92 } });
+}), { orbitRenderSnapshot,binaryRocheFrameRadius,binaryRocheViewportFits,fitBinaryRocheViewport,storyDecks: orbitalStoryDecks, liveFormulas, spatial3D: { flattenPlane: 'xz' as const, defaultVisibleHeight: 8.5, sceneDepthRadius: 8, default3DAzimuthRad: 0.5, default3DPolarRad: 0.92 } });
 
 export default astroOrbitalMechanicsPlugin;
