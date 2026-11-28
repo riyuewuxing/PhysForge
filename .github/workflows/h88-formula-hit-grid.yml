@@ -16,7 +16,7 @@ jobs:
           path: audit
       - uses: actions/checkout@v4
         with:
-          ref: 41939b0f6fd5ebc63428fa486e9afc78a92528c3
+          ref: 1c5dbbdf4a5968d64b40319dafa00dc89a900831
           path: source
       - uses: pnpm/action-setup@v4
         with:
@@ -32,7 +32,7 @@ jobs:
           cp audit/scripts/h88_formula_hit_grid.mjs source/scripts/
           git -C source diff --exit-code
         env:
-          SOURCE_HEAD: 41939b0f6fd5ebc63428fa486e9afc78a92528c3
+          SOURCE_HEAD: 1c5dbbdf4a5968d64b40319dafa00dc89a900831
       - run: pnpm install --frozen-lockfile
         working-directory: source
       - run: pnpm exec playwright install --with-deps chromium
@@ -45,7 +45,7 @@ jobs:
         working-directory: source
         timeout-minutes: 5
         env:
-          SOURCE_HEAD: 41939b0f6fd5ebc63428fa486e9afc78a92528c3
+          SOURCE_HEAD: 1c5dbbdf4a5968d64b40319dafa00dc89a900831
           SOURCE_ROLE: candidate
       - uses: actions/upload-artifact@v4
         if: always()
