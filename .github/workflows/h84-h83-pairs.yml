@@ -1,0 +1,347 @@
+name: H84 recover H83 remaining original pairs
+on:
+  pull_request:
+    branches: ['polish/v31-h83-s02-readout']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  delta:
+    if: github.event.pull_request.head.ref == 'audit/h84-h83-remaining-pairs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [online, offline]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PHASE: ${{ matrix.phase }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify exact runs and retrieve retained artifacts
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          mkdir -p inputs review
+          for i in {1..18}; do
+            state=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/46022936408)
+            test "$(jq -r .head_sha <<<"$state")" = 54859b12382bcacdc471a586f086b2e89685781c
+            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/46022936408/jobs?per_page=100")
+            visual=$(jq -ce --arg n "visual ($PHASE)" '[.jobs[]|select(.name==$n)]|if length==1 then .[0] else error("nonunique visual job") end' <<<"$jobs")
+            if [[ "$(jq -r .status <<<"$visual")" == completed ]]; then
+              test "$(jq -r .conclusion <<<"$visual")" = success
+              break
+            fi
+            sleep 5
+          done
+          test "$(jq -r .status <<<"$visual")" = completed
+          test "$(jq -r .conclusion <<<"$visual")" = success
+          # This is an independent ancestor delta; the direct-parent comparison
+          # remains NOT_RUN and its red workflow status is not overwritten.
+          old=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/46015253705)
+          test "$(jq -r .head_sha <<<"$old")" = c965dab0e44516615d4cc094b811734392e52f4c
+          test "$(jq -r .conclusion <<<"$old")" = success
+          for run in 46015253705 46022936408; do
+            meta=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" | jq -ce --arg n "v31-polish-visual-$PHASE" '[.artifacts[]|select(.name==$n and .expired==false)]|if length==1 then .[0] else error("nonunique or missing raw artifact") end')
+            id=$(jq -r .id <<<"$meta")
+            digest=$(jq -r .digest <<<"$meta")
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "inputs/$run.zip"
+            echo "${digest#sha256:}  inputs/$run.zip" | sha256sum -c -
+            echo "$meta" > "inputs/$run.json"
+          done
+      - name: Install pinned PNG decoder
+        timeout-minutes: 1
+        run: python -m pip install --disable-pip-version-check Pillow==11.3.0
+      - name: Compare all PNG paths and exact bytes
+        timeout-minutes: 2
+        run: python scripts/h84_h83_remaining_pairs.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-index
+          path: review/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-01.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-01
+          path: review/pair-pack-01.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-02.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-02
+          path: review/pair-pack-02.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-03.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-03
+          path: review/pair-pack-03.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-04.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-04
+          path: review/pair-pack-04.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-05.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-05
+          path: review/pair-pack-05.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-06.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-06
+          path: review/pair-pack-06.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-07.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-07
+          path: review/pair-pack-07.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-08.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-08
+          path: review/pair-pack-08.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-09.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-09
+          path: review/pair-pack-09.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-10.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-10
+          path: review/pair-pack-10.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-11.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-11
+          path: review/pair-pack-11.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-12.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-12
+          path: review/pair-pack-12.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-13.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-13
+          path: review/pair-pack-13.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-14.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-14
+          path: review/pair-pack-14.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-15.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-15
+          path: review/pair-pack-15.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-16.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-16
+          path: review/pair-pack-16.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-17.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-17
+          path: review/pair-pack-17.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-18.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-18
+          path: review/pair-pack-18.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-19.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-19
+          path: review/pair-pack-19.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-20.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-20
+          path: review/pair-pack-20.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-21.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-21
+          path: review/pair-pack-21.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-22.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-22
+          path: review/pair-pack-22.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-23.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-23
+          path: review/pair-pack-23.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-24.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-24
+          path: review/pair-pack-24.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-25.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-25
+          path: review/pair-pack-25.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-26.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-26
+          path: review/pair-pack-26.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-27.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-27
+          path: review/pair-pack-27.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-28.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-28
+          path: review/pair-pack-28.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-29.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-29
+          path: review/pair-pack-29.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-30.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-30
+          path: review/pair-pack-30.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-31.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-31
+          path: review/pair-pack-31.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-32.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-32
+          path: review/pair-pack-32.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-33.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-33
+          path: review/pair-pack-33.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-34.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-34
+          path: review/pair-pack-34.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-35.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-35
+          path: review/pair-pack-35.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-36.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-36
+          path: review/pair-pack-36.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-37.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-37
+          path: review/pair-pack-37.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-38.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-38
+          path: review/pair-pack-38.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-39.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-39
+          path: review/pair-pack-39.zip
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('review/pair-pack-40.zip') != '' }}
+        with:
+          name: h84-h83-pairs-${{ matrix.phase }}-40
+          path: review/pair-pack-40.zip
+          if-no-files-found: error
+          retention-days: 7
