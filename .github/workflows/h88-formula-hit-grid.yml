@@ -1,0 +1,56 @@
+name: H88 formula center and half-step
+on:
+  pull_request:
+    branches: ['polish/v31-h88-formula-hit-grid']
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    if: github.event.pull_request.head.ref == 'audit/h88-formula-hit-grid'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 1c5dbbdf4a5968d64b40319dafa00dc89a900831
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_HEAD"
+          cp audit/scripts/h88_formula_hit_grid.mjs source/scripts/
+          git -C source diff --exit-code
+        env:
+          SOURCE_HEAD: 1c5dbbdf4a5968d64b40319dafa00dc89a900831
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h88_formula_hit_grid.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: 1c5dbbdf4a5968d64b40319dafa00dc89a900831
+          SOURCE_ROLE: candidate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-formula-hit-grid-candidate
+          path: source/evidence/h88-formula-hit-grid/
+          if-no-files-found: error
+          retention-days: 7
