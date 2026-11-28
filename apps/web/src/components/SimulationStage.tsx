@@ -322,6 +322,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const thermoStage=plugin.meta.id==='thermo-piston-gas-laws';
   const orbitCompareStage=plugin.meta.id==='stse-gravity-assist-rendezvous';
   const m10BinaryStage=plugin.meta.id==='astro-orbital-mechanics'&&params.mode==='binary-lagrange';
+  const m10HohmannStage=plugin.meta.id==='astro-orbital-mechanics'&&params.mode==='hohmann-transfer';
   const thermalCycleStage=plugin.meta.id==='thermo-cycles-kinetic-md';
   const quantumStaticStage=plugin.meta.id==='modern-photoelectric-compton';
   const atomicStage=plugin.meta.id==='modern-rutherford-bohr',atomicStaticStage=atomicStage&&params.mode==='bohr';
@@ -450,6 +451,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const transformerSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const orbitCompareSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const m10BinarySafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
+  const m10HohmannSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const b1FitAtRef=useRef(-Infinity);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
@@ -458,7 +460,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;rollingFitKeyRef.current='';advancedSafeRef.current=null;relativityFitKeyRef.current='';
-    cradleSafeRef.current=null;chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;inductionSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;m10BinarySafeRef.current=null;
+    cradleSafeRef.current=null;chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;inductionSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;m10BinarySafeRef.current=null;m10HohmannSafeRef.current=null;
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -1171,6 +1173,39 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       }
     }
+    // The two circular reference orbits are finite teaching geometry. Fit
+    // them to the real unobscured 2D stage, without changing physical radii,
+    // reference frames, replay, authored story or manual camera ownership.
+    const m10HohmannAutomatic=p.meta.id==='astro-orbital-mechanics'&&pm.mode==='hohmann-transfer'&&
+      !showThreeRef.current&&!userTransformedViewRef.current&&!requestedStoryDeckRef.current&&
+      latestRef.current.activeFrameId==='ground'&&scrub===null&&!dragModeRef.current&&readDisplayedLayers().has('orbit');
+    if(m10HohmannAutomatic&&drawState!==null){
+      const cur=latestRef.current,v=viewportRef.current,radius=Number(pm.r2OverR1);
+      const key=JSON.stringify([cur.resetNonce,radius,v.width,v.height,cur.presentationMode,cur.rightSidebarOpen,cur.oscilloscopeCollapsed]);
+      const fresh=m10HohmannSafeRef.current?.key!==key;
+      if(fresh){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-formula"]':'[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        const dock=document.querySelector(cur.presentationMode?'[data-testid="fullscreen-controls"]':'[data-testid="floating-scope-dock"]')?.getBoundingClientRect();
+        const right=cur.presentationMode||cur.rightSidebarOpen?(panel&&panel.width>0?panel.left-box.left-16:v.width-340):v.width-26;
+        const bottom=dock&&dock.height>0?dock.top-box.top-16:cur.presentationMode||cur.oscilloscopeCollapsed?v.height-84:v.height-220;
+        m10HohmannSafeRef.current={key,safe:{left:30,right,top:112,bottom}};
+      }
+      const safe=m10HohmannSafeRef.current!.safe,margin=28;
+      const first=worldToScreen(-radius,radius,v),last=worldToScreen(radius,-radius,v);
+      const fits=first.x>=safe.left+margin-1e-6&&first.y>=safe.top+margin-1e-6&&last.x<=safe.right-margin+1e-6&&last.y<=safe.bottom-margin+1e-6;
+      const width=safe.right-safe.left-2*margin,height=safe.bottom-safe.top-2*margin;
+      if((fresh||!fits)&&radius>0&&Number.isFinite(radius)&&width>=72&&height>=72){
+        const unit={...v,scale:1,offsetX:0,offsetY:0},unitPpm=getPixelsPerMeter(unit);
+        const ppm=Math.min(width/(2*radius),height/(2*radius),unitPpm*(.42/.24)/(radius+.6));
+        if(Number.isFinite(ppm)&&ppm>0&&unitPpm>0){
+          const anchor=worldToScreen(0,0,unit);
+          const next={...v,scale:ppm/unitPpm,offsetX:(safe.left+safe.right)/2-anchor.x,offsetY:(safe.top+safe.bottom)/2-anchor.y};
+          cameraRef.current=next;viewportRef.current=next;if(fresh)baseScaleRef.current=next.scale;
+          setOverlayViewport(next);setZoomPercent(Math.round(100*next.scale/Math.max(1e-6,baseScaleRef.current)));
+        }
+      }
+    }
     // Keep real teaching geometry in the uncovered stage, without altering
     // state, story camera ownership or a teacher's manual pan/zoom.
     const orbitCompareAutomatic=p.meta.id==='stse-gravity-assist-rendezvous'&&!userTransformedViewRef.current&&
@@ -1490,6 +1525,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
       canvas.dataset.m10Rendered=JSON.stringify(model.orbitRenderSnapshot(drawState as AstroOrbitalState,pm as AstroOrbitalParams,readDisplayedLayers()));
       if(pm.mode==='binary-lagrange')canvas.dataset.m10BinaryView=JSON.stringify({automatic:m10BinaryAutomatic,radius:m10BinaryRadius,safe:m10BinarySafeRef.current?.safe,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});
       else delete canvas.dataset.m10BinaryView;
+      if(pm.mode==='hohmann-transfer')canvas.dataset.m10HohmannView=JSON.stringify({automatic:m10HohmannAutomatic,safe:m10HohmannSafeRef.current?.safe,scale:vp.scale,offsetX:vp.offsetX,offsetY:vp.offsetY});
+      else delete canvas.dataset.m10HohmannView;
     }
     if(fusionModel&&fusionPoints&&frame){
       canvas.dataset.s01ScreenBounds=JSON.stringify(fusionModel.fusionFlatScreenBounds(fusionPoints,viewportRef.current));
@@ -1820,7 +1857,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
   useEffect(()=>{if(cradleStage){cradleSafeRef.current=null;renderFrameToCanvas();}else if(chaseStage){chaseSafeRef.current=null;renderFrameToCanvas();}else if(plugin.meta.id==='mech-constrained-velocity'){constrainedFitKeyRef.current='';renderFrameToCanvas();}else if(plugin.meta.id==='mech-projectile-coupling'){projectileSafeRef.current=null;renderFrameToCanvas();}else if(inductionStage){inductionSafeRef.current=null;renderFrameToCanvas();}else if(contactStage){contactSafeRef.current=null;renderFrameToCanvas();}else if(verticalStage){verticalSafeRef.current=null;renderFrameToCanvas();}else if(turntableStage){turntableSafeRef.current=null;renderFrameToCanvas();}else if(springStage){springSafeRef.current=null;renderFrameToCanvas();}else if(collisionStage){collisionSafeRef.current=null;renderFrameToCanvas();}else if(rollingStage){rollingFitKeyRef.current='';renderFrameToCanvas();}else if(advancedStage){advancedSafeRef.current=null;renderFrameToCanvas();}else if(capacitorStage){capacitorSafeRef.current=null;renderFrameToCanvas();}else if(acStage){acSafeRef.current=null;renderFrameToCanvas();}else if(wireStage){wireSafeRef.current=null;renderFrameToCanvas();}else if(eddyStage){eddySafeRef.current=null;renderFrameToCanvas();}else if(generatorStage){generatorSafeRef.current=null;renderFrameToCanvas();}else if(lcStage){lcSafeRef.current=null;renderFrameToCanvas();}else if(waveStage){waveSafeRef.current=null;renderFrameToCanvas();}else if(rippleStage){rippleSafeRef.current=null;renderFrameToCanvas();}else if(transformerStage){transformerSafeRef.current=null;renderFrameToCanvas();}else if(orbitCompareStage){orbitCompareSafeRef.current=null;renderFrameToCanvas();}},[orbitCompareStage,chaseStage,cradleStage,inductionStage,contactStage,verticalStage,turntableStage,springStage,collisionStage,rollingStage,advancedStage,capacitorStage,acStage,wireStage,eddyStage,generatorStage,lcStage,waveStage,rippleStage,transformerStage,plugin.meta.id,rightSidebarOpen,oscilloscopeCollapsed,presentationMode]);
 
-  useEffect(()=>{if(m10BinaryStage){m10BinarySafeRef.current=null;renderFrameToCanvas();}},[m10BinaryStage,rightSidebarOpen,oscilloscopeCollapsed,presentationMode,activeLayers]);
+  useEffect(()=>{if(m10BinaryStage||m10HohmannStage){m10BinarySafeRef.current=null;m10HohmannSafeRef.current=null;renderFrameToCanvas();}},[m10BinaryStage,m10HohmannStage,rightSidebarOpen,oscilloscopeCollapsed,presentationMode,activeLayers]);
 
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
@@ -2224,7 +2261,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
-                  if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+                  if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||m10HohmannStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -2250,7 +2287,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               // Like OrbitControls' start, pointer-down establishes camera
               // ownership before the first movement; a resize/fit cannot race
               // the teacher between gesture start and its first delta.
-              if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+              if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||m10HohmannStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {
