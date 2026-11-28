@@ -70,7 +70,8 @@ export function newtonDisplayGain(p:WaveOpticsParams,xMm:number,yMm:number,dxMm:
   return 1+weight*Math.expm1(-.5*(.65*phaseStep)**2);
 }
 export function filterNewtonDisplayMean(p:WaveOpticsParams,mean:number,xMm:number,yMm:number,dxMm:number,dyMm:number):number{
-  return Math.max(0,Math.min(1,.5+(mean-.5)*newtonDisplayGain(p,xMm,yMm,dxMm,dyMm)));
+  const gain=newtonDisplayGain(p,xMm,yMm,dxMm,dyMm);
+  return gain===1?mean:Math.max(0,Math.min(1,.5+(mean-.5)*gain));
 }
 export function averageNewtonDisplayPixel(p:WaveOpticsParams,xMm:number,yMm:number,dxMm:number,dyMm:number):number|undefined{
   const mean=averageNewtonPixel(p,xMm,yMm,dxMm,dyMm);
