@@ -2,7 +2,7 @@ import { resolvePluginParams } from '@physforge/sim-sdk';
 import { describe, expect, it } from 'vitest';
 import { opticsWaveInterferencePlugin } from './plugin.js';
 import { waveOpticsPresets } from './presets.js';
-import { makeOpticsProfile, averageNewtonPixel, makeOpticsApparatus, binOpticsProfile } from './sceneGeometry.js';
+import { makeOpticsProfile, averageNewtonPixel, makeOpticsApparatus, binOpticsProfile, newtonDisplayGain, averageNewtonDisplayPixel, filterNewtonDisplayMean, newtonDisplayNeedsFilter } from './sceneGeometry.js';
 import {
   computeKeyOpticsMetrics,
   createInitialState,
@@ -190,5 +190,63 @@ describe('H43 shared teaching geometry and display conservation',()=>{
     const points=[{u:0,intensity:0},{u:.25,intensity:1},{u:.5,intensity:0},{u:.75,intensity:1},{u:1,intensity:0}];
     for(const count of [1,3,7,40]){const b=binOpticsProfile(points,count);expect(b).toHaveLength(count);expect(b.reduce((sum,v)=>sum+v.mean,0)/count).toBeCloseTo(.5,12);for(const v of b){expect(v.mean).toBeGreaterThanOrEqual(v.min-1e-12);expect(v.mean).toBeLessThanOrEqual(v.max+1e-12);}}
     expect(binOpticsProfile([{u:0,intensity:.3},{u:1,intensity:.3}],7).every(b=>Math.abs(b.mean-.3)<1e-12)).toBe(true);
+  });
+});
+
+describe('H88 finite-resolution Newton display low-pass is not point physics',()=>{
+  const dense=()=>({...getPreset(2),wavelengthNm:400,refractiveIndexN2:1.8,lensRadiusR:.5});
+  it('retains all resolved pixel intensities, phase and exact center',()=>{
+    const p=dense();
+    for(const loss of [true,false]){
+      const q={...p,halfWaveLoss:loss};
+      for(const [x,y,dx,dy] of [[0,0,.04,.04],[.1,0,.04,.04],[4,2,.0001,.0001],[4,2,0,0]] as const){
+        expect(newtonDisplayGain(q,x,y,dx,dy)).toBe(1);
+        expect(averageNewtonDisplayPixel(q,x,y,dx,dy)).toBe(averageNewtonPixel(q,x,y,dx,dy));
+      }
+      expect(evalNewtonRingIntensity(0,q)).toBe(loss?0:1);
+    }
+    expect(averageNewtonDisplayPixel({...p,lensRadiusR:.001},2,0,.04,.04)).toBeUndefined();
+  });
+  it('suppresses beyond-Nyquist contrast by independently derived local phase response',()=>{
+    const p=dense(),x=4,y=0,R=p.lensRadiusR,r=x/1000;
+    // d(4*pi*n*h/lambda)/dx in rad/mm, independently from spherical sag.
+    const k=4*Math.PI*p.refractiveIndexN2*r/(p.wavelengthNm*1e-9*Math.sqrt(R*R-r*r))*1e-3;
+    const at=(f:number)=>2*Math.PI*f/k;
+    expect(newtonDisplayGain(p,x,y,at(.25),0)).toBeCloseTo(1,13);
+    let previous=1;
+    for(const f of [.26,.35,.49,.5,.7,1,1.3,2,3]){
+      const dx=at(f),g=newtonDisplayGain(p,x,y,dx,0);
+      expect(g).toBeGreaterThanOrEqual(0);expect(g).toBeLessThanOrEqual(previous+1e-14);
+      previous=g;
+      if(f>=.5)expect(g).toBeCloseTo(Math.exp(-2*Math.PI**2*.65**2*f*f),13);
+      expect(newtonDisplayGain(p,-x,y,dx,0)).toBeCloseTo(g,14);
+      expect(newtonDisplayGain(p,y,x,0,dx)).toBeCloseTo(g,14);
+    }
+    expect(newtonDisplayGain(p,x,0,at(.5),0)).toBeLessThan(.13);
+    expect(newtonDisplayGain(p,x,0,at(1.3),0)).toBeLessThan(1e-5);
+    expect(newtonDisplayNeedsFilter(p,5,.04,.04)).toBe(true);
+    expect(newtonDisplayNeedsFilter(p,5,.0001,.0001)).toBe(false);
+  });
+  it('preserves complementary phases, bounds and the physical radial export',()=>{
+    const p=dense(),profile=makeOpticsProfile(p),span=profile.max-profile.min,columns=695;
+    const bins=binOpticsProfile(profile.points,columns),snapshot=JSON.stringify(profile);
+    const metrics=computeKeyOpticsMetrics(p);
+    const ir=opticsWaveInterferencePlugin.exportDiagramIR!(createInitialState(p),p);
+    let oldEnergy=0,newEnergy=0,count=0;
+    for(const bin of bins){
+      const x=profile.min+span*bin.u,mean=filterNewtonDisplayMean(p,bin.mean,x,0,span/columns,0);
+      expect(mean).toBeGreaterThanOrEqual(0);expect(mean).toBeLessThanOrEqual(1);
+      if(Math.abs(x)>4){oldEnergy+=(bin.mean-.5)**2;newEnergy+=(mean-.5)**2;count++;}
+    }
+    expect(count).toBeGreaterThan(100);expect(newEnergy).toBeLessThan(oldEnergy*.0001);
+    for(const [x,y] of [[.3,0],[1.5,2],[4,.5],[0,-4]] as const){
+      const a=averageNewtonDisplayPixel(p,x,y,.04,.04)!;
+      const b=averageNewtonDisplayPixel({...p,halfWaveLoss:false},x,y,.04,.04)!;
+      expect(a+b).toBeCloseTo(1,13);
+    }
+    expect(JSON.stringify(makeOpticsProfile(p))).toBe(snapshot);
+    expect(computeKeyOpticsMetrics(p)).toEqual(metrics);
+    expect(opticsWaveInterferencePlugin.exportDiagramIR!(createInitialState(p),p)).toEqual(ir);
+    expect(evalNewtonRingIntensity(metrics.newtonR1Mm!,p)).toBeLessThan(1e-12);
   });
 });

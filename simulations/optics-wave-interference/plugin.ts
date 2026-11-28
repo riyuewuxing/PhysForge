@@ -1,7 +1,7 @@
 import type { LiveFormulaSpec } from '@physforge/sim-sdk';
 import { createWorldMapper, defineSimulationPlugin, resolveAndDrawLabels, type CanvasLabel, type DiagramPrimitive, type ParamFieldSpec } from '@physforge/sim-sdk';
 import { waveOpticsPresets } from './presets.js';
-import { makeOpticsProfile, opticsReadout, makePattern, makeOpticsApparatus, binOpticsProfile } from './sceneGeometry.js';
+import { makeOpticsProfile, opticsReadout, makePattern, makeOpticsApparatus, binOpticsProfile, filterNewtonDisplayMean, newtonDisplayNeedsFilter } from './sceneGeometry.js';
 import {
   checkInvariants,
   computeObservables,
@@ -312,7 +312,10 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
     if(pattern){
       ctx.drawImage(pattern,a.x,a.y,b.x-a.x,b.y-a.y);
       ctx.strokeStyle=projector?'#64748b':'#475569';ctx.lineWidth=1;ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);
-      if(isRing){label('ring-ruler',center,2.04,'视场半径 '+profile.max.toFixed(1)+' mm · '+(p.halfWaveLoss?'中心暗':'中心亮'));}
+      if(isRing){
+        const span=profile.max-profile.min,filtered=newtonDisplayNeedsFilter(p,profile.max,span/pattern.width,span/pattern.height);
+        label('ring-ruler',center,2.04,(filtered?'r≤':'视场半径 ')+profile.max.toFixed(1)+' mm · '+(p.halfWaveLoss?'中心暗':'中心亮')+(filtered?' · 显示滤波':''));
+      }
       else if(p.mode==='thin-film-wedge'){label('thin-end',x0+.14,1.64,'x=0');label('thick-end',x1-.15,1.64,'20 mm');label('wedge-pattern',center,1.83,'等厚干涉俯视图');}
       else {label('angle-domain',center,1.83,'远场图样 · sin θ');label('angle-note',center,1.65,'非屏上距离');}
     }
@@ -322,18 +325,20 @@ export const opticsWaveInterferencePlugin = Object.assign(defineSimulationPlugin
       line(-2,baseline,2,baseline,ink);line(-2,baseline,-2,baseline+height,ink);
       line(-2,baseline+height,2,baseline+height,projector?'#cbd5e1':'#334155');
       label('i1',-2.13,baseline+height,'1');label('i0',-2.13,baseline,'0');
-      const columns=Math.max(40,Math.floor(m.len(4))),bins=binOpticsProfile(profile.points,columns);
-      const averaged=profile.points.length>columns*4&&bins.some(v=>v.max-v.min>.75);
+      const columns=Math.max(40,Math.min(4096,Math.floor(m.len(4)))),bins=binOpticsProfile(profile.points,columns);
+      const span=profile.max-profile.min,dx=span/columns;
+      const ringFiltered=isRing&&newtonDisplayNeedsFilter(p,profile.max,dx,0);
+      const averaged=ringFiltered||(profile.points.length>columns*4&&bins.some(v=>v.max-v.min>.75));
       if(averaged){
         ctx.globalAlpha=.24;
         for(const v of bins)line(-2+4*v.u,baseline+height*v.min,-2+4*v.u,baseline+height*v.max,accent,1);
         ctx.globalAlpha=1;
       }
       ctx.beginPath();
-      const display=averaged?bins.map(v=>({u:v.u,intensity:v.mean})):profile.points;
+      const display=averaged?bins.map(v=>({u:v.u,intensity:ringFiltered?filterNewtonDisplayMean(p,v.mean,profile.min+span*v.u,0,dx,0):v.mean})):profile.points;
       for(let i=0;i<display.length;i++){const v=display[i]!;const q=m.toScreen(-2+4*v.u,baseline+height*v.intensity);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y);}
       ctx.strokeStyle=accent;ctx.lineWidth=1.6;ctx.stroke();
-      label('profile-meaning',-1.25,.04,averaged?'I/I₀ · 像素均值 / 浅色极值':'I/I₀ · 中心截面');
+      label('profile-meaning',-1.25,.04,ringFiltered?'I/I₀ · 显示滤波 / 浅色物理极值':averaged?'I/I₀ · 像素均值 / 浅色极值':'I/I₀ · 中心截面');
       ctx.setLineDash([3,3]);for(const mark of profile.marks)line(-2+4*mark.u,baseline,-2+4*mark.u,baseline+height,projector?'#b45309':'#fbbf24');ctx.setLineDash([]);
       for(let i=0;i<profile.ticks.length;i++){const tick=profile.ticks[i]!;const x=-2+4*tick.u;line(x,baseline,x,baseline-.035,ink);label('tick-'+i,x,baseline-.11,tick.label);}
       label('axis',0,-1.06,profile.axis);label('readout',0,.16,opticsReadout(state,p),accent);
