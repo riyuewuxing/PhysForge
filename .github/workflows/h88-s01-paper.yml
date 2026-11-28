@@ -1,4 +1,4 @@
-name: H88 exact-source S01 projector palette
+name: H88 S01 instrumented camera diagnosis (audit only)
 on:
   pull_request:
     branches: ['polish/v31-h88-s01-projector']
@@ -8,7 +8,7 @@ jobs:
   audit:
     if: startsWith(github.event.pull_request.head.ref, 'audit/h88-s01-projector')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,9 +29,14 @@ jobs:
           cache-dependency-path: source/pnpm-lock.yaml
       - run: |
           test "$(git -C source rev-parse HEAD)" = "49ec8ae3595ec02b844cc33e5baf1ec17635110d"
-          cp audit/scripts/h88_s01_paper.mjs source/scripts/
-          sha256sum source/scripts/h88_s01_paper.mjs
+          cp audit/scripts/h88_s01_camera_trace.mjs source/scripts/
+          sha256sum source/scripts/h88_s01_camera_trace.mjs
       - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: |
+          node scripts/h88_s01_camera_trace.mjs --instrument
+          test "$(git diff --name-only)" = "apps/web/src/stage/ThreeStage.tsx"
+          git diff -- apps/web/src/stage/ThreeStage.tsx
         working-directory: source
       - run: pnpm exec playwright install --with-deps chromium
         working-directory: source
@@ -39,15 +44,15 @@ jobs:
         working-directory: source
         env:
           VITE_BASE_PATH: /PhysForge/
-      - run: node scripts/h88_s01_paper.mjs
+      - run: node scripts/h88_s01_camera_trace.mjs
         working-directory: source
-        timeout-minutes: 5
+        timeout-minutes: 7
         env:
           SOURCE_HEAD: 49ec8ae3595ec02b844cc33e5baf1ec17635110d
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: h88-s01-paper-evidence
+          name: h88-s01-camera-trace-evidence
           path: |
             source/evidence/h88-s01-paper/*.png
             source/evidence/h88-s01-paper/report.json
