@@ -452,6 +452,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
   const orbitCompareSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const m10BinarySafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
   const m10HohmannSafeRef=useRef<{key:string;safe:ProjectileSafeRect}|null>(null);
+  const o01FitKeyRef=useRef('');
   const b1FitAtRef=useRef(-Infinity);
   const b1FitKey=(vp:Viewport)=>{const cur=latestRef.current;return JSON.stringify([cur.resetNonce,vp.width,vp.height,cur.presentationMode,cur.oscilloscopeCollapsed,cur.params.mode,cur.params.fieldScale,cur.params.coilHalfSpanM,cur.params.majorRadiusM,cur.params.mirrorLengthM,cur.params.safetyFactorQ]);};
   const applyDefaultCameraView = (width: number, height: number) => {
@@ -460,7 +461,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
     baseScaleRef.current = Math.max(1e-6, initialCamera.scale);
     userTransformedViewRef.current = false;
     b1FitKeyRef.current='';b1FitAtRef.current=-Infinity;rollingFitKeyRef.current='';advancedSafeRef.current=null;relativityFitKeyRef.current='';
-    cradleSafeRef.current=null;chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;inductionSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;m10BinarySafeRef.current=null;m10HohmannSafeRef.current=null;
+    cradleSafeRef.current=null;chaseSafeRef.current=null;constrainedFitKeyRef.current='';projectileSafeRef.current=null;inductionSafeRef.current=null;contactSafeRef.current=null;verticalSafeRef.current=null;turntableSafeRef.current=null;springSafeRef.current=null;collisionSafeRef.current=null;capacitorSafeRef.current=null;acSafeRef.current=null;wireSafeRef.current=null;eddySafeRef.current=null;generatorSafeRef.current=null;transformerSafeRef.current=null;lcSafeRef.current=null;waveSafeRef.current=null;rippleSafeRef.current=null;orbitCompareSafeRef.current=null;m10BinarySafeRef.current=null;m10HohmannSafeRef.current=null;o01FitKeyRef.current='';
     cameraRef.current = initialCamera;
     viewportRef.current = {
       ...viewportRef.current,
@@ -1206,6 +1207,37 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
         }
       }
     }
+    // O01's apparatus, fringe image, curve and wavelength rail occupy a
+    // fixed teaching-world rectangle. Keep the default normal-workbench
+    // camera if it fits; otherwise minimally translate or reduce its scale.
+    // Never mutate the experiment, offline renderer, story or manual camera.
+    const o01Automatic=p.meta.id==='optics-wave-interference'&&
+      !latestRef.current.presentationMode&&!showThreeRef.current&&!userTransformedViewRef.current&&
+      !requestedStoryDeckRef.current&&latestRef.current.activeFrameId==='ground'&&scrub===null&&!dragModeRef.current;
+    if(o01Automatic&&drawState!==null){
+      const cur=latestRef.current,v=viewportRef.current;
+      const key=JSON.stringify([cur.resetNonce,v.width,v.height,cur.rightSidebarOpen,pm.mode]);
+      if(o01FitKeyRef.current!==key){
+        const box=canvas.getBoundingClientRect();
+        const panel=document.querySelector('[data-testid="right-control-panel"]')?.getBoundingClientRect();
+        // At panel mount/transition use the conservative known workbench width.
+        const edge=cur.rightSidebarOpen?Math.min(v.width-284,panel&&panel.width>0?panel.left-box.left:v.width-300):v.width;
+        const left=40,right=edge-28,top=32,bottom=v.height-82;
+        const minX=-2.18,maxX=2.17,minY=-1.47,maxY=2.04;
+        const initial={...v,...resolveInitialCameraTransform(p as SimulationPluginV2<ParamRecord,unknown>,pm,v.width,v.height)};
+        const unit={...v,scale:1,offsetX:0,offsetY:0},unitPpm=getPixelsPerMeter(unit);
+        const ppm=Math.min(getPixelsPerMeter(initial),(right-left)/(maxX-minX),(bottom-top)/(maxY-minY));
+        if(right-left>=100&&bottom-top>=100&&Number.isFinite(ppm)&&ppm>0&&unitPpm>0){
+          const anchor=worldToScreen(0,0,unit);
+          const clamp=(x:number,lo:number,hi:number)=>lo<=hi?Math.min(hi,Math.max(lo,x)):(lo+hi)/2;
+          const next={...v,scale:ppm/unitPpm,
+            offsetX:clamp(initial.offsetX,left-anchor.x-minX*ppm,right-anchor.x-maxX*ppm),
+            offsetY:clamp(initial.offsetY,top-anchor.y+maxY*ppm,bottom-anchor.y+minY*ppm)};
+          o01FitKeyRef.current=key;cameraRef.current=next;viewportRef.current=next;baseScaleRef.current=next.scale;
+          setOverlayViewport(next);setZoomPercent(100);
+        }
+      }
+    }
     // Keep real teaching geometry in the uncovered stage, without altering
     // state, story camera ownership or a teacher's manual pan/zoom.
     const orbitCompareAutomatic=p.meta.id==='stse-gravity-assist-rendezvous'&&!userTransformedViewRef.current&&
@@ -1859,6 +1891,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
 
   useEffect(()=>{if(m10BinaryStage||m10HohmannStage){m10BinarySafeRef.current=null;m10HohmannSafeRef.current=null;renderFrameToCanvas();}},[m10BinaryStage,m10HohmannStage,rightSidebarOpen,oscilloscopeCollapsed,presentationMode,activeLayers]);
 
+  useEffect(()=>{if(waveOpticsStage){o01FitKeyRef.current='';renderFrameToCanvas();}},[waveOpticsStage,rightSidebarOpen,presentationMode]);
+
   // 模型切换、预设切换和手动复位统一回到插件声明的初始取景
   useEffect(() => {
     storyCameraTweenRef.current = null;
@@ -2261,7 +2295,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
                   };
                   dragModeRef.current = null;
                   hoveredHandleIdRef.current = null;
-                  if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||m10HohmannStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+                  if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||m10HohmannStage||waveOpticsStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
                   canvas.style.cursor = 'grabbing';
                   return;
                 }
@@ -2287,7 +2321,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               // Like OrbitControls' start, pointer-down establishes camera
               // ownership before the first movement; a resize/fit cannot race
               // the teacher between gesture start and its first delta.
-              if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||m10HohmannStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
+              if(autoFrameStage||chaseStage||cradleStage||inductionStage||contactStage||verticalStage||turntableStage||springStage||collisionStage||rollingStage||advancedStage||relativityStage||shmStage||capacitorStage||acStage||wireStage||eddyStage||generatorStage||lcStage||waveStage||rippleStage||transformerStage||orbitCompareStage||m10HohmannStage||waveOpticsStage){userTransformedViewRef.current=true;renderFrameToCanvas();}
               canvas.style.cursor = 'grabbing';
             }}
             onPointerMove={(e) => {
