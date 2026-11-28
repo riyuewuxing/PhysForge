@@ -1,0 +1,55 @@
+name: H87 exact-source S02 handle contrast and actual drag
+on:
+  pull_request:
+    branches: ['polish/v31-h87-s02-handle-contrast']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h87-s02-handle-contrast')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 946c0b90a2826ba0d22c21d8753289c82ecdf416
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "946c0b90a2826ba0d22c21d8753289c82ecdf416"
+          cp audit/scripts/h87_s02_handles.mjs source/scripts/
+          sha256sum source/scripts/h87_s02_handles.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h87_s02_handles.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: 946c0b90a2826ba0d22c21d8753289c82ecdf416
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h87-s02-handles-evidence
+          path: |
+            source/evidence/h87-s02/*.png
+            source/evidence/h87-s02/report.json
+          if-no-files-found: error
+          retention-days: 7
