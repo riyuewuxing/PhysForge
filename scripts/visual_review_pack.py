@@ -3,7 +3,8 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 from urllib.parse import urlencode
@@ -172,7 +173,7 @@ def exact_parent_runs(args):
     """Search independent indexes; accept only exact parent SHA and audit workflow."""
     root = f"repos/{args.repo}/actions"
     primary = root + "/workflows/v31-polish-audit.yml/runs?" + urlencode(
-        {"head_sha": args.head, "status": "success", "per_page": 10})
+        {"head_sha": args.head, "status": "completed", "per_page": 10})
     queries = [primary]
     if args.base_branch:
         # The SHA-filtered index can omit a completed visual run. The branch
@@ -189,12 +190,151 @@ def exact_parent_runs(args):
         print("Baseline index candidates:", len(runs))
         for run in runs:
             if (run.get("head_sha") != args.head
-                    or run.get("conclusion") != "success"
+                    or run.get("status") != "completed"
+                    or run.get("conclusion") not in ("success", "failure")
                     or run.get("path", "").split("@", 1)[0] != ".github/workflows/v31-polish-audit.yml"
                     or run.get("id") in seen or not run.get("id")):
                 continue
             seen.add(run["id"])
             yield run
+
+
+BASELINE_MISSING = "required exact parent comparison unavailable"
+
+
+def unique_artifact(arts, name, run):
+    """Bind raw bytes to the exact run and immutable artifact ID."""
+    matches = [a for a in arts if not a.get("expired") and a.get("name") == name]
+    if len(matches) != 1:
+        raise ValueError("nonunique or missing artifact: " + name)
+    a = matches[0]
+    origin = a.get("workflow_run") or {}
+    if (origin.get("id") != run["id"] or origin.get("head_sha") != run["head_sha"]
+            or not isinstance(a.get("id"), int) or a["id"] <= 0
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", a.get("digest") or "")
+            or not isinstance(a.get("size_in_bytes"), int) or a["size_in_bytes"] <= 0):
+        raise ValueError("unverified artifact provenance: " + name)
+    return a
+
+
+def gh_verified_extract(repo, artifact, dest):
+    """Download the declared ZIP by ID, verify outer SHA/size/CRC, then extract."""
+    dest.mkdir(parents=True, exist_ok=False)
+    archive = dest.parent / (dest.name + ".zip")
+    try:
+        with archive.open("wb") as output:
+            subprocess.run(["gh", "api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip"],
+                           check=True, stdout=output, timeout=120)
+        if (archive.stat().st_size != artifact["size_in_bytes"]
+                or digest(archive) != artifact["digest"].removeprefix("sha256:")):
+            raise ValueError("raw artifact ZIP size or SHA-256 mismatch")
+        with zipfile.ZipFile(archive) as z:
+            infos = z.infolist()
+            names = [i.filename for i in infos]
+            if len(set(names)) != len(names) or z.testzip() is not None:
+                raise ValueError("artifact ZIP contains duplicate names or bad CRC")
+            for info in infos:
+                p = PurePosixPath(info.filename)
+                if (p.is_absolute() or ".." in p.parts or "\\" in info.filename
+                        or not p.parts or (info.external_attr >> 16) & 0o170000 == 0o120000):
+                    raise ValueError("unsafe artifact member")
+                if info.is_dir():
+                    continue
+                # Only retain evidence PNGs and the review manifest.
+                if p.suffix.lower() == ".png" or p.as_posix() == "manifest.json":
+                    z.extract(info, dest)
+    finally:
+        archive.unlink(missing_ok=True)
+
+
+def failed_capture_proof(repo, run):
+    """A failed run is not green; admit only independently successful capture jobs.
+    Restrict recovery to first-attempt PR runs with downstream review-only failures.
+    """
+    if run.get("event") != "pull_request" or run.get("run_attempt") != 1:
+        raise ValueError("failed source run attempt/event not proven")
+    data = gh_json(f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
+    jobs = data["jobs"]
+    if data.get("total_count") != len(jobs):
+        raise ValueError("incomplete job listing")
+    phases = {}
+    names = {f"Lossless bounded screenshot review ({p})" for p in ("online", "offline")}
+    failed = [j for j in jobs if j.get("conclusion") not in ("success", "skipped")]
+    if not failed or any(j.get("name") not in names or j.get("conclusion") != "failure"
+                         or j.get("status") != "completed" for j in failed):
+        raise ValueError("source contains non-review failures")
+    for phase in ("online", "offline"):
+        matches = [j for j in jobs if j.get("name") == f"visual ({phase})"]
+        if len(matches) != 1:
+            raise ValueError("nonunique capture job")
+        job = matches[0]
+        if (job.get("status") != "completed" or job.get("conclusion") != "success"
+                or job.get("head_sha") != run["head_sha"] or job.get("run_id") != run["id"]
+                or job.get("run_attempt") != 1 or not isinstance(job.get("id"), int)):
+            raise ValueError("capture job not successful for exact source")
+        required = ["Run actions/checkout@v4", "Run pnpm build", "Run pnpm audit:visual",
+                    "Run actions/upload-artifact@v4"]
+        if phase == "offline":
+            required.append("Run pnpm export:release --v3-audit")
+        for step in required:
+            found = [s for s in job.get("steps", []) if s.get("name") == step]
+            if len(found) != 1 or found[0].get("status") != "completed" or found[0].get("conclusion") != "success":
+                raise ValueError("capture step not successful: " + step)
+        phases[phase] = job["id"]
+    return phases
+
+
+def validate_failed_review(data, run, phase):
+    rows = data.get("images", [])
+    if (data.get("schema") != SCHEMA or data.get("head_sha") != run["head_sha"]
+            or data.get("phase") != phase or str(data.get("source", {}).get("run_id")) != str(run["id"])
+            or data.get("baseline_status") != "NOT_RUN"
+            or data.get("errors") != [BASELINE_MISSING] or data.get("targets_only")
+            or not rows or data.get("count") != len(rows) or data.get("selected_count") != len(rows)
+            or any(r.get("error") or r.get("change") != "NOT_RUN"
+                   or not isinstance(r.get("path"), str)
+                   or not re.fullmatch(r"[0-9a-f]{64}", r.get("sha256") or "")
+                   or not isinstance(r.get("bytes"), int) or r["bytes"] <= 0
+                   or not isinstance(r.get("size"), list) or len(r["size"]) != 2
+                   or any(not isinstance(v, int) or v <= 0 for v in r["size"]) for r in rows)
+            or len({r["path"] for r in rows}) != len(rows)
+            or not re.fullmatch(r"[0-9a-f]{40}", data.get("checkout_sha") or "")):
+        raise ValueError("review did not fail exclusively for the missing baseline")
+    return rows
+
+
+def recover_failed_capture(args, run, arts):
+    """Rebuild only a raw reference, not a passed review or release decision."""
+    proof = failed_capture_proof(args.repo, run)
+    review = unique_artifact(arts, f"v31-polish-review-manifest-{args.phase}", run)
+    raw = unique_artifact(arts, f"v31-polish-visual-{args.phase}", run)
+    dest = args.out / "_failed_capture" / str(run["id"])
+    manifest_dir = dest / "review"
+    gh_verified_extract(args.repo, review, manifest_dir)
+    data = json.loads((manifest_dir / "manifest.json").read_text(encoding="utf-8"))
+    rows = validate_failed_review(data, run, args.phase)
+    # A PR run normally checks out a synthetic merge. Prove that its tree is
+    # exactly the head's tree; a moving base must not silently alter evidence.
+    def tree(sha):
+        commit = gh_json(f"repos/{args.repo}/git/commits/{sha}")
+        if commit.get("sha") != sha:
+            raise ValueError("commit lookup returned wrong SHA")
+        return commit["tree"]["sha"]
+    if tree(data["checkout_sha"]) != tree(run["head_sha"]):
+        raise ValueError("capture checkout tree differs from exact head")
+    raw_dir = dest / "raw"
+    gh_verified_extract(args.repo, raw, raw_dir)
+    fields = ("path", "bytes", "sha256", "size")
+    identity = lambda rs: sorted(tuple(r[k] if k != "size" else tuple(r[k]) for k in fields) for r in rs)
+    actual = scan(raw_dir)
+    if any("error" in r for r in actual) or identity(actual) != identity(rows):
+        raise ValueError("raw PNG set/bytes/size differs from original review index")
+    return pack(raw_dir, args.out, args.head, args.phase, args.prefixes, targets_only=True,
+                source={"kind": "verified_raw_capture_from_failed_review",
+                        "run_id": run["id"], "run_conclusion": run["conclusion"],
+                        "capture_job_id": proof[args.phase], "artifact_id": raw["id"],
+                        "github_declared_digest": raw["digest"], "review_artifact_id": review["id"],
+                        "review_digest": review["digest"], "verified_checkout_sha": data["checkout_sha"]})
 
 
 def resolve_base(args):
@@ -204,6 +344,16 @@ def resolve_base(args):
     try:
         for run in exact_parent_runs(args):
             arts = gh_json(f"repos/{args.repo}/actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
+            if run["conclusion"] == "failure":
+                try:
+                    m = recover_failed_capture(args, run, arts)
+                    if not m["errors"]:
+                        print("Exact raw parent recovered; original review remains failed:", run["id"])
+                        return 0
+                    print("Recovered parent pack invalid:", m["errors"], file=sys.stderr)
+                except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile) as exc:
+                    print("Failed-review capture rejected:", str(exc), file=sys.stderr)
+                continue
             small = next((a for a in arts if not a["expired"] and
                           a["name"] == f"v31-polish-review-manifest-{args.phase}"), None)
             if small:
@@ -266,7 +416,7 @@ def main():
     if a.require_baseline and baseline is None:
         # Keep all current PNGs and a useful manifest even on failure, but
         # never allow a required comparison that did not run to turn green.
-        m["errors"].append("required exact parent comparison unavailable")
+        m["errors"].append(BASELINE_MISSING)
         dump(a.out / "manifest.json", m)
         print(m["errors"][-1], file=sys.stderr)
     return int(bool(m["errors"]))
