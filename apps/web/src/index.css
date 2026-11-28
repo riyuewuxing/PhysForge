@@ -348,7 +348,9 @@ input[type="range"].pf-slider::-moz-range-thumb {
 /* V3 live formula touch targets and independent scrub HUD. */
 .pf-live-var { padding:3px 6px; touch-action:none; user-select:none; cursor:ew-resize; border-bottom:1px dashed #38bdf8; color:#7dd3fc; }
 .pf-live-var--dragging { background:rgba(56,189,248,.18); border-radius:4px; }
-.pf-live-formula-markup { text-align:center; font-size:.9rem; }
+/* Touch-action must live on a box to which it applies; KaTeX's non-replaced
+   inline token alone cannot prevent the browser taking over a drag. */
+.pf-live-formula-markup { text-align:center; font-size:.9rem; touch-action:none; }
 .pf-live-formula-markup .katex-display { margin:.3rem 0; }
 /* KaTeX's second vlist row is an empty depth strut, painted above fraction
    denominators. It must not intercept a real formula token's pointer. */
