@@ -98,12 +98,51 @@ async function run(base,width,id,preset){
  }catch(e){report.issues.push(String(e?.stack||e));await page.screenshot({path:path.join(out,width+'-'+id+'-failure.png')}).catch(()=>{});}
  finally{await context.close();}
 }
+async function runE10(base,width){
+ const ctx=await browser.newContext({viewport:{width,height:width===1024?768:900},deviceScaleFactor:1,serviceWorkers:'block'});
+ const page=await ctx.newPage();page.setDefaultTimeout(15000);
+ page.on('pageerror',e=>report.errors.push(e.message));page.on('console',m=>{if(m.type()==='error')report.errors.push(m.text());});
+ page.on('request',r=>{if(/^https?:/.test(r.url())&&!r.url().startsWith('http://127.0.0.1:'))report.external.push(r.url());});
+ try{
+  await page.goto(base+'?model=em-3d-magnetic-fields&preset=finite-solenoid-3d',{waitUntil:'networkidle'});
+  await page.waitForFunction(()=>document.querySelector('[data-testid="app-shell"]')?.dataset.modelId==='em-3d-magnetic-fields');
+  const stage=page.getByTestId('three-stage-container');
+  await page.getByTestId('btn-fullscreen-speech').click();
+  const toggle=page.getByTestId('btn-view-3d-fullscreen');
+  if((await toggle.innerText()).includes('3D 空间'))await toggle.click();
+  await stage.waitFor({state:'visible'});
+  const settle=async(mode)=>{
+   await page.waitForFunction(mode=>{const d=document.querySelector('[data-testid="three-stage-container"]')?.dataset;const b=JSON.parse(d?.e10SolenoidBounds||'null');return b?.mode===mode&&d.e10AutoFit==='true'&&d.fieldLineCount==='33'&&d.conductorCount==='10'&&b.fitOverlaps===0&&b.overlays.length>=3;},mode);
+   const r=await stage.evaluate(n=>{
+    const d=n.dataset,b=JSON.parse(d.e10SolenoidBounds),r=n.getBoundingClientRect();
+    return {b,width:r.width,height:r.height,t:Number(d.simTime),speed:Number(d.speed),force:Number(d.lorentzForceMagnitude),trail:Number(d.trailPoints),fieldLines:Number(d.fieldLineCount),conductors:Number(d.conductorCount),particle:JSON.parse(d.e10ParticleProjection||'null')};
+   });
+   const key=width+'-E10-'+mode;
+   check(r.b.body.visible&&r.b.body.left>=r.b.safe.left&&r.b.body.right<=r.b.safe.right&&r.b.body.top>=r.b.safe.top&&r.b.body.bottom<=r.b.safe.bottom,key+': actual body fit');
+   if(mode==='domain')check(r.b.bounds.visible&&r.b.overlaps===0,key+': full field visible and clear');
+   check([r.t,r.speed,r.force,r.trail].every(Number.isFinite)&&r.speed>0,key+': real physical telemetry');
+   await page.screenshot({path:path.join(out,key+'.png')});
+   return r;
+  };
+  const domain=await settle('domain');
+  await page.getByTestId('e10-frame-body').click();const body=await settle('body');
+  await page.getByTestId('e10-frame-domain').click();const again=await settle('domain');
+  const phys=r=>[r.t,r.speed,r.force,r.trail,r.fieldLines,r.conductors,r.b.samples,r.b.bodySamples];
+  check(JSON.stringify(phys(domain))===JSON.stringify(phys(body))&&JSON.stringify(phys(domain))===JSON.stringify(phys(again)),width+': camera never changes physical state or scene samples');
+  const bodyWidth=r=>r.b.body.right-r.b.body.left;
+  check(bodyWidth(body)>bodyWidth(domain),width+': body mode increases actual projected conductor width');
+  check(Math.abs(bodyWidth(again)-bodyWidth(domain))<1,width+': domain return width deterministic');
+  report.e10??=[];report.e10.push({width,domain,body,again});
+ }catch(e){report.issues.push(String(e?.stack||e));await page.screenshot({path:path.join(out,width+'-E10-failure.png')}).catch(()=>{});}
+ finally{await ctx.close();}
+}
 try{
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
  const base='http://127.0.0.1:'+server.address().port+'/PhysForge/';
  browser=await chromium.launch({headless:true});
  for(const w of [1024,1440])for(const [id,preset] of [['em-capacitor-millikan','capacitor-reversed-polarity'],['stse-em-devices-suite','velocity-selector-spectrometer'],['builder-optics-ray',null]])await run(base,w,id,preset);
+ for(const w of [1024,1440])await runE10(base,w);
 }catch(e){report.issues.push(String(e?.stack||e));}
 finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));}
-if(report.issues.length||report.errors.length||report.external.length||report.camera.length!==2||report.cases.filter(x=>x.key.endsWith('-stage')).length!==12)throw Error(JSON.stringify(report));
+if(report.issues.length||report.errors.length||report.external.length||report.camera.length!==2||report.e10?.length!==2||report.cases.filter(x=>x.key.endsWith('-stage')).length!==12)throw Error(JSON.stringify(report));
 console.log('H88 title and capacitor camera cases verified');
