@@ -478,3 +478,17 @@ input[type="range"].pf-slider::-moz-range-thumb {
 [data-s01-palette="projector"] [data-testid="mirror-loss-cone"] .text-amber-300 { color:#92400e; }
 [data-s01-palette="projector"] [data-testid="mirror-loss-cone"] .text-sky-300 { color:#075985; }
 [data-s01-palette="projector"] [data-testid="mirror-loss-cone"] .text-pink-300 { color:#9f1239; }
+
+[data-s01-palette="projector"] [data-physical-axis="X"] line { stroke:#be123c; }
+[data-s01-palette="projector"] [data-physical-axis="X"] polygon,
+[data-s01-palette="projector"] [data-physical-axis="X"] text { fill:#be123c; }
+[data-s01-palette="projector"] [data-physical-axis="Y"] line { stroke:#166534; }
+[data-s01-palette="projector"] [data-physical-axis="Y"] polygon,
+[data-s01-palette="projector"] [data-physical-axis="Y"] text { fill:#166534; }
+[data-s01-palette="projector"] [data-physical-axis="Z"] line { stroke:#075985; }
+[data-s01-palette="projector"] [data-physical-axis="Z"] polygon,
+[data-s01-palette="projector"] [data-physical-axis="Z"] text { fill:#075985; }
+[data-s01-palette="projector"] [data-testid="mirror-loss-cone"] svg [stroke="#4ade80"] { stroke:#166534; }
+[data-s01-palette="projector"] [data-testid="mirror-loss-cone"] svg [stroke="#94a3b8"] { stroke:#475569; }
+[data-s01-palette="projector"] [data-testid="mirror-loss-cone"] svg [fill="#86efac"] { fill:#166534; }
+[data-s01-palette="projector"] [data-testid="mirror-loss-cone"] svg [fill="#cbd5e1"] { fill:#475569; }
