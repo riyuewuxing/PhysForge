@@ -101,10 +101,16 @@ async function formulaCase(page,key){
  check(Number(await bSlider.inputValue())===B,key+': magnetic field unchanged');
  report.cases.push({key,kind:'formula',before,B,target,initial,samples,finalHold,after});
 }
+async function toggleWorkbench3d(page){
+ const tools=page.getByTestId('tools-menu'),button=page.getByTestId('btn-tools-menu');
+ if(!await tools.isVisible())await button.click();
+ await page.getByTestId('btn-view-3d').click();
+ if(await tools.isVisible())await button.click();
+}
 async function cameraCase(page,key,preset){
  await load(page,'stse-tokamak-magnetic-mirror',preset);
  const stage=page.getByTestId('three-stage-container');
- if(!await stage.isVisible())await page.getByTestId('btn-view-3d').click();
+ if(!await stage.isVisible())await toggleWorkbench3d(page);
  const read=async()=>{
    await page.waitForFunction(()=>{const d=document.querySelector('[data-testid="three-stage-container"]')?.dataset;return d?.morphT==='0'&&d.s01OrbitPhase==='idle'&&!!d.s01CameraPose&&!!d.s01Rendered;},null,{timeout:25000});
    return stage.evaluate(n=>({state:JSON.parse(n.dataset.s01Rendered),pose:JSON.parse(n.dataset.s01CameraPose),auto:n.dataset.s01AutoFit,axis:n.querySelector('[data-magnetic-axis-widget]')?.getAttribute('data-axis-orientation'),bounds:JSON.parse(n.dataset.s01ScreenBounds),width:n.clientWidth,height:n.clientHeight,palette:n.dataset.s01Palette}));
@@ -137,16 +143,16 @@ async function cameraCase(page,key,preset){
  const vp=page.viewportSize();
  await page.setViewportSize({width:vp.width===1024?1280:1100,height:vp.height+35});
  await page.waitForFunction(old=>document.querySelector('[data-testid="three-stage-container"]')?.clientWidth!==old,manual.width);
- const resized=await read();
  // Resizing is allowed to change projection; after real new render it must
  // still preserve physical state, manual ownership, and permit a gesture.
  await page.waitForFunction(p=>{const n=document.querySelector('[data-testid="three-stage-container"]');return !!n?.dataset.s01CameraPose&&n.dataset.s01CameraPose!==p;},JSON.stringify(manual.pose));
+ const resized=await read();
+ check(resized.width!==manual.width&&resized.auto==='false',key+': actual resize rendered with manual ownership');
  const moved=await orbit();
  const changedTheme=await theme(),restored=await theme();
  check(same(moved.pose,changedTheme.pose)&&same(moved.pose,restored.pose)&&moved.axis===changedTheme.axis&&moved.axis===restored.axis,key+': resized manual camera theme invariant');
  await snap(page,key+'-resized');
- const btn=page.getByTestId('btn-view-3d');
- await btn.click();
+ await toggleWorkbench3d(page);
  await stage.waitFor({state:'detached',timeout:25000});
  const flat=page.getByTestId('simulation-canvas');
  await flat.waitFor({state:'visible'});
@@ -154,7 +160,7 @@ async function cameraCase(page,key,preset){
  const flatEvidence=await flat.evaluate(n=>({auto:n.dataset.s01AutoFit,time:n.dataset.s01Time,bounds:JSON.parse(n.dataset.s01ScreenBounds||'null')}));
  check(Math.abs(Number(flatEvidence.time)-moved.state.t)<1e-9,key+': manual 3D to flat preserves physical clock');
  await snap(page,key+'-flat');
- await btn.click();
+ await toggleWorkbench3d(page);
  await stage.waitFor({state:'visible'});
  const reentered=await read();
  check(reentered.auto==='false',key+': flat to spatial preserves manual ownership');
