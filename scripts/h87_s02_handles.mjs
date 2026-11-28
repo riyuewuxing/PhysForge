@@ -24,7 +24,31 @@ async function run(base,width){
  page.on('pageerror',e=>report.errors.push(e.message));page.on('console',m=>{if(m.type()==='error')report.errors.push(m.text());});
  page.on('request',r=>{if(/^https?:/.test(r.url())&&!r.url().startsWith('http://127.0.0.1:'))report.external.push(r.url());});
  await page.addInitScript(()=>{
-  document.addEventListener('pointermove',e=>{if(e.buttons===1)window.__s02LastMove=performance.now();},true);
+  // Observe before the last input, independently of screenshot/protocol latency.
+  let activePointer=null,sequence=0,lastMove=0,raf=0;
+  window.__s02Frames=[];
+  function frame(){
+   raf=0;if(activePointer===null)return;
+   const hud=[...document.querySelectorAll('[data-testid="live-formula-hud"]')].find(n=>!n.hidden);
+   const hudValue=Number(hud?.textContent?.match(/E:\s*([\d.]+)\s*V\/m/)?.[1]);
+   const formula=[...document.querySelectorAll('[data-testid="fullscreen-formula"] annotation')].map(n=>n.textContent);
+   window.__s02Frames.push({sequence,ms:performance.now()-lastMove,hudValue,paint:window.__s02Paint??null,eHandle:window.__s02HandleE??null,formula});
+   raf=requestAnimationFrame(frame);
+  }
+  document.addEventListener('pointerdown',e=>{
+   if(e.button!==0||!(e.target instanceof Element)||!e.target.closest('.pf-live-var'))return;
+   if(raf)cancelAnimationFrame(raf);
+   activePointer=e.pointerId;sequence=0;lastMove=performance.now();window.__s02Frames=[];
+   window.__s02Sequence=sequence;raf=requestAnimationFrame(frame);
+  },true);
+  document.addEventListener('pointermove',e=>{
+   if(e.pointerId!==activePointer||e.buttons!==1)return;
+   sequence++;lastMove=performance.now();window.__s02Sequence=sequence;
+  },true);
+  for(const type of ['pointerup','pointercancel','lostpointercapture'])document.addEventListener(type,e=>{
+   if(e.pointerId!==activePointer)return;
+   activePointer=null;if(raf)cancelAnimationFrame(raf);raf=0;
+  },true);
   const original=CanvasRenderingContext2D.prototype.fillText;
   CanvasRenderingContext2D.prototype.fillText=function(text,...args){
    if(this.canvas.dataset.testid==='simulation-canvas'&&typeof text==='string'){
@@ -67,23 +91,23 @@ async function run(base,width){
    const latex='v_s='+(Number(exponent)===0?mantissa:mantissa+'\\times10^{'+Number(exponent)+'}')+'\\text{ m/s}';
    const handle='E='+(preview/1e5).toFixed(1)+'×10⁵ V/m';
    const series=await page.evaluate(({preview,rounded,latex,handle})=>new Promise(resolve=>{
-    const origin=window.__s02LastMove??performance.now(),samples=[];
-    const start=performance.now();let stable=0,firstMatch=null;
-    function sample(now){
-     const hud=[...document.querySelectorAll('[data-testid="live-formula-hud"]')].find(n=>!n.hidden);
-     const hudValue=Number(hud?.textContent?.match(/E:\s*([\d.]+)\s*V\/m/)?.[1]);
-     const paint=window.__s02Paint??null;
-     const eHandle=window.__s02HandleE??null;
-     const formula=[...document.querySelectorAll('[data-testid="fullscreen-formula"] annotation')].map(n=>n.textContent);
-     const match=hudValue===preview&&paint?.includes('= '+rounded+' m/s')&&formula.includes(latex)&&eHandle===handle;
-     samples.push({ms:now-origin,hudValue,paint,eHandle,formula,match});
-     if(match){stable++;if(firstMatch===null)firstMatch=now-origin;}else stable=0;
-     if(stable>=3||now-start>=400)resolve({samples,firstMatch,stable,lastMove:origin});else requestAnimationFrame(sample);
-    }requestAnimationFrame(sample);
+    const sequence=window.__s02Sequence,start=performance.now();
+    function sample(){
+     const all=(window.__s02Frames??[]).filter(s=>s.sequence===sequence);
+     const samples=all.map(s=>({...s,match:s.hudValue===preview&&s.paint?.includes('= '+rounded+' m/s')&&s.formula.includes(latex)&&s.eHandle===handle}));
+     let stable=0,firstMatch=null,reverted=false;
+     for(const s of samples){
+      if(s.match){stable++;if(firstMatch===null)firstMatch=s.ms;}
+      else{if(firstMatch!==null)reverted=true;stable=0;}
+     }
+     if(stable>=3||performance.now()-start>=400)resolve({sequence,samples,firstMatch,stable,reverted,firstSample:samples[0]?.ms??null});else requestAnimationFrame(sample);
+    }sample();
    }),{preview,rounded:expected.toFixed(0),latex,handle});
    report.hold??=[];report.hold.push({width,preview,B,expected,latex,handle,...series});
    check(series.stable>=3,width+': held pointer HUD, actual Canvas E, Canvas v and formula converge for three frames');
    check(series.firstMatch!==null&&series.firstMatch<=250,width+': held preview convergence <=250 ms from last pointer move');
+   check(series.sequence>0&&series.firstSample!==null&&series.firstSample<=80,width+': early frame sampling after actual pointer move');
+   check(!series.reverted,width+': no held-value reversion after first matching sample');
    await page.screenshot({path:path.join(out,width+'-held.png')});
   }finally{await page.mouse.up();}
   await hud.waitFor({state:'hidden'});
