@@ -1,0 +1,55 @@
+name: H88 exact-source S02 electric-label clearance and actual drag
+on:
+  pull_request:
+    branches: ['polish/v31-h88-s02-electric-label']
+permissions:
+  contents: read
+jobs:
+  audit:
+    if: startsWith(github.event.pull_request.head.ref, 'audit/h88-s02-electric-label')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 9e9d15dccef13ccbbdd0a4134e58d9e4eb98f2e4
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "9e9d15dccef13ccbbdd0a4134e58d9e4eb98f2e4"
+          cp audit/scripts/h88_s02_electric_label.mjs source/scripts/
+          sha256sum source/scripts/h88_s02_electric_label.mjs
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h88_s02_electric_label.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: 9e9d15dccef13ccbbdd0a4134e58d9e4eb98f2e4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-s02-electric-label-evidence
+          path: |
+            source/evidence/h88-s02/*.png
+            source/evidence/h88-s02/report.json
+          if-no-files-found: error
+          retention-days: 7
