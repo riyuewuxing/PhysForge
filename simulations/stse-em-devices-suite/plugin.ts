@@ -527,10 +527,33 @@ export const stseEmDevicesSuitePlugin = Object.assign(defineSimulationPlugin<EmD
       ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
       ctx.moveTo(b.x-size*Math.cos(angle-.45),b.y-size*Math.sin(angle-.45));ctx.lineTo(b.x,b.y);
       ctx.lineTo(b.x-size*Math.cos(angle+.45),b.y-size*Math.sin(angle+.45));ctx.stroke();
-      ctx.font='600 12px system-ui, sans-serif';ctx.fillText(cue.label,(a.x+b.x)/2+6,(a.y+b.y)/2-8);
+      ctx.font='600 12px system-ui, sans-serif';
+      // The MHD current arrow sits immediately below the presentation readout.
+      // Label its right end instead of painting into the readout's second line.
+      if(cue.id==='mhd-load-current'){
+        ctx.fillText(cue.label,Math.max(a.x,b.x)+8,(a.y+b.y)/2+4);
+      }else{
+        ctx.fillText(cue.label,(a.x+b.x)/2+6,(a.y+b.y)/2-8);
+      }
     }
     ctx.fillStyle=annotation;ctx.font='12px system-ui, sans-serif';ctx.textAlign='center';
-    for (const label of diagram.labels) { const p=m.toScreen(label.x,label.y);const terminal=/^(上|下) /.test(label.text);ctx.fillStyle=terminal?(projector?'#0f172a':'#f8fafc'):annotation;ctx.font=terminal?'bold 14px system-ui, sans-serif':'12px system-ui, sans-serif';ctx.fillText(label.text,p.x,p.y); }
+    for (const label of diagram.labels) {
+      const p=m.toScreen(label.x,label.y);
+      const terminal=/^(上|下) /.test(label.text);
+      ctx.fillStyle=terminal?(projector?'#0f172a':'#f8fafc'):annotation;
+      ctx.font=terminal?'bold 14px system-ui, sans-serif':'12px system-ui, sans-serif';
+      let baseline=p.y;
+      if(params.device==='mhd-generator'&&label.text.startsWith('下 ')){
+        // Clear the actual lower electrode and its conductor, in CSS pixels.
+        // Leave the shared world geometry (including 3D and DiagramIR) intact.
+        const electrode=diagram.parts.find(part=>part.id==='mhd-electrode-lower');
+        if(electrode){
+          const edge=m.toScreen(label.x,electrode.y-electrode.height/2).y;
+          baseline=edge+ctx.measureText(label.text).actualBoundingBoxAscent+4;
+        }
+      }
+      ctx.fillText(label.text,p.x,baseline);
+    }
     ctx.textAlign='left';
 
     // RF arrow above the actual gap; direction from the current RF voltage.
