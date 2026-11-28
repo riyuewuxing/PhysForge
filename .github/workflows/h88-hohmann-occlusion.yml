@@ -1,0 +1,55 @@
+name: H88 Hohmann screen occlusion diagnostic
+on:
+  pull_request:
+    branches: ['polish/v31-h88-formula-hit-ownership']
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    if: github.event.pull_request.head.ref == 'audit/h88-hohmann-occlusion'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 9f814af61b5023f0af3a8aad13110991acab17ef
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_HEAD"
+          cp audit/scripts/h88_hohmann_occlusion.mjs source/scripts/
+          git -C source diff --exit-code
+        env:
+          SOURCE_HEAD: 9f814af61b5023f0af3a8aad13110991acab17ef
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h88_hohmann_occlusion.mjs
+        working-directory: source
+        timeout-minutes: 3
+        env:
+          SOURCE_HEAD: 9f814af61b5023f0af3a8aad13110991acab17ef
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-hohmann-occlusion
+          path: source/evidence/h88-hohmann/
+          if-no-files-found: error
+          retention-days: 7
