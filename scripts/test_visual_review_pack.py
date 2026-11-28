@@ -1,4 +1,6 @@
 import json
+import hashlib
+import subprocess
 import sys
 from pathlib import Path
 import tempfile
@@ -9,7 +11,9 @@ import zipfile
 
 from PIL import Image
 
-from visual_review_pack import exact_parent_runs, main, pack, read_baseline, resolve_base
+from visual_review_pack import (BASELINE_MISSING, exact_parent_runs, failed_capture_proof,
+    gh_verified_extract, main, pack, read_baseline, recover_failed_capture,
+    resolve_base, scan, unique_artifact, validate_failed_review)
 
 
 class ReviewPackTests(unittest.TestCase):
@@ -74,14 +78,14 @@ class ReviewPackTests(unittest.TestCase):
                                    prefixes=[], out=out)
             path = ".github/workflows/v31-polish-audit.yml"
             def run(i, sha="parent", workflow=path, conclusion="success"):
-                return dict(id=i, head_sha=sha, path=workflow, conclusion=conclusion)
+                return dict(id=i, head_sha=sha, path=workflow, status='completed', conclusion=conclusion)
             def index(query):
                 if "head_sha=" in query:
                     return {"workflow_runs": []}
                 if "branch=" in query:
                     self.assertIn("polish%2Fparent", query)
                     return {"workflow_runs": [run(1, "newer"), run(2, workflow=".github/workflows/ci.yml"),
-                                              run(3, conclusion="failure"), run(4)]}
+                                              run(3, conclusion="cancelled"), run(4)]}
                 self.assertIn("/runs/4/artifacts", query)
                 return {"artifacts": [{"id": 7, "expired": False,
                                        "name": "v31-polish-review-manifest-online"}]}
@@ -101,7 +105,7 @@ class ReviewPackTests(unittest.TestCase):
     def test_no_exact_parent_does_not_use_branch_latest(self):
         args = SimpleNamespace(repo="owner/repo", head="parent", base_branch="polish/parent")
         with patch("visual_review_pack.gh_json", return_value={"workflow_runs": [
-            dict(id=7, head_sha="newer", conclusion="success",
+            dict(id=7, head_sha="newer", status="completed", conclusion="success",
                  path=".github/workflows/v31-polish-audit.yml")]}):
             self.assertEqual(list(exact_parent_runs(args)), [])
 
@@ -185,6 +189,176 @@ class ReviewPackTests(unittest.TestCase):
             self.assertTrue(m2["errors"])
             self.assertEqual(m2["batches"], [])
 
+
+
+class FailedReviewRecoveryTests(unittest.TestCase):
+    HEAD = "a" * 40
+    CHECKOUT = "b" * 40
+    TREE = "c" * 40
+    RUN = 23
+
+    def run_meta(self):
+        return dict(id=self.RUN, head_sha=self.HEAD, status="completed",
+                    conclusion="failure", event="pull_request", run_attempt=1,
+                    path=".github/workflows/v31-polish-audit.yml")
+
+    def jobs(self):
+        rows = []
+        for i, phase in enumerate(("online", "offline")):
+            steps = ["Run actions/checkout@v4", "Run pnpm build",
+                     "Run pnpm audit:visual", "Run actions/upload-artifact@v4"]
+            if phase == "offline":
+                steps.append("Run pnpm export:release --v3-audit")
+            rows.append(dict(id=100+i, name=f"visual ({phase})", status="completed",
+                conclusion="success", head_sha=self.HEAD, run_id=self.RUN, run_attempt=1,
+                steps=[dict(name=n, status="completed", conclusion="success") for n in steps]))
+            rows.append(dict(id=200+i, name=f"Lossless bounded screenshot review ({phase})",
+                             status="completed", conclusion="failure"))
+        return dict(total_count=len(rows), jobs=rows)
+
+    def artifact(self, path, name, id):
+        raw = path.read_bytes()
+        return dict(id=id, name=name, expired=False, size_in_bytes=len(raw),
+                    digest="sha256:"+hashlib.sha256(raw).hexdigest(),
+                    workflow_run=dict(id=self.RUN, head_sha=self.HEAD))
+
+    def fixture(self, root):
+        raw = root / "fixture"
+        raw.mkdir()
+        Image.new("RGB", (30, 24), "red").save(raw / "one.png")
+        (raw/"nested").mkdir()
+        Image.new("RGB", (20, 15), "blue").save(raw / "nested/two.png")
+        manifest = dict(schema=1, head_sha=self.HEAD, checkout_sha=self.CHECKOUT,
+                        phase="online", source=dict(run_id=str(self.RUN)), targets_only=False,
+                        baseline_status="NOT_RUN", errors=[BASELINE_MISSING], count=2,
+                        selected_count=2, images=[dict(r, change="NOT_RUN") for r in scan(raw)])
+        rz = root / "raw.zip"
+        mz = root / "manifest.zip"
+        with zipfile.ZipFile(rz,"w") as z:
+            for p in raw.rglob("*.png"):
+                z.write(p, p.relative_to(raw).as_posix())
+        with zipfile.ZipFile(mz,"w") as z:
+            z.writestr("manifest.json", json.dumps(manifest))
+        arts = [self.artifact(rz, "v31-polish-visual-online", 1),
+                self.artifact(mz, "v31-polish-review-manifest-online", 2)]
+        args = SimpleNamespace(repo="owner/repo",head=self.HEAD,phase="online",
+                               prefixes=[],out=root/"out",base_branch="polish/v31-parent")
+        return args, arts, {1:rz, 2:mz}
+
+    def fake_subprocess(self, archives):
+        def run(command, **kwargs):
+            self.assertEqual(command[:2], ["gh", "api"])
+            artifact_id = int(command[-1].split("/")[-2])
+            kwargs["stdout"].write(archives[artifact_id].read_bytes())
+            return subprocess.CompletedProcess(command,0)
+        return run
+
+    def fake_gh_json(self, query, jobs=None, mismatched_tree=False, arts=None):
+        if "/jobs?" in query:
+            return jobs if jobs is not None else self.jobs()
+        if "/git/commits/" in query:
+            sha = query.rsplit("/",1)[-1]
+            return dict(sha=sha, tree=dict(sha="d"*40 if mismatched_tree and sha==self.CHECKOUT else self.TREE))
+        if query.endswith("/artifacts?per_page=100"):
+            return dict(artifacts=arts or [])
+        if "/runs?" in query:
+            self.assertTrue("status=completed" in query or "branch=" in query)
+            return dict(workflow_runs=[self.run_meta()])
+        raise AssertionError(query)
+
+    def test_verified_failed_parent_recovers_full_original_png_index_not_release(self):
+        with tempfile.TemporaryDirectory() as td:
+            args, arts, archives = self.fixture(Path(td))
+            with patch("visual_review_pack.gh_json",side_effect=lambda q:self.fake_gh_json(q,arts=arts)), \
+                 patch("visual_review_pack.subprocess.run",side_effect=self.fake_subprocess(archives)):
+                self.assertEqual(resolve_base(args),0)
+            data=read_baseline(args.out/"manifest.json",self.HEAD,"online")
+            self.assertIsNotNone(data)
+            self.assertEqual(data["count"],2)
+            self.assertEqual(data["baseline_status"],"NOT_RUN")
+            self.assertEqual(data["source"]["run_conclusion"],"failure")
+            self.assertEqual(data["source"]["capture_job_id"],100)
+            self.assertEqual(data["source"]["artifact_id"],1)
+            self.assertEqual(data["source"]["verified_checkout_sha"],self.CHECKOUT)
+            self.assertEqual({r["path"] for r in data["images"]},{"one.png","nested/two.png"})
+
+    def test_wrong_run_or_sha_or_ambiguous_artifact_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            args, arts, _ = self.fixture(Path(td))
+            name=arts[0]["name"]
+            for other in (dict(id=99,head_sha=self.HEAD),dict(id=self.RUN,head_sha="f"*40)):
+                a=dict(arts[0],workflow_run=other)
+                with self.assertRaises(ValueError):
+                    unique_artifact([a],name,self.run_meta())
+            with self.assertRaises(ValueError):
+                unique_artifact([arts[0],arts[0]],name,self.run_meta())
+
+    def test_failed_capture_or_non_review_failure_rejected(self):
+        for case in ("raw_failure","wrong_sha","missing_export","non_review_failure","duplicate_job","incomplete"):
+            jobs=self.jobs()
+            if case=="raw_failure":
+                jobs["jobs"][0]["conclusion"]="failure"
+            elif case=="wrong_sha":
+                jobs["jobs"][0]["head_sha"]="f"*40
+            elif case=="missing_export":
+                jobs["jobs"][2]["steps"][-1]["conclusion"]="skipped"
+            elif case=="non_review_failure":
+                jobs["jobs"].append(dict(name="other",status="completed",conclusion="failure"))
+                jobs["total_count"]+=1
+            elif case=="duplicate_job":
+                jobs["jobs"].append(jobs["jobs"][0])
+                jobs["total_count"]+=1
+            elif case=="incomplete":
+                jobs["total_count"]+=1
+            with self.subTest(case=case),patch("visual_review_pack.gh_json",return_value=jobs):
+                with self.assertRaises(ValueError):
+                    failed_capture_proof("owner/repo",self.run_meta())
+        with self.assertRaises(ValueError):
+            failed_capture_proof("owner/repo",dict(self.run_meta(),run_attempt=2))
+
+    def test_review_manifest_must_be_baseline_only_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            args, arts, archives = self.fixture(Path(td))
+            with zipfile.ZipFile(archives[2]) as z:
+                manifest=json.loads(z.read("manifest.json"))
+            for changes in (dict(errors=[BASELINE_MISSING,"PNG corrupt"]),
+                            dict(phase="offline"),dict(head_sha="f"*40),
+                            dict(source=dict(run_id="other")),dict(count=3),
+                            dict(selected_count=1),dict(baseline_status="COMPARED"),
+                            dict(checkout_sha="bad")):
+                with self.subTest(changes=changes),self.assertRaises(ValueError):
+                    validate_failed_review(dict(manifest,**changes),self.run_meta(),"online")
+
+    def test_bad_digest_and_unsafe_member_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            args, arts, archives = self.fixture(root)
+            with patch("visual_review_pack.subprocess.run",side_effect=self.fake_subprocess(archives)):
+                with self.assertRaises(ValueError):
+                    gh_verified_extract(args.repo,dict(arts[0],digest="sha256:"+"0"*64),root/"bad-digest")
+                with self.assertRaises(ValueError):
+                    gh_verified_extract(args.repo,dict(arts[0],size_in_bytes=1),root/"bad-size")
+            unsafe=root/"unsafe.zip"
+            with zipfile.ZipFile(unsafe,"w") as z:
+                z.writestr("../escape.png",b"bad")
+            a=self.artifact(unsafe,"unsafe",3)
+            with patch("visual_review_pack.subprocess.run",side_effect=self.fake_subprocess({3:unsafe})):
+                with self.assertRaises(ValueError):
+                    gh_verified_extract(args.repo,a,root/"unsafe-extract")
+            self.assertFalse((root/"escape.png").exists())
+
+    def test_wrong_checkout_tree_and_raw_manifest_mismatch_fail_closed(self):
+        for case in ("tree","raw"):
+            with self.subTest(case=case),tempfile.TemporaryDirectory() as td:
+                args, arts, archives=self.fixture(Path(td))
+                if case=="raw":
+                    with zipfile.ZipFile(archives[1],"a") as z:
+                        z.writestr("unexpected.png",b"not a PNG")
+                    arts[0]=self.artifact(archives[1],arts[0]["name"],1)
+                with patch("visual_review_pack.gh_json",side_effect=lambda q:self.fake_gh_json(q,mismatched_tree=case=="tree",arts=arts)), \
+                     patch("visual_review_pack.subprocess.run",side_effect=self.fake_subprocess(archives)):
+                    self.assertEqual(resolve_base(args),0)
+                self.assertIsNone(read_baseline(args.out/"manifest.json",self.HEAD,"online"))
 
 if __name__ == "__main__":
     unittest.main()
