@@ -1,0 +1,47 @@
+name: H88 exact-source legacy offline replay
+on:
+  pull_request:
+    branches: ['polish/v31-h88-s01-projector-camera-quiescent']
+permissions:
+  contents: read
+jobs:
+  legacy-scope:
+    if: github.event.pull_request.head.ref == 'audit/h88-exact-offline-replay'
+    name: Offline browser ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [builder-composite-em-field, em-induction-double-rod, stse-em-devices-suite, stse-tokamak-magnetic-mirror, astro-orbital-mechanics]
+    env:
+      SOURCE_HEAD: 26e0f5f06d79149e12c7b792aac4d22598a87b87
+      MODEL: ${{ matrix.model }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 26e0f5f06d79149e12c7b792aac4d22598a87b87
+      - run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          test "$(git hash-object scripts/h64_legacy_scope_audit.mjs)" = "16e6558021fa2c89d0afb88ca5ab2e625ea37301"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/h64_legacy_scope_audit.mjs
+        timeout-minutes: 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-offline-${{ matrix.model }}
+          path: |
+            evidence/scope/*.png
+            evidence/scope/*.html
+            evidence/scope/report.json
+          if-no-files-found: error
+          retention-days: 7
