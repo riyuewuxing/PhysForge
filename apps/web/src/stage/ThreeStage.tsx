@@ -51,6 +51,7 @@ interface ThreeStageProps {
   readonly activeLayers: ReadonlySet<string>;
   readonly getFrameLayers?: () => ReadonlySet<string>;
   readonly presentationMode?: boolean;
+  readonly theme?: 'chalkboard' | 'projector';
   readonly morphTarget?: 0 | 1;
   readonly initialFlatViewport?: Viewport;
   readonly onMorphProgress?: (progress: number) => void;
@@ -100,7 +101,12 @@ const magneticAxisColors = [
 
 function updateMagneticAxisWidget(widget:SVGSVGElement,camera:THREE.Camera,directPhysicalAxes=false,fusionMode?:TokamakMirrorParams['mode']):void{
   const directions = magneticAxisColors.map(axis => projectCameraDirection(fusionMode?new THREE.Vector3(...Object.values(fusionDisplayPoint(axis.direction,fusionMode)) as [number,number,number]):directPhysicalAxes?new THREE.Vector3(axis.direction.x,axis.direction.y,axis.direction.z):mapMagneticPoint(axis.direction), camera));
-  const orientation = directions.map(v => v.toArray().map(x => x.toFixed(3)).join(',')).join(';');
+  // S01's displayed axis uses three decimals; signed rounded zero is the same
+  // direction, not a camera change. Keep every nonzero digit intact.
+  const orientation = directions.map(v => v.toArray().map(x => {
+    const rounded=x.toFixed(3);
+    return fusionMode&&rounded==='-0.000'?'0.000':rounded;
+  }).join(',')).join(';');
   if (widget.getAttribute('data-axis-orientation') === orientation) return;
   widget.setAttribute('data-axis-orientation', orientation);
   for (let i = 0; i < magneticAxisColors.length; i++) {
@@ -249,6 +255,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   activeLayers,
   getFrameLayers,
   presentationMode = false,
+  theme = 'chalkboard',
   morphTarget = 0, initialFlatViewport, getFrameParams, storyCameraCommandRef, onMorphProgress, onMorphFlat, onWebGLFallback,
   initialB1AutoFit=true,b1AutoFitAllowed=true,b1ResetViewNonce=0,b1ScopeCollapsed=false
 }) => {
@@ -265,6 +272,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
   const latestStateRef = useRef(simState);
   const latestParamsRef = useRef(params);
   const latestLayersRef = useRef(activeLayers);
+  const themeRef = useRef(theme); themeRef.current = theme;
   const morphPropsRef = useRef({ morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback });
   morphPropsRef.current = { morphTarget, onMorphProgress, onMorphFlat, onWebGLFallback };
   const initialViewportRef = useRef(initialFlatViewport);
@@ -483,6 +491,57 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     let b1LastPolicy=b1PolicyRef.current;
     const lockB1Camera=()=>{b1AutoFit=false;};
     if(isBoundedStage||isTokamak3d||isMag3d)controls.addEventListener('start',lockB1Camera);
+    // OrbitControls continues applying its damping tail even after the change
+    // event threshold stops marking the scene dirty. A later palette repaint
+    // then unexpectedly reveals that hidden camera motion. Settle and publish
+    // the final actual render for S01 only; never disable damping during input.
+    type FusionOrbitPhase='idle'|'gesture'|'damping'|'final-render';
+    let fusionOrbitPhase:FusionOrbitPhase='idle',fusionOrbitStableFrames=0,fusionOrbitQuiescent=false;
+    const fusionPreviousPosition=new THREE.Vector3(),fusionPreviousTarget=new THREE.Vector3(),fusionPreviousQuaternion=new THREE.Quaternion();
+    const setFusionOrbitPhase=(phase:FusionOrbitPhase)=>{
+      fusionOrbitPhase=phase;
+      if(isTokamak3d)container.dataset.s01OrbitPhase=phase;
+    };
+    const cancelFusionOrbitSettle=()=>{
+      if(!isTokamak3d)return;
+      fusionOrbitQuiescent=false;fusionOrbitStableFrames=0;setFusionOrbitPhase('idle');
+    };
+    const startFusionOrbit=()=>{
+      fusionOrbitQuiescent=false;fusionOrbitStableFrames=0;setFusionOrbitPhase('gesture');
+    };
+    const endFusionOrbit=()=>{
+      fusionOrbitQuiescent=false;fusionOrbitStableFrames=0;setFusionOrbitPhase('damping');dirty=true;
+    };
+    if(isTokamak3d){
+      setFusionOrbitPhase('idle');
+      controls.addEventListener('start',startFusionOrbit);
+      controls.addEventListener('end',endFusionOrbit);
+    }
+    const updateOrbitControls=()=>{
+      // The damping residual was explicitly flushed. Re-running lookAt and
+      // spherical conversion on an idle, manually owned camera only introduces
+      // rounding drift. New gestures, authored morphs and resets reopen updates.
+      if(isTokamak3d&&fusionOrbitQuiescent&&!b1AutoFit)return;
+      if(!isTokamak3d||fusionOrbitPhase!=='damping'){controls.update();return;}
+      fusionPreviousPosition.copy(camera.position);
+      fusionPreviousTarget.copy(controls.target);
+      fusionPreviousQuaternion.copy(camera.quaternion);
+      controls.update();
+      const scale=Math.max(1,camera.position.distanceTo(controls.target));
+      const q=camera.quaternion,p=fusionPreviousQuaternion;
+      const rotation=Math.min(Math.hypot(q.x-p.x,q.y-p.y,q.z-p.z,q.w-p.w),Math.hypot(q.x+p.x,q.y+p.y,q.z+p.z,q.w+p.w));
+      // Measure the real pose update, not OrbitControls' change event or a
+      // stale DOM frame. Flush only a sub-pixel residual after 4 stable ticks.
+      const stable=fusionPreviousPosition.distanceTo(camera.position)<=scale*1e-7&&
+        fusionPreviousTarget.distanceTo(controls.target)<=scale*1e-7&&rotation<=1e-7;
+      fusionOrbitStableFrames=stable?fusionOrbitStableFrames+1:0;
+      if(fusionOrbitStableFrames<4)return;
+      const damping=controls.enableDamping;
+      controls.enableDamping=false;
+      controls.update();
+      controls.enableDamping=damping;
+      fusionOrbitQuiescent=true;setFusionOrbitPhase('final-render');dirty=true;
+    };
     // An authored E04 opening may fit the real circuit once its transition
     // settles. A teacher orbit/pan/zoom owns subsequent framing.
     let inductionOpeningAuto=false,inductionOpeningKey='',inductionOpeningCheckedAt=-Infinity;
@@ -670,8 +729,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         } else {
           marker.scale.setScalar(.038);
           const fusion=state as TokamakMirrorState;
-          sphereMat.color.set(fusion.escaped?0xfb7185:0xffe9b0);
-          sphereMat.emissive.set(fusion.escaped?0xa5253e:0xffaf4b);
+          const paper=themeRef.current==='projector';
+          sphereMat.color.set(paper?(fusion.escaped?0xbe123c:0xb45309):(fusion.escaped?0xfb7185:0xffe9b0));
+          sphereMat.emissive.set(paper?(fusion.escaped?0x881337:0x78350f):(fusion.escaped?0xa5253e:0xffaf4b));
+          sphereMat.emissiveIntensity=paper?.18:1.4;
           if(fusionTrail&&fusionHalo&&(lastFusionTrail!==fusion.trail||lastFusionMode!==fusionParams.mode)){
             lastFusionTrail=fusion.trail;lastFusionMode=fusionParams.mode;
             fusionTrail.update(fusion.trail,p=>fusionDisplayPoint(p,fusionParams.mode));
@@ -777,17 +838,21 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
               applyFluxEndpointFade(geometry,closed);
               const fluxCore=new THREE.Mesh(geometry,isMag3d?e10FluxCoreMaterial(true,role):coilFluxCoreMaterial(true));
               if(isMag3d)fluxCore.name='e10-field-'+role;
+              else if(isTokamak3d)fluxCore.name='fusion-field-core';
               staticGroup.add(fluxCore);
               if (isMag3d||isTokamak3d) {
                 const haloGeometry = new THREE.TubeGeometry(curve, divisions, isMag3d?.018:.024, 5, closed);
                 applyFluxEndpointFade(haloGeometry,closed);
-                staticGroup.add(new THREE.Mesh(haloGeometry, isMag3d?e10FluxHaloMaterial(role):coilFluxHaloMaterial()));
+                const halo=new THREE.Mesh(haloGeometry, isMag3d?e10FluxHaloMaterial(role):coilFluxHaloMaterial());
+                if(isTokamak3d)halo.name='fusion-field-halo';
+                staticGroup.add(halo);
                 // Tangent of an actual ordered field sample, not a decorative direction.
                 if (renderedFieldCount % (isTokamak3d?2:4) === 0) {
                   const index = Math.max(1, Math.floor(points.length / 2));
                   const start = points[index-1]!, delta = points[index]!.clone().sub(start);
                   if (delta.lengthSq() > 1e-10) {
                     const cone = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.085, 8), isMag3d?e10FluxCoreMaterial(false,role):coilFluxCoreMaterial());
+                    if(isTokamak3d)cone.name='fusion-field-direction';
                     cone.position.copy(start).lerp(points[index]!, 0.5);
                     cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), delta.normalize());
                     staticGroup.add(cone);
@@ -838,6 +903,12 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
         controls.removeEventListener('change', markDirty);
         if(isBoundedStage||isTokamak3d||isMag3d)controls.removeEventListener('start',lockB1Camera);
+        if(isTokamak3d){
+          controls.removeEventListener('start',startFusionOrbit);
+          controls.removeEventListener('end',endFusionOrbit);
+          delete container.dataset.s01OrbitPhase;
+          delete container.dataset.s01CameraPose;
+        }
         if(isInductionStage)controls.removeEventListener('start',lockInductionOpening);
         e10Ring?.remove();
         planarDriver?.dispose();
@@ -871,6 +942,34 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     });
     resizeObserver.observe(container);
 
+    // S01 paper palette changes only display materials, never the camera,
+    // physics state, geometry, field samples or WebGL context ownership.
+    const fusionPaperBackground=new THREE.Color('#f8fafc');
+    let lastFusionPalette:string|null=null;
+    let lastFusionPaletteKey='';
+    const applyFusionPalette=()=>{
+      const paper=themeRef.current==='projector';
+      const palette=paper?'projector':'chalkboard';
+      const key=JSON.stringify([palette,lastConfigSig,fusionPinKey]);
+      if(lastFusionPaletteKey===key)return;
+      lastFusionPaletteKey=key;lastFusionPalette=palette;
+      scene.background=paper?fusionPaperBackground:magneticBackdrop;
+      const paint=(obj:THREE.Object3D,color:number,opacity?:number)=>{
+        if(obj instanceof THREE.Mesh&&obj.material instanceof THREE.MeshBasicMaterial){obj.material.color.setHex(color);if(opacity!==undefined)obj.material.opacity=opacity;}
+      };
+      staticGroup.traverse(o=>{
+        if(o.name==='fusion-field-core'||o.name==='fusion-field-direction')paint(o,paper?0x075985:0x75e5f1,paper?.95:.87);
+        else if(o.name==='fusion-field-halo')paint(o,0x2ebbd7,paper?0:.11);
+        else if(o.name==='tokamak-vacuum-chamber')paint(o,paper?0x0e7490:0x7dd3fc,paper?.09:.06);
+      });
+      const trail=trailGroup.getObjectByName('fusion-particle-trail');if(trail)paint(trail,paper?0x92400e:0xffcb75);
+      const halo=trailGroup.getObjectByName('fusion-particle-trail-halo');if(halo)paint(halo,0xffa445,paper?0:.15);
+      if(particleGlow)particleGlow.material.opacity=paper?0:1;
+      for(const [arrow,head,shaft] of [[velocityArrow,paper?0x92400e:0xfacc15,paper?0x92400e:0xffd36b],[lorentzForceArrow,paper?0xbe123c:0xfb7185,paper?0xbe123c:0xf472b6],[magneticFieldArrow,paper?0x075985:0x38bdf8,paper?0x075985:0x54d7ed]] as const){
+        arrow.setColor(new THREE.Color(head));const stem=arrow.getObjectByName('magnetic-vector-shaft');if(stem)paint(stem,shaft);
+      }
+      fusionPins?.children.forEach(pin=>paint(pin,pin.name==='fusion-escape'?(paper?0xbe123c:0xfb7185):(paper?0x166534:0x4ade80)));
+    };
     let lastSyncedParams = getFrameParams?.() ?? latestParamsRef.current;
     let lastSyncedLayers = readLayers();
     syncState(readState(), lastSyncedParams, lastSyncedLayers);
@@ -888,6 +987,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
           }
           if(isBoundedStage||isTokamak3d||isMag3d)b1AutoFit=false;
+          cancelFusionOrbitSettle();
           if(isInductionStage){
             inductionOpeningAuto=command.view.morphT===0&&b1PolicyRef.current.presentation;
             inductionOpeningKey='';inductionOpeningCheckedAt=-Infinity;inductionSafe=null;
@@ -899,6 +999,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           authored = true;
           dirty = true;
         } else if (target !== lastMorphTarget) {
+          cancelFusionOrbitSettle();
           if(isInductionStage){inductionOpeningAuto=false;inductionSafe=null;}
           if (target === 1 && morph.getMorphT() === 0 && !morph.isAnimating) {
             morph.syncFromOrbitPosition(camera.position, controls.target, camera.fov);
@@ -912,18 +1013,18 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         controls.enabled = morph.getMorphT() === 0 && !morph.isAnimating;
         if (controls.enabled) {
           if (!wasEnabled || authored) controls.target.copy(morph.getOrbitTarget());
-          controls.update();
+          updateOrbitControls();
         }
         const progress = morph.getMorphT();
         container.dataset.morphT = String(progress);
         morphPropsRef.current.onMorphProgress?.(progress);
       } else {
-        controls.update();
+        updateOrbitControls();
       }
 
       const b1Policy=b1PolicyRef.current;
       if(isBoundedStage||isTokamak3d||isMag3d){
-        if(b1Policy.nonce!==b1LastPolicy.nonce){b1AutoFit=true;b1FramingKey='';magneticSceneFitKey='';lastMagneticProjectionKey='';lastMagneticShapeLayout='';b1FramedAt=-Infinity;dirty=true;}
+        if(b1Policy.nonce!==b1LastPolicy.nonce){cancelFusionOrbitSettle();b1AutoFit=true;b1FramingKey='';magneticSceneFitKey='';lastMagneticProjectionKey='';lastMagneticShapeLayout='';b1FramedAt=-Infinity;dirty=true;}
         if(b1Policy.allowed!==b1LastPolicy.allowed||b1Policy.presentation!==b1LastPolicy.presentation||b1Policy.scopeCollapsed!==b1LastPolicy.scopeCollapsed)dirty=true;
         b1LastPolicy=b1Policy;
       }
@@ -943,6 +1044,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
           if(layoutKey!==magneticLayoutKey){magneticLayoutKey=layoutKey;dirty=true;}
         }
       }
+      const fusionThemeChanged=isTokamak3d&&lastFusionPalette!==themeRef.current;
+      if(fusionThemeChanged)dirty=true;
       const changed=latestState!==null&&latestState!==undefined&&(latestState!==lastSyncedState||frameParams!==lastSyncedParams||frameLayers!==lastSyncedLayers);
       const syncLatest=()=>{
         syncState(latestState,frameParams,frameLayers);
@@ -973,7 +1076,8 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (contextLost || !dirty || now - lastRenderTime < performanceGuard.interval) return;
 
       const renderStart = performance.now();
-      if(changed&&(isBoundedStage||isTokamak3d||isMag3d))syncLatest();
+      if((changed&&(isBoundedStage||isTokamak3d||isMag3d))||fusionThemeChanged)syncLatest();
+      if(isTokamak3d)applyFusionPalette();
       const b1=isBoundedStage&&latestState!==null&&latestState!==undefined?latestState as BoundedMagneticState:null;
       const bp=frameParams as BoundedMagneticParams;
       const rw=renderer.domElement.clientWidth||width,rh=renderer.domElement.clientHeight||height;
@@ -1108,6 +1212,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       if (magneticAxisWidget) updateMagneticAxisWidget(magneticAxisWidget,renderCamera,isBoundedStage,isTokamak3d?(frameParams as TokamakMirrorParams).mode:undefined);
       renderer.render(scene, renderCamera);
       cssRenderer.render(scene, renderCamera);
+      if(isTokamak3d&&lastFusionPalette)container.dataset.s01Palette=lastFusionPalette;
       if(isInductionStage){
         const root=scene.getObjectByName('physforge-flagship-em-induction-double-rod');
         const points=root?inductionOpeningPoints(root):[];
@@ -1125,6 +1230,11 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
         container.dataset.s01VelocityVectors=String(frameLayers.has('velocityComponents'));
         if(fusionPoints)container.dataset.s01ScreenBounds=JSON.stringify(projectFusionFrame(fusionPoints,renderCamera,rw,rh));
         container.dataset.s01AutoFit=String(b1AutoFit&&b1Policy.allowed);
+        // These values describe the camera that just rendered, never a
+        // pending controls update. Idle is published only after final paint.
+        container.dataset.s01CameraPose=JSON.stringify({position:renderCamera.position.toArray(),
+          quaternion:renderCamera.quaternion.toArray(),target:controls.target.toArray(),projection:renderCamera.projectionMatrix.toArray()});
+        if(fusionOrbitPhase==='final-render')setFusionOrbitPhase('idle');
       }
       if(b1){
         // Diagnostics and visible caption refer to the state just rendered.
