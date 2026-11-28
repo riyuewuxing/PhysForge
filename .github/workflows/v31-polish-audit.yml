@@ -5,6 +5,8 @@ on:
     paths:
       - 'simulations/**'
       - 'apps/singlefile-exporter/src/**'
+      - 'apps/web/src/App.tsx'
+      - 'apps/web/src/stage/**'
       - 'apps/web/src/components/RightControlPanel.tsx'
       - 'apps/web/src/components/SimulationStage.tsx'
       - 'apps/web/src/components/ExportStudioDrawer.tsx'

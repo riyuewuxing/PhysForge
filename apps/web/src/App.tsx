@@ -765,7 +765,10 @@ const ClassroomApp: React.FC = () => {
 
           {store.fullscreenPresentation && (
             <>
-              <div data-testid="fullscreen-title" className="pointer-events-none absolute left-[68px] top-6 z-20 max-w-[min(44vw,620px)] text-slate-100 drop-shadow-lg">
+              <div data-testid="fullscreen-title" className="pointer-events-none absolute left-[68px] top-6 z-20 text-slate-100 drop-shadow-lg"
+                style={{ maxWidth: store.telemetry.formulaItems.length > 0 || liveFormulas.length > 0
+                  ? 'min(620px, calc(100% - min(320px, 38vw) - 108px))'
+                  : 'min(620px, calc(100% - 92px))' }}>
                 <div className="truncate text-2xl font-semibold tracking-tight">{storyDeck?.title ?? (plugin.meta.id === 'em-induction-double-rod' && store.params.rodMode === 'double' ? '电磁感应·双杆切割' : (plugin.meta.id==='builder-optics-ray'?OPTICS_TITLES[String(store.params.sceneMode)]:undefined) ?? WORKBENCH_TITLES[plugin.meta.id] ?? plugin.meta.title)}</div>
                 <div className="mt-1 text-xs tracking-wide text-slate-400">{store.appMode === 'story' ? '分镜讲课模式' : '全屏课堂演说模式'}</div>
               </div>
