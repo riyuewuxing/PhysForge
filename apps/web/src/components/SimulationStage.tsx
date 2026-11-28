@@ -1259,9 +1259,18 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           const showHandle = h.showWhenIdle !== false || hovered;
           // E04's external-force control is drawn by the web shell, not the
           // model renderer. Preserve its semantic green on white paper.
-          const handleColor = currentTheme === 'projector' &&
-            p.meta.id === 'em-induction-double-rod' && h.id === 'external-force-rod1'
-            ? '#166534' : h.color ?? '#38bdf8';
+          const paperHandleColor = currentTheme === 'projector'
+            ? p.meta.id === 'em-induction-double-rod' && h.id === 'external-force-rod1'
+              ? '#166534'
+              : p.meta.id === 'stse-em-devices-suite' && h.id === 'device-b-field'
+                ? '#075985'
+                : p.meta.id === 'stse-em-devices-suite' && h.id === 'device-e-field'
+                  ? '#92400e'
+                  : undefined
+            : undefined;
+          // S02 uses matching magnetic/electric cue colors on white Canvas.
+          // The hover tooltip retains its bright semantic text on its dark card.
+          const handleColor = paperHandleColor ?? h.color ?? '#38bdf8';
           if (showHandle && hovered) {
             ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
             ctx.shadowColor = h.color ?? '#38bdf8';
