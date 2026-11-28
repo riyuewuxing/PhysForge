@@ -215,7 +215,7 @@ async function layoutCase(base,width){
     }
     if(device==='mhd-generator'){
      const current=g.labels['I外'],load=g.labels['外负载 R'],channel=g.labels['导电流体通道'],lower=Object.entries(g.labels).find(([l])=>l.startsWith('下 '))?.[1];
-     const arrow=g.paths.filter(p=>p.color===(light?'#166534':'#4ade80')&&p.points.length===6&&p.points[0].y===p.points[1].y).sort((a,b)=>Math.abs(b.points[1].x-b.points[0].x)-Math.abs(a.points[1].x-a.points[0].x))[0];
+     const arrow=g.paths.filter(p=>p.color===(light?'#166534':'#4ade80')&&p.points.length===5&&p.points[0].kind==='move'&&p.points[1].kind==='line'&&p.points[2].kind==='move'&&p.points[0].y===p.points[1].y).sort((a,b)=>Math.abs(b.points[1].x-b.points[0].x)-Math.abs(a.points[1].x-a.points[0].x))[0];
      const copper=g.paths.filter(p=>p.color===(light?'#b45309':'#d97706')).flatMap(p=>p.rects);
      const electrodes=copper.filter(r=>r.w>r.h*15);
      const bottomEdge=Math.max(...electrodes.map(r=>r.y+r.h));
