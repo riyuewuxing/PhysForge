@@ -1301,9 +1301,13 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
             ctx.stroke();
             ctx.font = hovered ? 'bold 12px sans-serif' : 'bold 11px sans-serif';
           }
+          // S02's electric handle lies to the left of the chamber. Put its
+          // label outside the field region, without changing the drag anchor.
+          const labelOutsideLeft = p.meta.id === 'stse-em-devices-suite' && h.id === 'device-e-field';
           if (showHandle && hovered) {
             const labelWidth = ctx.measureText(h.label).width + 14;
-            const labelX = Math.max(6, Math.min(vp.width - labelWidth - 6, sPos.x + 14));
+            const preferredLabelX = labelOutsideLeft ? sPos.x - labelWidth - 14 : sPos.x + 14;
+            const labelX = Math.max(6, Math.min(vp.width - labelWidth - 6, preferredLabelX));
             const labelY = Math.max(18, Math.min(vp.height - 8, sPos.y - 16));
             ctx.fillStyle = 'rgba(11, 15, 23, 0.9)';
             ctx.beginPath();
@@ -1316,7 +1320,8 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
           } else if (showHandle) {
             // Keep the sampled voltage annotation off the I-U curve and axis.
             const isPhotoelectricSample = plugin.meta.id === 'modern-photoelectric-compton' && h.id === 'anode-voltage-point';
-            ctx.fillText(h.label, sPos.x + 10, sPos.y + (isPhotoelectricSample ? -12 : 4));
+            const labelX = labelOutsideLeft ? Math.max(6, sPos.x - 10 - ctx.measureText(h.label).width) : sPos.x + 10;
+            ctx.fillText(h.label, labelX, sPos.y + (isPhotoelectricSample ? -12 : 4));
           }
         }
         ctx.restore();
