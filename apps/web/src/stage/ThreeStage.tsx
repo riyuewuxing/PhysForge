@@ -496,7 +496,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     // then unexpectedly reveals that hidden camera motion. Settle and publish
     // the final actual render for S01 only; never disable damping during input.
     type FusionOrbitPhase='idle'|'gesture'|'damping'|'final-render';
-    let fusionOrbitPhase:FusionOrbitPhase='idle',fusionOrbitStableFrames=0;
+    let fusionOrbitPhase:FusionOrbitPhase='idle',fusionOrbitStableFrames=0,fusionOrbitQuiescent=false;
     const fusionPreviousPosition=new THREE.Vector3(),fusionPreviousTarget=new THREE.Vector3(),fusionPreviousQuaternion=new THREE.Quaternion();
     const setFusionOrbitPhase=(phase:FusionOrbitPhase)=>{
       fusionOrbitPhase=phase;
@@ -504,13 +504,13 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
     };
     const cancelFusionOrbitSettle=()=>{
       if(!isTokamak3d)return;
-      fusionOrbitStableFrames=0;setFusionOrbitPhase('idle');
+      fusionOrbitQuiescent=false;fusionOrbitStableFrames=0;setFusionOrbitPhase('idle');
     };
     const startFusionOrbit=()=>{
-      fusionOrbitStableFrames=0;setFusionOrbitPhase('gesture');
+      fusionOrbitQuiescent=false;fusionOrbitStableFrames=0;setFusionOrbitPhase('gesture');
     };
     const endFusionOrbit=()=>{
-      fusionOrbitStableFrames=0;setFusionOrbitPhase('damping');dirty=true;
+      fusionOrbitQuiescent=false;fusionOrbitStableFrames=0;setFusionOrbitPhase('damping');dirty=true;
     };
     if(isTokamak3d){
       setFusionOrbitPhase('idle');
@@ -518,6 +518,10 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       controls.addEventListener('end',endFusionOrbit);
     }
     const updateOrbitControls=()=>{
+      // The damping residual was explicitly flushed. Re-running lookAt and
+      // spherical conversion on an idle, manually owned camera only introduces
+      // rounding drift. New gestures, authored morphs and resets reopen updates.
+      if(isTokamak3d&&fusionOrbitQuiescent&&!b1AutoFit)return;
       if(!isTokamak3d||fusionOrbitPhase!=='damping'){controls.update();return;}
       fusionPreviousPosition.copy(camera.position);
       fusionPreviousTarget.copy(controls.target);
@@ -536,7 +540,7 @@ export const ThreeStage: React.FC<ThreeStageProps> = ({
       controls.enableDamping=false;
       controls.update();
       controls.enableDamping=damping;
-      setFusionOrbitPhase('final-render');dirty=true;
+      fusionOrbitQuiescent=true;setFusionOrbitPhase('final-render');dirty=true;
     };
     // An authored E04 opening may fit the real circuit once its transition
     // settles. A teacher orbit/pan/zoom owns subsequent framing.
