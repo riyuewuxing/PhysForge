@@ -776,6 +776,8 @@ const ClassroomApp: React.FC = () => {
                 <div data-testid="fullscreen-formula" className="pf-presentation-formula absolute right-6 top-6 z-20 w-[min(320px,38vw)] max-h-[65vh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-950/75 p-4 text-slate-100 shadow-2xl backdrop-blur-xl">
                   {liveFormulas.length ? <Suspense fallback={<KatexFormulaCard items={store.telemetry.formulaItems} compact showSubstituted={false} highlightedId={highlightedFormulaId} />}>
                     <LazyLiveFormulaCard key={`${plugin.meta.id}:${store.paramContextEpoch}`} specs={liveFormulas} params={store.params} schema={plugin.paramSchema} highlightedId={highlightedFormulaId}
+                      showPaintedSelector={plugin.meta.id === 'stse-em-devices-suite' && store.params.device === 'velocity-selector' && !store.view3dEnabled}
+                      paintedSelector={store.telemetry.paintedSelector}
                       onBegin={(key) => store.beginLiveFormula(plugin.meta.id, key, store.paramContextEpoch)}
                       onChange={(key, value) => store.updateLiveFormula(plugin.meta.id, key, value, store.paramContextEpoch)}
                       onEnd={(key) => store.endLiveFormula(plugin.meta.id, key, store.paramContextEpoch)} />
