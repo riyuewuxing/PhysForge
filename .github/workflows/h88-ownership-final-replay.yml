@@ -1,0 +1,96 @@
+name: H88 ownership final legacy offline and selector replay
+on:
+  pull_request:
+    branches: ['polish/v31-h88-formula-hit-ownership']
+permissions:
+  contents: read
+jobs:
+  legacy-scope:
+    if: github.event.pull_request.head.ref == 'audit/h88-ownership-final-legacy-selector'
+    name: Offline browser ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [builder-composite-em-field, em-induction-double-rod, stse-em-devices-suite, stse-tokamak-magnetic-mirror, astro-orbital-mechanics]
+    env:
+      SOURCE_HEAD: 9f814af61b5023f0af3a8aad13110991acab17ef
+      MODEL: ${{ matrix.model }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 9f814af61b5023f0af3a8aad13110991acab17ef
+      - run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          test "$(git hash-object scripts/h64_legacy_scope_audit.mjs)" = "16e6558021fa2c89d0afb88ca5ab2e625ea37301"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/h64_legacy_scope_audit.mjs
+        timeout-minutes: 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-ownership-final-offline-${{ matrix.model }}
+          path: |
+            evidence/scope/*.png
+            evidence/scope/*.html
+            evidence/scope/report.json
+          if-no-files-found: error
+          retention-days: 7
+  selector-denominator:
+    if: github.event.pull_request.head.ref == 'audit/h88-ownership-final-legacy-selector'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 9f814af61b5023f0af3a8aad13110991acab17ef
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_HEAD"
+          cp audit/scripts/h88_formula_hit_grid.mjs source/scripts/
+          git -C source diff --exit-code
+        env:
+          SOURCE_HEAD: 9f814af61b5023f0af3a8aad13110991acab17ef
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h88_formula_hit_grid.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: 9f814af61b5023f0af3a8aad13110991acab17ef
+          SOURCE_ROLE: candidate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-ownership-selector-denominator
+          path: source/evidence/h88-formula-hit-grid/
+          if-no-files-found: error
+          retention-days: 7
