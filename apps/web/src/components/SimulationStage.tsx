@@ -2135,6 +2135,7 @@ export const SimulationStage: React.FC<SimulationStageProps> = ({
               activeLayers={threeLayers}
               getFrameLayers={readDisplayedLayers}
               presentationMode={presentationMode}
+              theme={theme}
               morphTarget={view3dEnabled ? 0 : 1}
               initialFlatViewport={initialFlatViewportRef.current}
               initialB1AutoFit={!userTransformedViewRef.current}
