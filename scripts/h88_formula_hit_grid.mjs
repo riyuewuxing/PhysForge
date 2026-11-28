@@ -48,6 +48,12 @@ async function formulaCase(page,key){
      return result;
    };
  });
+ await page.addInitScript(()=>{
+  window.__h88PointerEvents=[];
+  for(const type of ['pointerdown','pointermove','pointerup','pointercancel','gotpointercapture','lostpointercapture']){
+   document.addEventListener(type,e=>window.__h88PointerEvents.push({type,pointerType:e.pointerType,x:e.clientX,y:e.clientY,target:e.target?.className}),true);
+  }
+ });
  await load(page,'stse-em-devices-suite','velocity-selector-spectrometer');
  const eSlider=page.getByTestId('param-slider-eFieldVPerM'),bSlider=page.getByTestId('param-slider-bFieldT');
  const E=Number(await eSlider.inputValue()),B=Number(await bSlider.inputValue());
@@ -92,7 +98,7 @@ async function formulaCase(page,key){
  try {
   for(const dx of [5,10,15,20,25,30,35,40,45,50,55,60]){
     await move(dx);
-    const immediate=await read();report.eventSamples??=[];report.eventSamples.push({key,dx,...immediate});samples.push({...immediate,phase:'event',dx,expected:quant(B+dir*dx*3.8/240)});
+    const immediate=await read();report.pointerEvents??={};report.pointerEvents[key]=await page.evaluate(()=>window.__h88PointerEvents);report.eventSamples??=[];report.eventSamples.push({key,dx,...immediate});samples.push({...immediate,phase:'event',dx,expected:quant(B+dir*dx*3.8/240)});
     check(immediate.target===quant(B+dir*dx*3.8/240),key+': pointer oracle '+dx);
     // Sample after a browser animation frame and a following task boundary.
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0))));
@@ -132,6 +138,10 @@ async function formulaCase(page,key){
  await redo.click();
  check(Math.abs(Number(await bSlider.inputValue())-target)<1e-9&&Number(await eSlider.inputValue())===E,key+': redo restores only final gesture');
  await snap(page,key+'-redo');
+ const events=await page.evaluate(()=>window.__h88PointerEvents);
+ report.pointerEvents[key]=events;
+ check(!events.some(e=>e.type==='pointercancel'),key+': no browser pointer cancellation');
+ check(events.some(e=>e.type==='pointerdown'&&e.pointerType===(touch?'touch':'mouse')),key+': actual input type');
  report.cases.push({key,kind:'formula',E,B,target,initial,samples,held,released,divergences:divergences.length,previewGaps:previewGaps.length});
 }
 try{
