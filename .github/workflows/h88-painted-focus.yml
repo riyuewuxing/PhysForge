@@ -1,0 +1,56 @@
+name: H88 painted selector and solenoid focus
+on:
+  pull_request:
+    branches: ['polish/v31-h88-selector-painted-ack']
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    if: github.event.pull_request.head.ref == 'audit/h88-selector-painted-ack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: audit
+      - uses: actions/checkout@v4
+        with:
+          ref: 4df6cab73f91ca34e42fd39535532922a7f0bacb
+          path: source
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          package_json_file: source/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - run: |
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_HEAD"
+          cp audit/scripts/h88_painted_selector_focus.mjs source/scripts/
+          git -C source diff --exit-code
+        env:
+          SOURCE_HEAD: 4df6cab73f91ca34e42fd39535532922a7f0bacb
+      - run: pnpm install --frozen-lockfile
+        working-directory: source
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: source
+      - run: pnpm build
+        working-directory: source
+        env:
+          VITE_BASE_PATH: /PhysForge/
+      - run: node scripts/h88_painted_selector_focus.mjs
+        working-directory: source
+        timeout-minutes: 5
+        env:
+          SOURCE_HEAD: 4df6cab73f91ca34e42fd39535532922a7f0bacb
+          SOURCE_ROLE: candidate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h88-painted-focus-candidate
+          path: source/evidence/h88-painted-focus/
+          if-no-files-found: error
+          retention-days: 7
